@@ -7,6 +7,8 @@ if (existsSync(new URL("../.env", import.meta.url))) {
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
+  // Postgres. Unset locally => PGlite (embedded Postgres) under api/data/pg.
+  databaseUrl: process.env.DATABASE_URL ?? "",
   jwtSecret: process.env.JWT_SECRET ?? "dev-only-change-me",
   otpPepper: process.env.OTP_PEPPER ?? "dev-only-change-me-too",
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",

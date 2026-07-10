@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomInt } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { db, now, newId } from "./db.ts";
+import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
 import { sendLoginCode } from "./email.ts";
 
@@ -32,11 +32,11 @@ export function getUserId(req: FastifyRequest): string {
   }
 }
 
-function uniqueReferralCode(email: string): string {
+async function uniqueReferralCode(email: string): Promise<string> {
   const base = (email.split("@")[0] || "user").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 6) || "USER";
   for (let i = 0; i < 20; i++) {
     const candidate = `${base}${randomInt(10, 99)}`;
-    const exists = db.prepare("SELECT 1 FROM users WHERE referral_code = ?").get(candidate);
+    const exists = await sql.get("SELECT 1 FROM users WHERE referral_code = ?", candidate);
     if (!exists) return candidate;
   }
   return `${base}${Date.now().toString().slice(-4)}`;
@@ -47,26 +47,26 @@ type UserRow = {
   referred_by: string | null; status: string; created_at: string;
 };
 
-function roleOf(userId: string): string | null {
-  const row = db.prepare("SELECT role FROM admin_users WHERE user_id = ?").get(userId) as
-    | { role: string } | undefined;
+async function roleOf(userId: string): Promise<string | null> {
+  const row = await sql.get<{ role: string }>("SELECT role FROM admin_users WHERE user_id = ?", userId);
   return row?.role ?? null;
 }
 
 // Promote founder emails (config.adminEmails) to admin on login.
-function ensureAdminRole(userId: string, email: string): void {
+async function ensureAdminRole(userId: string, email: string): Promise<void> {
   if (!config.adminEmails.includes(email.toLowerCase())) return;
-  db.prepare(
+  await sql.run(
     "INSERT INTO admin_users (user_id, role, created_at) VALUES (?, 'admin', ?) " +
     "ON CONFLICT(user_id) DO UPDATE SET role = 'admin'",
-  ).run(userId, now());
+    userId, now(),
+  );
 }
 
-function publicUser(u: UserRow) {
+async function publicUser(u: UserRow) {
   return {
     id: u.id, email: u.email, country: u.country,
     referralCode: u.referral_code, status: u.status,
-    role: roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
+    role: await roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
   };
 }
 
@@ -88,12 +88,13 @@ export async function authRoutes(app: FastifyInstance) {
     const code = makeCode();
 
     // Invalidate any earlier unused codes for this email.
-    db.prepare("UPDATE email_codes SET consumed = 1 WHERE email = ? AND consumed = 0").run(email);
+    await sql.run("UPDATE email_codes SET consumed = 1 WHERE email = ? AND consumed = 0", email);
 
     const expires = new Date(Date.now() + config.otpTtlMinutes * 60_000).toISOString();
-    db.prepare(
+    await sql.run(
       "INSERT INTO email_codes (id, email, code_hash, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,0,0,?)",
-    ).run(newId(), email, hashCode(code), expires, now());
+      newId(), email, hashCode(code), expires, now(),
+    );
 
     try {
       await sendLoginCode(email, code);
@@ -111,77 +112,71 @@ export async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "Enter the 6-number code." });
 
     const email = parsed.data.email.toLowerCase().trim();
-    const row = db
-      .prepare("SELECT * FROM email_codes WHERE email = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1")
-      .get(email) as
-      | { id: string; code_hash: string; expires_at: string; attempts: number }
-      | undefined;
+    const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number }>(
+      "SELECT * FROM email_codes WHERE email = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
+      email,
+    );
 
     if (!row) return reply.code(400).send({ error: "No code found. Please ask for a new code." });
     if (new Date(row.expires_at).getTime() < Date.now()) {
-      db.prepare("UPDATE email_codes SET consumed = 1 WHERE id = ?").run(row.id);
+      await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
       return reply.code(400).send({ error: "This code has expired. Please ask for a new code." });
     }
     if (row.attempts >= config.otpMaxAttempts) {
-      db.prepare("UPDATE email_codes SET consumed = 1 WHERE id = ?").run(row.id);
+      await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
       return reply.code(429).send({ error: "Too many tries. Please ask for a new code." });
     }
 
     if (hashCode(parsed.data.code) !== row.code_hash) {
-      db.prepare("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?").run(row.id);
+      await sql.run("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", row.id);
       return reply.code(400).send({ error: "Wrong code. Please try again." });
     }
 
     // Correct code — consume it and sign the user in.
-    db.prepare("UPDATE email_codes SET consumed = 1 WHERE id = ?").run(row.id);
+    await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
 
-    let user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
+    let user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
     if (!user) {
       const id = newId();
-      const referralCode = uniqueReferralCode(email);
+      const referralCode = await uniqueReferralCode(email);
       let referredBy: string | null = null;
       if (parsed.data.ref) {
-        const inviter = db
-          .prepare("SELECT id FROM users WHERE referral_code = ?")
-          .get(parsed.data.ref.toUpperCase()) as { id: string } | undefined;
+        const inviter = await sql.get<{ id: string }>(
+          "SELECT id FROM users WHERE referral_code = ?", parsed.data.ref.toUpperCase(),
+        );
         if (inviter) referredBy = inviter.id;
       }
-      db.prepare(
-        "INSERT INTO users (id, email, country, referral_code, referred_by, status, created_at) VALUES (?,?,?,?,?, 'active', ?)",
-      ).run(id, email, "Pakistan", referralCode, referredBy, now());
-      if (referredBy) {
-        db.prepare(
-          "INSERT INTO referrals (id, referrer_user_id, referred_user_id, created_at, bonus_paid) VALUES (?,?,?,?,0)",
-        ).run(newId(), referredBy, id, now());
-      }
-      user = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow;
+      // The user row and its referral edge must land together, or an invite is
+      // silently lost.
+      await sql.tx(async (t) => {
+        await t.run(
+          "INSERT INTO users (id, email, country, referral_code, referred_by, status, created_at) VALUES (?,?,?,?,?, 'active', ?)",
+          id, email, "Pakistan", referralCode, referredBy, now(),
+        );
+        if (referredBy) {
+          await t.run(
+            "INSERT INTO referrals (id, referrer_user_id, referred_user_id, created_at, bonus_paid) VALUES (?,?,?,?,0)",
+            newId(), referredBy, id, now(),
+          );
+        }
+      });
+      user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", id);
     }
 
-    ensureAdminRole(user.id, user.email);
-    return { token: signToken(user.id), user: publicUser(user) };
+    await ensureAdminRole(user!.id, user!.email);
+    return { token: signToken(user!.id), user: await publicUser(user!) };
   });
 
   // Who am I (used by the app after it has a token)
   app.get("/auth/me", async (req, reply) => {
     try {
       const userId = getUserId(req);
-      const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
+      const user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
       if (!user) return reply.code(404).send({ error: "User not found" });
-      return { user: publicUser(user) };
+      return { user: await publicUser(user) };
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
     }
   });
 }
-
-// Referrals table is created lazily here to keep db.ts focused on core money tables.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS referrals (
-    id                TEXT PRIMARY KEY,
-    referrer_user_id  TEXT NOT NULL REFERENCES users(id),
-    referred_user_id  TEXT NOT NULL REFERENCES users(id),
-    created_at        TEXT NOT NULL,
-    bonus_paid        INTEGER NOT NULL DEFAULT 0
-  );
-`);

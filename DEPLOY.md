@@ -42,10 +42,21 @@ Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return
 `{"ok":true,"service":"paidup-api"}`.
 
-### ⚠️ Persistence
-The backend currently uses local SQLite, which **resets on every redeploy** on
-Railway. For real use, add the **Railway PostgreSQL** plugin and migrate the DB
-layer (the SQL is written to port cleanly). Until then, treat data as temporary.
+### Persistence — Postgres (required)
+1. Railway → your project → **New** → **Database** → **Add PostgreSQL**.
+2. On the **api** service → Variables → **New Variable** → **Add Reference** →
+   pick the Postgres service's `DATABASE_URL`. (Referencing it uses the private
+   network, which is free and needs no TLS.)
+3. Redeploy.
+
+The API **refuses to boot in production without `DATABASE_URL`**. That is
+deliberate: without it the data would sit on the container's disk, which Railway
+wipes on every redeploy — losing users, balances, and the ledger.
+
+Locally, leave `DATABASE_URL` empty. The API then runs **PGlite**, Postgres
+compiled to WASM, stored in `api/data/pg`. Same SQL, no install.
+
+Schema is created on boot (`initDb()`), so there is no separate migration step.
 
 ---
 

@@ -6,7 +6,7 @@ import { appRoutes } from "./routes/app.ts";
 import { webhookRoutes } from "./routes/webhooks.ts";
 import { withdrawalRoutes } from "./routes/withdrawals.ts";
 import { staffRoutes } from "./routes/staff.ts";
-import "./db.ts";
+import { initDb, usingRealPostgres } from "./db.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -33,6 +33,15 @@ if (process.env.NODE_ENV === "production") {
     process.exit(1);
   }
 }
+
+// Data outlives deploys only on a real Postgres server. PGlite writes to the
+// container's disk, which Railway wipes on every redeploy.
+if (process.env.NODE_ENV === "production" && !usingRealPostgres) {
+  console.error("FATAL: not starting — DATABASE_URL is unset, so data would live on ephemeral disk and be lost on the next deploy. Add the Railway Postgres plugin.");
+  process.exit(1);
+}
+
+await initDb();
 
 const app = Fastify({ logger: true });
 

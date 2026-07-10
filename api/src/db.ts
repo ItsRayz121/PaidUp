@@ -1,22 +1,147 @@
-// Local database using Node's built-in SQLite (zero install, no native build).
-// Schema is plain SQL so it ports to Postgres on Railway later with minimal
-// change. GUARDRAIL #2: balance is NEVER stored — it is always SUM(amount)
+// Postgres. GUARDRAIL #2: balance is NEVER stored — it is always SUM(amount)
 // over the append-only ledger. There is no "balance" column anywhere.
-import { DatabaseSync } from "node:sqlite";
+//
+// Two drivers, one dialect:
+//   - DATABASE_URL set  -> node-postgres against the real server (Railway).
+//   - DATABASE_URL unset -> PGlite, Postgres compiled to WASM, persisted under
+//     ../data/pg. Local dev needs no Postgres install, and runs the same SQL.
+//
+// Query helpers take `?` placeholders and rewrite them to $1..$n, so callers
+// keep writing portable SQL.
+import { Pool } from "pg";
+import { PGlite } from "@electric-sql/pglite";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { config } from "./config.ts";
 
-// fileURLToPath handles Windows drive letters and spaces (%20) correctly.
-const dataDir = fileURLToPath(new URL("../data/", import.meta.url));
-mkdirSync(dataDir, { recursive: true });
+export const now = () => new Date().toISOString();
+export const newId = () => randomUUID();
 
-export const db = new DatabaseSync(fileURLToPath(new URL("../data/app.db", import.meta.url)));
+type QueryResult = { rows: Record<string, unknown>[]; rowCount: number };
+type Driver = {
+  query: (text: string, params: unknown[]) => Promise<QueryResult>;
+  exec: (text: string) => Promise<void>;
+  begin: () => Promise<Tx>;
+};
+type Tx = {
+  query: (text: string, params: unknown[]) => Promise<QueryResult>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+};
 
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
+// `?` -> `$1, $2, ...`. Our SQL has no `?` inside string literals.
+function toPg(text: string): string {
+  let i = 0;
+  return text.replace(/\?/g, () => `$${++i}`);
+}
 
-db.exec(`
+function makePgDriver(connectionString: string): Driver {
+  // Railway's private network (*.railway.internal) speaks plain TCP. The public
+  // proxy requires TLS but presents a cert for a different host.
+  const internal = /\.railway\.internal|localhost|127\.0\.0\.1/.test(connectionString);
+  const pool = new Pool({
+    connectionString,
+    ssl: internal ? undefined : { rejectUnauthorized: false },
+    max: 10,
+  });
+  const norm = (r: { rows: unknown[]; rowCount: number | null }): QueryResult => ({
+    rows: r.rows as Record<string, unknown>[],
+    rowCount: r.rowCount ?? 0,
+  });
+  return {
+    query: async (text, params) => norm(await pool.query(toPg(text), params)),
+    exec: async (text) => void (await pool.query(text)),
+    begin: async () => {
+      const client = await pool.connect();
+      await client.query("BEGIN");
+      return {
+        query: async (text, params) => norm(await client.query(toPg(text), params)),
+        commit: async () => {
+          await client.query("COMMIT");
+          client.release();
+        },
+        rollback: async () => {
+          await client.query("ROLLBACK");
+          client.release();
+        },
+      };
+    },
+  };
+}
+
+function makePgliteDriver(): Driver {
+  const dir = fileURLToPath(new URL("../data/pg/", import.meta.url));
+  mkdirSync(dir, { recursive: true });
+  const lite = new PGlite(dir);
+  const norm = (r: { rows: unknown[]; affectedRows?: number }): QueryResult => ({
+    rows: r.rows as Record<string, unknown>[],
+    rowCount: r.affectedRows ?? (r.rows as unknown[]).length,
+  });
+  const q = async (text: string, params: unknown[]) =>
+    norm(await lite.query(toPg(text), params as never[]));
+  return {
+    query: q,
+    exec: async (text) => void (await lite.exec(text)),
+    // PGlite is single-connection; BEGIN/COMMIT on it directly is equivalent.
+    begin: async () => {
+      await lite.exec("BEGIN");
+      return {
+        query: q,
+        commit: async () => void (await lite.exec("COMMIT")),
+        rollback: async () => void (await lite.exec("ROLLBACK")),
+      };
+    },
+  };
+}
+
+const driver: Driver = config.databaseUrl
+  ? makePgDriver(config.databaseUrl)
+  : makePgliteDriver();
+
+export const usingRealPostgres = Boolean(config.databaseUrl);
+
+export const sql = {
+  async run(text: string, ...params: unknown[]): Promise<{ rowCount: number }> {
+    const r = await driver.query(text, params);
+    return { rowCount: r.rowCount };
+  },
+  async get<T>(text: string, ...params: unknown[]): Promise<T | undefined> {
+    const r = await driver.query(text, params);
+    return r.rows[0] as T | undefined;
+  },
+  async all<T>(text: string, ...params: unknown[]): Promise<T[]> {
+    const r = await driver.query(text, params);
+    return r.rows as T[];
+  },
+  // Money moves inside this. If the callback throws, nothing is written.
+  async tx<T>(fn: (t: TxApi) => Promise<T>): Promise<T> {
+    const t = await driver.begin();
+    const api: TxApi = {
+      run: async (text, ...params) => ({ rowCount: (await t.query(text, params)).rowCount }),
+      get: async <R>(text: string, ...params: unknown[]) =>
+        (await t.query(text, params)).rows[0] as R | undefined,
+      all: async <R>(text: string, ...params: unknown[]) =>
+        (await t.query(text, params)).rows as R[],
+    };
+    try {
+      const out = await fn(api);
+      await t.commit();
+      return out;
+    } catch (err) {
+      await t.rollback();
+      throw err;
+    }
+  },
+};
+
+export type TxApi = {
+  run: (text: string, ...params: unknown[]) => Promise<{ rowCount: number }>;
+  get: <R>(text: string, ...params: unknown[]) => Promise<R | undefined>;
+  all: <R>(text: string, ...params: unknown[]) => Promise<R[]>;
+};
+
+const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
     email         TEXT UNIQUE NOT NULL,
@@ -57,6 +182,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger_entries(user_id);
 
+  -- Who invited whom. Written at signup; the bonus itself is a ledger entry
+  -- posted when the invitee's task is credited (see webhooks).
+  CREATE TABLE IF NOT EXISTS referrals (
+    id               TEXT PRIMARY KEY,
+    referrer_user_id TEXT NOT NULL REFERENCES users(id),
+    referred_user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+    created_at       TEXT NOT NULL,
+    bonus_paid       INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id);
+
   CREATE TABLE IF NOT EXISTS tasks (
     id           TEXT PRIMARY KEY,
     type         TEXT NOT NULL CHECK (type IN ('install','survey','video')),
@@ -71,8 +207,8 @@ db.exec(`
     created_at   TEXT NOT NULL
   );
 
-  -- Created now for the postback flow (next slice). A completion only becomes
-  -- 'credited' after a VERIFIED server-to-server postback (guardrail #1).
+  -- A completion only becomes 'credited' after a VERIFIED server-to-server
+  -- postback (guardrail #1).
   CREATE TABLE IF NOT EXISTS task_completions (
     id             TEXT PRIMARY KEY,
     user_id        TEXT NOT NULL REFERENCES users(id),
@@ -99,9 +235,7 @@ db.exec(`
     reviewed_at  TEXT,
     paid_at      TEXT
   );
-`);
 
-db.exec(`
   CREATE TABLE IF NOT EXISTS admin_users (
     user_id    TEXT PRIMARY KEY REFERENCES users(id),
     role       TEXT NOT NULL CHECK (role IN ('agent','manager','admin')),
@@ -121,12 +255,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_fraud_user ON fraud_flags(user_id);
 
-  -- Log of EVERY postback received (verified or not) so Agents can resolve
-  -- "why didn't I get credited" disputes (docs/ARCHITECTURE.md step 5).
   -- Idempotency: a given network completion id can only be processed once.
   CREATE UNIQUE INDEX IF NOT EXISTS idx_completion_ext
     ON task_completions(network, external_id);
 
+  -- Log of EVERY postback received (verified or not) so Agents can resolve
+  -- "why didn't I get credited" disputes (docs/ARCHITECTURE.md step 5).
   CREATE TABLE IF NOT EXISTS postback_log (
     id          TEXT PRIMARY KEY,
     network     TEXT NOT NULL,
@@ -136,35 +270,47 @@ db.exec(`
     raw         TEXT,
     created_at  TEXT NOT NULL
   );
-`);
+`;
 
-export const now = () => new Date().toISOString();
-export const newId = () => randomUUID();
+export async function initDb(): Promise<void> {
+  await driver.exec(SCHEMA);
+}
 
 // The ONLY way points move. Append-only: inserts a signed ledger row.
 // `amount` sign is derived from direction so callers can't get it wrong.
-export function postLedger(params: {
-  userId: string;
-  points: number; // always positive magnitude
-  direction: "credit" | "debit";
-  sourceType: "task_completion" | "referral_bonus" | "withdrawal" | "admin_adjustment";
-  sourceRefId?: string;
-  note?: string;
-}): string {
+// Pass `t` to enlist in a caller's transaction.
+export async function postLedger(
+  params: {
+    userId: string;
+    points: number; // always positive magnitude
+    direction: "credit" | "debit";
+    sourceType: "task_completion" | "referral_bonus" | "withdrawal" | "admin_adjustment";
+    sourceRefId?: string;
+    note?: string;
+  },
+  t: Pick<TxApi, "run"> = sql,
+): Promise<string> {
   const magnitude = Math.abs(Math.trunc(params.points));
   const amount = params.direction === "credit" ? magnitude : -magnitude;
   const id = newId();
-  db.prepare(
+  await t.run(
     `INSERT INTO ledger_entries (id, user_id, amount, direction, source_type, source_ref_id, note, created_at)
      VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(id, params.userId, amount, params.direction, params.sourceType, params.sourceRefId ?? null, params.note ?? null, now());
+    id, params.userId, amount, params.direction, params.sourceType,
+    params.sourceRefId ?? null, params.note ?? null, now(),
+  );
   return id;
 }
 
 // Balance is always derived — this is the ONLY way balance is computed.
-export function balanceOf(userId: string): number {
-  const row = db
-    .prepare("SELECT COALESCE(SUM(amount), 0) AS bal FROM ledger_entries WHERE user_id = ?")
-    .get(userId) as { bal: number };
-  return row.bal;
+// ::int because Postgres returns SUM() of an integer column as bigint (a string).
+export async function balanceOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: number }>(
+    "SELECT COALESCE(SUM(amount), 0)::int AS bal FROM ledger_entries WHERE user_id = ?",
+    userId,
+  );
+  return row?.bal ?? 0;
 }
