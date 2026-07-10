@@ -25,13 +25,13 @@ POSTBACK_SECRET_OFFERHUB=7aae0e63c2522cb19c168e28aa06c8770069931a39ec3b1f8a3e40d
 WEB_ORIGIN=https://paid-up-one.vercel.app
 ```
 - Do **not** set `PORT` — Railway provides it automatically.
-- **Email:** set `RESEND_API_KEY` (preferred) or `BREVO_API_KEY`, plus
-  `EMAIL_FROM`. Without either key, codes print to the Railway logs.
-  - **Resend** requires a verified **domain** for `EMAIL_FROM` (Gmail is not
-    allowed; `onboarding@resend.dev` only sends to your own account email).
-  - **Brevo** allows a single verified sender (a Gmail works), e.g.
-    `EMAIL_FROM=fazalelahi5577@gmail.com`.
-  - If both keys are set, Resend wins.
+- **Email:** set `RESEND_API_KEY` and `EMAIL_FROM`. Without the key, codes print
+  to the Railway logs instead of being emailed.
+  - Resend requires a verified **domain** for `EMAIL_FROM` — currently
+    `login@creatorxbot.site`. Gmail is not allowed as a sender, and
+    `onboarding@resend.dev` only sends to your own Resend account email.
+  - In production the API refuses to boot if `EMAIL_FROM` is still the
+    `@paidup.app` default, since the provider would reject every send.
 
 > These are the values generated during setup. You can rotate them anytime —
 > just generate new random hex strings and update both here and any ad-network
@@ -56,13 +56,19 @@ layer (the SQL is written to port cleanly). Until then, treat data as temporary.
 NEXT_PUBLIC_API_URL=https://paidup-production-a25f.up.railway.app
 ```
 Without this, the deployed site calls `http://localhost:4000` and login/data fail.
+Type the value by hand — a trailing slash, space, or newline pasted in here ends
+up in every request path (`//tasks`) and makes the whole API 404.
+
+`NEXT_PUBLIC_*` values are baked into the JS **at build time**. After changing
+this, you must redeploy with **"Use existing build cache" unticked**, or the old
+value stays live.
 
 ### Settings → Build
 - **Root Directory:** `web`
 
 ### After setting the variable
 Redeploy (Vercel → Deployments → Redeploy). Then open the site and sign in with
-an email — you should get a code (emailed if `BREVO_API_KEY` is set on Railway,
+an email — you should get a code (emailed if `RESEND_API_KEY` is set on Railway,
 otherwise visible in the Railway logs).
 
 ---

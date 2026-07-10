@@ -26,6 +26,12 @@ if (process.env.NODE_ENV === "production") {
     console.error(`FATAL: not starting — these secrets are still defaults: ${missing.join(", ")}. Set them in the host environment and redeploy.`);
     process.exit(1);
   }
+  // A sender on an unverified domain is rejected by the provider at send time,
+  // which surfaces to the user as a generic login failure. Fail here instead.
+  if (config.resendApiKey && config.emailFrom.endsWith("@paidup.app")) {
+    console.error(`FATAL: not starting — EMAIL_FROM is still the ${config.emailFrom} default. Set it to an address on a domain verified in Resend.`);
+    process.exit(1);
+  }
 }
 
 const app = Fastify({ logger: true });
@@ -50,8 +56,10 @@ try {
   if (isProdSecretsMissing) {
     app.log.warn("Using DEV secrets. Set JWT_SECRET and OTP_PEPPER in .env before real use.");
   }
-  if (!config.brevoApiKey) {
-    app.log.warn("No BREVO_API_KEY set — login codes will print to this console, not email.");
+  if (!config.resendApiKey) {
+    app.log.warn("No RESEND_API_KEY set — login codes will print to this console, not email.");
+  } else {
+    app.log.info(`Email via Resend, from ${config.emailFrom}`);
   }
 } catch (err) {
   app.log.error(err);

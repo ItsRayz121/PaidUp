@@ -3,8 +3,10 @@
 // Base URL: set NEXT_PUBLIC_API_URL for deployed frontend (the Railway URL);
 // defaults to the local backend for dev.
 
+// trim() + /\/+$/ because a stray space, newline, or second slash pasted into
+// the host's env var survives into every request path and 404s the whole API.
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:4000";
+  process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
 
 const TOKEN_KEY = "paidup_token";
 const USER_KEY = "paidup_user";

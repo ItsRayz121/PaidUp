@@ -11,10 +11,9 @@ export const config = {
   otpPepper: process.env.OTP_PEPPER ?? "dev-only-change-me-too",
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
 
-  // Email providers. Resend is used if RESEND_API_KEY is set, else Brevo if
-  // BREVO_API_KEY is set, else codes print to the console (local dev).
+  // Email. Resend is used if RESEND_API_KEY is set, else codes print to the
+  // console (local dev). EMAIL_FROM must be on a domain verified in Resend.
   resendApiKey: process.env.RESEND_API_KEY ?? "",
-  brevoApiKey: process.env.BREVO_API_KEY ?? "",
   emailFrom: process.env.EMAIL_FROM ?? "login@paidup.app",
   emailFromName: process.env.EMAIL_FROM_NAME ?? "PaidUp",
 
