@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/*
+  Design tokens — from docs/DESIGN_BRIEF.md
+  Calm, grounded, trustworthy. Deep teal base + one warm accent (marigold)
+  used only for "you earned this" moments. Status colors always pair with
+  an icon + label, never color alone (see StatusBadge).
+*/
+@theme {
+  /* Brand */
+  --color-brand: #0d5c63;        /* deep teal — primary actions */
+  --color-brand-ink: #082f36;    /* darkest teal — headers, big text */
+  --color-brand-tint: #e5f1f1;   /* soft teal wash */
+
+  /* Warm accent — reserved for earned/reward moments */
+  --color-accent: #f2a417;       /* marigold */
+  --color-accent-ink: #7a4d00;   /* accent text on soft bg (AA) */
+  --color-accent-tint: #fdefcf;
+
+  /* Status — each is used WITH an icon + word, never on its own */
+  --color-success: #157f4a;
+  --color-success-tint: #e2f4ea;
+  --color-pending: #8a5a00;      /* darkened amber for AA text */
+  --color-pending-tint: #faedcd;
+  --color-danger: #b42318;
+  --color-danger-tint: #fce6e4;
+
+  /* Neutrals */
+  --color-ink: #0e1b1e;          /* body text */
+  --color-muted: #566467;        /* secondary text (AA on card) */
+  --color-line: #d9e2e3;         /* borders */
+  --color-bg: #f4f7f7;           /* app background */
+  --color-card: #ffffff;
+
+  /* Fonts (wired in layout.tsx via next/font) */
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-sora), var(--font-inter), system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Never let the app scroll sideways on small phones */
+  overflow-x: hidden;
+}
+
+/* Big numbers (balances, earnings) use the friendlier display face */
+.num {
+  font-family: var(--font-display);
+  font-feature-settings: "tnum" 1; /* tabular figures line up */
+  letter-spacing: -0.01em;
+}
+
+/* Accessibility floor: visible keyboard focus everywhere */
+:focus-visible {
+  outline: 3px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Respect reduced-motion — turn transitions/animations off */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* The whole app is framed like a phone, centered on larger screens */
+.app-frame {
+  max-width: 480px;
+  margin-inline: auto;
+  min-height: 100dvh;
+  background: var(--color-bg);
+  position: relative;
+}
+
+/* Restrained "earned" pop — used on confirmation screens only */
+@keyframes pop-in {
+  0% { transform: scale(0.8); opacity: 0; }
+  60% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes rise {
+  0% { transform: translateY(8px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.animate-pop { animation: pop-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.animate-rise { animation: rise 380ms ease-out both; }
