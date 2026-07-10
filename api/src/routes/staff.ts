@@ -53,13 +53,6 @@ export async function staffRoutes(app: FastifyInstance) {
     const { action, note } = parsed.data;
 
     const id = (req.params as { id: string }).id;
-    const w = await sql.get<{ id: string; user_id: string; amount: number; status: string }>(
-      "SELECT * FROM withdrawal_requests WHERE id = ?", id,
-    );
-    if (!w) return reply.code(404).send({ error: "Request not found." });
-    if (w.status === "paid" || w.status === "rejected") {
-      return reply.code(409).send({ error: `This request is already ${w.status}.` });
-    }
 
     const stampSql = (status: string, extra: Record<string, string> = {}) => {
       const cols = ["status = ?", "reviewed_by = ?", "reviewed_at = ?", "review_note = ?"];
@@ -67,24 +60,34 @@ export async function staffRoutes(app: FastifyInstance) {
       for (const [k, v] of Object.entries(extra)) { cols.push(`${k} = ?`); vals.push(v); }
       return { text: `UPDATE withdrawal_requests SET ${cols.join(", ")} WHERE id = ?`, vals: [...vals, id] };
     };
-    const stamp = async (status: string, extra: Record<string, string> = {}) => {
-      const s = stampSql(status, extra);
-      await sql.run(s.text, ...s.vals);
-    };
 
-    if (action === "approve") {
-      if (!canApproveAmount(role, w.amount)) {
-        return reply.code(403).send({ error: "This is above your limit. A Manager must approve it." });
+    // The whole decision runs in one transaction that locks the request row
+    // (FOR UPDATE). Two staff acting on the same request at once serialize: the
+    // second waits, then re-reads the status the first set and bails — so a
+    // reject can never refund twice. staffGuard maps a thrown {statusCode} to
+    // JSON, so throwing here rolls the transaction back cleanly.
+    return await sql.tx(async (t) => {
+      const w = await t.get<{ id: string; user_id: string; amount: number; status: string }>(
+        "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
+      );
+      if (!w) throw { statusCode: 404, message: "Request not found." };
+      if (w.status === "paid" || w.status === "rejected") {
+        throw { statusCode: 409, message: `This request is already ${w.status}.` };
       }
-      await stamp(role === "agent" ? "agent_approved" : "manager_approved");
-      return { ok: true, status: role === "agent" ? "agent_approved" : "manager_approved" };
-    }
 
-    if (action === "reject") {
-      // Return the held points to the user (compensating credit — the ledger
-      // stays append-only; we never delete the original debit). The refund and
-      // the status change land together, or a rejected payout keeps the points.
-      await sql.tx(async (t) => {
+      if (action === "approve") {
+        if (!canApproveAmount(role, w.amount)) {
+          throw { statusCode: 403, message: "This is above your limit. A Manager must approve it." };
+        }
+        const status = role === "agent" ? "agent_approved" : "manager_approved";
+        const s = stampSql(status);
+        await t.run(s.text, ...s.vals);
+        return { ok: true, status };
+      }
+
+      if (action === "reject") {
+        // Return the held points to the user (compensating credit — the ledger
+        // stays append-only; we never delete the original debit).
         await postLedger({
           userId: w.user_id, points: w.amount, direction: "credit",
           sourceType: "admin_adjustment", sourceRefId: id,
@@ -92,20 +95,21 @@ export async function staffRoutes(app: FastifyInstance) {
         }, t);
         const s = stampSql("rejected");
         await t.run(s.text, ...s.vals);
-      });
-      return { ok: true, status: "rejected", refunded: w.amount };
-    }
+        return { ok: true, status: "rejected", refunded: w.amount };
+      }
 
-    // action === "pay"
-    if (!READY.includes(w.status)) {
-      return reply.code(409).send({ error: "Approve this request before marking it paid." });
-    }
-    if (!canApproveAmount(role, w.amount)) {
-      return reply.code(403).send({ error: "This is above your limit. A Manager must pay it." });
-    }
-    // In v1 payout is manual; the on-chain USDT send will happen here.
-    await stamp("paid", { paid_at: now() });
-    return { ok: true, status: "paid" };
+      // action === "pay"
+      if (!READY.includes(w.status)) {
+        throw { statusCode: 409, message: "Approve this request before marking it paid." };
+      }
+      if (!canApproveAmount(role, w.amount)) {
+        throw { statusCode: 403, message: "This is above your limit. A Manager must pay it." };
+      }
+      // In v1 payout is manual; the on-chain USDT send will happen here.
+      const s = stampSql("paid", { paid_at: now() });
+      await t.run(s.text, ...s.vals);
+      return { ok: true, status: "paid" };
+    });
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.

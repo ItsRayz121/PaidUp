@@ -37,9 +37,13 @@ export async function withdrawalRoutes(app: FastifyInstance) {
 
     const id = newId();
     try {
-      // Re-read the balance inside the transaction: two concurrent requests must
-      // not both pass the check and each debit the same points.
       await sql.tx(async (t) => {
+        // Serialize all money moves for this user. Without this, two concurrent
+        // requests both read the same balance under READ COMMITTED, both pass
+        // the check, and both debit — draining more than the user has. The lock
+        // is held until this transaction commits, so the second request waits
+        // and then sees the balance the first one already reduced.
+        await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
         if (amountPoints > (await balanceOf(userId, t))) {
           throw { statusCode: 400, message: "You do not have that many points yet." };
         }
