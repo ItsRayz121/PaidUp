@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
-import type { LedgerStatus } from "@/lib/mock";
+
+// Matches the backend's ledger row status (see @/lib/api LedgerEntry).
+type LedgerStatus = "earned" | "paid" | "pending" | "rejected";
 
 // ---- Button ---------------------------------------------------------------
 // One action per button, named by the action (DESIGN_BRIEF simple-English).

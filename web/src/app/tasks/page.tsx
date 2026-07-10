@@ -1,9 +1,17 @@
+"use client";
+
 import { TaskFlow } from "@/components/TaskFlow";
+import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { InfoIcon } from "@/components/icons";
-import { tasks, user } from "@/lib/mock";
+import { useRequireAuth, useApi } from "@/lib/hooks";
+import { fetchTasks } from "@/lib/api";
 
 export default function TasksPage() {
-  const hasTasks = tasks.length > 0;
+  const { user, ready } = useRequireAuth();
+  const tasks = useApi(fetchTasks, []);
+
+  if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
+  const list = tasks.data?.tasks ?? [];
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -18,17 +26,17 @@ export default function TasksPage() {
         reward before you start.
       </p>
 
-      {hasTasks ? (
-        <TaskFlow tasks={tasks} />
+      {tasks.loading ? (
+        <Loading />
+      ) : tasks.error ? (
+        <ErrorState message={tasks.error} onRetry={tasks.reload} />
+      ) : list.length === 0 ? (
+        <EmptyState
+          title={`No tasks right now for ${user?.country ?? "your country"}`}
+          body="Check back soon. New tasks come every day. Meanwhile, invite a friend and earn more."
+        />
       ) : (
-        // Empty state — say WHY and give a next step (DESIGN_BRIEF)
-        <div className="rounded-2xl border border-line bg-card p-6 text-center">
-          <p className="font-semibold text-brand-ink">No tasks right now for {user.country}</p>
-          <p className="mt-1 text-sm text-muted">
-            Check back soon. New tasks come every day. Meanwhile, invite a friend
-            and earn more.
-          </p>
-        </div>
+        <TaskFlow tasks={list} />
       )}
     </div>
   );

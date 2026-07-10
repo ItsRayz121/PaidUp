@@ -10,7 +10,12 @@ import "./db.ts";
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: config.webOrigin, credentials: true });
+// In production, only allow the configured web origin. In dev, reflect any
+// origin so the app is reachable from localhost AND your phone on the LAN.
+await app.register(cors, {
+  origin: process.env.NODE_ENV === "production" ? config.webOrigin : true,
+  credentials: true,
+});
 
 app.get("/health", async () => ({ ok: true, service: "paidup-api" }));
 

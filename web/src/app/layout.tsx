@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Sora } from "next/font/google";
 import "./globals.css";
-import { BottomNav } from "@/components/BottomNav";
+import { Shell } from "@/components/Shell";
 
 // Body: highly legible sans for cheap screens. Display: friendlier face for
 // big numbers (balances, earnings). See DESIGN_BRIEF typography.
@@ -23,10 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${inter.variable} ${sora.variable} antialiased`}>
-        <div className="app-frame flex flex-col">
-          <main className="flex-1">{children}</main>
-          <BottomNav />
-        </div>
+        <Shell>{children}</Shell>
       </body>
     </html>
   );

@@ -42,19 +42,25 @@ export async function appRoutes(app: FastifyInstance) {
     minWithdrawPoints: config.minWithdrawPoints,
   })));
 
-  // Full ledger history for the user
+  // Full ledger history for the user. A withdrawal's status comes from the
+  // withdrawal_requests row (pending/paid/rejected) — NEVER hard-coded, or a
+  // just-requested payout would falsely read as "paid".
   app.get("/wallet/ledger", guard((userId) => {
     const rows = db
-      .prepare("SELECT * FROM ledger_entries WHERE user_id = ? ORDER BY created_at DESC")
+      .prepare(
+        `SELECT le.*, w.status AS w_status
+         FROM ledger_entries le
+         LEFT JOIN withdrawal_requests w
+           ON w.id = le.source_ref_id AND le.source_type = 'withdrawal'
+         WHERE le.user_id = ? ORDER BY le.created_at DESC`,
+      )
       .all(userId) as Array<Record<string, unknown>>;
     return {
       entries: rows.map((e) => ({
         id: e.id,
         label: (e.note as string) || labelFor(e.source_type as string),
         points: e.amount,
-        // Settled ledger rows are done; pending/rejected live in
-        // task_completions / withdrawal_requests (next slice).
-        status: e.source_type === "withdrawal" ? "paid" : "earned",
+        status: statusFor(e.source_type as string, e.w_status as string | null),
         kind: kindFor(e.source_type as string),
         at: e.created_at,
       })),
@@ -72,6 +78,15 @@ export async function appRoutes(app: FastifyInstance) {
       .get(userId) as { s: number }).s;
     return { code: user.referral_code, joined, earnedPoints: earned };
   }));
+}
+
+// Display status for a ledger row. Withdrawals track their request; everything
+// else is a settled credit ("earned").
+function statusFor(source: string, withdrawalStatus: string | null): string {
+  if (source !== "withdrawal") return "earned";
+  if (withdrawalStatus === "paid") return "paid";
+  if (withdrawalStatus === "rejected") return "rejected";
+  return "pending"; // pending / agent_approved / manager_approved
 }
 
 function labelFor(source: string): string {

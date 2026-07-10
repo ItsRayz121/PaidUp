@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Card, PointsPill, SponsoredTag, Button } from "./ui";
 import { offerIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon } from "./icons";
 import { formatPoints } from "@/lib/format";
-import type { Task } from "@/lib/mock";
+import type { Task } from "@/lib/api";
 
 // Renders the task list + the two interactive steps that build trust:
 //   1. Sponsored disclosure sheet (guardrail #3) shown BEFORE a task starts.
@@ -17,7 +17,7 @@ import type { Task } from "@/lib/mock";
 
 export function TaskFlow({ tasks }: { tasks: Task[] }) {
   const [openTask, setOpenTask] = useState<Task | null>(null);
-  const [earned, setEarned] = useState<Task | null>(null);
+  const [started, setStarted] = useState<Task | null>(null);
 
   return (
     <>
@@ -64,14 +64,12 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
           onStart={() => {
             const t = openTask;
             setOpenTask(null);
-            // Demo: instant tasks (video) show the earned moment right away.
-            // Everything else would wait for a real postback in production.
-            setEarned(t);
+            setStarted(t);
           }}
         />
       )}
 
-      {earned && <EarnedConfirmation task={earned} onDone={() => setEarned(null)} />}
+      {started && <TaskStartedInfo task={started} onDone={() => setStarted(null)} />}
     </>
   );
 }
@@ -122,34 +120,40 @@ function DisclosureSheet({
   );
 }
 
-// ---- Signature moment #1: points earned ----------------------------------
-function EarnedConfirmation({ task, onDone }: { task: Task; onDone: () => void }) {
+// Shown after a user starts a task. HONEST: points are NOT added here — they
+// arrive only after the ad network confirms (verified postback, guardrail #1).
+// The real "points added" moment fires when the wallet balance goes up.
+function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Points added"
+      aria-label="Task started"
       className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-brand-ink px-6 text-center"
     >
-      <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-accent">
-        <CheckIcon size={52} className="text-brand-ink" />
+      <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-brand-tint">
+        <ArrowRightIcon size={48} className="text-brand" />
       </div>
 
-      <p className="animate-rise mt-6 text-sm font-medium uppercase tracking-wide text-accent">
-        Nice work
+      <p className="animate-rise mt-6 text-lg font-bold text-white">Task started</p>
+      <p className="animate-rise mt-2 flex items-center gap-2 text-white/90">
+        <StarIcon size={20} className="text-accent" />
+        <span>You will get <span className="num font-bold">{formatPoints(task.points)}</span> points</span>
       </p>
-      <p className="animate-rise mt-1 flex items-center gap-2 text-white">
-        <StarIcon size={26} className="text-accent" />
-        <span className="num text-5xl font-bold">+{formatPoints(task.points)}</span>
-      </p>
-      <p className="animate-rise mt-2 text-lg text-white/80">points added</p>
 
-      <p className="animate-rise mt-6 max-w-xs text-sm text-white/60">
-        Your new points are in your wallet. Keep earning to get your money.
-      </p>
+      <div className="animate-rise mt-6 w-full max-w-xs space-y-2.5 text-left">
+        <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3 text-white/90">
+          <CheckIcon size={18} className="shrink-0 text-accent" />
+          <span className="text-sm">Finish the task in the app.</span>
+        </div>
+        <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3 text-white/90">
+          <ClockIcon size={18} className="shrink-0 text-accent" />
+          <span className="text-sm">We add your points after the partner confirms. This can take a little time.</span>
+        </div>
+      </div>
 
       <div className="mt-8 w-full max-w-xs">
-        <Button variant="accent" onClick={onDone}>Keep earning</Button>
+        <Button variant="accent" onClick={onDone}>OK, got it</Button>
       </div>
     </div>
   );
