@@ -1,9 +1,11 @@
 import type { AdNetworkAdapter } from "./types.ts";
 import { offerhubAdapter } from "./offerhub.ts";
+import { tapvidAdapter } from "./tapvid.ts";
 
 const registry: Record<string, AdNetworkAdapter> = {
   [offerhubAdapter.name]: offerhubAdapter,
-  // Add network #2, #3 here — one line each, no changes to the others.
+  [tapvidAdapter.name]: tapvidAdapter,
+  // Add network #3 here — one line each, no changes to the others.
 };
 
 export function getAdapter(network: string): AdNetworkAdapter | undefined {

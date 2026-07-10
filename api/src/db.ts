@@ -278,6 +278,63 @@ const SCHEMA = `
     raw         TEXT,
     created_at  TEXT NOT NULL
   );
+
+  -- Ad networks, Admin-configurable. id = the adapter key used in the postback
+  -- URL (/webhooks/:id/postback). commission_split_pct and referral_bonus_pct
+  -- are stored here, NEVER hardcoded (docs/ARCHITECTURE.md § Commission split).
+  -- A 'disabled' network's postbacks are rejected and its tasks are hidden.
+  CREATE TABLE IF NOT EXISTS networks (
+    id                   TEXT PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    type                 TEXT NOT NULL CHECK (type IN ('offerwall','rewarded_video')),
+    status               TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+    -- % of the net network payout we model as the user's points reward. Used to
+    -- SET a task's points and for margin reporting; the credited amount always
+    -- comes from the task row, so changing this never alters a promised reward.
+    commission_split_pct INTEGER NOT NULL DEFAULT 55,
+    -- % of a referred user's task points paid to their inviter as a bonus.
+    referral_bonus_pct   INTEGER NOT NULL DEFAULT 10,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT
+  );
+
+  -- Device fingerprints (guardrail #5: fingerprint at the device level from day
+  -- one). device_id is a client-computed hash of browser/device signals — NO
+  -- PII. One row per (user, device); we also keep the signup/last-seen IP so the
+  -- fraud layer can spot referral rings sharing a device or IP.
+  CREATE TABLE IF NOT EXISTS user_devices (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    device_id  TEXT NOT NULL,
+    ip         TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_user_device ON user_devices(user_id, device_id);
+  CREATE INDEX IF NOT EXISTS idx_device ON user_devices(device_id);
+
+  -- Support tickets (Agent queue). Simple-English, earner-facing on one side;
+  -- staff-facing on the other. Messages are append-only per ticket.
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    subject    TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','closed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status);
+  CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id);
+
+  CREATE TABLE IF NOT EXISTS ticket_messages (
+    id          TEXT PRIMARY KEY,
+    ticket_id   TEXT NOT NULL REFERENCES support_tickets(id),
+    author_role TEXT NOT NULL CHECK (author_role IN ('user','staff')),
+    author_id   TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ticket_messages ON ticket_messages(ticket_id);
 `;
 
 // Idempotent column adds for databases created before these columns existed
@@ -294,6 +351,19 @@ const MIGRATIONS = `
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
+  // Ensure the known adapter networks have a config row in every environment,
+  // so the Admin panel and the disabled-network checks always have something to
+  // read. Split percentages are the modeled defaults; Admin tunes them live.
+  await sql.run(
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
+     VALUES ('offerhub','OfferHub','offerwall','active',55,10,?)
+     ON CONFLICT (id) DO NOTHING`, now(),
+  );
+  await sql.run(
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
+     VALUES ('tapvid','TapVid','rewarded_video','active',60,10,?)
+     ON CONFLICT (id) DO NOTHING`, now(),
+  );
 }
 
 // The ONLY way points move. Append-only: inserts a signed ledger row.

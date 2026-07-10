@@ -44,7 +44,20 @@ These override convenience or speed at every step:
 
 ## Current build status
 
-- **Phase 0**: docs + architecture + design system. ✅ docs on disk.
-- **Phase 1 (MVP)**: in progress. Frontend Earner app (`web/`) built first with mock data; backend to follow.
+- **Phase 0**: docs + architecture + design system. ✅ done.
+- **Phase 1 (MVP)**: ✅ **all P0 features built + verified** (2026-07-10). Earner app (`web/`) + backend (`api/`) live on Vercel/Railway (Postgres), wired end-to-end.
+  - Auth: email + password, one-time signup verification, forgot-password reset.
+  - Append-only ledger; balance = SUM(ledger). Money writes in transactions.
+  - **Two** ad-network adapters with verified S2S postbacks: `offerhub` (offerwall, HMAC) + `tapvid` (rewarded-video, token+HMAC). Add a network = one adapter file + one registry line.
+  - Withdrawals in USDT (BEP20/Polygon/Base/Aptos), address-validated, held via ledger debit, advisory-lock against double-spend, Agent→Manager approval chain.
+  - **Networks table** — Admin sets commission split + referral bonus per network and can disable a network (stops crediting + hides offers) with no redeploy.
+  - **Fraud layer**: per-user velocity cap, **device fingerprinting** (`x-device-id`), **device-reuse** + **referral-ring** detection, staff flag-resolution trail.
+  - **Staff panels** (`/staff`): withdrawal queue, **KPI dashboard** (manager), **support-ticket queue** (agent), **network config** (admin), dispute lookup, fraud queue.
+  - **Earner Help/Support** (`/help`): create tickets, threaded replies.
+- Verified: API smoke tests (all endpoints), fraud detection fires, `web` build + typecheck clean. See `security-review` run notes.
 
-See `docs/` for the full spec. Open business decisions (commission split, launch payout rail) are tracked in `docs/PROJECT_SPEC.md` → Open Questions.
+**Still open (business decisions, not build gaps):** real commission split % (mechanism built, number unset), app name "PaidUp" (placeholder), launch market given the USDT rail. Tracked in `docs/PROJECT_SPEC.md` → Open Questions.
+
+**Phase 2 next:** referral commission tuning, more networks, Sentry authorization, tighter fraud rules. Do not start Phase 2 items beyond what's above until these are prioritized.
+
+See `docs/` for the full spec.

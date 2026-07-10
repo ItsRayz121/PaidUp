@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { sql, balanceOf } from "../db.ts";
+import { z } from "zod";
+import { sql, now, newId, balanceOf } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId } from "../auth.ts";
 
@@ -24,8 +25,14 @@ export async function appRoutes(app: FastifyInstance) {
   // Offer feed for the user's country
   app.get("/tasks", guard(async (userId) => {
     const user = (await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId))!;
+    // Hide offers from a network the Admin has disabled. A task whose network
+    // has no row yet (predates the networks table) still shows — absence = active.
     const rows = await sql.all<Record<string, unknown>>(
-      "SELECT * FROM tasks WHERE status = 'active' AND country = ? ORDER BY points DESC",
+      `SELECT t.* FROM tasks t
+       LEFT JOIN networks n ON n.id = t.network
+       WHERE t.status = 'active' AND t.country = ?
+         AND (n.status IS NULL OR n.status = 'active')
+       ORDER BY t.points DESC`,
       user.country,
     );
     return {
@@ -79,6 +86,66 @@ export async function appRoutes(app: FastifyInstance) {
       userId,
     );
     return { code: user.referral_code, joined: joined?.n ?? 0, earnedPoints: earned?.s ?? 0 };
+  }));
+
+  // ---- Support: earner-facing help tickets --------------------------------
+  // Simple English, one screen. A ticket is a subject + a thread of messages;
+  // staff answer from the Agent queue.
+  const newTicketSchema = z.object({
+    subject: z.string().min(1).max(120),
+    message: z.string().min(1).max(2000),
+  });
+  app.post("/support/tickets", guard(async (userId, req, reply) => {
+    const parsed = newTicketSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Add a short subject and your message." });
+    const id = newId();
+    await sql.tx(async (t) => {
+      await t.run(
+        "INSERT INTO support_tickets (id, user_id, subject, status, created_at, updated_at) VALUES (?,?,?, 'open', ?, ?)",
+        id, userId, parsed.data.subject, now(), now(),
+      );
+      await t.run(
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'user', ?,?,?)",
+        newId(), id, userId, parsed.data.message, now(),
+      );
+    });
+    return { ticket: { id, subject: parsed.data.subject, status: "open" } };
+  }));
+
+  // My tickets, newest first, each with its full message thread.
+  app.get("/support/tickets", guard(async (userId) => {
+    const tickets = await sql.all<Record<string, unknown>>(
+      "SELECT id, subject, status, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC",
+      userId,
+    );
+    const out = [];
+    for (const t of tickets) {
+      const messages = await sql.all(
+        "SELECT author_role, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC",
+        t.id,
+      );
+      out.push({ id: t.id, subject: t.subject, status: t.status, at: t.created_at, updatedAt: t.updated_at, messages });
+    }
+    return { tickets: out };
+  }));
+
+  // Add a message to my own ticket (reopens it so staff see it again).
+  const replySchema = z.object({ message: z.string().min(1).max(2000) });
+  app.post("/support/tickets/:id/messages", guard(async (userId, req, reply) => {
+    const parsed = replySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Type your message first." });
+    const id = (req.params as { id: string }).id;
+    // Ownership check — a user may only post to their own ticket.
+    const ticket = await sql.get<{ id: string }>("SELECT id FROM support_tickets WHERE id = ? AND user_id = ?", id, userId);
+    if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
+    await sql.tx(async (t) => {
+      await t.run(
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'user', ?,?,?)",
+        newId(), id, userId, parsed.data.message, now(),
+      );
+      await t.run("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", now(), id);
+    });
+    return { ok: true };
   }));
 }
 

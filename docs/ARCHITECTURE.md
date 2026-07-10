@@ -55,11 +55,22 @@ interface AdNetworkAdapter {
 
 ## Fraud & risk layer (Phase 1, don't defer)
 
-- **Device fingerprinting**: hash of device/browser signals (no PII). Cap completions per device per day.
-- **Velocity checks**: rate-limit by IP and ASN; flag data-center IPs.
-- **Geo mismatch**: flag if postback country/IP doesn't match user's stated country.
-- **Referral ring detection**: flag clusters of referred accounts sharing a device/IP with the referrer.
-- **Escalation path**: flags surface to Agents first; nothing is silently auto-banned without a visible trail.
+- **Device fingerprinting** ✅ built: the web app computes a no-PII hash of coarse
+  browser signals (`web/src/lib/device.ts`), sent as the `x-device-id` header;
+  the backend records it per (user, device) in `user_devices` at every
+  login/verify/reset (`api/src/fraud.ts`).
+- **Velocity checks** ✅ built: a user can only be credited for the same offer
+  *type* N times/day (`config.velocityCapPerTypePerDay`); over the cap →
+  `velocity` flag, no credit (`api/src/routes/webhooks.ts`).
+- **Device reuse** ✅ built: ≥3 accounts on one device → `device_reuse` flag.
+- **Referral ring detection** ✅ built: an invited account sharing a device with
+  its referrer → `referral_ring` flag (high severity).
+- **Escalation path** ✅ built: flags surface in the staff `/staff/fraud` queue;
+  nothing is auto-banned. Managers resolve flags via `/staff/fraud/:id/resolve`,
+  leaving an append-only trail (`resolved_by`, `resolution_note`).
+- **Geo mismatch**: not yet built — postback country/IP vs stated country (Phase 2).
+- Flag deduping: an unresolved flag of the same (type, device) is not re-raised,
+  so repeated logins don't spam the queue.
 
 ## Commission split — starting framework (Admin confirms real numbers)
 
@@ -81,12 +92,24 @@ Each country needs its own integration; don't build a generic abstraction until 
 
 Withdrawals route through Agent → Manager approval before any payout API in v1.
 
-## API surface (high level)
+## API surface (as built)
 
-- `POST /auth/email/request` (send 6-digit code), `POST /auth/email/verify` (Telegram verify is the planned fallback; SMS OTP dropped for cost)
-- `GET /tasks` (offer feed for user's country)
-- `POST /webhooks/{network}/postback` (per-network inbound)
+Auth (email + password; SMS OTP dropped for cost, Telegram is the planned fallback):
+- `POST /auth/register` (create unverified account, email a 6-digit code — password is bound to the code, applied only on verify), `POST /auth/verify-email`, `POST /auth/login`, `POST /auth/forgot`, `POST /auth/reset`, `GET /auth/me`
+
+Earner:
+- `GET /tasks` (offer feed for the user's country; hides disabled-network offers)
 - `GET /wallet/balance`, `GET /wallet/ledger`
-- `POST /withdrawals`, `GET /withdrawals/:id`
+- `POST /withdrawals`, `GET /withdrawals` (USDT chains; funds held via ledger debit)
 - `GET /referrals/me`
-- Admin/Manager/Agent-only: `/admin/*`, `/manager/*`, `/agent/*` — gated by `admin_users.role`, never by frontend hiding alone.
+- `POST /support/tickets`, `GET /support/tickets`, `POST /support/tickets/:id/messages`
+
+Inbound:
+- `POST|GET /webhooks/:network/postback` — per-network adapter verifies; disabled networks are rejected; idempotent by (network, external_id). Client-side crediting never exists.
+
+Staff (gated by `admin_users.role`, never by frontend hiding alone):
+- Agent+: `GET /staff/withdrawals`, `POST /staff/withdrawals/:id/decision`, `GET /staff/users/:id`, `GET /staff/tickets`, `GET /staff/tickets/:id`, `POST /staff/tickets/:id/reply`
+- Manager+: `GET /staff/fraud`, `POST /staff/fraud/:id/resolve`, `GET /staff/kpis`
+- Admin: `GET /staff/networks`, `PATCH /staff/networks/:id` (commission split, referral bonus, enable/disable)
+
+Every authenticated request also carries an `x-device-id` header (device fingerprint) used by the fraud layer.

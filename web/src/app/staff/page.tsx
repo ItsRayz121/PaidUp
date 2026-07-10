@@ -8,6 +8,7 @@ import {
   type StaffWithdrawal,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton } from "@/components/staff";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -19,6 +20,7 @@ export default function StaffPage() {
   const [lookupTarget, setLookupTarget] = useState<string | null>(null);
   const queue = useApi(() => fetchStaffQueue(status), [status]);
   const isManager = user?.role === "manager" || user?.role === "admin";
+  const isAdmin = user?.role === "admin";
 
   if (!ready) return <div className="p-6 text-muted">Loading…</div>;
   if (user && !user.role) {
@@ -57,6 +59,14 @@ export default function StaffPage() {
         </div>
         <LogoutButton />
       </header>
+
+      {/* KPI dashboard — managers/admins only */}
+      {isManager && (
+        <section className="mb-8">
+          <h2 className="mb-2 font-bold text-brand-ink">Dashboard</h2>
+          <KpiDashboard />
+        </section>
+      )}
 
       {/* Withdrawal queue */}
       <section className="mb-8">
@@ -126,6 +136,12 @@ export default function StaffPage() {
           </div>
         )}
       </section>
+
+      {/* Support tickets — all staff */}
+      <TicketQueue />
+
+      {/* Ad-network config — admin only */}
+      {isAdmin && <NetworkPanel />}
 
       {/* Dispute lookup */}
       <UserLookup target={lookupTarget} />
@@ -216,9 +232,9 @@ function FraudPanel() {
           <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No open flags. Good.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-line">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
-                <tr><th className="p-2.5">User</th><th className="p-2.5">Type</th><th className="p-2.5">Severity</th><th className="p-2.5">Detail</th><th className="p-2.5">When</th></tr>
+                <tr><th className="p-2.5">User</th><th className="p-2.5">Type</th><th className="p-2.5">Severity</th><th className="p-2.5">Detail</th><th className="p-2.5">When</th><th className="p-2.5">Action</th></tr>
               </thead>
               <tbody>
                 {fraud.data!.flags.map((f, i) => (
@@ -228,6 +244,7 @@ function FraudPanel() {
                     <td className="p-2.5">{String(f.severity)}</td>
                     <td className="p-2.5 text-muted">{String(f.detail ?? "")}</td>
                     <td className="p-2.5 text-muted">{timeAgo(String(f.created_at))}</td>
+                    <td className="p-2.5"><ResolveFlagButton id={String(f.id)} onResolved={fraud.reload} /></td>
                   </tr>
                 ))}
               </tbody>

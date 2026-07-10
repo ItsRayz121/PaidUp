@@ -6,6 +6,15 @@ import { z } from "zod";
 import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
 import { sendLoginCode } from "./email.ts";
+import { recordDevice } from "./fraud.ts";
+
+// The frontend computes a device fingerprint (no PII) and sends it here so the
+// fraud layer can spot one device farming many accounts (guardrail #5).
+function deviceOf(req: FastifyRequest): string | undefined {
+  const raw = req.headers["x-device-id"];
+  const id = Array.isArray(raw) ? raw[0] : raw;
+  return id ? String(id).slice(0, 100) : undefined;
+}
 
 const scryptAsync = promisify(scrypt);
 
@@ -240,6 +249,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user) return reply.code(404).send({ error: "Account not found. Please sign up again." });
 
     await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
     return { token: signToken(user.id), user: await publicUser(user) };
   });
 
@@ -265,6 +275,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
     return { token: signToken(user.id), user: await publicUser(user) };
   });
 
@@ -300,6 +311,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user) return reply.code(404).send({ error: "Account not found." });
 
     await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
     return { token: signToken(user.id), user: await publicUser(user) };
   });
 

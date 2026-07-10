@@ -74,4 +74,17 @@ export const InfoIcon = (p: IconProps) => (
   <svg {...base(p)}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.5h.01" /></svg>
 );
 
+export const HelpIcon = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7" /><path d="M12 17h.01" /></svg>
+);
+export const ChartIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M4 20V4" /><path d="M4 20h16" /><rect x="7" y="11" width="3" height="6" /><rect x="12.5" y="7" width="3" height="10" /><rect x="18" y="13" width="3" height="4" /></svg>
+);
+export const SlidersIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M18 18h2" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></svg>
+);
+export const InboxIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M4 13h4l2 3h4l2-3h4" /><path d="M5 13 6.5 5h11L19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-5Z" /></svg>
+);
+
 export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon };

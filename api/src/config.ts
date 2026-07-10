@@ -41,6 +41,13 @@ export const config = {
   // dev secret so the demo adapter still verifies. Set real secrets in prod.
   postbackSecrets: {
     offerhub: process.env.POSTBACK_SECRET_OFFERHUB ?? "dev-postback-secret",
+    tapvid: process.env.POSTBACK_SECRET_TAPVID ?? "dev-postback-secret",
+  } as Record<string, string>,
+
+  // Static per-network tokens for networks that gate with a shared token in
+  // addition to a signature (e.g. tapvid rewarded-video).
+  postbackTokens: {
+    tapvid: process.env.POSTBACK_TOKEN_TAPVID ?? "dev-postback-token",
   } as Record<string, string>,
 
   // Comma-separated founder/admin emails seeded as role=admin on first run.

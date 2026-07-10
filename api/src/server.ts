@@ -22,6 +22,9 @@ if (process.env.NODE_ENV === "production") {
   for (const [name, secret] of Object.entries(config.postbackSecrets)) {
     if (secret.startsWith("dev-")) missing.push(`POSTBACK_SECRET_${name.toUpperCase()}`);
   }
+  for (const [name, token] of Object.entries(config.postbackTokens)) {
+    if (token.startsWith("dev-")) missing.push(`POSTBACK_TOKEN_${name.toUpperCase()}`);
+  }
   if (missing.length) {
     console.error(`FATAL: not starting — these secrets are still defaults: ${missing.join(", ")}. Set them in the host environment and redeploy.`);
     process.exit(1);

@@ -8,6 +8,8 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
 
+import { getDeviceId } from "./device";
+
 const TOKEN_KEY = "paidup_token";
 const USER_KEY = "paidup_user";
 
@@ -44,11 +46,13 @@ export class ApiError extends Error {
 
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
+  const deviceId = getDeviceId();
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(deviceId ? { "x-device-id": deviceId } : {}),
       ...(opts.headers ?? {}),
     },
   });
@@ -138,3 +142,57 @@ export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay
 export const fetchStaffUser = (id: string) =>
   apiFetch<{ user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[] }>(`/staff/users/${id}`);
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
+export const resolveFraud = (id: string, note?: string) =>
+  apiFetch<{ ok: true }>(`/staff/fraud/${id}/resolve`, { method: "POST", body: JSON.stringify({ note }) });
+
+// ---- Support tickets (earner side) ---------------------------------------
+export type TicketMessage = { author_role: "user" | "staff"; body: string; created_at: string };
+export type MyTicket = {
+  id: string; subject: string; status: "open" | "answered" | "closed";
+  at: string; updatedAt: string; messages: TicketMessage[];
+};
+export const fetchMyTickets = () => apiFetch<{ tickets: MyTicket[] }>("/support/tickets");
+export const createTicket = (subject: string, message: string) =>
+  apiFetch<{ ticket: { id: string } }>("/support/tickets", {
+    method: "POST", body: JSON.stringify({ subject, message }),
+  });
+export const replyToMyTicket = (id: string, message: string) =>
+  apiFetch<{ ok: true }>(`/support/tickets/${id}/messages`, {
+    method: "POST", body: JSON.stringify({ message }),
+  });
+
+// ---- Support tickets (staff side) ----------------------------------------
+export type StaffTicket = {
+  id: string; userId: string; userEmail: string; subject: string;
+  status: string; messageCount: number; at: string; updatedAt: string;
+};
+export const fetchStaffTickets = (status = "open") =>
+  apiFetch<{ tickets: StaffTicket[] }>(`/staff/tickets?status=${encodeURIComponent(status)}`);
+export const fetchStaffTicket = (id: string) =>
+  apiFetch<{ ticket: Record<string, unknown>; messages: TicketMessage[] }>(`/staff/tickets/${id}`);
+export const replyStaffTicket = (id: string, message: string, close = false) =>
+  apiFetch<{ ok: true }>(`/staff/tickets/${id}/reply`, {
+    method: "POST", body: JSON.stringify({ message, close }),
+  });
+
+// ---- Admin: ad-network config --------------------------------------------
+export type NetworkConfig = {
+  id: string; name: string; type: "offerwall" | "rewarded_video"; status: "active" | "disabled";
+  commissionSplitPct: number; referralBonusPct: number; taskCount: number; creditedCount: number;
+  updatedAt: string | null;
+};
+export const fetchNetworks = () => apiFetch<{ networks: NetworkConfig[] }>("/staff/networks");
+export const updateNetwork = (
+  id: string,
+  patch: { status?: "active" | "disabled"; commissionSplitPct?: number; referralBonusPct?: number },
+) => apiFetch<{ ok: true }>(`/staff/networks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- Manager: KPI dashboard ----------------------------------------------
+export type Kpis = {
+  users: { total: number; new7d: number };
+  withdrawals: { pendingCount: number; pendingPoints: number; paidCount7d: number; paidPoints7d: number; paidPointsAll: number };
+  earning: { taskPointsAll: number; referralPointsAll: number; completionsToday: number };
+  risk: { openFraud: number; openTickets: number };
+  series: { day: string; completions: number; points: number }[];
+};
+export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");

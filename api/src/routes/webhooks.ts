@@ -28,6 +28,17 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "unknown network" });
     }
 
+    // A network the Admin has disabled stops crediting immediately — no code
+    // change or redeploy needed. Row may be absent for a network that predates
+    // the table; absence is treated as active so we never silently drop traffic.
+    const net = await sql.get<{ status: string; referral_bonus_pct: number }>(
+      "SELECT status, referral_bonus_pct FROM networks WHERE id = ?", network,
+    );
+    if (net && net.status === "disabled") {
+      await logPostback(false, "network_disabled");
+      return reply.code(403).send({ error: "network disabled" });
+    }
+
     // 1. Verify signature per this network's method.
     const result = adapter.verifyPostback(input);
     if (!result.ok) {
@@ -102,8 +113,11 @@ export async function webhookRoutes(app: FastifyInstance) {
       }, t);
 
       // Referral commission (P1): inviter earns a share, tracked separately.
+      // The share is the network's configured referral_bonus_pct (Admin-set,
+      // never hardcoded), falling back to the global default if unset.
       if (user.referred_by) {
-        const bonus = Math.floor(task.points * config.referralCommissionPct);
+        const pct = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
+        const bonus = Math.floor(task.points * pct);
         if (bonus > 0) {
           await postLedger({
             userId: user.referred_by, points: bonus, direction: "credit",

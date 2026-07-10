@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { HomeIcon, TasksIcon, WalletIcon, ReferIcon } from "./icons";
+import { HomeIcon, TasksIcon, WalletIcon, ReferIcon, HelpIcon } from "./icons";
 
 // Icon + LABEL nav — first-time smartphone users get confused by icon-only nav
 // (DESIGN_BRIEF). Labels always visible, not just icons.
@@ -11,6 +11,7 @@ const items = [
   { href: "/tasks", label: "Tasks", Icon: TasksIcon },
   { href: "/wallet", label: "Wallet", Icon: WalletIcon },
   { href: "/refer", label: "Refer", Icon: ReferIcon },
+  { href: "/help", label: "Help", Icon: HelpIcon },
 ];
 
 // Screens that should NOT show the tab bar (full-screen flows).
@@ -26,7 +27,7 @@ export function BottomNav() {
       className="sticky bottom-0 z-20 border-t border-line bg-card/95 backdrop-blur"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-4">
+      <ul className="grid grid-cols-5">
         {items.map(({ href, label, Icon }) => {
           const active = href === "/" ? path === "/" : path.startsWith(href);
           return (

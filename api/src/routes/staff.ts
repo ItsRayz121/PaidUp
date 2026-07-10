@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, balanceOf, postLedger } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 
@@ -134,5 +134,177 @@ export async function staffRoutes(app: FastifyInstance) {
        LEFT JOIN users u ON u.id = f.user_id WHERE f.resolved_by IS NULL ORDER BY f.created_at DESC`,
     );
     return { flags };
+  }));
+
+  // Resolve a flag (managers/admins). Append-only spirit: we don't delete, we
+  // stamp who cleared it and why, leaving the trail (docs/ARCHITECTURE.md).
+  app.post("/staff/fraud/:id/resolve", staffGuard(["manager", "admin"], async ({ userId }, req, reply) => {
+    const note = (req.body as { note?: string })?.note;
+    const id = (req.params as { id: string }).id;
+    const res = await sql.run(
+      "UPDATE fraud_flags SET resolved_by = ?, resolution_note = ? WHERE id = ? AND resolved_by IS NULL",
+      userId, note ?? null, id,
+    );
+    if (!res.rowCount) return reply.code(404).send({ error: "Flag not found or already resolved." });
+    return { ok: true };
+  }));
+
+  // ---- Admin: ad-network config ------------------------------------------
+  // Commission split + referral bonus live here, never in code (guardrail /
+  // docs/ARCHITECTURE.md § Commission split). Admin can disable a network,
+  // which stops its postbacks crediting and hides its offers, with no redeploy.
+  const networkPatchSchema = z.object({
+    status: z.enum(["active", "disabled"]).optional(),
+    commissionSplitPct: z.number().int().min(0).max(100).optional(),
+    referralBonusPct: z.number().int().min(0).max(100).optional(),
+  });
+
+  app.get("/staff/networks", staffGuard(["admin"], async () => {
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT n.*,
+         (SELECT COUNT(*)::int FROM tasks t WHERE t.network = n.id) AS task_count,
+         (SELECT COUNT(*)::int FROM task_completions c WHERE c.network = n.id AND c.status = 'credited') AS credited_count
+       FROM networks n ORDER BY n.type, n.name`,
+    );
+    return {
+      networks: rows.map((n) => ({
+        id: n.id, name: n.name, type: n.type, status: n.status,
+        commissionSplitPct: n.commission_split_pct, referralBonusPct: n.referral_bonus_pct,
+        taskCount: n.task_count, creditedCount: n.credited_count, updatedAt: n.updated_at,
+      })),
+    };
+  }));
+
+  app.patch("/staff/networks/:id", staffGuard(["admin"], async (_ctx, req, reply) => {
+    const parsed = networkPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid status or a split between 0 and 100." });
+    const id = (req.params as { id: string }).id;
+
+    const cols: string[] = [];
+    const vals: unknown[] = [];
+    if (parsed.data.status !== undefined) { cols.push("status = ?"); vals.push(parsed.data.status); }
+    if (parsed.data.commissionSplitPct !== undefined) { cols.push("commission_split_pct = ?"); vals.push(parsed.data.commissionSplitPct); }
+    if (parsed.data.referralBonusPct !== undefined) { cols.push("referral_bonus_pct = ?"); vals.push(parsed.data.referralBonusPct); }
+    if (!cols.length) return reply.code(400).send({ error: "Nothing to change." });
+    cols.push("updated_at = ?"); vals.push(now());
+
+    const res = await sql.run(`UPDATE networks SET ${cols.join(", ")} WHERE id = ?`, ...vals, id);
+    if (!res.rowCount) return reply.code(404).send({ error: "Network not found." });
+    return { ok: true };
+  }));
+
+  // ---- Agent: support tickets --------------------------------------------
+  app.get("/staff/tickets", staffGuard(["agent", "manager", "admin"], async (_ctx, req) => {
+    const status = (req.query as { status?: string }).status ?? "open";
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT ti.*, u.email AS user_email,
+         (SELECT COUNT(*)::int FROM ticket_messages m WHERE m.ticket_id = ti.id) AS message_count
+       FROM support_tickets ti JOIN users u ON u.id = ti.user_id
+       WHERE ti.status = ? ORDER BY ti.updated_at ASC`,
+      status,
+    );
+    return {
+      tickets: rows.map((t) => ({
+        id: t.id, userId: t.user_id, userEmail: t.user_email, subject: t.subject,
+        status: t.status, messageCount: t.message_count, at: t.created_at, updatedAt: t.updated_at,
+      })),
+    };
+  }));
+
+  app.get("/staff/tickets/:id", staffGuard(["agent", "manager", "admin"], async (_ctx, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const ticket = await sql.get<Record<string, unknown>>(
+      `SELECT ti.*, u.email AS user_email FROM support_tickets ti
+       JOIN users u ON u.id = ti.user_id WHERE ti.id = ?`, id,
+    );
+    if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
+    const messages = await sql.all(
+      "SELECT id, author_role, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC", id,
+    );
+    return {
+      ticket: {
+        id: ticket.id, userId: ticket.user_id, userEmail: ticket.user_email,
+        subject: ticket.subject, status: ticket.status, at: ticket.created_at,
+      },
+      messages,
+    };
+  }));
+
+  const replySchema = z.object({
+    message: z.string().min(1).max(2000),
+    close: z.boolean().optional(),
+  });
+  app.post("/staff/tickets/:id/reply", staffGuard(["agent", "manager", "admin"], async ({ userId }, req, reply) => {
+    const parsed = replySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Type a reply first." });
+    const id = (req.params as { id: string }).id;
+
+    const ticket = await sql.get<{ id: string }>("SELECT id FROM support_tickets WHERE id = ?", id);
+    if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
+
+    await sql.tx(async (t) => {
+      await t.run(
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'staff', ?,?,?)",
+        newId(), id, userId, parsed.data.message, now(),
+      );
+      await t.run(
+        "UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?",
+        parsed.data.close ? "closed" : "answered", now(), id,
+      );
+    });
+    return { ok: true };
+  }));
+
+  // ---- Manager: KPI dashboard --------------------------------------------
+  // All figures derived from the ledger and request tables — no stored
+  // aggregates to drift out of sync (guardrail #2 in spirit).
+  app.get("/staff/kpis", staffGuard(["manager", "admin"], async () => {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+
+    const one = async (text: string, ...params: unknown[]) =>
+      (await sql.get<{ v: number }>(text, ...params))?.v ?? 0;
+
+    const [
+      totalUsers, newUsers7d, pendingCount, pendingPoints,
+      paidCount7d, paidPoints7d, paidPointsAll,
+      taskPointsAll, referralPointsAll, completionsToday,
+      openFraud, openTickets,
+    ] = await Promise.all([
+      one("SELECT COUNT(*)::int AS v FROM users WHERE email_verified = 1"),
+      one("SELECT COUNT(*)::int AS v FROM users WHERE email_verified = 1 AND created_at >= ?", sevenDaysAgo),
+      one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status IN ('pending','agent_approved','manager_approved')"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM withdrawal_requests WHERE status IN ('pending','agent_approved','manager_approved')"),
+      one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status = 'paid' AND paid_at >= ?", sevenDaysAgo),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM withdrawal_requests WHERE status = 'paid' AND paid_at >= ?", sevenDaysAgo),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM withdrawal_requests WHERE status = 'paid'"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE source_type = 'task_completion'"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE source_type = 'referral_bonus'"),
+      one("SELECT COUNT(*)::int AS v FROM task_completions WHERE status = 'credited' AND created_at >= ?", startOfToday.toISOString()),
+      one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NULL"),
+      one("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status != 'closed'"),
+    ]);
+
+    // 7-day activity series (completions + points credited per day).
+    const series = await sql.all<{ day: string; completions: number; points: number }>(
+      `SELECT to_char(created_at::timestamp, 'YYYY-MM-DD') AS day,
+              COUNT(*)::int AS completions,
+              COALESCE(SUM(points),0)::int AS points
+       FROM (
+         SELECT tc.created_at, t.points
+         FROM task_completions tc JOIN tasks t ON t.id = tc.task_id
+         WHERE tc.status = 'credited' AND tc.created_at >= ?
+       ) x
+       GROUP BY day ORDER BY day ASC`,
+      sevenDaysAgo,
+    );
+
+    return {
+      users: { total: totalUsers, new7d: newUsers7d },
+      withdrawals: { pendingCount, pendingPoints, paidCount7d, paidPoints7d, paidPointsAll },
+      earning: { taskPointsAll, referralPointsAll, completionsToday },
+      risk: { openFraud, openTickets },
+      series,
+    };
   }));
 }
