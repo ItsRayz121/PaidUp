@@ -47,10 +47,26 @@ type UserRow = {
   referred_by: string | null; status: string; created_at: string;
 };
 
+function roleOf(userId: string): string | null {
+  const row = db.prepare("SELECT role FROM admin_users WHERE user_id = ?").get(userId) as
+    | { role: string } | undefined;
+  return row?.role ?? null;
+}
+
+// Promote founder emails (config.adminEmails) to admin on login.
+function ensureAdminRole(userId: string, email: string): void {
+  if (!config.adminEmails.includes(email.toLowerCase())) return;
+  db.prepare(
+    "INSERT INTO admin_users (user_id, role, created_at) VALUES (?, 'admin', ?) " +
+    "ON CONFLICT(user_id) DO UPDATE SET role = 'admin'",
+  ).run(userId, now());
+}
+
 function publicUser(u: UserRow) {
   return {
     id: u.id, email: u.email, country: u.country,
     referralCode: u.referral_code, status: u.status,
+    role: roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
   };
 }
 
@@ -141,6 +157,7 @@ export async function authRoutes(app: FastifyInstance) {
       user = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow;
     }
 
+    ensureAdminRole(user.id, user.email);
     return { token: signToken(user.id), user: publicUser(user) };
   });
 

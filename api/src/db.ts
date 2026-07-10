@@ -101,8 +101,65 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS admin_users (
+    user_id    TEXT PRIMARY KEY REFERENCES users(id),
+    role       TEXT NOT NULL CHECK (role IN ('agent','manager','admin')),
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS fraud_flags (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT REFERENCES users(id),
+    device_id    TEXT,
+    flag_type    TEXT NOT NULL,
+    severity     TEXT NOT NULL DEFAULT 'low',
+    detail       TEXT,
+    created_at   TEXT NOT NULL,
+    resolved_by  TEXT,
+    resolution_note TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_fraud_user ON fraud_flags(user_id);
+
+  -- Log of EVERY postback received (verified or not) so Agents can resolve
+  -- "why didn't I get credited" disputes (docs/ARCHITECTURE.md step 5).
+  -- Idempotency: a given network completion id can only be processed once.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_completion_ext
+    ON task_completions(network, external_id);
+
+  CREATE TABLE IF NOT EXISTS postback_log (
+    id          TEXT PRIMARY KEY,
+    network     TEXT NOT NULL,
+    external_id TEXT,
+    verified    INTEGER NOT NULL,
+    outcome     TEXT NOT NULL,
+    raw         TEXT,
+    created_at  TEXT NOT NULL
+  );
+`);
+
 export const now = () => new Date().toISOString();
 export const newId = () => randomUUID();
+
+// The ONLY way points move. Append-only: inserts a signed ledger row.
+// `amount` sign is derived from direction so callers can't get it wrong.
+export function postLedger(params: {
+  userId: string;
+  points: number; // always positive magnitude
+  direction: "credit" | "debit";
+  sourceType: "task_completion" | "referral_bonus" | "withdrawal" | "admin_adjustment";
+  sourceRefId?: string;
+  note?: string;
+}): string {
+  const magnitude = Math.abs(Math.trunc(params.points));
+  const amount = params.direction === "credit" ? magnitude : -magnitude;
+  const id = newId();
+  db.prepare(
+    `INSERT INTO ledger_entries (id, user_id, amount, direction, source_type, source_ref_id, note, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).run(id, params.userId, amount, params.direction, params.sourceType, params.sourceRefId ?? null, params.note ?? null, now());
+  return id;
+}
 
 // Balance is always derived — this is the ONLY way balance is computed.
 export function balanceOf(userId: string): number {
