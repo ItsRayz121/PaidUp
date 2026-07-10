@@ -159,14 +159,17 @@ const SCHEMA = `
   -- Email verification codes. We store only a HASH of the code, never the
   -- code itself, plus expiry + attempt count (auth security).
   CREATE TABLE IF NOT EXISTS email_codes (
-    id         TEXT PRIMARY KEY,
-    email      TEXT NOT NULL,
-    code_hash  TEXT NOT NULL,
-    purpose    TEXT NOT NULL DEFAULT 'verify',
-    expires_at TEXT NOT NULL,
-    attempts   INTEGER NOT NULL DEFAULT 0,
-    consumed   INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    id                   TEXT PRIMARY KEY,
+    email                TEXT NOT NULL,
+    code_hash            TEXT NOT NULL,
+    purpose              TEXT NOT NULL DEFAULT 'verify',
+    -- Password chosen at register, applied only when THIS code is confirmed, so
+    -- an unverified account's password can't be set by an unauthenticated caller.
+    pending_password_hash TEXT,
+    expires_at           TEXT NOT NULL,
+    attempts             INTEGER NOT NULL DEFAULT 0,
+    consumed             INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email);
 
@@ -281,6 +284,7 @@ const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'verify';
+  ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;
 `;
 
 export async function initDb(): Promise<void> {

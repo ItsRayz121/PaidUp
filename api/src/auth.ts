@@ -37,9 +37,15 @@ async function verifyPassword(password: string, stored: string | null): Promise<
 }
 
 // Issue a fresh OTP for a purpose ('verify' at signup, 'reset' for password
-// reset), invalidating earlier unused codes of that purpose. Throws if the
-// email can't be sent so the caller can return a clear error.
-async function issueCode(email: string, purpose: "verify" | "reset"): Promise<void> {
+// reset), invalidating earlier unused codes of that purpose. For signup the
+// caller passes the chosen password hash; it rides on the code and is applied
+// only when the code is confirmed, so an unverified account's password can't be
+// set by anyone who doesn't control the inbox. Throws if the email can't be sent.
+async function issueCode(
+  email: string,
+  purpose: "verify" | "reset",
+  pendingPasswordHash: string | null = null,
+): Promise<void> {
   const code = makeCode();
   await sql.run(
     "UPDATE email_codes SET consumed = 1 WHERE email = ? AND purpose = ? AND consumed = 0",
@@ -47,17 +53,19 @@ async function issueCode(email: string, purpose: "verify" | "reset"): Promise<vo
   );
   const expires = new Date(Date.now() + config.otpTtlMinutes * 60_000).toISOString();
   await sql.run(
-    "INSERT INTO email_codes (id, email, code_hash, purpose, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,?,0,0,?)",
-    newId(), email, hashCode(code), purpose, expires, now(),
+    "INSERT INTO email_codes (id, email, code_hash, purpose, pending_password_hash, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,?,?,0,0,?)",
+    newId(), email, hashCode(code), purpose, pendingPasswordHash, expires, now(),
   );
   await sendLoginCode(email, code);
 }
 
-// Validate + consume an OTP for a purpose. Returns a structured result so each
-// route can map it to the right status code.
-type CodeResult = { ok: true } | { ok: false; statusCode: number; error: string };
+// Validate + consume an OTP for a purpose. Returns a structured result (with the
+// password bound to the code, if any) so each route can map it to a status code.
+type CodeResult =
+  | { ok: true; pendingPasswordHash: string | null }
+  | { ok: false; statusCode: number; error: string };
 async function consumeCode(email: string, code: string, purpose: "verify" | "reset"): Promise<CodeResult> {
-  const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number }>(
+  const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number; pending_password_hash: string | null }>(
     "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
     email, purpose,
   );
@@ -75,7 +83,7 @@ async function consumeCode(email: string, code: string, purpose: "verify" | "res
     return { ok: false, statusCode: 400, error: "Wrong code. Please try again." };
   }
   await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
-  return { ok: true };
+  return { ok: true, pendingPasswordHash: row.pending_password_hash ?? null };
 }
 
 function signToken(userId: string): string {
@@ -162,6 +170,9 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "Enter a valid email and a password of at least 8 letters." });
     }
     const email = parsed.data.email.toLowerCase().trim();
+    // Hash now, but do NOT write it to the account. The password is bound to the
+    // verification code and applied only when that code is confirmed — otherwise
+    // anyone could overwrite an unverified account's password (account takeover).
     const passwordHash = await hashPassword(parsed.data.password);
 
     const existing = await sql.get<{ id: string; email_verified: number }>(
@@ -171,11 +182,10 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: "This email already has an account. Please log in." });
     }
 
-    if (existing) {
-      // Unverified account from an earlier attempt — update the password and
-      // resend the code. (Don't touch the referral edge set on first creation.)
-      await sql.run("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, existing.id);
-    } else {
+    if (!existing) {
+      // Create the account with NO password yet (email_verified = 0). The
+      // password lands at verification. The user row and its referral edge must
+      // commit together, or an invite is silently lost.
       const id = newId();
       const referralCode = await uniqueReferralCode(email);
       let referredBy: string | null = null;
@@ -185,12 +195,10 @@ export async function authRoutes(app: FastifyInstance) {
         );
         if (inviter) referredBy = inviter.id;
       }
-      // The user row and its referral edge must land together, or an invite is
-      // silently lost.
       await sql.tx(async (t) => {
         await t.run(
-          "INSERT INTO users (id, email, password_hash, email_verified, country, referral_code, referred_by, status, created_at) VALUES (?,?,?,0,?,?,?, 'active', ?)",
-          id, email, passwordHash, "Pakistan", referralCode, referredBy, now(),
+          "INSERT INTO users (id, email, email_verified, country, referral_code, referred_by, status, created_at) VALUES (?,?,0,?,?,?, 'active', ?)",
+          id, email, "Pakistan", referralCode, referredBy, now(),
         );
         if (referredBy) {
           await t.run(
@@ -202,7 +210,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      await issueCode(email, "verify");
+      await issueCode(email, "verify", passwordHash);
     } catch (err) {
       req.log.error({ err }, "email send failed");
       return reply.code(502).send({ error: "We could not send the email. Please try again." });
@@ -219,7 +227,15 @@ export async function authRoutes(app: FastifyInstance) {
     const result = await consumeCode(email, parsed.data.code, "verify");
     if (!result.ok) return reply.code(result.statusCode).send({ error: result.error });
 
-    await sql.run("UPDATE users SET email_verified = 1 WHERE email = ?", email);
+    // Apply the password chosen at register (bound to this code) and mark
+    // verified together. Without a bound password the account can't be used.
+    if (!result.pendingPasswordHash) {
+      return reply.code(400).send({ error: "Please sign up again to set your password." });
+    }
+    await sql.run(
+      "UPDATE users SET password_hash = ?, email_verified = 1 WHERE email = ?",
+      result.pendingPasswordHash, email,
+    );
     const user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
     if (!user) return reply.code(404).send({ error: "Account not found. Please sign up again." });
 
@@ -241,11 +257,11 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user || !(await verifyPassword(parsed.data.password, user.password_hash))) {
       return reply.code(401).send({ error: "Wrong email or password." });
     }
+    // A set password implies a verified email (password is only written at
+    // verify/reset), so this is a defensive guard, not a normal path. No resend:
+    // a verify code must carry a pending password, which we don't have here.
     if (!user.email_verified) {
-      // Right password but never verified — send a fresh code and route them to
-      // the verify screen instead of logging in.
-      try { await issueCode(email, "verify"); } catch (err) { req.log.error({ err }, "email send failed"); }
-      return reply.code(403).send({ error: "Please verify your email first. We sent you a new code.", needsVerify: true });
+      return reply.code(403).send({ error: "Please verify your email first.", needsVerify: true });
     }
 
     await ensureAdminRole(user.id, user.email);
