@@ -74,8 +74,8 @@ export type LedgerEntry = {
   status: "earned" | "pending" | "paid" | "rejected"; kind: string; at: string;
 };
 export type Withdrawal = {
-  id: string; amount: number; payoutRail: string;
-  status: string; at: string; reviewNote?: string; paidAt?: string;
+  id: string; amount: number; chain: string; address?: string;
+  status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string;
 };
 
 // ---- Auth -----------------------------------------------------------------
@@ -119,15 +119,15 @@ export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
 export const fetchReferrals = () =>
   apiFetch<{ code: string; joined: number; earnedPoints: number }>("/referrals/me");
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
-export const createWithdrawal = (amountPoints: number, payoutRail: string) =>
+export const createWithdrawal = (amountPoints: number, chain: string, address: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
-    method: "POST", body: JSON.stringify({ amountPoints, payoutRail }),
+    method: "POST", body: JSON.stringify({ amountPoints, chain, address }),
   });
 
 // ---- Staff ----------------------------------------------------------------
 export type StaffWithdrawal = {
   id: string; userId: string; userEmail: string; amount: number;
-  payoutRail: string; status: string; at: string; withinAgentLimit: boolean;
+  chain: string; address: string | null; status: string; at: string; withinAgentLimit: boolean;
 };
 export const fetchStaffQueue = (status = "pending") =>
   apiFetch<{ requests: StaffWithdrawal[] }>(`/staff/withdrawals?status=${encodeURIComponent(status)}`);

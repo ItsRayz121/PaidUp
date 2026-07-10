@@ -229,17 +229,19 @@ const SCHEMA = `
   );
 
   CREATE TABLE IF NOT EXISTS withdrawal_requests (
-    id           TEXT PRIMARY KEY,
-    user_id      TEXT NOT NULL REFERENCES users(id),
-    amount       INTEGER NOT NULL,
-    payout_rail  TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'pending'
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    amount         INTEGER NOT NULL,
+    payout_rail    TEXT NOT NULL,          -- chain id: bep20 | polygon | base | aptos
+    payout_address TEXT,                   -- destination USDT wallet address
+    status         TEXT NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending','agent_approved','manager_approved','paid','rejected')),
-    reviewed_by  TEXT,
-    review_note  TEXT,
-    created_at   TEXT NOT NULL,
-    reviewed_at  TEXT,
-    paid_at      TEXT
+    tx_hash        TEXT,                   -- on-chain hash once paid (send scaffold)
+    reviewed_by    TEXT,
+    review_note    TEXT,
+    created_at     TEXT NOT NULL,
+    reviewed_at    TEXT,
+    paid_at        TEXT
   );
 
   CREATE TABLE IF NOT EXISTS admin_users (
@@ -285,6 +287,8 @@ const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'verify';
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_address TEXT;
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS tx_hash TEXT;
 `;
 
 export async function initDb(): Promise<void> {

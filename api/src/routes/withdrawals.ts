@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId } from "../auth.ts";
+import { validateAddress, type ChainId } from "../chains.ts";
 
 function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
@@ -17,7 +18,8 @@ function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyRepl
 
 const createSchema = z.object({
   amountPoints: z.number().int().positive(),
-  payoutRail: z.enum(["jazzcash", "easypaisa"]),
+  chain: z.enum(["bep20", "polygon", "base", "aptos"]),
+  address: z.string().min(1).max(120),
 });
 
 export async function withdrawalRoutes(app: FastifyInstance) {
@@ -26,14 +28,20 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   // writes a compensating credit (see staff route).
   app.post("/withdrawals", guard(async (userId, req, reply) => {
     const parsed = createSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount and wallet." });
-    const { amountPoints, payoutRail } = parsed.data;
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount, network, and wallet address." });
+    const { amountPoints, chain, address: addressRaw } = parsed.data;
 
     if (amountPoints < config.minWithdrawPoints) {
       return reply.code(400).send({
         error: `You need at least ${config.minWithdrawPoints} points to get money.`,
       });
     }
+
+    // Validate the destination address for the chosen chain BEFORE holding funds
+    // — a payout to a malformed address is unrecoverable.
+    const addrCheck = validateAddress(chain as ChainId, addressRaw);
+    if (!addrCheck.ok) return reply.code(400).send({ error: addrCheck.error });
+    const address = addressRaw.trim();
 
     const id = newId();
     try {
@@ -48,14 +56,14 @@ export async function withdrawalRoutes(app: FastifyInstance) {
           throw { statusCode: 400, message: "You do not have that many points yet." };
         }
         await t.run(
-          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, status, created_at)
-           VALUES (?,?,?,?, 'pending', ?)`,
-          id, userId, amountPoints, payoutRail, now(),
+          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, created_at)
+           VALUES (?,?,?,?,?, 'pending', ?)`,
+          id, userId, amountPoints, chain, address, now(),
         );
         // Hold the funds.
         await postLedger({
           userId, points: amountPoints, direction: "debit",
-          sourceType: "withdrawal", sourceRefId: id, note: `Withdrawal to ${payoutRail}`,
+          sourceType: "withdrawal", sourceRefId: id, note: `Withdrawal (USDT ${chain})`,
         }, t);
       });
     } catch (e) {
@@ -64,7 +72,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       throw e;
     }
 
-    return { request: { id, amount: amountPoints, payoutRail, status: "pending" } };
+    return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
   }));
 
   // The user's own payout history.
@@ -74,9 +82,9 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     );
     return {
       requests: rows.map((r) => ({
-        id: r.id, amount: r.amount, payoutRail: r.payout_rail,
+        id: r.id, amount: r.amount, chain: r.payout_rail, address: r.payout_address ?? undefined,
         status: r.status, at: r.created_at, reviewNote: r.review_note ?? undefined,
-        paidAt: r.paid_at ?? undefined,
+        paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
       })),
     };
   }));

@@ -40,7 +40,8 @@ export async function staffRoutes(app: FastifyInstance) {
     return {
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
-        payoutRail: r.payout_rail, status: r.status, at: r.created_at,
+        chain: r.payout_rail, address: r.payout_address ?? null,
+        status: r.status, at: r.created_at,
         withinAgentLimit: (r.amount as number) <= config.agentApprovalMaxPoints,
       })),
     };

@@ -89,7 +89,8 @@ export default function StaffPage() {
                 <tr>
                   <th className="p-2.5">User</th>
                   <th className="p-2.5">Amount</th>
-                  <th className="p-2.5">Rail</th>
+                  <th className="p-2.5">Network</th>
+                  <th className="p-2.5">Send to (USDT address)</th>
                   <th className="p-2.5">Requested</th>
                   <th className="p-2.5">Action</th>
                 </tr>
@@ -105,7 +106,15 @@ export default function StaffPage() {
                       <div className="num font-semibold text-brand-ink">{formatPoints(r.amount)}</div>
                       <div className="text-xs text-muted">{formatMoney(r.amount)}</div>
                     </td>
-                    <td className="p-2.5 capitalize">{r.payoutRail}</td>
+                    <td className="p-2.5 uppercase">{r.chain}</td>
+                    <td className="p-2.5">
+                      {r.address ? (
+                        <button onClick={() => navigator.clipboard?.writeText(r.address!)}
+                          title="Click to copy" className="num break-all text-left text-xs text-brand hover:underline">
+                          {r.address}
+                        </button>
+                      ) : <span className="text-xs text-muted">—</span>}
+                    </td>
                     <td className="p-2.5 text-muted">{timeAgo(r.at)}</td>
                     <td className="p-2.5">
                       <Actions status={r.status} onAct={(a) => act(r.id, a)} />

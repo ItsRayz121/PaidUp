@@ -7,20 +7,17 @@ import { Loading, ErrorState } from "@/components/state";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { fetchBalance, createWithdrawal } from "@/lib/api";
-import { formatPoints, formatMoney, pointsToMoney, CURRENCY_SYMBOL, POINTS_PER_UNIT } from "@/lib/format";
+import { formatPoints, formatMoney } from "@/lib/format";
+import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
-const WALLETS = [
-  { id: "jazzcash", label: "JazzCash", hint: "Mobile wallet" },
-  { id: "easypaisa", label: "EasyPaisa", hint: "Mobile wallet" },
-];
-
-// Withdrawal request + the "money on the way" moment. v1 payout is MANUAL —
+// Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
 // the confirmation is honest: a request we pay within the SLA, not instant.
 export default function WithdrawPage() {
   const { ready } = useRequireAuth();
   const bal = useApi(fetchBalance, []);
 
-  const [walletId, setWalletId] = useState("jazzcash");
+  const [chain, setChain] = useState<ChainId>("bep20");
+  const [address, setAddress] = useState("");
   const [amount, setAmount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,18 +28,19 @@ export default function WithdrawPage() {
 
   const balance = bal.data?.points ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 2000;
-  const wallet = WALLETS.find((w) => w.id === walletId)!;
+  const chainMeta = CHAINS.find((c) => c.id === chain)!;
   const amt = amount || min;
   const belowMin = amt < min;
   const overBalance = amt > balance;
-  const invalid = belowMin || overBalance;
+  const addressOk = addressLooksValid(chain, address);
+  const invalid = belowMin || overBalance || !addressOk;
 
-  if (done) return <SentConfirmation amount={amt} wallet={wallet.label} />;
+  if (done) return <SentConfirmation amount={amt} chainLabel={chainMeta.label} address={address.trim()} />;
 
   async function submit() {
     setBusy(true); setError(null);
     try {
-      await createWithdrawal(amt, walletId);
+      await createWithdrawal(amt, chain, address.trim());
       setDone(true);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -65,25 +63,48 @@ export default function WithdrawPage() {
         <p className="text-sm text-muted">= about {formatMoney(balance)}</p>
       </Card>
 
+      {/* Network picker */}
       <div>
-        <p className="mb-2 px-1 font-semibold text-brand-ink">Send my money to</p>
+        <p className="mb-2 px-1 font-semibold text-brand-ink">Get paid in USDT</p>
         <div className="grid grid-cols-2 gap-2.5">
-          {WALLETS.map((w) => {
-            const active = w.id === walletId;
+          {CHAINS.map((c) => {
+            const active = c.id === chain;
             return (
-              <button key={w.id} onClick={() => setWalletId(w.id)} aria-pressed={active}
+              <button key={c.id} onClick={() => setChain(c.id)} aria-pressed={active}
                 className={`rounded-xl border p-3 text-left ${active ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
                 <span className="flex items-center justify-between">
-                  <span className="font-semibold text-brand-ink">{w.label}</span>
+                  <span className="font-semibold text-brand-ink">{c.label}</span>
                   {active && <CheckIcon size={18} className="text-brand" />}
                 </span>
-                <span className="text-xs text-muted">{w.hint}</span>
+                <span className="text-xs text-muted">{c.note}</span>
               </button>
             );
           })}
+          {/* PKR / local money — not yet */}
+          <div className="col-span-2 flex items-center justify-between rounded-xl border border-dashed border-line bg-card/50 p-3">
+            <span className="font-semibold text-muted">Bank / JazzCash / EasyPaisa (PKR)</span>
+            <span className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending">Coming soon</span>
+          </div>
         </div>
       </div>
 
+      {/* Wallet address */}
+      <div>
+        <label htmlFor="addr" className="mb-2 block px-1 font-semibold text-brand-ink">Your USDT wallet address</label>
+        <input id="addr" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          placeholder={chain === "aptos" ? "0x… (Aptos)" : "0x… (42 characters)"}
+          value={address} onChange={(e) => setAddress(e.target.value)}
+          className="w-full rounded-xl border border-line bg-card p-3.5 text-brand-ink outline-none placeholder:text-muted/60 break-all" />
+        {address.length > 0 && !addressOk && (
+          <p className="mt-1.5 px-1 text-sm text-danger">That does not look like a {chainMeta.label} address.</p>
+        )}
+        <p className="mt-1.5 flex items-start gap-1.5 px-1 text-xs text-muted">
+          <ShieldIcon size={14} className="mt-0.5 shrink-0" />
+          Send to the right network ({chainMeta.label}). Money sent to the wrong network or a wrong address cannot come back.
+        </p>
+      </div>
+
+      {/* Amount */}
       <div>
         <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">How many points?</label>
         <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
@@ -94,15 +115,15 @@ export default function WithdrawPage() {
             className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
         </div>
         <p className="mt-1.5 px-1 text-sm text-muted">
-          You will get <span className="font-semibold text-brand-ink">{CURRENCY_SYMBOL} {pointsToMoney(Math.max(0, amt)).toLocaleString("en-PK")}</span> in your {wallet.label}.
+          We send USDT worth <span className="font-semibold text-brand-ink">{formatPoints(Math.max(0, amt))} points</span> to your wallet.
         </p>
-        <p className="px-1 text-xs text-muted">Lowest payout is {formatPoints(min)} points ({POINTS_PER_UNIT} points = {CURRENCY_SYMBOL} 1).</p>
+        <p className="px-1 text-xs text-muted">Lowest payout is {formatPoints(min)} points.</p>
         {belowMin && <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">You need at least {formatPoints(min)} points to get money.</p>}
         {overBalance && <p className="mt-2 rounded-lg bg-danger-tint p-2.5 text-sm text-danger">You do not have that many points yet.</p>}
       </div>
 
       <Button variant="accent" disabled={invalid || busy} onClick={submit}>
-        <WalletIcon size={20} /> {busy ? "Sending…" : `Send me ${CURRENCY_SYMBOL} ${pointsToMoney(Math.max(0, amt)).toLocaleString("en-PK")}`}
+        <WalletIcon size={20} /> {busy ? "Sending…" : "Ask for my USDT"}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
         <ShieldIcon size={14} /> We check every payment to keep your account safe.
@@ -111,21 +132,28 @@ export default function WithdrawPage() {
   );
 }
 
-function SentConfirmation({ amount, wallet }: { amount: number; wallet: string }) {
+function SentConfirmation({ amount, chainLabel, address }: { amount: number; chainLabel: string; address: string }) {
+  const shortAddr = address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
   return (
     <div className="flex min-h-[80dvh] flex-col items-center justify-center px-6 text-center">
       <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-success text-white"><CheckIcon size={52} /></div>
       <h1 className="animate-rise mt-6 text-2xl font-bold text-brand-ink">We got your request</h1>
       <p className="animate-rise mt-2 text-lg text-muted">
-        <span className="font-semibold text-brand-ink num">{formatMoney(amount)}</span> is on the way to your {wallet}.
+        USDT for <span className="font-semibold text-brand-ink num">{formatPoints(amount)} points</span> is on the way.
       </p>
       <div className="animate-rise mt-6 w-full max-w-sm space-y-2.5 text-left">
+        <div className="rounded-xl bg-card border border-line p-3">
+          <p className="text-xs text-muted">Network</p>
+          <p className="font-semibold text-brand-ink">{chainLabel}</p>
+          <p className="mt-2 text-xs text-muted">To this wallet</p>
+          <p className="num break-all text-sm text-brand-ink">{shortAddr}</p>
+        </div>
         <div className="flex items-center gap-3 rounded-xl bg-success-tint p-3 text-success">
           <CheckIcon size={20} className="shrink-0" /><span className="text-sm font-medium">Request received</span>
         </div>
         <div className="flex items-center gap-3 rounded-xl bg-pending-tint p-3 text-pending">
           <ClockIcon size={20} className="shrink-0" />
-          <span className="text-sm font-medium">We send your money within 72 hours. We will tell you when it is sent.</span>
+          <span className="text-sm font-medium">We check and send your USDT within 72 hours. We will tell you when it is sent.</span>
         </div>
       </div>
       <div className="mt-8 w-full max-w-sm space-y-2.5">
