@@ -25,8 +25,13 @@ POSTBACK_SECRET_OFFERHUB=7aae0e63c2522cb19c168e28aa06c8770069931a39ec3b1f8a3e40d
 WEB_ORIGIN=https://paid-up-one.vercel.app
 ```
 - Do **not** set `PORT` — Railway provides it automatically.
-- `BREVO_API_KEY` is optional: without it, login codes print to the Railway
-  deploy logs instead of being emailed.
+- **Email:** set `RESEND_API_KEY` (preferred) or `BREVO_API_KEY`, plus
+  `EMAIL_FROM`. Without either key, codes print to the Railway logs.
+  - **Resend** requires a verified **domain** for `EMAIL_FROM` (Gmail is not
+    allowed; `onboarding@resend.dev` only sends to your own account email).
+  - **Brevo** allows a single verified sender (a Gmail works), e.g.
+    `EMAIL_FROM=fazalelahi5577@gmail.com`.
+  - If both keys are set, Resend wins.
 
 > These are the values generated during setup. You can rotate them anytime —
 > just generate new random hex strings and update both here and any ad-network
