@@ -17,7 +17,7 @@ A rewards app: users complete offers (app installs, surveys, rewarded video) sup
 
 - **Frontend**: Next.js, deployed on **Vercel**. Use the Vercel MCP for deploys/previews. Lives in `web/`.
 - **Backend**: Node (Express or Fastify), deployed on **Railway**, Postgres + Redis (Railway add-ons). Will live in `api/`.
-- **Auth**: **Email verification as primary** (6-digit code by email). Founder decision (2026-07-10): phone SMS OTP is **dropped** for launch — per-SMS cost in these markets is too high. **Telegram login/verification** is the planned cheaper fallback if email hurts signup. (Original spec said phone-OTP-primary; this supersedes it.)
+- **Auth**: **Email + password**, with a one-time email code to verify the address at signup. Founder decision (2026-07-10, revised same day): the original passwordless "code every login" flow is replaced — users register with email+password, verify once by code, then log in with the password; a code is only re-sent for email verification or **forgot password**. Phone SMS OTP remains **dropped** (per-SMS cost too high); **Telegram** is the planned cheaper fallback if email hurts signup. Passwords are scrypt-hashed (Node built-in, no dependency). See `api/src/auth.ts`.
 - **Graphics/icons**: Canva MCP for icon sets and marketing assets.
 - **Domain**: GoDaddy MCP for DNS once a domain is chosen.
 - **Error monitoring**: Sentry — currently unauthorized in this workspace. Authorize before Phase 2.

@@ -79,12 +79,34 @@ export type Withdrawal = {
 };
 
 // ---- Auth -----------------------------------------------------------------
-export const requestCode = (email: string) =>
-  apiFetch<{ ok: true }>("/auth/email/request", { method: "POST", body: JSON.stringify({ email }) });
+type AuthOk = { token: string; user: SessionUser };
 
-export const verifyCode = (email: string, code: string, ref?: string) =>
-  apiFetch<{ token: string; user: SessionUser }>("/auth/email/verify", {
-    method: "POST", body: JSON.stringify({ email, code, ref }),
+// Create an account. Emails a one-time code to verify the address.
+export const register = (email: string, password: string, ref?: string) =>
+  apiFetch<{ ok: true }>("/auth/register", {
+    method: "POST", body: JSON.stringify({ email, password, ref }),
+  });
+
+// Confirm the signup code -> signed in.
+export const verifyEmail = (email: string, code: string) =>
+  apiFetch<AuthOk>("/auth/verify-email", {
+    method: "POST", body: JSON.stringify({ email, code }),
+  });
+
+// Log in with email + password (no code once verified).
+export const login = (email: string, password: string) =>
+  apiFetch<AuthOk>("/auth/login", {
+    method: "POST", body: JSON.stringify({ email, password }),
+  });
+
+// Ask for a password-reset code.
+export const forgotPassword = (email: string) =>
+  apiFetch<{ ok: true }>("/auth/forgot", { method: "POST", body: JSON.stringify({ email }) });
+
+// Set a new password with the reset code -> signed in.
+export const resetPassword = (email: string, code: string, password: string) =>
+  apiFetch<AuthOk>("/auth/reset", {
+    method: "POST", body: JSON.stringify({ email, code, password }),
   });
 
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");

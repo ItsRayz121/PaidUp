@@ -143,15 +143,17 @@ export type TxApi = {
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
-    id            TEXT PRIMARY KEY,
-    email         TEXT UNIQUE NOT NULL,
-    telegram_id   TEXT,
-    phone         TEXT,
-    country       TEXT NOT NULL DEFAULT 'Pakistan',
-    referral_code TEXT UNIQUE NOT NULL,
-    referred_by   TEXT REFERENCES users(id),
-    status        TEXT NOT NULL DEFAULT 'active',
-    created_at    TEXT NOT NULL
+    id             TEXT PRIMARY KEY,
+    email          TEXT UNIQUE NOT NULL,
+    password_hash  TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    telegram_id    TEXT,
+    phone          TEXT,
+    country        TEXT NOT NULL DEFAULT 'Pakistan',
+    referral_code  TEXT UNIQUE NOT NULL,
+    referred_by    TEXT REFERENCES users(id),
+    status         TEXT NOT NULL DEFAULT 'active',
+    created_at     TEXT NOT NULL
   );
 
   -- Email verification codes. We store only a HASH of the code, never the
@@ -160,6 +162,7 @@ const SCHEMA = `
     id         TEXT PRIMARY KEY,
     email      TEXT NOT NULL,
     code_hash  TEXT NOT NULL,
+    purpose    TEXT NOT NULL DEFAULT 'verify',
     expires_at TEXT NOT NULL,
     attempts   INTEGER NOT NULL DEFAULT 0,
     consumed   INTEGER NOT NULL DEFAULT 0,
@@ -272,8 +275,17 @@ const SCHEMA = `
   );
 `;
 
+// Idempotent column adds for databases created before these columns existed
+// (the live DB predates password auth). Safe to run on every boot.
+const MIGRATIONS = `
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'verify';
+`;
+
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
+  await driver.exec(MIGRATIONS);
 }
 
 // The ONLY way points move. Append-only: inserts a signed ledger row.

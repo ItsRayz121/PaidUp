@@ -1,10 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomInt, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
 import { sendLoginCode } from "./email.ts";
+
+const scryptAsync = promisify(scrypt);
 
 // ---- helpers --------------------------------------------------------------
 function hashCode(code: string): string {
@@ -14,6 +17,65 @@ function hashCode(code: string): string {
 
 function makeCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+// Password hashing with scrypt (built into Node — no dependency). Format:
+// "scrypt$<salt-hex>$<hash-hex>". Salt is per-password; compare is constant-time.
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const derived = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
+}
+
+async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
+  if (!stored) return false;
+  const [algo, saltHex, hashHex] = stored.split("$");
+  if (algo !== "scrypt" || !saltHex || !hashHex) return false;
+  const expected = Buffer.from(hashHex, "hex");
+  const derived = (await scryptAsync(password, Buffer.from(saltHex, "hex"), expected.length)) as Buffer;
+  return derived.length === expected.length && timingSafeEqual(derived, expected);
+}
+
+// Issue a fresh OTP for a purpose ('verify' at signup, 'reset' for password
+// reset), invalidating earlier unused codes of that purpose. Throws if the
+// email can't be sent so the caller can return a clear error.
+async function issueCode(email: string, purpose: "verify" | "reset"): Promise<void> {
+  const code = makeCode();
+  await sql.run(
+    "UPDATE email_codes SET consumed = 1 WHERE email = ? AND purpose = ? AND consumed = 0",
+    email, purpose,
+  );
+  const expires = new Date(Date.now() + config.otpTtlMinutes * 60_000).toISOString();
+  await sql.run(
+    "INSERT INTO email_codes (id, email, code_hash, purpose, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,?,0,0,?)",
+    newId(), email, hashCode(code), purpose, expires, now(),
+  );
+  await sendLoginCode(email, code);
+}
+
+// Validate + consume an OTP for a purpose. Returns a structured result so each
+// route can map it to the right status code.
+type CodeResult = { ok: true } | { ok: false; statusCode: number; error: string };
+async function consumeCode(email: string, code: string, purpose: "verify" | "reset"): Promise<CodeResult> {
+  const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number }>(
+    "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
+    email, purpose,
+  );
+  if (!row) return { ok: false, statusCode: 400, error: "No code found. Please ask for a new code." };
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
+    return { ok: false, statusCode: 400, error: "This code has expired. Please ask for a new code." };
+  }
+  if (row.attempts >= config.otpMaxAttempts) {
+    await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
+    return { ok: false, statusCode: 429, error: "Too many tries. Please ask for a new code." };
+  }
+  if (hashCode(code) !== row.code_hash) {
+    await sql.run("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", row.id);
+    return { ok: false, statusCode: 400, error: "Wrong code. Please try again." };
+  }
+  await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
+  return { ok: true };
 }
 
 function signToken(userId: string): string {
@@ -71,72 +133,49 @@ async function publicUser(u: UserRow) {
 }
 
 // ---- routes ---------------------------------------------------------------
-const requestSchema = z.object({ email: z.string().email() });
-const verifySchema = z.object({
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8, "at least 8 letters").max(200),
+  ref: z.string().optional(), // referral code of the inviter
+});
+const verifyEmailSchema = z.object({
   email: z.string().email(),
   code: z.string().regex(/^\d{6}$/),
-  ref: z.string().optional(), // referral code of the inviter
+});
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1).max(200),
+});
+const forgotSchema = z.object({ email: z.string().email() });
+const resetSchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/),
+  password: z.string().min(8).max(200),
 });
 
 export async function authRoutes(app: FastifyInstance) {
-  // Step 1: user asks for a code
-  app.post("/auth/email/request", async (req, reply) => {
-    const parsed = requestSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Please enter a valid email." });
-
+  // Register: create an UNVERIFIED account with a password, then email a code
+  // to prove the address. The account can't log in until the email is verified.
+  app.post("/auth/register", async (req, reply) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Enter a valid email and a password of at least 8 letters." });
+    }
     const email = parsed.data.email.toLowerCase().trim();
-    const code = makeCode();
+    const passwordHash = await hashPassword(parsed.data.password);
 
-    // Invalidate any earlier unused codes for this email.
-    await sql.run("UPDATE email_codes SET consumed = 1 WHERE email = ? AND consumed = 0", email);
-
-    const expires = new Date(Date.now() + config.otpTtlMinutes * 60_000).toISOString();
-    await sql.run(
-      "INSERT INTO email_codes (id, email, code_hash, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,0,0,?)",
-      newId(), email, hashCode(code), expires, now(),
+    const existing = await sql.get<{ id: string; email_verified: number }>(
+      "SELECT id, email_verified FROM users WHERE email = ?", email,
     );
-
-    try {
-      await sendLoginCode(email, code);
-    } catch (err) {
-      req.log.error({ err }, "email send failed");
-      return reply.code(502).send({ error: "We could not send the email. Please try again." });
-    }
-    // Never reveal whether the email already has an account.
-    return { ok: true };
-  });
-
-  // Step 2: user submits the code -> signed in (creates account if new)
-  app.post("/auth/email/verify", async (req, reply) => {
-    const parsed = verifySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Enter the 6-number code." });
-
-    const email = parsed.data.email.toLowerCase().trim();
-    const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number }>(
-      "SELECT * FROM email_codes WHERE email = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
-      email,
-    );
-
-    if (!row) return reply.code(400).send({ error: "No code found. Please ask for a new code." });
-    if (new Date(row.expires_at).getTime() < Date.now()) {
-      await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
-      return reply.code(400).send({ error: "This code has expired. Please ask for a new code." });
-    }
-    if (row.attempts >= config.otpMaxAttempts) {
-      await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
-      return reply.code(429).send({ error: "Too many tries. Please ask for a new code." });
+    if (existing && existing.email_verified) {
+      return reply.code(409).send({ error: "This email already has an account. Please log in." });
     }
 
-    if (hashCode(parsed.data.code) !== row.code_hash) {
-      await sql.run("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", row.id);
-      return reply.code(400).send({ error: "Wrong code. Please try again." });
-    }
-
-    // Correct code — consume it and sign the user in.
-    await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
-
-    let user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
-    if (!user) {
+    if (existing) {
+      // Unverified account from an earlier attempt — update the password and
+      // resend the code. (Don't touch the referral edge set on first creation.)
+      await sql.run("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, existing.id);
+    } else {
       const id = newId();
       const referralCode = await uniqueReferralCode(email);
       let referredBy: string | null = null;
@@ -150,8 +189,8 @@ export async function authRoutes(app: FastifyInstance) {
       // silently lost.
       await sql.tx(async (t) => {
         await t.run(
-          "INSERT INTO users (id, email, country, referral_code, referred_by, status, created_at) VALUES (?,?,?,?,?, 'active', ?)",
-          id, email, "Pakistan", referralCode, referredBy, now(),
+          "INSERT INTO users (id, email, password_hash, email_verified, country, referral_code, referred_by, status, created_at) VALUES (?,?,?,0,?,?,?, 'active', ?)",
+          id, email, passwordHash, "Pakistan", referralCode, referredBy, now(),
         );
         if (referredBy) {
           await t.run(
@@ -160,11 +199,92 @@ export async function authRoutes(app: FastifyInstance) {
           );
         }
       });
-      user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", id);
     }
 
-    await ensureAdminRole(user!.id, user!.email);
-    return { token: signToken(user!.id), user: await publicUser(user!) };
+    try {
+      await issueCode(email, "verify");
+    } catch (err) {
+      req.log.error({ err }, "email send failed");
+      return reply.code(502).send({ error: "We could not send the email. Please try again." });
+    }
+    return { ok: true };
+  });
+
+  // Verify the email with the signup code -> mark verified and sign in.
+  app.post("/auth/verify-email", async (req, reply) => {
+    const parsed = verifyEmailSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter the 6-number code." });
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const result = await consumeCode(email, parsed.data.code, "verify");
+    if (!result.ok) return reply.code(result.statusCode).send({ error: result.error });
+
+    await sql.run("UPDATE users SET email_verified = 1 WHERE email = ?", email);
+    const user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
+    if (!user) return reply.code(404).send({ error: "Account not found. Please sign up again." });
+
+    await ensureAdminRole(user.id, user.email);
+    return { token: signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Log in with email + password. No code needed once the email is verified.
+  app.post("/auth/login", async (req, reply) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter your email and password." });
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const user = await sql.get<UserRow & { password_hash: string | null; email_verified: number }>(
+      "SELECT * FROM users WHERE email = ?", email,
+    );
+    // Same generic message whether the email is unknown or the password is
+    // wrong, so the endpoint can't be used to discover which emails exist.
+    if (!user || !(await verifyPassword(parsed.data.password, user.password_hash))) {
+      return reply.code(401).send({ error: "Wrong email or password." });
+    }
+    if (!user.email_verified) {
+      // Right password but never verified — send a fresh code and route them to
+      // the verify screen instead of logging in.
+      try { await issueCode(email, "verify"); } catch (err) { req.log.error({ err }, "email send failed"); }
+      return reply.code(403).send({ error: "Please verify your email first. We sent you a new code.", needsVerify: true });
+    }
+
+    await ensureAdminRole(user.id, user.email);
+    return { token: signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Forgot password: email a reset code. Always returns ok so the endpoint
+  // can't reveal whether an account exists.
+  app.post("/auth/forgot", async (req, reply) => {
+    const parsed = forgotSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Please enter a valid email." });
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const user = await sql.get<{ id: string }>("SELECT id FROM users WHERE email = ?", email);
+    if (user) {
+      try { await issueCode(email, "reset"); } catch (err) { req.log.error({ err }, "email send failed"); }
+    }
+    return { ok: true };
+  });
+
+  // Reset password with the reset code -> set new password and sign in. A
+  // successful reset also verifies the email (they proved control of it).
+  app.post("/auth/reset", async (req, reply) => {
+    const parsed = resetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Enter the code and a new password of at least 8 letters." });
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const result = await consumeCode(email, parsed.data.code, "reset");
+    if (!result.ok) return reply.code(result.statusCode).send({ error: result.error });
+
+    const passwordHash = await hashPassword(parsed.data.password);
+    await sql.run("UPDATE users SET password_hash = ?, email_verified = 1 WHERE email = ?", passwordHash, email);
+    const user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
+    if (!user) return reply.code(404).send({ error: "Account not found." });
+
+    await ensureAdminRole(user.id, user.email);
+    return { token: signToken(user.id), user: await publicUser(user) };
   });
 
   // Who am I (used by the app after it has a token)
