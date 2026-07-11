@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
+import { LangToggle } from "@/components/LangToggle";
 import { ShieldIcon, CheckIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
+import { useI18n } from "@/lib/i18n";
 import {
   register, verifyEmail, login, forgotPassword, resetPassword, loginWithTelegram,
   setSession, getToken, ApiError, type SessionUser,
@@ -21,6 +23,7 @@ const TG_BOT = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
 // Mounts Telegram's Login Widget. It calls the global set here with the signed
 // user payload, which we forward to the backend for server-side verification.
 function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) => void }) {
+  const { t } = useI18n();
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = box.current;
@@ -41,7 +44,7 @@ function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) 
   return (
     <div className="mt-6">
       <div className="mb-4 flex items-center gap-3 text-xs text-muted">
-        <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
+        <span className="h-px flex-1 bg-line" /> {t("login.or")} <span className="h-px flex-1 bg-line" />
       </div>
       <div ref={box} className="flex justify-center" />
     </div>
@@ -50,6 +53,7 @@ function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) 
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -87,7 +91,7 @@ export default function LoginPage() {
       // Login of an unverified account returns 403 and sends a fresh code —
       // move the user to the verify screen instead of showing an error.
       if (e instanceof ApiError && e.status === 403 && mode === "login") {
-        setInfo("Please check your email for a code to verify your account.");
+        setInfo(t("login.msg.verifyPrompt"));
         setMode("verify");
       } else {
         setError((e as Error).message);
@@ -98,14 +102,14 @@ export default function LoginPage() {
 
   const doRegister = () => run(async () => {
     await register(email.trim(), password, ref);
-    setInfo(`We sent a 6-number code to ${email.trim()}.`);
+    setInfo(t("login.msg.codeSent", { email: email.trim() }));
     setMode("verify");
   });
   const doVerify = () => run(async () => finish(await verifyEmail(email.trim(), code)));
   const doLogin = () => run(async () => finish(await login(email.trim(), password)));
   const doForgot = () => run(async () => {
     await forgotPassword(email.trim());
-    setInfo("If that email has an account, we sent a code to it.");
+    setInfo(t("login.msg.forgotSent"));
     setMode("reset");
   });
   const doReset = () => run(async () => finish(await resetPassword(email.trim(), code, password)));
@@ -123,14 +127,17 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8">
-      <div className="mb-8 flex items-center gap-2">
-        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand text-accent">
-          <StarIcon size={24} />
-        </span>
-        <div>
-          <p className="num text-xl font-bold text-brand-ink leading-none">PaidUp</p>
-          <p className="text-xs text-muted">Earn and get real cash</p>
+      <div className="mb-8 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand text-accent">
+            <StarIcon size={24} />
+          </span>
+          <div>
+            <p className="num text-xl font-bold text-brand-ink leading-none">PaidUp</p>
+            <p className="text-xs text-muted">{t("login.tagline")}</p>
+          </div>
         </div>
+        <LangToggle />
       </div>
 
       {error && <p className="mb-4 rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}
@@ -139,30 +146,30 @@ export default function LoginPage() {
       {/* ---- LOG IN ---- */}
       {mode === "login" && (
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-brand-ink">Log in</h1>
-          <p className="mt-1 text-muted">Welcome back. Enter your email and password.</p>
+          <h1 className="text-2xl font-bold text-brand-ink">{t("login.login.title")}</h1>
+          <p className="mt-1 text-muted">{t("login.login.subtitle")}</p>
 
-          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">Your email</label>
+          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">{t("login.yourEmail")}</label>
           <input id="email" type="email" inputMode="email" autoComplete="email"
-            placeholder="name@email.com" value={email}
+            placeholder={t("login.emailPlaceholder")} value={email}
             onChange={(e) => setEmail(e.target.value)} className={inputClass} />
 
-          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">Password</label>
+          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">{t("login.password")}</label>
           <input id="password" type="password" autoComplete="current-password"
-            placeholder="Your password" value={password}
+            placeholder={t("login.passwordPlaceholder")} value={password}
             onChange={(e) => setPassword(e.target.value)} className={inputClass} />
 
           <button onClick={() => go("forgot")}
-            className="mt-2 block text-sm font-semibold text-brand">Forgot password?</button>
+            className="mt-2 block text-sm font-semibold text-brand">{t("login.forgot")}</button>
 
           <div className="mt-5">
             <Button variant="primary" disabled={!emailOk || !password || busy} onClick={doLogin}>
-              {busy ? "Logging in…" : <>Log in <ArrowRightIcon size={18} /></>}
+              {busy ? t("login.loggingIn") : <>{t("login.logIn")} <ArrowRightIcon size={18} /></>}
             </Button>
           </div>
           <button onClick={() => go("register")}
             className="mt-4 w-full text-center text-sm font-semibold text-brand">
-            New here? Create an account
+            {t("login.newHere")}
           </button>
 
           <TelegramLoginButton onAuth={onTelegramAuth} />
@@ -172,36 +179,36 @@ export default function LoginPage() {
       {/* ---- REGISTER ---- */}
       {mode === "register" && (
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-brand-ink">Create an account</h1>
-          <p className="mt-1 text-muted">We will email you one code to confirm your address.</p>
+          <h1 className="text-2xl font-bold text-brand-ink">{t("login.register.title")}</h1>
+          <p className="mt-1 text-muted">{t("login.register.subtitle")}</p>
           {ref && (
             <p className="mt-3 rounded-lg bg-accent-tint p-2.5 text-sm text-accent-ink">
-              You were invited with code <span className="font-bold">{ref}</span>. Nice!
+              {t("login.invitedWith", { code: ref })}
             </p>
           )}
 
-          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">Your email</label>
+          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">{t("login.yourEmail")}</label>
           <input id="email" type="email" inputMode="email" autoComplete="email"
-            placeholder="name@email.com" value={email}
+            placeholder={t("login.emailPlaceholder")} value={email}
             onChange={(e) => setEmail(e.target.value)} className={inputClass} />
 
-          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">Make a password</label>
+          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">{t("login.makePassword")}</label>
           <input id="password" type="password" autoComplete="new-password"
-            placeholder="At least 8 letters" value={password}
+            placeholder={t("login.min8Placeholder")} value={password}
             onChange={(e) => setPassword(e.target.value)} className={inputClass} />
-          <p className="mt-1.5 text-xs text-muted">Use 8 letters or more. Keep it safe.</p>
+          <p className="mt-1.5 text-xs text-muted">{t("login.passwordHint")}</p>
 
           <div className="mt-5">
             <Button variant="primary" disabled={!emailOk || !passwordOk || busy} onClick={doRegister}>
-              {busy ? "Sending…" : <>Create account <ArrowRightIcon size={18} /></>}
+              {busy ? t("login.sending") : <>{t("login.createAccount")} <ArrowRightIcon size={18} /></>}
             </Button>
           </div>
           <button onClick={() => go("login")}
             className="mt-4 w-full text-center text-sm font-semibold text-brand">
-            Already have an account? Log in
+            {t("login.haveAccount")}
           </button>
           <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted">
-            <ShieldIcon size={14} /> We keep your email safe. We never share it.
+            <ShieldIcon size={14} /> {t("login.emailSafe")}
           </p>
 
           <TelegramLoginButton onAuth={onTelegramAuth} />
@@ -211,74 +218,72 @@ export default function LoginPage() {
       {/* ---- VERIFY EMAIL (after register / unverified login) ---- */}
       {mode === "verify" && (
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-brand-ink">Check your email</h1>
-          <p className="mt-1 text-muted">
-            We sent a 6-number code to <span className="font-semibold text-brand-ink">{email}</span>.
-          </p>
+          <h1 className="text-2xl font-bold text-brand-ink">{t("login.verify.title")}</h1>
+          <p className="mt-1 text-muted">{t("login.verify.subtitle", { email })}</p>
 
-          <label htmlFor="code" className="mt-6 mb-2 block font-semibold text-brand-ink">Enter the code</label>
+          <label htmlFor="code" className="mt-6 mb-2 block font-semibold text-brand-ink">{t("login.enterCode")}</label>
           <input id="code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
             placeholder="123456" value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+            dir="ltr"
             className="num w-full rounded-xl border border-line bg-card p-3.5 text-center text-3xl tracking-[0.4em] text-brand-ink outline-none placeholder:text-muted/40" />
 
           <div className="mt-5">
             <Button variant="accent" disabled={!codeOk || busy} onClick={doVerify}>
-              {busy ? "Checking…" : <><CheckIcon size={18} /> Verify and continue</>}
+              {busy ? t("login.checking") : <><CheckIcon size={18} /> {t("login.verifyContinue")}</>}
             </Button>
           </div>
           <button onClick={() => go("login")}
-            className="mt-4 w-full text-center text-sm font-semibold text-brand">Back to log in</button>
+            className="mt-4 w-full text-center text-sm font-semibold text-brand">{t("login.backToLogin")}</button>
         </div>
       )}
 
       {/* ---- FORGOT PASSWORD ---- */}
       {mode === "forgot" && (
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-brand-ink">Forgot password</h1>
-          <p className="mt-1 text-muted">Enter your email. We will send a code to set a new password.</p>
+          <h1 className="text-2xl font-bold text-brand-ink">{t("login.forgot.title")}</h1>
+          <p className="mt-1 text-muted">{t("login.forgot.subtitle")}</p>
 
-          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">Your email</label>
+          <label htmlFor="email" className="mt-6 mb-2 block font-semibold text-brand-ink">{t("login.yourEmail")}</label>
           <input id="email" type="email" inputMode="email" autoComplete="email"
-            placeholder="name@email.com" value={email}
+            placeholder={t("login.emailPlaceholder")} value={email}
             onChange={(e) => setEmail(e.target.value)} className={inputClass} />
 
           <div className="mt-5">
             <Button variant="primary" disabled={!emailOk || busy} onClick={doForgot}>
-              {busy ? "Sending…" : <>Send code <ArrowRightIcon size={18} /></>}
+              {busy ? t("login.sending") : <>{t("login.sendCode")} <ArrowRightIcon size={18} /></>}
             </Button>
           </div>
           <button onClick={() => go("login")}
-            className="mt-4 w-full text-center text-sm font-semibold text-brand">Back to log in</button>
+            className="mt-4 w-full text-center text-sm font-semibold text-brand">{t("login.backToLogin")}</button>
         </div>
       )}
 
       {/* ---- RESET PASSWORD ---- */}
       {mode === "reset" && (
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-brand-ink">Set a new password</h1>
-          <p className="mt-1 text-muted">
-            Enter the code we sent to <span className="font-semibold text-brand-ink">{email}</span> and a new password.
-          </p>
+          <h1 className="text-2xl font-bold text-brand-ink">{t("login.reset.title")}</h1>
+          <p className="mt-1 text-muted">{t("login.reset.subtitle", { email })}</p>
 
-          <label htmlFor="code" className="mt-6 mb-2 block font-semibold text-brand-ink">Code</label>
+          <label htmlFor="code" className="mt-6 mb-2 block font-semibold text-brand-ink">{t("login.code")}</label>
           <input id="code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
             placeholder="123456" value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+            dir="ltr"
             className="num w-full rounded-xl border border-line bg-card p-3.5 text-center text-2xl tracking-[0.3em] text-brand-ink outline-none placeholder:text-muted/40" />
 
-          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">New password</label>
+          <label htmlFor="password" className="mt-4 mb-2 block font-semibold text-brand-ink">{t("login.newPassword")}</label>
           <input id="password" type="password" autoComplete="new-password"
-            placeholder="At least 8 letters" value={password}
+            placeholder={t("login.min8Placeholder")} value={password}
             onChange={(e) => setPassword(e.target.value)} className={inputClass} />
 
           <div className="mt-5">
             <Button variant="accent" disabled={!codeOk || !passwordOk || busy} onClick={doReset}>
-              {busy ? "Saving…" : <><CheckIcon size={18} /> Save and continue</>}
+              {busy ? t("login.saving") : <><CheckIcon size={18} /> {t("login.saveContinue")}</>}
             </Button>
           </div>
           <button onClick={() => go("login")}
-            className="mt-4 w-full text-center text-sm font-semibold text-brand">Back to log in</button>
+            className="mt-4 w-full text-center text-sm font-semibold text-brand">{t("login.backToLogin")}</button>
         </div>
       )}
     </div>

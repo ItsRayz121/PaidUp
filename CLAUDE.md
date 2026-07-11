@@ -77,10 +77,11 @@ These override convenience or speed at every step:
   - **Fraud rule `payout_address_reuse`** — flags (never blocks) when
     `payoutAddressReuseThreshold` (3)+ accounts withdraw to one wallet; the farm
     cash-out signal. Checked at withdrawal-request time, deduped per address.
-  - **Urdu localization foundation (Phase 3 start)** — client-side i18n
-    (`web/src/lib/i18n.tsx`, en/ur dictionary, RTL, localStorage preference),
-    `LangToggle`, provider in `Shell`; Home/Tasks + bottom nav translated. Staff
-    panel stays English. More earner screens (login, wallet, refer, help) to do.
+  - **Urdu localization (Phase 3)** — client-side i18n (`web/src/lib/i18n.tsx`,
+    en/ur dictionary, RTL, localStorage preference), `LangToggle`, provider in
+    `Shell`. **All earner screens localized**: Home, Tasks, Wallet, Refer, Help,
+    Withdraw (money flow), Login (all 5 modes) + bottom nav. 131 keys, en/ur in
+    sync (verified). Staff panel intentionally stays English (internal tool).
   - Verified: api + web typecheck, web production build, payout unit tests (12),
     fraud DB test (4), `security-review` (no findings) — all clean.
 
