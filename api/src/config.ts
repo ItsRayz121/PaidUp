@@ -11,7 +11,12 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ?? "",
   jwtSecret: process.env.JWT_SECRET ?? "dev-only-change-me",
   otpPepper: process.env.OTP_PEPPER ?? "dev-only-change-me-too",
-  webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+  // Allowed browser origin(s) for CORS in production. Accepts a comma-separated
+  // list so the apex domain, www, and (during a domain switch) the old Vercel
+  // URL can all be allowed at once, e.g.
+  //   WEB_ORIGIN=https://rozipay.xyz,https://www.rozipay.xyz
+  webOrigins: (process.env.WEB_ORIGIN ?? "http://localhost:3000")
+    .split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean),
 
   // Email. Resend is used if RESEND_API_KEY is set, else codes print to the
   // console (local dev). EMAIL_FROM must be on a domain verified in Resend.

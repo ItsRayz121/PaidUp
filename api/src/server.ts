@@ -48,10 +48,10 @@ await initDb();
 
 const app = Fastify({ logger: true });
 
-// In production, only allow the configured web origin. In dev, reflect any
+// In production, only allow the configured web origin(s). In dev, reflect any
 // origin so the app is reachable from localhost AND your phone on the LAN.
 await app.register(cors, {
-  origin: process.env.NODE_ENV === "production" ? config.webOrigin : true,
+  origin: process.env.NODE_ENV === "production" ? config.webOrigins : true,
   credentials: true,
 });
 
