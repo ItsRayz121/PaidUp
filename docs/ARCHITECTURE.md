@@ -63,8 +63,17 @@ interface AdNetworkAdapter {
   *type* N times/day (`config.velocityCapPerTypePerDay`); over the cap →
   `velocity` flag, no credit (`api/src/routes/webhooks.ts`).
 - **Device reuse** ✅ built: ≥3 accounts on one device → `device_reuse` flag.
-- **Referral ring detection** ✅ built: an invited account sharing a device with
-  its referrer → `referral_ring` flag (high severity).
+- **IP reuse** ✅ built (Phase 2): ≥`config.ipReuseThreshold` accounts from one
+  IP → `ip_reuse` flag (medium). Threshold is higher than device reuse on
+  purpose — carrier-grade NAT in our markets means many users legitimately
+  share an IP, so this is a soft signal for staff review, never an auto-ban.
+- **Referral ring detection** ✅ built: an invited account sharing a **device**
+  with its referrer → `referral_ring` (high); sharing only an **IP** (Phase 2)
+  → `referral_ring` (medium) as a weaker fallback.
+- **Global velocity cap** ✅ built (Phase 2): a user's total credited
+  completions across ALL offer types/day is capped
+  (`config.velocityCapAllTypesPerDay`), on top of the per-type cap — stops
+  maxing every type at once. Over → `velocity` flag, no credit.
 - **Escalation path** ✅ built: flags surface in the staff `/staff/fraud` queue;
   nothing is auto-banned. Managers resolve flags via `/staff/fraud/:id/resolve`,
   leaving an append-only trail (`resolved_by`, `resolution_note`).
@@ -80,6 +89,13 @@ Tier-3 markets: per-action revenue is low (~$0.05–$0.50). Starting split to mo
 - Keep the remainder as margin.
 
 Store the split in the `networks` table as a configurable field, not a hardcoded constant.
+
+**Referral commission (Phase 2 tuning):** the inviter earns `referral_bonus_pct`
+of a referred user's task points as a separate `referral_bonus` ledger entry.
+`referral_bonus_days` bounds it to a window — the inviter only earns while the
+invited account is younger than that many days (`0` = lifetime). Both are
+per-network, Admin-tunable (`PATCH /staff/networks/:id`), never hardcoded. The
+window caps long-tail payout cost and the value of a referral farm.
 
 ## Payout rails
 

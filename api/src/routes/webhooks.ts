@@ -31,8 +31,8 @@ export async function webhookRoutes(app: FastifyInstance) {
     // A network the Admin has disabled stops crediting immediately — no code
     // change or redeploy needed. Row may be absent for a network that predates
     // the table; absence is treated as active so we never silently drop traffic.
-    const net = await sql.get<{ status: string; referral_bonus_pct: number }>(
-      "SELECT status, referral_bonus_pct FROM networks WHERE id = ?", network,
+    const net = await sql.get<{ status: string; referral_bonus_pct: number; referral_bonus_days: number }>(
+      "SELECT status, referral_bonus_pct, referral_bonus_days FROM networks WHERE id = ?", network,
     );
     if (net && net.status === "disabled") {
       await logPostback(false, "network_disabled");
@@ -57,8 +57,8 @@ export async function webhookRoutes(app: FastifyInstance) {
     }
 
     // 3. Validate our user + task exist and task is active.
-    const user = await sql.get<{ id: string; referred_by: string | null }>(
-      "SELECT id, referred_by FROM users WHERE id = ?", userId,
+    const user = await sql.get<{ id: string; referred_by: string | null; created_at: string }>(
+      "SELECT id, referred_by, created_at FROM users WHERE id = ?", userId,
     );
     const task = await sql.get<{ id: string; type: string; points: number }>(
       "SELECT id, type, points FROM tasks WHERE id = ? AND status = 'active'", taskId,
@@ -95,6 +95,31 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.send({ ok: true, credited: 0, flagged: "velocity" });
     }
 
+    // 4b. Tighter global cap: total credited completions across ALL offer types
+    // today. Blocks a user maxing every type at once (guardrail #5).
+    const allTypesRow = await sql.get<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM task_completions
+       WHERE user_id = ? AND status = 'credited' AND created_at >= ?`,
+      userId, since.toISOString(),
+    );
+    if ((allTypesRow?.n ?? 0) >= config.velocityCapAllTypesPerDay) {
+      const total = allTypesRow?.n ?? 0;
+      await sql.tx(async (t) => {
+        await t.run(
+          `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, postback_payload, created_at)
+           VALUES (?,?,?,?,?, 'rejected', ?, ?)`,
+          newId(), userId, taskId, network, externalId, JSON.stringify(input), now(),
+        );
+        await t.run(
+          "INSERT INTO fraud_flags (id, user_id, flag_type, severity, detail, created_at) VALUES (?,?,?,?,?,?)",
+          newId(), userId, "velocity", "medium",
+          `Over daily cap across all offer types (${total} today)`, now(),
+        );
+      });
+      await logPostback(true, "velocity_blocked_global", externalId);
+      return reply.send({ ok: true, credited: 0, flagged: "velocity" });
+    }
+
     // 5. Verified + clean: record the completion and credit the ledger together.
     // If either write fails, neither lands — no points without a completion row,
     // no completion row without points. Points come from OUR task row, never
@@ -115,7 +140,13 @@ export async function webhookRoutes(app: FastifyInstance) {
       // Referral commission (P1): inviter earns a share, tracked separately.
       // The share is the network's configured referral_bonus_pct (Admin-set,
       // never hardcoded), falling back to the global default if unset.
-      if (user.referred_by) {
+      // P2 tuning: only pay while the invited account is inside the referral
+      // window (referral_bonus_days; 0 = lifetime). Past the window the inviter
+      // stops earning from this referral — caps long-tail cost and farm value.
+      const windowDays = net ? net.referral_bonus_days : config.referralBonusDays;
+      const inviteAgeDays = (Date.now() - new Date(user.created_at).getTime()) / 86400_000;
+      const withinWindow = windowDays <= 0 || inviteAgeDays <= windowDays;
+      if (user.referred_by && withinWindow) {
         const pct = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
         const bonus = Math.floor(task.points * pct);
         if (bonus > 0) {

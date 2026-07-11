@@ -6,8 +6,9 @@ import { sql, now, initDb } from "./db.ts";
 // tasks.network is the ADAPTER KEY (networks.id), so the feed can hide a
 // disabled network's offers and postbacks map back to a configured network.
 const networks = [
-  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 55, referral_bonus_pct: 10 },
-  { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 10 },
+  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 55, referral_bonus_pct: 10, referral_bonus_days: 0 },
+  { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
+  { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 55, referral_bonus_pct: 10, referral_bonus_days: 0 },
 ];
 
 const tasks = [
@@ -16,6 +17,8 @@ const tasks = [
   { id: "t3", type: "survey", title: "Answer a few questions about shopping", points: 220, network: "offerhub", advertiser: "Survey partner", minutes: 6, requirement: "Answer honestly. If answers don't match, points may not be added." },
   { id: "t4", type: "install", title: "Install Fast Wallet and make an account", points: 900, network: "offerhub", advertiser: "Fast Wallet", minutes: 5, requirement: "You must finish sign up inside the app to get your points." },
   { id: "t5", type: "video", title: "Watch a video about a new game", points: 40, network: "tapvid", advertiser: "GameHub", minutes: 1, requirement: null },
+  { id: "t6", type: "survey", title: "Share your opinion on mobile brands", points: 260, network: "surveyx", advertiser: "SurveyX", minutes: 7, requirement: "Answer honestly. If you are screened out, points may not be added." },
+  { id: "t7", type: "survey", title: "Quick survey about your daily commute", points: 150, network: "surveyx", advertiser: "SurveyX", minutes: 4, requirement: "Finish all questions to get your points." },
 ];
 
 await initDb();
@@ -23,10 +26,10 @@ await initDb();
 let nets = 0;
 for (const n of networks) {
   const res = await sql.run(
-    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES (?,?,?, 'active', ?,?, ?)
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_days, created_at)
+     VALUES (?,?,?, 'active', ?,?,?, ?)
      ON CONFLICT (id) DO NOTHING`,
-    n.id, n.name, n.type, n.commission_split_pct, n.referral_bonus_pct, now(),
+    n.id, n.name, n.type, n.commission_split_pct, n.referral_bonus_pct, n.referral_bonus_days, now(),
   );
   if (res.rowCount) nets++;
 }

@@ -56,8 +56,14 @@ These override convenience or speed at every step:
   - **Earner Help/Support** (`/help`): create tickets, threaded replies.
 - Verified: API smoke tests (all endpoints), fraud detection fires, `web` build + typecheck clean. See `security-review` run notes.
 
+- **Phase 2 (in progress)**: three build items done + verified (2026-07-11):
+  - **3rd ad network** `surveyx` (offerwall) — a *third* postback verification scheme (HMAC + signed-timestamp freshness/replay window + completion-status gate); adapter + registry line + seed rows only, no changes to the other adapters.
+  - **Referral commission tuning** — per-network `referral_bonus_days` window (0 = lifetime), Admin-tunable in `/staff` next to the split; past the window the inviter stops earning from that referral.
+  - **Tighter fraud** — `ip_reuse` detection, `referral_ring`-by-shared-IP (medium, softer than the device-share high), and a **global** daily velocity cap across all offer types on top of the per-type cap.
+  - Verified: 13-check API smoke test (surveyx accept/reject paths, referral window in/out/lifetime, global velocity flag, IP fraud flags), `api` + `web` typecheck, `web` production build — all clean.
+
 **Still open (business decisions, not build gaps):** real commission split % (mechanism built, number unset), app name "PaidUp" (placeholder), launch market given the USDT rail. Tracked in `docs/PROJECT_SPEC.md` → Open Questions.
 
-**Phase 2 next:** referral commission tuning, more networks, Sentry authorization, tighter fraud rules. Do not start Phase 2 items beyond what's above until these are prioritized.
+**Phase 2 remaining:** Sentry authorization (needs founder to authorize the connector), geo-mismatch fraud rule (postback country/IP vs stated country — still deferred, needs a GeoIP source), further fraud tuning. Do not start Phase 2 items beyond these until prioritized.
 
 See `docs/` for the full spec.

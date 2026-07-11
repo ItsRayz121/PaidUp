@@ -27,11 +27,29 @@ export const config = {
 
   // Referral commission (P1): referrer earns this share of a referred user's
   // task points, as a separate referral_bonus ledger entry. Business decision.
+  // Used only as the fallback when a network has no config row.
   referralCommissionPct: 0.1,
+  // Referral bonus WINDOW (P2 tuning): pay the inviter a bonus only while the
+  // invited account is younger than this many days. 0 = lifetime (no window).
+  // Per-network `referral_bonus_days` overrides this; this is the fallback.
+  referralBonusDays: 0,
 
   // Fraud: a single user can only get credited for the same offer TYPE this
   // many times per day. Over the cap => flagged, not credited (guardrail #5).
   velocityCapPerTypePerDay: 20,
+  // Tighter cap (P2): total credited completions across ALL offer types in one
+  // day. Stops a user maxing every type at once (20 installs + 20 surveys + …).
+  velocityCapAllTypesPerDay: 40,
+  // Tighter fraud (P2): flag when this many distinct accounts are seen from one
+  // IP. Higher than the device threshold on purpose — carrier-grade NAT in our
+  // markets makes many users legitimately share an IP, so this is a soft,
+  // medium-severity signal for staff review, never an auto-ban.
+  ipReuseThreshold: 6,
+
+  // Postback replay window (P2): a signed postback whose timestamp is older or
+  // newer than this many seconds is rejected (adapters that sign a timestamp,
+  // e.g. surveyx). Defends against replay of a captured signed callback.
+  postbackFreshnessSeconds: 300,
 
   // Withdrawal approval chain: at/below this an Agent may approve; above it a
   // Manager must approve (docs/PROJECT_SPEC.md).
@@ -42,6 +60,7 @@ export const config = {
   postbackSecrets: {
     offerhub: process.env.POSTBACK_SECRET_OFFERHUB ?? "dev-postback-secret",
     tapvid: process.env.POSTBACK_SECRET_TAPVID ?? "dev-postback-secret",
+    surveyx: process.env.POSTBACK_SECRET_SURVEYX ?? "dev-postback-secret",
   } as Record<string, string>,
 
   // Static per-network tokens for networks that gate with a shared token in

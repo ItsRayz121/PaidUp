@@ -169,6 +169,7 @@ export function NetworkPanel() {
                 <tr>
                   <th className="p-2.5">Network</th><th className="p-2.5">Type</th>
                   <th className="p-2.5">Split % to user</th><th className="p-2.5">Referral %</th>
+                  <th className="p-2.5">Referral days</th>
                   <th className="p-2.5">Offers</th><th className="p-2.5">Credited</th><th className="p-2.5">Status</th>
                 </tr>
               </thead>
@@ -185,8 +186,9 @@ export function NetworkPanel() {
 function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void }) {
   const [split, setSplit] = useState(net.commissionSplitPct);
   const [refPct, setRefPct] = useState(net.referralBonusPct);
+  const [refDays, setRefDays] = useState(net.referralBonusDays);
   const [busy, setBusy] = useState(false);
-  const dirty = split !== net.commissionSplitPct || refPct !== net.referralBonusPct;
+  const dirty = split !== net.commissionSplitPct || refPct !== net.referralBonusPct || refDays !== net.referralBonusDays;
 
   async function patch(patchObj: Parameters<typeof updateNetwork>[1]) {
     setBusy(true);
@@ -202,12 +204,13 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
       <td className="p-2.5">{net.type === "rewarded_video" ? "Rewarded video" : "Offerwall"}</td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={split} onChange={(e) => setSplit(Number(e.target.value))} className={numInput} /></td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={refPct} onChange={(e) => setRefPct(Number(e.target.value))} className={numInput} /></td>
+      <td className="p-2.5"><input type="number" min={0} max={3650} value={refDays} onChange={(e) => setRefDays(Number(e.target.value))} className={numInput} title="0 = lifetime (no window)" /></td>
       <td className="num p-2.5">{net.taskCount}</td>
       <td className="num p-2.5">{net.creditedCount}</td>
       <td className="p-2.5">
         <div className="flex items-center gap-1.5">
           {dirty && (
-            <button disabled={busy} onClick={() => patch({ commissionSplitPct: split, referralBonusPct: refPct })}
+            <button disabled={busy} onClick={() => patch({ commissionSplitPct: split, referralBonusPct: refPct, referralBonusDays: refDays })}
               className="rounded bg-brand px-2 py-1 text-xs font-semibold text-white disabled:opacity-50">Save</button>
           )}
           <button disabled={busy} onClick={() => patch({ status: net.status === "active" ? "disabled" : "active" })}

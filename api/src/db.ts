@@ -294,6 +294,9 @@ const SCHEMA = `
     commission_split_pct INTEGER NOT NULL DEFAULT 55,
     -- % of a referred user's task points paid to their inviter as a bonus.
     referral_bonus_pct   INTEGER NOT NULL DEFAULT 10,
+    -- Referral bonus WINDOW: pay the inviter only while the invited account is
+    -- younger than this many days. 0 = lifetime (no window). Admin-tunable.
+    referral_bonus_days  INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL,
     updated_at           TEXT
   );
@@ -346,6 +349,7 @@ const MIGRATIONS = `
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_address TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+  ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_days INTEGER NOT NULL DEFAULT 0;
 `;
 
 export async function initDb(): Promise<void> {
@@ -362,6 +366,11 @@ export async function initDb(): Promise<void> {
   await sql.run(
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
      VALUES ('tapvid','TapVid','rewarded_video','active',60,10,?)
+     ON CONFLICT (id) DO NOTHING`, now(),
+  );
+  await sql.run(
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
+     VALUES ('surveyx','SurveyX','offerwall','active',55,10,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
 }

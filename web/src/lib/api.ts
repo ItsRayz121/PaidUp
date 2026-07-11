@@ -178,13 +178,14 @@ export const replyStaffTicket = (id: string, message: string, close = false) =>
 // ---- Admin: ad-network config --------------------------------------------
 export type NetworkConfig = {
   id: string; name: string; type: "offerwall" | "rewarded_video"; status: "active" | "disabled";
-  commissionSplitPct: number; referralBonusPct: number; taskCount: number; creditedCount: number;
+  commissionSplitPct: number; referralBonusPct: number; referralBonusDays: number;
+  taskCount: number; creditedCount: number;
   updatedAt: string | null;
 };
 export const fetchNetworks = () => apiFetch<{ networks: NetworkConfig[] }>("/staff/networks");
 export const updateNetwork = (
   id: string,
-  patch: { status?: "active" | "disabled"; commissionSplitPct?: number; referralBonusPct?: number },
+  patch: { status?: "active" | "disabled"; commissionSplitPct?: number; referralBonusPct?: number; referralBonusDays?: number },
 ) => apiFetch<{ ok: true }>(`/staff/networks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 
 // ---- Manager: KPI dashboard ----------------------------------------------

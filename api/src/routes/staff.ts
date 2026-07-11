@@ -157,6 +157,8 @@ export async function staffRoutes(app: FastifyInstance) {
     status: z.enum(["active", "disabled"]).optional(),
     commissionSplitPct: z.number().int().min(0).max(100).optional(),
     referralBonusPct: z.number().int().min(0).max(100).optional(),
+    // Referral window in days (0 = lifetime). Up to ~10 years.
+    referralBonusDays: z.number().int().min(0).max(3650).optional(),
   });
 
   app.get("/staff/networks", staffGuard(["admin"], async () => {
@@ -170,6 +172,7 @@ export async function staffRoutes(app: FastifyInstance) {
       networks: rows.map((n) => ({
         id: n.id, name: n.name, type: n.type, status: n.status,
         commissionSplitPct: n.commission_split_pct, referralBonusPct: n.referral_bonus_pct,
+        referralBonusDays: n.referral_bonus_days,
         taskCount: n.task_count, creditedCount: n.credited_count, updatedAt: n.updated_at,
       })),
     };
@@ -185,6 +188,7 @@ export async function staffRoutes(app: FastifyInstance) {
     if (parsed.data.status !== undefined) { cols.push("status = ?"); vals.push(parsed.data.status); }
     if (parsed.data.commissionSplitPct !== undefined) { cols.push("commission_split_pct = ?"); vals.push(parsed.data.commissionSplitPct); }
     if (parsed.data.referralBonusPct !== undefined) { cols.push("referral_bonus_pct = ?"); vals.push(parsed.data.referralBonusPct); }
+    if (parsed.data.referralBonusDays !== undefined) { cols.push("referral_bonus_days = ?"); vals.push(parsed.data.referralBonusDays); }
     if (!cols.length) return reply.code(400).send({ error: "Nothing to change." });
     cols.push("updated_at = ?"); vals.push(now());
 
