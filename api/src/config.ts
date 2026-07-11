@@ -15,9 +15,12 @@ export const config = {
 
   // Email. Resend is used if RESEND_API_KEY is set, else codes print to the
   // console (local dev). EMAIL_FROM must be on a domain verified in Resend.
+  // The default below is a deliberately-unregisterable `.invalid` sentinel
+  // (RFC 6761) so production fail-fasts if EMAIL_FROM was never set — it can
+  // never collide with a real verified sending domain (e.g. login@rozipay.xyz).
   resendApiKey: process.env.RESEND_API_KEY ?? "",
-  emailFrom: process.env.EMAIL_FROM ?? "login@paidup.app",
-  emailFromName: process.env.EMAIL_FROM_NAME ?? "PaidUp",
+  emailFrom: process.env.EMAIL_FROM ?? "login@rozipay.invalid",
+  emailFromName: process.env.EMAIL_FROM_NAME ?? "RoziPay",
 
   // Product rules (mirror the frontend demo values; real numbers are a
   // business decision — see docs/PROJECT_SPEC.md Open Questions).

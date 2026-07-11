@@ -53,8 +53,8 @@ never receive them.
 4. On **Railway** set:
    - `RESEND_API_KEY=<the key>`
    - `EMAIL_FROM=login@<your-verified-domain>`
-5. Redeploy. The API refuses to boot if `EMAIL_FROM` is still the `@paidup.app`
-   default, so this is enforced.
+5. Redeploy. The API refuses to boot if `EMAIL_FROM` is still the
+   `@rozipay.invalid` sentinel default, so this is enforced.
 
 > You already have `login@creatorxbot.site` noted in DEPLOY.md — if that domain is
 > verified in Resend, you only need the API key.
@@ -93,12 +93,19 @@ connector. Once done, tell me and I'll wire error monitoring into the API + web.
 
 ---
 
-## ⚪ 5. Custom domain (optional, nicer than *.vercel.app)
+## 🟡 5. Point the domain — `rozipay.xyz` (chosen, final)
 
-Currently `paid-up-one.vercel.app`. If you want `paidup.app` (or similar):
-1. Tell me the name — I can check availability via the GoDaddy/Vercel tools.
-2. Buy it, then add it in **Vercel → Project → Domains** and point DNS.
-3. Update `WEB_ORIGIN` (Railway) and `NEXT_PUBLIC_API_URL` if the API domain moves.
+The app currently serves from `paid-up-one.vercel.app`. To move it to **rozipay.xyz**:
+1. Buy/own `rozipay.xyz`, then add it in **Vercel → Project → Domains**.
+2. Add the DNS records Vercel shows (at your registrar) and wait for it to verify.
+3. Set `WEB_ORIGIN=https://rozipay.xyz` on **Railway** (so CORS accepts the new
+   origin), and redeploy the API.
+4. Leave `NEXT_PUBLIC_API_URL` pointing at the Railway API URL unless you also
+   move the API to a custom subdomain (e.g. `api.rozipay.xyz`).
+
+> Trust note: `.xyz` reads as less trustworthy for a money app. Consider adding
+> `rozipay.app` or `rozipay.pk` later and redirecting — your referral growth
+> depends on looking legitimate.
 
 ---
 

@@ -3,20 +3,20 @@
 import { config } from "./config.ts";
 
 function subjectFor(code: string) {
-  return `${code} is your PaidUp code`;
+  return `${code} is your RoziPay code`;
 }
 function htmlFor(code: string) {
   // Simple, plain wording (DESIGN_BRIEF simple-English rules).
   return (
     `<div style="font-family:sans-serif;font-size:16px;color:#0e1b1e">` +
-    `<p>Your PaidUp code is:</p>` +
+    `<p>Your RoziPay code is:</p>` +
     `<p style="font-size:32px;font-weight:bold;letter-spacing:4px">${code}</p>` +
     `<p>It works for 10 minutes. Do not share it with anyone.</p>` +
     `</div>`
   );
 }
 function textFor(code: string) {
-  return `Your PaidUp code is ${code}. It works for 10 minutes. Do not share it.`;
+  return `Your RoziPay code is ${code}. It works for 10 minutes. Do not share it.`;
 }
 
 export async function sendLoginCode(email: string, code: string): Promise<void> {

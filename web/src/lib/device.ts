@@ -14,7 +14,7 @@ function fnv1a(str: string): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-const KEY = "paidup_device";
+const KEY = "rozipay_device";
 
 export function getDeviceId(): string {
   if (typeof window === "undefined") return "";

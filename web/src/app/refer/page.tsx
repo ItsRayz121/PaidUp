@@ -29,7 +29,7 @@ export default function ReferPage() {
     catch { setCopied(false); }
   }
   async function share() {
-    if (navigator.share) { try { await navigator.share({ title: "Join PaidUp", text: message, url: link }); } catch {} }
+    if (navigator.share) { try { await navigator.share({ title: "Join RoziPay", text: message, url: link }); } catch {} }
     else { copy(); }
   }
 

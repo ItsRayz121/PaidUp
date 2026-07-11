@@ -60,7 +60,7 @@ export default function StaffPage() {
     <div className="mx-auto max-w-5xl px-4 py-5">
       <header className="mb-5 flex items-center justify-between border-b border-line pb-3">
         <div>
-          <h1 className="text-lg font-bold text-brand-ink">PaidUp — Staff</h1>
+          <h1 className="text-lg font-bold text-brand-ink">RoziPay — Staff</h1>
           <p className="text-xs text-muted">
             Signed in as {user?.email} · role: <span className="font-semibold uppercase">{user?.role}</span>
           </p>

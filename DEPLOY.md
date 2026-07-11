@@ -1,4 +1,10 @@
-# Deploying PaidUp
+# Deploying RoziPay
+
+> **Brand:** the app is **RoziPay**, domain **rozipay.xyz** (final). The Vercel
+> project slug (`paid-up-one`) and the live Vercel/Railway hostnames below are the
+> *existing* deploy targets and are unchanged — renaming the brand does not move
+> the infrastructure. To actually serve the app from `rozipay.xyz`, add it as a
+> custom domain in Vercel and update `WEB_ORIGIN` (see the Frontend section).
 
 Two separate deploys, both auto-deploy from GitHub `main` on every push:
 
@@ -35,7 +41,7 @@ Railway.
     `login@creatorxbot.site`. Gmail is not allowed as a sender, and
     `onboarding@resend.dev` only sends to your own Resend account email.
   - In production the API refuses to boot if `EMAIL_FROM` is still the
-    `@paidup.app` default, since the provider would reject every send.
+    `@rozipay.invalid` sentinel default, since the provider would reject every send.
 
 > These are the values generated during setup. You can rotate them anytime —
 > just generate new random hex strings and update both here and any ad-network
@@ -80,7 +86,7 @@ gets a synthetic `tg<id>@telegram.local` address and can sign in via Telegram on
 ### After setting variables
 Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return
-`{"ok":true,"service":"paidup-api"}`.
+`{"ok":true,"service":"rozipay-api"}`.
 
 ### Applying launch config (commission split)
 The launch default is **60% of net network payout to users** (40% margin).

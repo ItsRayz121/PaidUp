@@ -73,7 +73,7 @@ const dict: Record<Locale, Record<string, string>> = {
     "refer.step3": "You get points when they earn.",
     "refer.trustNote": "Your friends only trust apps that pay. Get your money first, then share.",
     "refer.inviteMessage":
-      "I use PaidUp to earn real money. Join with my code {code} and we both get points. {link}",
+      "I use RoziPay to earn real money. Join with my code {code} and we both get points. {link}",
     // help
     "help.title": "Help & support",
     "help.subtitle": "Tell us the problem. A real person will reply.",
@@ -228,7 +228,7 @@ const dict: Record<Locale, Record<string, string>> = {
     "refer.trustNote":
       "آپ کے دوست صرف انہی ایپس پر بھروسہ کرتے ہیں جو ادائیگی کرتی ہیں۔ پہلے اپنے پیسے نکالیں، پھر شیئر کریں۔",
     "refer.inviteMessage":
-      "میں اصلی پیسے کمانے کے لیے PaidUp استعمال کرتا ہوں۔ میرے کوڈ {code} کے ساتھ شامل ہوں اور ہم دونوں کو پوائنٹس ملیں گے۔ {link}",
+      "میں اصلی پیسے کمانے کے لیے RoziPay استعمال کرتا ہوں۔ میرے کوڈ {code} کے ساتھ شامل ہوں اور ہم دونوں کو پوائنٹس ملیں گے۔ {link}",
     // help
     "help.title": "مدد اور سپورٹ",
     "help.subtitle": "ہمیں مسئلہ بتائیں۔ ایک اصل شخص جواب دے گا۔",
@@ -330,7 +330,7 @@ const dict: Record<Locale, Record<string, string>> = {
   },
 };
 
-const STORAGE_KEY = "paidup.locale";
+const STORAGE_KEY = "rozipay.locale";
 
 function localeDir(l: Locale): "ltr" | "rtl" {
   return LOCALES.find((x) => x.id === l)?.dir ?? "ltr";

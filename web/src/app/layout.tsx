@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "PaidUp — earn and get real money",
+  title: "RoziPay — earn and get real money",
   description: "Do simple tasks, earn points, and get real cash in your mobile wallet.",
 };
 

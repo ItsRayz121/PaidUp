@@ -10,8 +10,8 @@ export const API_BASE =
 
 import { getDeviceId } from "./device";
 
-const TOKEN_KEY = "paidup_token";
-const USER_KEY = "paidup_user";
+const TOKEN_KEY = "rozipay_token";
+const USER_KEY = "rozipay_user";
 
 export type SessionUser = {
   id: string; email: string; country: string;

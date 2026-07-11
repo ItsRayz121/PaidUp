@@ -133,7 +133,7 @@ export default function LoginPage() {
             <StarIcon size={24} />
           </span>
           <div>
-            <p className="num text-xl font-bold text-brand-ink leading-none">PaidUp</p>
+            <p className="num text-xl font-bold text-brand-ink leading-none">RoziPay</p>
             <p className="text-xs text-muted">{t("login.tagline")}</p>
           </div>
         </div>

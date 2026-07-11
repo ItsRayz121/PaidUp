@@ -10,7 +10,7 @@ import { initDb, usingRealPostgres } from "./db.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
-console.log(`Booting paidup-api · node ${process.version} · NODE_ENV=${process.env.NODE_ENV ?? "(unset)"} · PORT=${process.env.PORT ?? config.port}`);
+console.log(`Booting rozipay-api · node ${process.version} · NODE_ENV=${process.env.NODE_ENV ?? "(unset)"} · PORT=${process.env.PORT ?? config.port}`);
 
 // SECURITY: never boot in production with default (source-visible) secrets —
 // they allow session forgery, admin impersonation, and forged postbacks.
@@ -31,7 +31,7 @@ if (process.env.NODE_ENV === "production") {
   }
   // A sender on an unverified domain is rejected by the provider at send time,
   // which surfaces to the user as a generic login failure. Fail here instead.
-  if (config.resendApiKey && config.emailFrom.endsWith("@paidup.app")) {
+  if (config.resendApiKey && config.emailFrom.endsWith("@rozipay.invalid")) {
     console.error(`FATAL: not starting — EMAIL_FROM is still the ${config.emailFrom} default. Set it to an address on a domain verified in Resend.`);
     process.exit(1);
   }
@@ -55,7 +55,7 @@ await app.register(cors, {
   credentials: true,
 });
 
-app.get("/health", async () => ({ ok: true, service: "paidup-api" }));
+app.get("/health", async () => ({ ok: true, service: "rozipay-api" }));
 
 await app.register(authRoutes);
 await app.register(appRoutes);
