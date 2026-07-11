@@ -6,11 +6,13 @@ import { StatusLegend } from "@/components/TaskFlow";
 import { Loading, ErrorState, EmptyState, LogoutButton } from "@/components/state";
 import { StarIcon, WalletIcon, GiftIcon, InfoIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
+import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchLedger, type LedgerEntry } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 
 export default function WalletPage() {
   const { ready } = useRequireAuth();
+  const { t } = useI18n();
   const bal = useApi(fetchBalance, []);
   const led = useApi(fetchLedger, []);
 
@@ -25,8 +27,8 @@ export default function WalletPage() {
     <div className="px-4 pt-5 pb-8 space-y-5">
       <header className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-bold text-brand-ink">Wallet</h1>
-          <p className="text-sm text-muted">Your points and your money history.</p>
+          <h1 className="text-xl font-bold text-brand-ink">{t("nav.wallet")}</h1>
+          <p className="text-sm text-muted">{t("wallet.subtitle")}</p>
         </div>
         <LogoutButton />
       </header>
@@ -35,19 +37,19 @@ export default function WalletPage() {
         <ErrorState message={bal.error} onRetry={bal.reload} />
       ) : (
         <Card className="p-5">
-          <p className="text-sm text-muted">Your points</p>
+          <p className="text-sm text-muted">{t("common.yourPoints")}</p>
           <p className="mt-1 flex items-center gap-2">
             <StarIcon size={26} className="text-accent" />
             <span className="num text-4xl font-bold text-brand-ink">{formatPoints(points)}</span>
           </p>
-          <p className="mt-1 text-muted">About <span className="font-semibold text-brand-ink">{formatMoney(points)}</span></p>
+          <p className="mt-1 font-semibold text-brand-ink">{t("wallet.aboutValue", { value: formatMoney(points) })}</p>
           <div className="mt-4">
             {canWithdraw ? (
-              <Button href="/wallet/withdraw" variant="primary"><WalletIcon size={20} /> Get my money</Button>
+              <Button href="/wallet/withdraw" variant="primary"><WalletIcon size={20} /> {t("common.getMyMoney")}</Button>
             ) : (
               <p className="flex gap-2 rounded-xl bg-pending-tint p-3 text-sm text-pending">
                 <InfoIcon size={18} className="mt-0.5 shrink-0" />
-                You can get your money at {formatPoints(min)} points. Keep earning — you are close.
+                {t("wallet.reachAt", { points: formatPoints(min) })}
               </p>
             )}
           </div>
@@ -55,13 +57,13 @@ export default function WalletPage() {
       )}
 
       <section>
-        <SectionTitle>History</SectionTitle>
+        <SectionTitle>{t("wallet.history")}</SectionTitle>
         <Card className="p-2 mb-2"><div className="px-2 py-1"><StatusLegend /></div></Card>
 
         {led.loading ? <Loading /> : led.error ? (
           <ErrorState message={led.error} onRetry={led.reload} />
         ) : entries.length === 0 ? (
-          <EmptyState title="No history yet" body="Finish a task to see your first points here." />
+          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
         ) : (
           <ul className="space-y-2.5">
             {entries.map((e: LedgerEntry) => {
@@ -93,7 +95,7 @@ export default function WalletPage() {
       </section>
 
       <p className="text-center text-xs text-muted">
-        Need help with a payment? <Link href="/refer" className="font-semibold text-brand">Contact support</Link>
+        {t("wallet.needHelp")} <Link href="/help" className="font-semibold text-brand">{t("wallet.contactSupport")}</Link>
       </p>
     </div>
   );

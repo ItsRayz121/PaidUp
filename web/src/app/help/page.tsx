@@ -5,6 +5,7 @@ import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { HelpIcon, CheckIcon, ClockIcon, ShieldIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
+import { useI18n } from "@/lib/i18n";
 import { fetchMyTickets, createTicket, replyToMyTicket, type MyTicket } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 
@@ -13,6 +14,7 @@ const inputClass =
 
 export default function HelpPage() {
   const { ready } = useRequireAuth();
+  const { t } = useI18n();
   const tickets = useApi(fetchMyTickets, []);
   const [asking, setAsking] = useState(false);
 
@@ -24,13 +26,13 @@ export default function HelpPage() {
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
       <header>
-        <h1 className="text-xl font-bold text-brand-ink">Help &amp; support</h1>
-        <p className="text-sm text-muted">Tell us the problem. A real person will reply.</p>
+        <h1 className="text-xl font-bold text-brand-ink">{t("help.title")}</h1>
+        <p className="text-sm text-muted">{t("help.subtitle")}</p>
       </header>
 
       {!asking && (
         <Button variant="primary" onClick={() => setAsking(true)}>
-          <HelpIcon size={18} /> Ask for help
+          <HelpIcon size={18} /> {t("help.askForHelp")}
         </Button>
       )}
 
@@ -38,8 +40,8 @@ export default function HelpPage() {
 
       {list.length === 0 && !asking ? (
         <EmptyState
-          title="No questions yet"
-          body="If your points did not come, or money is late, ask here and we will check."
+          title={t("help.noQuestionsTitle")}
+          body={t("help.noQuestionsBody")}
         />
       ) : (
         <section className="space-y-3">
@@ -49,17 +51,18 @@ export default function HelpPage() {
 
       <Card className="flex items-center gap-3 bg-brand-tint p-4">
         <ShieldIcon size={20} className="shrink-0 text-brand" />
-        <p className="text-sm text-brand-ink">Points are only added after the offer partner confirms your task. This can take a little time.</p>
+        <p className="text-sm text-brand-ink">{t("help.pointsNote")}</p>
       </Card>
     </div>
   );
 }
 
 function TicketStatus({ status }: { status: MyTicket["status"] }) {
+  const { t } = useI18n();
   const map = {
-    open: { label: "Waiting for reply", Icon: ClockIcon, cls: "bg-pending-tint text-pending" },
-    answered: { label: "We replied", Icon: CheckIcon, cls: "bg-success-tint text-success" },
-    closed: { label: "Closed", Icon: CheckIcon, cls: "bg-brand-tint text-brand" },
+    open: { label: t("help.statusWaiting"), Icon: ClockIcon, cls: "bg-pending-tint text-pending" },
+    answered: { label: t("help.statusReplied"), Icon: CheckIcon, cls: "bg-success-tint text-success" },
+    closed: { label: t("help.statusClosed"), Icon: CheckIcon, cls: "bg-brand-tint text-brand" },
   }[status];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${map.cls}`}>
@@ -69,6 +72,7 @@ function TicketStatus({ status }: { status: MyTicket["status"] }) {
 }
 
 function TicketCard({ ticket, onReplied }: { ticket: MyTicket; onReplied: () => void }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -86,7 +90,7 @@ function TicketCard({ ticket, onReplied }: { ticket: MyTicket; onReplied: () => 
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
         <div className="min-w-0">
           <p className="truncate font-semibold text-brand-ink">{ticket.subject}</p>
-          <p className="text-xs text-muted">Last update {timeAgo(ticket.updatedAt)}</p>
+          <p className="text-xs text-muted">{t("help.lastUpdate", { time: timeAgo(ticket.updatedAt) })}</p>
         </div>
         <TicketStatus status={ticket.status} />
       </button>
@@ -100,7 +104,7 @@ function TicketCard({ ticket, onReplied }: { ticket: MyTicket; onReplied: () => 
               }`}>
                 <p className="whitespace-pre-wrap">{m.body}</p>
                 <p className={`mt-1 text-[11px] ${m.author_role === "user" ? "text-white/70" : "text-muted"}`}>
-                  {m.author_role === "user" ? "You" : "Support"} · {timeAgo(m.created_at)}
+                  {m.author_role === "user" ? t("help.you") : t("help.support")} · {timeAgo(m.created_at)}
                 </p>
               </div>
             ))}
@@ -109,10 +113,10 @@ function TicketCard({ ticket, onReplied }: { ticket: MyTicket; onReplied: () => 
           {ticket.status !== "closed" && (
             <div className="space-y-2">
               <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2}
-                placeholder="Write a reply…" className={inputClass} />
+                placeholder={t("help.writeReply")} className={inputClass} />
               {err && <p className="text-sm text-danger">{err}</p>}
               <Button variant="ghost" size="md" full={false} disabled={!reply.trim() || busy} onClick={send}>
-                {busy ? "Sending…" : "Send reply"}
+                {busy ? t("help.sending") : t("help.sendReply")}
               </Button>
             </div>
           )}
@@ -123,6 +127,7 @@ function TicketCard({ ticket, onReplied }: { ticket: MyTicket; onReplied: () => 
 }
 
 function NewTicket({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const { t } = useI18n();
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -137,16 +142,16 @@ function NewTicket({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
 
   return (
     <Card className="p-4 space-y-3">
-      <p className="font-semibold text-brand-ink">What do you need help with?</p>
+      <p className="font-semibold text-brand-ink">{t("help.whatHelp")}</p>
       <input value={subject} onChange={(e) => setSubject(e.target.value)}
-        placeholder="Short subject (e.g. Points not added)" className={inputClass} maxLength={120} />
+        placeholder={t("help.subjectPlaceholder")} className={inputClass} maxLength={120} />
       <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
-        placeholder="Tell us what happened." className={inputClass} maxLength={2000} />
+        placeholder={t("help.messagePlaceholder")} className={inputClass} maxLength={2000} />
       {err && <p className="text-sm text-danger">{err}</p>}
       <div className="flex gap-2.5">
-        <Button variant="ghost" size="md" onClick={onCancel}>Cancel</Button>
+        <Button variant="ghost" size="md" onClick={onCancel}>{t("common.cancel")}</Button>
         <Button variant="primary" size="md" disabled={!subject.trim() || !message.trim() || busy} onClick={submit}>
-          {busy ? "Sending…" : "Send"}
+          {busy ? t("help.sending") : t("help.send")}
         </Button>
       </div>
     </Card>
