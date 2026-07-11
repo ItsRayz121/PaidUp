@@ -4,6 +4,7 @@ import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId } from "../auth.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
+import { checkPayoutAddressReuse } from "../fraud.ts";
 
 function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
@@ -72,6 +73,10 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       throw e;
     }
 
+    // Flag (never block) if this wallet is shared across accounts — staff see it
+    // in the fraud queue before approving the payout. Runs after the hold commits.
+    await checkPayoutAddressReuse(userId, address);
+
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
   }));
 
@@ -85,6 +90,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         id: r.id, amount: r.amount, chain: r.payout_rail, address: r.payout_address ?? undefined,
         status: r.status, at: r.created_at, reviewNote: r.review_note ?? undefined,
         paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
+        usdtAmount: r.usdt_amount ?? undefined,
       })),
     };
   }));

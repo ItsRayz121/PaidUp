@@ -350,6 +350,7 @@ const MIGRATIONS = `
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_address TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS usdt_amount TEXT;
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_days INTEGER NOT NULL DEFAULT 0;
 `;
 

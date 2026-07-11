@@ -142,9 +142,9 @@ export type StaffWithdrawal = {
 };
 export const fetchStaffQueue = (status = "pending") =>
   apiFetch<{ requests: StaffWithdrawal[] }>(`/staff/withdrawals?status=${encodeURIComponent(status)}`);
-export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string) =>
-  apiFetch<{ ok: true; status: string }>(`/staff/withdrawals/${id}/decision`, {
-    method: "POST", body: JSON.stringify({ action, note }),
+export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
+  apiFetch<{ ok: true; status: string; txHash?: string; usdt?: string }>(`/staff/withdrawals/${id}/decision`, {
+    method: "POST", body: JSON.stringify({ action, note, txHash }),
   });
 export const fetchStaffUser = (id: string) =>
   apiFetch<{ user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[] }>(`/staff/users/${id}`);

@@ -67,8 +67,31 @@ These override convenience or speed at every step:
   - **Telegram login fallback** — `POST /auth/telegram` verifies the Login Widget signature server-side (HMAC-SHA256 keyed by SHA256(bot token)) + freshness/replay window; finds-or-creates by `telegram_id` with a synthetic never-emailed address; feature-flagged off until `TELEGRAM_BOT_TOKEN` (backend) + `NEXT_PUBLIC_TELEGRAM_BOT` (web) are set. Frontend widget on `/login` + register.
   - Verified: 12-check API smoke test (commission=60 after seed, geo match/mismatch/dedupe, telegram valid/bad-sig/stale/repeat), `api` + `web` typecheck, `web` production build, `security-review` (no findings) — all clean.
 
-**Still open (business decisions):** ✅ all three now locked (60% split / Pakistan / PaidUp). Real commission % is set in code; run the seed to push it to the live DB.
+- **Phase 2/3 (cont.)**: three more items done + verified (2026-07-11):
+  - **USDT payout settlement** — the manual mark-paid stub is replaced by a payout
+    provider (`api/src/payout.ts`). Manual mode is live: marking paid records the
+    on-chain **tx hash** + computed **USDT amount** (`POINTS_PER_USDT` rate) as
+    proof; staff panel prompts for the hash. On-chain auto-send is scaffolded and
+    config-gated (`PAYOUT_MODE=onchain` + signer + RPC), deliberately disabled
+    until proven on testnet — see DEPLOY.md § Payout.
+  - **Fraud rule `payout_address_reuse`** — flags (never blocks) when
+    `payoutAddressReuseThreshold` (3)+ accounts withdraw to one wallet; the farm
+    cash-out signal. Checked at withdrawal-request time, deduped per address.
+  - **Urdu localization foundation (Phase 3 start)** — client-side i18n
+    (`web/src/lib/i18n.tsx`, en/ur dictionary, RTL, localStorage preference),
+    `LangToggle`, provider in `Shell`; Home/Tasks + bottom nav translated. Staff
+    panel stays English. More earner screens (login, wallet, refer, help) to do.
+  - Verified: api + web typecheck, web production build, payout unit tests (12),
+    fraud DB test (4), `security-review` (no findings) — all clean.
 
-**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow), further fraud tuning. Do not start Phase 2 items beyond these until prioritized.
+**Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
+are things only the founder can obtain: (1) a **real ad-network account** + its
+postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
+**Resend API key + verified email domain**, (3) a **funded USDT treasury wallet**.
+Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
+
+**Still open (business decisions):** ✅ all three locked (60% split / Pakistan / PaidUp).
+
+**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow). Further fraud tuning + finishing Urdu across all screens are open Phase 3 work.
 
 See `docs/` for the full spec.

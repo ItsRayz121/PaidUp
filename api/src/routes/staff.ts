@@ -3,6 +3,8 @@ import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
+import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
+import type { ChainId } from "../chains.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -22,6 +24,9 @@ const READY = ["agent_approved", "manager_approved"];
 const decisionSchema = z.object({
   action: z.enum(["approve", "reject", "pay"]),
   note: z.string().max(500).optional(),
+  // Manual payout: the on-chain hash of the USDT the staff member sent by hand.
+  // Required to mark paid in manual mode; ignored when auto-send is on.
+  txHash: z.string().max(120).optional(),
 });
 
 export async function staffRoutes(app: FastifyInstance) {
@@ -51,7 +56,7 @@ export async function staffRoutes(app: FastifyInstance) {
   app.post("/staff/withdrawals/:id/decision", staffGuard(["agent", "manager", "admin"], async ({ userId, role }, req, reply) => {
     const parsed = decisionSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick approve, reject, or pay." });
-    const { action, note } = parsed.data;
+    const { action, note, txHash } = parsed.data;
 
     const id = (req.params as { id: string }).id;
 
@@ -68,7 +73,7 @@ export async function staffRoutes(app: FastifyInstance) {
     // reject can never refund twice. staffGuard maps a thrown {statusCode} to
     // JSON, so throwing here rolls the transaction back cleanly.
     return await sql.tx(async (t) => {
-      const w = await t.get<{ id: string; user_id: string; amount: number; status: string }>(
+      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string }>(
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
       if (!w) throw { statusCode: 404, message: "Request not found." };
@@ -106,10 +111,23 @@ export async function staffRoutes(app: FastifyInstance) {
       if (!canApproveAmount(role, w.amount)) {
         throw { statusCode: 403, message: "This is above your limit. A Manager must pay it." };
       }
-      // In v1 payout is manual; the on-chain USDT send will happen here.
-      const s = stampSql("paid", { paid_at: now() });
+      // Settle the payout: manual mode records the hash the staff member sent by
+      // hand; onchain mode (when enabled + tested) signs and broadcasts here.
+      // Either way the actual USDT amount is derived from one conversion rule and
+      // stored alongside the on-chain hash as proof of payment.
+      const usdt = pointsToUsdt(w.amount);
+      const provider = getPayoutProvider();
+      const result = await provider.send({
+        requestId: w.id,
+        chain: w.payout_rail as ChainId,
+        address: w.payout_address,
+        points: w.amount,
+        usdt,
+        providedTxHash: txHash,
+      });
+      const s = stampSql("paid", { paid_at: now(), tx_hash: result.txHash, usdt_amount: usdt });
       await t.run(s.text, ...s.vals);
-      return { ok: true, status: "paid" };
+      return { ok: true, status: "paid", txHash: result.txHash, usdt };
     });
   }));
 

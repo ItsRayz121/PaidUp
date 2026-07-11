@@ -50,6 +50,19 @@ its secret in Railway **before** (or with) the deploy, or the new build won't
 start. Generate one with:
 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
+### Payout / USDT send
+v1 payout is **manual**: an admin approves, sends USDT from the treasury wallet,
+and pastes the on-chain **transaction hash** to mark the request paid (stored as
+proof, shown to the user). Config:
+- `POINTS_PER_USDT` — points-to-USDT rate at pay time. Default `1000` (1000 points
+  = 1 USDT). Set the real number here.
+- On-chain **auto-send** is scaffolded but OFF. Do not enable on mainnet until
+  proven on a testnet. To turn on later: `PAYOUT_MODE=onchain`,
+  `PAYOUT_SIGNER_KEY=<funded EVM hot-wallet key>`, and `RPC_BEP20` / `RPC_POLYGON`
+  / `RPC_BASE` for the chains you auto-settle (Aptos stays manual). Until the
+  broadcast in `api/src/payout.ts` is implemented + tested, onchain mode refuses
+  to settle and falls back to requiring a manual hash.
+
 ### Optional — Telegram login fallback
 A cheaper alternative to email at signup. Off by default; leave unset to keep it
 hidden. To turn it on:

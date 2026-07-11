@@ -128,6 +128,36 @@ export async function recordDevice(
   }
 }
 
+// Payout-address reuse (P2): many distinct accounts cashing out to the SAME
+// USDT wallet is the classic account-farm signal — a fraudster funnels the
+// points from dozens of fake accounts into one destination address. We compare
+// the normalised address across all withdrawal requests; EVM addresses are
+// case-insensitive, so we lower-case them (Aptos too — hex). Soft, medium,
+// staff-review only: it NEVER blocks the withdrawal (a family sharing one wallet
+// is plausible here), matching the rest of the layer. Call at request time.
+// Best-effort — never throws into the withdrawal path.
+export async function checkPayoutAddressReuse(
+  userId: string,
+  address: string,
+): Promise<void> {
+  try {
+    const norm = address.trim().toLowerCase();
+    if (!norm) return;
+    const accounts = await sql.all<{ user_id: string }>(
+      "SELECT DISTINCT user_id FROM withdrawal_requests WHERE LOWER(payout_address) = ?",
+      norm,
+    );
+    if (accounts.length >= config.payoutAddressReuseThreshold) {
+      await flagOnce(
+        "payout_address_reuse", `addr:${norm}`, userId, "medium",
+        `${accounts.length} accounts withdraw to this wallet address.`,
+      );
+    }
+  } catch {
+    // A fraud signal must never break a legitimate withdrawal.
+  }
+}
+
 // Geo-mismatch (P2): the offer was completed from a country that differs from
 // the one the account signed up in — a common signal of proxy/VPN farming or a
 // resold account. Uses the country the NETWORK reports in its postback vs the

@@ -45,6 +45,12 @@ export const config = {
   // markets makes many users legitimately share an IP, so this is a soft,
   // medium-severity signal for staff review, never an auto-ban.
   ipReuseThreshold: 6,
+  // Tighter fraud (P2): flag when one payout wallet address is used by this many
+  // distinct accounts. A farm funnels many fake accounts' points into a single
+  // cash-out wallet, so a shared destination address is a strong signal — but we
+  // still only flag for staff review (never block the withdrawal), since a
+  // family legitimately sharing one wallet is possible in our markets.
+  payoutAddressReuseThreshold: 3,
 
   // Postback replay window (P2): a signed postback whose timestamp is older or
   // newer than this many seconds is rejected (adapters that sign a timestamp,
@@ -54,6 +60,28 @@ export const config = {
   // Withdrawal approval chain: at/below this an Agent may approve; above it a
   // Manager must approve (docs/PROJECT_SPEC.md).
   agentApprovalMaxPoints: 5000,
+
+  // ---- Payout / USDT send -------------------------------------------------
+  // Points -> USDT conversion at pay time. How many points equal 1 USDT. This is
+  // a business number derived from the commission split; the value below is a
+  // launch placeholder (1000 points = 1 USDT). Set POINTS_PER_USDT in prod.
+  pointsPerUsdt: Number(process.env.POINTS_PER_USDT ?? 1000),
+  // Payout mode. "manual" (default, v1 non-goal): a staff member sends USDT from
+  // the treasury wallet and records the tx hash when marking paid. "onchain":
+  // the API signs+broadcasts the USDT transfer itself when an admin clicks pay.
+  // On-chain is OFF unless explicitly set AND a signer key is present, and it
+  // must be proven on testnet before mainnet use — see api/src/payout.ts.
+  payoutMode: (process.env.PAYOUT_MODE ?? "manual") as "manual" | "onchain",
+  // Treasury signer for onchain mode (EVM hot wallet private key, 0x + 64 hex).
+  // Empty => onchain mode refuses to send (falls back to requiring manual hash).
+  payoutSignerKey: process.env.PAYOUT_SIGNER_KEY ?? "",
+  // Per-chain JSON-RPC endpoints for onchain broadcast. Empty => that chain
+  // cannot auto-send and staff must pay it manually.
+  payoutRpc: {
+    bep20: process.env.RPC_BEP20 ?? "",
+    polygon: process.env.RPC_POLYGON ?? "",
+    base: process.env.RPC_BASE ?? "",
+  } as Record<string, string>,
 
   // Per-network postback secrets (HMAC). Empty in dev falls back to a known
   // dev secret so the demo adapter still verifies. Set real secrets in prod.

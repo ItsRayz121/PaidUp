@@ -35,13 +35,21 @@ export default function StaffPage() {
 
   async function act(id: string, action: "approve" | "reject" | "pay") {
     let note: string | undefined;
+    let txHash: string | undefined;
     if (action === "reject") {
       const reason = window.prompt("Reason for rejecting (the user will see this):");
       if (reason === null) return; // cancelled
       note = reason;
     }
+    if (action === "pay") {
+      // v1 is manual: send the USDT from the treasury wallet, then paste the
+      // on-chain transaction hash here so the user gets proof of payment.
+      const hash = window.prompt("Paste the USDT transaction hash you sent (0x…). Send the payment first.");
+      if (hash === null) return; // cancelled
+      txHash = hash.trim();
+    }
     try {
-      await decideWithdrawal(id, action, note);
+      await decideWithdrawal(id, action, note, txHash);
       queue.reload();
     } catch (e) {
       window.alert((e as Error).message);
