@@ -50,8 +50,10 @@ export default function WithdrawPage() {
 
   const balance = bal.data?.points ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 2000;
+  const fee = bal.data?.withdrawalFeePoints ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
   const amt = amount || min;
+  const net = Math.max(0, amt - fee); // points actually converted to USDT
   const belowMin = amt < min;
   const overBalance = amt > balance;
   const addressOk = addressLooksValid(chain, address);
@@ -59,7 +61,7 @@ export default function WithdrawPage() {
   const trimmed = address.trim();
   const canSaveAddr = addressOk && trimmed !== (savedAddresses[chain] ?? "");
 
-  if (done) return <SentConfirmation amount={amt} chainLabel={chainMeta.label} address={trimmed} />;
+  if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} />;
 
   async function submit() {
     setBusy(true); setError(null);
@@ -163,8 +165,20 @@ export default function WithdrawPage() {
             onChange={(e) => setAmount(Number(e.target.value))}
             className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
         </div>
+        {fee > 0 && !belowMin && (
+          <div className="mt-2 rounded-lg border border-line bg-card p-2.5 text-sm">
+            <div className="flex justify-between text-muted">
+              <span>{t("withdraw.feeLabel")}</span>
+              <span className="num">− {t("common.pointsAmount", { n: formatPoints(fee) })}</span>
+            </div>
+            <div className="mt-1 flex justify-between font-semibold text-brand-ink">
+              <span>{t("withdraw.youReceive")}</span>
+              <span className="num">{t("common.pointsAmount", { n: formatPoints(net) })}</span>
+            </div>
+          </div>
+        )}
         <p className="mt-1.5 px-1 text-sm font-semibold text-brand-ink">
-          {t("withdraw.weSendWorth", { points: t("common.pointsAmount", { n: formatPoints(Math.max(0, amt)) }) })}
+          {t("withdraw.weSendWorth", { points: t("common.pointsAmount", { n: formatPoints(net) }) })}
         </p>
         <p className="px-1 text-xs text-muted">{t("withdraw.lowestPayout", { points: t("common.pointsAmount", { n: formatPoints(min) }) })}</p>
         {belowMin && <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needAtLeast", { points: t("common.pointsAmount", { n: formatPoints(min) }) })}</p>}

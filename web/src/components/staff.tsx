@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket,
-  fetchNetworks, updateNetwork, resolveFraud,
+  fetchNetworks, updateNetwork, resolveFraud, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
@@ -152,11 +152,48 @@ function TicketThread({ id, onChange }: { id: string; onChange: () => void }) {
   );
 }
 
+// ---- Withdrawal fee (admin only) -----------------------------------------
+// Flat fee (points) taken out of every withdrawal, deducted from the payout so
+// it covers on-chain gas / protects margin. Snapshotted onto each request.
+function WithdrawalFeePanel() {
+  const s = useApi(fetchSettings, []);
+  const [fee, setFee] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const current = s.data?.withdrawalFeePoints ?? 0;
+  const value = fee ?? current;
+
+  async function save() {
+    setBusy(true);
+    try { await updateSettings({ withdrawalFeePoints: value }); s.reload(); setFee(null); }
+    catch (e) { window.alert((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <section className="mb-8">
+      <h2 className="mb-2 font-bold text-brand-ink">Withdrawal fee</h2>
+      <p className="mb-2 text-xs text-muted">Flat points fee taken out of every withdrawal (covers network/gas cost). 0 = no fee. The user sees the fee and the net amount before they confirm.</p>
+      <div className="flex items-center gap-2 rounded-lg border border-line p-3">
+        <input type="number" min={0} max={1000000} value={value}
+          onChange={(e) => setFee(Number(e.target.value))}
+          className="num w-28 rounded border border-line bg-card p-1.5 text-sm outline-none" />
+        <span className="text-sm text-muted">points per withdrawal</span>
+        {fee !== null && fee !== current && (
+          <button disabled={busy} onClick={save}
+            className="ms-auto rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Save</button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ---- Ad-network config (admin only) --------------------------------------
 export function NetworkPanel() {
   const nets = useApi(fetchNetworks, []);
 
   return (
+    <>
+    <WithdrawalFeePanel />
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Ad networks &amp; commission</h2>
       <p className="mb-2 text-xs text-muted">Split and referral bonus are configured here — never in code. Disabling a network stops its postbacks crediting and hides its offers.</p>
@@ -182,6 +219,7 @@ export function NetworkPanel() {
           </div>
         )}
     </section>
+    </>
   );
 }
 

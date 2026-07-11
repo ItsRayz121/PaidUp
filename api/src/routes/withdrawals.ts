@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId } from "../auth.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
@@ -62,6 +62,14 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     if (!addrCheck.ok) return reply.code(400).send({ error: addrCheck.error });
     const address = addressRaw.trim();
 
+    // Snapshot the current withdrawal fee onto the request, so a later Admin
+    // change can't alter an in-flight payout. The user must have more than the
+    // fee, or the net USDT would be zero/negative.
+    const fee = Math.max(0, Number(await getSetting("withdrawal_fee_points", "0")) || 0);
+    if (amountPoints <= fee) {
+      return reply.code(400).send({ error: `The withdrawal fee is ${fee} points. Ask for more than that.` });
+    }
+
     const id = newId();
     try {
       await sql.tx(async (t) => {
@@ -75,9 +83,9 @@ export async function withdrawalRoutes(app: FastifyInstance) {
           throw { statusCode: 400, message: "You do not have that many points yet." };
         }
         await t.run(
-          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, created_at)
-           VALUES (?,?,?,?,?, 'pending', ?)`,
-          id, userId, amountPoints, chain, address, now(),
+          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, status, created_at)
+           VALUES (?,?,?,?,?,?, 'pending', ?)`,
+          id, userId, amountPoints, chain, address, fee, now(),
         );
         // Hold the funds.
         await postLedger({
@@ -134,7 +142,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         id: r.id, amount: r.amount, chain: r.payout_rail, address: r.payout_address ?? undefined,
         status: r.status, at: r.created_at, reviewNote: r.review_note ?? undefined,
         paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
-        usdtAmount: r.usdt_amount ?? undefined,
+        usdtAmount: r.usdt_amount ?? undefined, feePoints: (r.fee_points as number) ?? 0,
       })),
     };
   }));

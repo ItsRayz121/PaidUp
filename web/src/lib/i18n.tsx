@@ -176,6 +176,8 @@ const dict: Record<Locale, Record<string, string>> = {
     "wallet.setupWallet": "Set up my withdrawal wallet",
     "withdraw.saveAddress": "Save this address",
     "withdraw.addressSaved": "Address saved",
+    "withdraw.feeLabel": "Withdrawal fee",
+    "withdraw.youReceive": "You receive",
     // leaderboard
     "leaderboard.title": "Leaderboard",
     "leaderboard.subtitle": "Top earners and top inviters.",
@@ -345,6 +347,8 @@ const dict: Record<Locale, Record<string, string>> = {
     "wallet.setupWallet": "میرا واپسی والٹ سیٹ اپ کریں",
     "withdraw.saveAddress": "یہ ایڈریس محفوظ کریں",
     "withdraw.addressSaved": "ایڈریس محفوظ ہو گیا",
+    "withdraw.feeLabel": "نکالنے کی فیس",
+    "withdraw.youReceive": "آپ کو ملیں گے",
     // leaderboard
     "leaderboard.title": "لیڈر بورڈ",
     "leaderboard.subtitle": "سب سے زیادہ کمانے والے اور دعوت دینے والے۔",

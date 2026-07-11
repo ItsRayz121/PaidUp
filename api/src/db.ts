@@ -372,6 +372,17 @@ const MIGRATIONS = `
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, chain)
   );
+
+  -- Global key-value app settings (Admin-tunable), e.g. the withdrawal fee.
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  -- Fee (in points) charged on a withdrawal, snapshotted from app_settings at
+  -- request time so a later Admin change never alters an in-flight request.
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS fee_points INTEGER NOT NULL DEFAULT 0;
 `;
 
 export async function initDb(): Promise<void> {
@@ -397,6 +408,25 @@ export async function initDb(): Promise<void> {
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
      VALUES ('surveyx','SurveyX','offerwall','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
+  );
+  // Default global settings (only inserted when absent). Withdrawal fee off (0)
+  // by default so no user is surprised by a deduction until Admin sets one.
+  await sql.run(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES ('withdrawal_fee_points','0',?) ON CONFLICT (key) DO NOTHING",
+    now(),
+  );
+}
+
+// Read a global app setting, falling back if unset. Values are stored as text.
+export async function getSetting(key: string, fallback: string): Promise<string> {
+  const row = await sql.get<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", key);
+  return row?.value ?? fallback;
+}
+export async function setSetting(key: string, value: string): Promise<void> {
+  await sql.run(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+    key, value, now(),
   );
 }
 

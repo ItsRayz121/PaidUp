@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, postLedger } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger, getSetting, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
@@ -73,7 +73,7 @@ export async function staffRoutes(app: FastifyInstance) {
     // reject can never refund twice. staffGuard maps a thrown {statusCode} to
     // JSON, so throwing here rolls the transaction back cleanly.
     return await sql.tx(async (t) => {
-      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string }>(
+      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string; fee_points: number }>(
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
       if (!w) throw { statusCode: 404, message: "Request not found." };
@@ -113,15 +113,17 @@ export async function staffRoutes(app: FastifyInstance) {
       }
       // Settle the payout: manual mode records the hash the staff member sent by
       // hand; onchain mode (when enabled + tested) signs and broadcasts here.
-      // Either way the actual USDT amount is derived from one conversion rule and
-      // stored alongside the on-chain hash as proof of payment.
-      const usdt = pointsToUsdt(w.amount);
+      // The USDT amount is on the NET (amount minus the fee snapshotted at
+      // request time), derived from one conversion rule, and stored alongside the
+      // on-chain hash as proof of payment.
+      const net = Math.max(0, w.amount - (w.fee_points ?? 0));
+      const usdt = pointsToUsdt(net);
       const provider = getPayoutProvider();
       const result = await provider.send({
         requestId: w.id,
         chain: w.payout_rail as ChainId,
         address: w.payout_address,
-        points: w.amount,
+        points: net,
         usdt,
         providedTxHash: txHash,
       });
@@ -219,6 +221,22 @@ export async function staffRoutes(app: FastifyInstance) {
 
     const res = await sql.run(`UPDATE networks SET ${cols.join(", ")} WHERE id = ?`, ...vals, id);
     if (!res.rowCount) return reply.code(404).send({ error: "Network not found." });
+    return { ok: true };
+  }));
+
+  // ---- Admin: global settings (withdrawal fee) ---------------------------
+  app.get("/staff/settings", staffGuard(["admin"], async () => ({
+    withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+  })));
+
+  const settingsSchema = z.object({
+    // Flat fee (points) taken out of every withdrawal. 0 = no fee.
+    withdrawalFeePoints: z.number().int().min(0).max(1_000_000),
+  });
+  app.patch("/staff/settings", staffGuard(["admin"], async (_ctx, req, reply) => {
+    const parsed = settingsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a fee of 0 or more points." });
+    await setSetting("withdrawal_fee_points", String(parsed.data.withdrawalFeePoints));
     return { ok: true };
   }));
 

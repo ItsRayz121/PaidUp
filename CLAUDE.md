@@ -98,6 +98,11 @@ These override convenience or speed at every step:
     live rows (see DEPLOY.md — old rows keep 10%/no-L2 until seeded).
   - **Leaderboard** — top earners + top inviters (masked handles), `/leaderboard`
     page, linked from Refer. Social proof to drive referrals.
+  - **Admin-tunable withdrawal fee** — flat points fee (global, `app_settings`
+    key-value table, `/staff/settings` admin endpoints; default 0). Snapshotted
+    onto each request (`withdrawal_requests.fee_points`) so an Admin change never
+    alters an in-flight payout; net USDT = pointsToUsdt(amount − fee). Shown to
+    the user (fee + "you receive") before they confirm. Editable in `/staff`.
   - Verified: api+web typecheck, web build, i18n parity (143 keys en/ur), a 10-check
     referral/withdrawal/leaderboard e2e test (L1/L2/first-task math, idempotency,
     saved-address upsert), `security-review` (no findings) — all clean.

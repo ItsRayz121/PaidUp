@@ -79,7 +79,7 @@ export type LedgerEntry = {
 };
 export type Withdrawal = {
   id: string; amount: number; chain: string; address?: string;
-  status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string; usdtAmount?: string;
+  status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string; usdtAmount?: string; feePoints?: number;
 };
 
 // ---- Auth -----------------------------------------------------------------
@@ -124,7 +124,7 @@ export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 
 // ---- Earner ---------------------------------------------------------------
 export const fetchBalance = () =>
-  apiFetch<{ points: number; minWithdrawPoints: number }>("/wallet/balance");
+  apiFetch<{ points: number; minWithdrawPoints: number; withdrawalFeePoints: number }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
 export const fetchReferrals = () =>
@@ -222,3 +222,8 @@ export type Kpis = {
   series: { day: string; completions: number; points: number }[];
 };
 export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
+
+// ---- Admin: global settings (withdrawal fee) -----------------------------
+export const fetchSettings = () => apiFetch<{ withdrawalFeePoints: number }>("/staff/settings");
+export const updateSettings = (patch: { withdrawalFeePoints: number }) =>
+  apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });

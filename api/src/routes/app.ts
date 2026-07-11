@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, balanceOf } from "../db.ts";
+import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId } from "../auth.ts";
 
@@ -44,10 +44,12 @@ export async function appRoutes(app: FastifyInstance) {
     };
   }));
 
-  // Balance = SUM(ledger). Never a stored field.
+  // Balance = SUM(ledger). Never a stored field. Also returns the current
+  // withdrawal fee (points) so the withdraw screen can show fee + net.
   app.get("/wallet/balance", guard(async (userId) => ({
     points: await balanceOf(userId),
     minWithdrawPoints: config.minWithdrawPoints,
+    withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
   })));
 
   // Full ledger history for the user. A withdrawal's status comes from the
