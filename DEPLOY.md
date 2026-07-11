@@ -37,6 +37,15 @@ WEB_ORIGIN=https://paid-up-one.vercel.app
 > just generate new random hex strings and update both here and any ad-network
 > config that uses the postback secret.
 
+**Every ad-network adapter needs its own postback secret.** Each network in
+`api/src/adapters/index.ts` reads `POSTBACK_SECRET_<NAME>` (and some also a
+`POSTBACK_TOKEN_<NAME>`); the API **fail-fasts on boot** if any is still a
+default. Currently required: `POSTBACK_SECRET_OFFERHUB`, `POSTBACK_SECRET_TAPVID`,
+`POSTBACK_TOKEN_TAPVID`, `POSTBACK_SECRET_SURVEYX`. When you add a network, set
+its secret in Railway **before** (or with) the deploy, or the new build won't
+start. Generate one with:
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
 ### After setting variables
 Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return
