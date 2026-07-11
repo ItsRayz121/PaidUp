@@ -50,10 +50,35 @@ its secret in Railway **before** (or with) the deploy, or the new build won't
 start. Generate one with:
 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
+### Optional — Telegram login fallback
+A cheaper alternative to email at signup. Off by default; leave unset to keep it
+hidden. To turn it on:
+1. Create a bot with **@BotFather** → get its token.
+2. In BotFather, set the bot's **domain** to your web origin (`/setdomain` →
+   `paid-up-one.vercel.app`), or the Login Widget won't render.
+3. Railway → set `TELEGRAM_BOT_TOKEN=<bot token>`.
+4. Vercel → set `NEXT_PUBLIC_TELEGRAM_BOT=<bot username, no @>` and redeploy with
+   build cache off (it's a `NEXT_PUBLIC_*` value, baked in at build time).
+
+The backend re-verifies Telegram's signature server-side, so the button is inert
+until both values are set. Telegram gives no email, so a Telegram-only account
+gets a synthetic `tg<id>@telegram.local` address and can sign in via Telegram only.
+
 ### After setting variables
 Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return
 `{"ok":true,"service":"paidup-api"}`.
+
+### Applying launch config (commission split)
+The launch default is **60% of net network payout to users** (40% margin).
+`initDb()` only inserts a network row if absent — it never overwrites an existing
+one — so to push the decided split to networks already in the live DB, run the
+seed once against production:
+```
+railway run --service api npm run seed   # updates commission/referral on existing rows
+```
+Admins can still tune each network's split live in `/staff` afterward; a re-seed
+resets those to the launch numbers (status/disabled state is preserved).
 
 ### Persistence — Postgres (required)
 1. Railway → your project → **New** → **Database** → **Add PostgreSQL**.
@@ -82,6 +107,9 @@ NEXT_PUBLIC_API_URL=https://paidup-production-a25f.up.railway.app
 Without this, the deployed site calls `http://localhost:4000` and login/data fail.
 Type the value by hand — a trailing slash, space, or newline pasted in here ends
 up in every request path (`//tasks`) and makes the whole API 404.
+
+Optional: `NEXT_PUBLIC_TELEGRAM_BOT=<bot username>` turns on the Telegram login
+button (see the backend Telegram section). Leave unset to hide it.
 
 `NEXT_PUBLIC_*` values are baked into the JS **at build time**. After changing
 this, you must redeploy with **"Use existing build cache" unticked**, or the old

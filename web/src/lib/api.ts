@@ -113,6 +113,13 @@ export const resetPassword = (email: string, code: string, password: string) =>
     method: "POST", body: JSON.stringify({ email, code, password }),
   });
 
+// Telegram login fallback: post the signed widget payload; backend re-verifies
+// the signature and finds-or-creates the account. `ref` carries a referral code.
+export const loginWithTelegram = (payload: Record<string, unknown>) =>
+  apiFetch<AuthOk>("/auth/telegram", {
+    method: "POST", body: JSON.stringify(payload),
+  });
+
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 
 // ---- Earner ---------------------------------------------------------------

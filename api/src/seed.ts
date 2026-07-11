@@ -5,10 +5,12 @@ import { sql, now, initDb } from "./db.ts";
 
 // tasks.network is the ADAPTER KEY (networks.id), so the feed can hide a
 // disabled network's offers and postbacks map back to a configured network.
+// commission_split_pct is the user's share of net network payout. Launch
+// decision (founder, 2026-07-11): 60% to users / 40% margin, across the board.
 const networks = [
-  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 55, referral_bonus_pct: 10, referral_bonus_days: 0 },
+  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
   { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
-  { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 55, referral_bonus_pct: 10, referral_bonus_days: 0 },
+  { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
 ];
 
 const tasks = [
@@ -25,10 +27,20 @@ await initDb();
 
 let nets = 0;
 for (const n of networks) {
+  // Seed is the canonical "apply launch config" step: re-running it pushes the
+  // decided commission/referral numbers to existing rows too (initDb only
+  // inserts-if-absent, so it can't fix a network already at an old placeholder).
+  // status is deliberately NOT overwritten, so an Admin-disabled network stays
+  // disabled and live /staff tuning of a network's split is only reset on an
+  // explicit re-seed, never on a normal boot.
   const res = await sql.run(
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_days, created_at)
      VALUES (?,?,?, 'active', ?,?,?, ?)
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET
+       commission_split_pct = EXCLUDED.commission_split_pct,
+       referral_bonus_pct   = EXCLUDED.referral_bonus_pct,
+       referral_bonus_days  = EXCLUDED.referral_bonus_days,
+       updated_at           = EXCLUDED.created_at`,
     n.id, n.name, n.type, n.commission_split_pct, n.referral_bonus_pct, n.referral_bonus_days, now(),
   );
   if (res.rowCount) nets++;

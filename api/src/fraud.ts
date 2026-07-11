@@ -8,6 +8,21 @@ import { config } from "./config.ts";
 // How many distinct accounts may share one device before we flag device reuse.
 const DEVICE_REUSE_THRESHOLD = 3;
 
+// Geo-mismatch: our launch markets, mapping the ISO-2 country codes networks
+// usually put in a postback to the full names we store on the user row. Extend
+// this as new markets open. Anything not here falls through to a name compare.
+const ISO2_TO_COUNTRY: Record<string, string> = {
+  PK: "pakistan", IN: "india", BD: "bangladesh", ID: "indonesia", NG: "nigeria",
+};
+
+// Normalise a country to a comparable token: known ISO-2 -> canonical name,
+// otherwise the lower-cased, trimmed string ("Pakistan" and "pakistan" match).
+function canonicalCountry(c: string): string {
+  const t = c.trim();
+  if (!t) return "";
+  return ISO2_TO_COUNTRY[t.toUpperCase()] ?? t.toLowerCase();
+}
+
 // Raise a flag only if an unresolved one of the same (type, scope key) doesn't
 // already exist — so repeated logins from the same device/IP don't spam the
 // queue. `scopeKey` is stored in the device_id column: a real device hash for
@@ -110,5 +125,33 @@ export async function recordDevice(
     }
   } catch {
     // Fraud recording must never block a legitimate login.
+  }
+}
+
+// Geo-mismatch (P2): the offer was completed from a country that differs from
+// the one the account signed up in — a common signal of proxy/VPN farming or a
+// resold account. Uses the country the NETWORK reports in its postback vs the
+// user's stated country, so it needs no GeoIP database. Soft, medium-severity
+// signal for staff review only: it does NOT block crediting (legitimate travel
+// and mobile VPNs exist), matching device/IP-reuse. No-ops when the network
+// doesn't send a country. Best-effort — never throws into the postback path.
+export async function checkGeoMismatch(
+  userId: string,
+  statedCountry: string,
+  reportedCountry: string | undefined,
+): Promise<void> {
+  if (!reportedCountry) return; // network sent no country; nothing to compare
+  try {
+    const stated = canonicalCountry(statedCountry);
+    const reported = canonicalCountry(reportedCountry);
+    if (!stated || !reported || stated === reported) return;
+    // Scope the dedupe by user + reported country, so a user genuinely on the
+    // move raises at most one open flag per foreign country, not one per offer.
+    await flagOnce(
+      "geo_mismatch", `geo:${userId}:${reported}`, userId, "medium",
+      `Offer completed from "${reportedCountry}" but account country is "${statedCountry}".`,
+    );
+  } catch {
+    // Never let a fraud signal break a verified credit.
   }
 }

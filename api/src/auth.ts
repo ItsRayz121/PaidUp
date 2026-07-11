@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomInt, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomInt, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -309,6 +309,83 @@ export async function authRoutes(app: FastifyInstance) {
     await sql.run("UPDATE users SET password_hash = ?, email_verified = 1 WHERE email = ?", passwordHash, email);
     const user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
     if (!user) return reply.code(404).send({ error: "Account not found." });
+
+    await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
+    return { token: signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Telegram login fallback (P2). The web Telegram Login Widget posts the signed
+  // auth payload here. We re-verify the signature server-side (never trust the
+  // client) per Telegram's spec: HMAC-SHA256 of the sorted "key=value" lines,
+  // keyed by SHA256(bot_token). A first-time Telegram user is created with a
+  // synthetic, never-emailed address (Telegram gives no email) and no password,
+  // so they can only ever sign in through Telegram. Off unless a bot token is set.
+  app.post("/auth/telegram", async (req, reply) => {
+    if (!config.telegramBotToken) {
+      return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
+    }
+    // Work from the RAW body so the signature is checked over exactly the fields
+    // Telegram sent. `ref` is OUR referral param, not part of Telegram's signed
+    // set, so it is pulled out before building the check string.
+    const body = (typeof req.body === "object" && req.body ? req.body : {}) as Record<string, unknown>;
+    const data: Record<string, string> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined && v !== null) data[k] = String(v);
+    }
+    const hash = data.hash;
+    const ref = data.ref;
+    delete data.hash;
+    delete data.ref;
+    if (!hash || !data.id || !data.auth_date) {
+      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
+    }
+
+    const checkString = Object.keys(data).sort().map((k) => `${k}=${data[k]}`).join("\n");
+    const secret = createHash("sha256").update(config.telegramBotToken).digest();
+    const expected = createHmac("sha256", secret).update(checkString).digest();
+    const got = Buffer.from(hash, "hex");
+    if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
+      return reply.code(401).send({ error: "Telegram login failed. Please try again." });
+    }
+    // Freshness: reject a captured payload older than a day (Telegram's guidance)
+    // or dated in the future beyond a little clock skew — defends against replay.
+    const ageSec = Date.now() / 1000 - Number(data.auth_date);
+    if (!Number.isFinite(ageSec) || ageSec > 86_400 || ageSec < -300) {
+      return reply.code(401).send({ error: "This login expired. Please try again." });
+    }
+
+    const telegramId = data.id;
+    let user = await sql.get<UserRow>("SELECT * FROM users WHERE telegram_id = ?", telegramId);
+    if (!user) {
+      const id = newId();
+      // No email from Telegram: store a stable synthetic address so the NOT NULL
+      // + UNIQUE email column holds. It is never sent mail; auth is Telegram-only.
+      const email = `tg${telegramId}@telegram.local`;
+      const referralCode = await uniqueReferralCode(data.username || `tg${telegramId}`);
+      let referredBy: string | null = null;
+      if (ref) {
+        const inviter = await sql.get<{ id: string }>(
+          "SELECT id FROM users WHERE referral_code = ?", ref.toUpperCase(),
+        );
+        if (inviter) referredBy = inviter.id;
+      }
+      // User row + referral edge must commit together, or an invite is lost.
+      await sql.tx(async (t) => {
+        await t.run(
+          "INSERT INTO users (id, email, email_verified, telegram_id, country, referral_code, referred_by, status, created_at) VALUES (?,?,1,?,?,?,?, 'active', ?)",
+          id, email, telegramId, "Pakistan", referralCode, referredBy, now(),
+        );
+        if (referredBy) {
+          await t.run(
+            "INSERT INTO referrals (id, referrer_user_id, referred_user_id, created_at, bonus_paid) VALUES (?,?,?,?,0)",
+            newId(), referredBy, id, now(),
+          );
+        }
+      });
+      user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", id);
+    }
+    if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);

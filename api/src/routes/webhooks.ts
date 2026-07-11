@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { sql, now, newId, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { getAdapter } from "../adapters/index.ts";
+import { checkGeoMismatch } from "../fraud.ts";
 
 // Inbound ad-network postbacks. THIS is the only place task points are credited
 // (guardrail #1). The frontend can NEVER credit points. Every postback is
@@ -57,8 +58,8 @@ export async function webhookRoutes(app: FastifyInstance) {
     }
 
     // 3. Validate our user + task exist and task is active.
-    const user = await sql.get<{ id: string; referred_by: string | null; created_at: string }>(
-      "SELECT id, referred_by, created_at FROM users WHERE id = ?", userId,
+    const user = await sql.get<{ id: string; referred_by: string | null; created_at: string; country: string }>(
+      "SELECT id, referred_by, created_at, country FROM users WHERE id = ?", userId,
     );
     const task = await sql.get<{ id: string; type: string; points: number }>(
       "SELECT id, type, points FROM tasks WHERE id = ? AND status = 'active'", taskId,
@@ -158,6 +159,13 @@ export async function webhookRoutes(app: FastifyInstance) {
         }
       }
     });
+
+    // Geo-mismatch signal (P2): raise a soft fraud flag if the network says the
+    // completion came from a different country than the account's. Runs AFTER
+    // the credit lands — it never blocks a verified reward, only flags for staff
+    // review. Networks vary in which key carries the geo; accept the common ones.
+    const reportedCountry = input.country ?? input.country_code ?? input.geo;
+    await checkGeoMismatch(userId, user.country, reportedCountry);
 
     await logPostback(true, "credited", externalId);
     return reply.send({ ok: true, credited: task.points });

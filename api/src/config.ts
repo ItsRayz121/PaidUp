@@ -69,6 +69,12 @@ export const config = {
     tapvid: process.env.POSTBACK_TOKEN_TAPVID ?? "dev-postback-token",
   } as Record<string, string>,
 
+  // Telegram login fallback (P2): a cheaper alternative to email if email hurts
+  // signup. Empty => the /auth/telegram endpoint is off and the web button hides.
+  // Set to the BotFather token of the login bot to turn it on. The bot's domain
+  // must also be set in BotFather to your web origin for the widget to render.
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+
   // Comma-separated founder/admin emails seeded as role=admin on first run.
   adminEmails: (process.env.ADMIN_EMAILS ?? "fazalelahi5577@gmail.com")
     .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),

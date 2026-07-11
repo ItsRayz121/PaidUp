@@ -291,7 +291,8 @@ const SCHEMA = `
     -- % of the net network payout we model as the user's points reward. Used to
     -- SET a task's points and for margin reporting; the credited amount always
     -- comes from the task row, so changing this never alters a promised reward.
-    commission_split_pct INTEGER NOT NULL DEFAULT 55,
+    -- Launch default 60 (founder decision 2026-07-11: 60% to users / 40% margin).
+    commission_split_pct INTEGER NOT NULL DEFAULT 60,
     -- % of a referred user's task points paid to their inviter as a bonus.
     referral_bonus_pct   INTEGER NOT NULL DEFAULT 10,
     -- Referral bonus WINDOW: pay the inviter only while the invited account is
@@ -360,7 +361,7 @@ export async function initDb(): Promise<void> {
   // read. Split percentages are the modeled defaults; Admin tunes them live.
   await sql.run(
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES ('offerhub','OfferHub','offerwall','active',55,10,?)
+     VALUES ('offerhub','OfferHub','offerwall','active',60,10,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
   await sql.run(
@@ -370,7 +371,7 @@ export async function initDb(): Promise<void> {
   );
   await sql.run(
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES ('surveyx','SurveyX','offerwall','active',55,10,?)
+     VALUES ('surveyx','SurveyX','offerwall','active',60,10,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
 }

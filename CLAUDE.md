@@ -61,9 +61,14 @@ These override convenience or speed at every step:
   - **Referral commission tuning** — per-network `referral_bonus_days` window (0 = lifetime), Admin-tunable in `/staff` next to the split; past the window the inviter stops earning from that referral.
   - **Tighter fraud** — `ip_reuse` detection, `referral_ring`-by-shared-IP (medium, softer than the device-share high), and a **global** daily velocity cap across all offer types on top of the per-type cap.
   - Verified: 13-check API smoke test (surveyx accept/reject paths, referral window in/out/lifetime, global velocity flag, IP fraud flags), `api` + `web` typecheck, `web` production build — all clean.
+- **Phase 2 (cont.)**: three more items done + verified (2026-07-11):
+  - **Launch business decisions locked** (founder): commission = **60% of net payout to users** / 40% margin (default in code; apply to live rows via `railway run npm run seed` — see `DEPLOY.md`); launch market = **Pakistan** (already the default country everywhere); app name = **PaidUp** (kept).
+  - **Geo-mismatch fraud rule** — compares the country the network reports in the postback vs the user's stated country (ISO-2 ↔ name normalised for our markets); soft `geo_mismatch` medium flag, deduped per user+country, **never blocks crediting**. No GeoIP source needed (uses the postback's own country field), which is what had it deferred.
+  - **Telegram login fallback** — `POST /auth/telegram` verifies the Login Widget signature server-side (HMAC-SHA256 keyed by SHA256(bot token)) + freshness/replay window; finds-or-creates by `telegram_id` with a synthetic never-emailed address; feature-flagged off until `TELEGRAM_BOT_TOKEN` (backend) + `NEXT_PUBLIC_TELEGRAM_BOT` (web) are set. Frontend widget on `/login` + register.
+  - Verified: 12-check API smoke test (commission=60 after seed, geo match/mismatch/dedupe, telegram valid/bad-sig/stale/repeat), `api` + `web` typecheck, `web` production build, `security-review` (no findings) — all clean.
 
-**Still open (business decisions, not build gaps):** real commission split % (mechanism built, number unset), app name "PaidUp" (placeholder), launch market given the USDT rail. Tracked in `docs/PROJECT_SPEC.md` → Open Questions.
+**Still open (business decisions):** ✅ all three now locked (60% split / Pakistan / PaidUp). Real commission % is set in code; run the seed to push it to the live DB.
 
-**Phase 2 remaining:** Sentry authorization (needs founder to authorize the connector), geo-mismatch fraud rule (postback country/IP vs stated country — still deferred, needs a GeoIP source), further fraud tuning. Do not start Phase 2 items beyond these until prioritized.
+**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow), further fraud tuning. Do not start Phase 2 items beyond these until prioritized.
 
 See `docs/` for the full spec.

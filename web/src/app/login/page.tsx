@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { ShieldIcon, CheckIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import {
-  register, verifyEmail, login, forgotPassword, resetPassword,
+  register, verifyEmail, login, forgotPassword, resetPassword, loginWithTelegram,
   setSession, getToken, ApiError, type SessionUser,
 } from "@/lib/api";
 
@@ -13,6 +13,40 @@ type Mode = "login" | "register" | "verify" | "forgot" | "reset";
 
 const inputClass =
   "w-full rounded-xl border border-line bg-card p-3.5 text-lg text-brand-ink outline-none placeholder:text-muted/60";
+
+// Telegram login is a fallback that stays hidden until a bot username is set
+// (and TELEGRAM_BOT_TOKEN on the backend). Inlined at build time by Next.
+const TG_BOT = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+
+// Mounts Telegram's Login Widget. It calls the global set here with the signed
+// user payload, which we forward to the backend for server-side verification.
+function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!TG_BOT || !el) return;
+    (window as unknown as { onTelegramAuth?: (u: Record<string, unknown>) => void }).onTelegramAuth = onAuth;
+    const s = document.createElement("script");
+    s.src = "https://telegram.org/js/telegram-widget.js?22";
+    s.async = true;
+    s.setAttribute("data-telegram-login", TG_BOT);
+    s.setAttribute("data-size", "large");
+    s.setAttribute("data-radius", "12");
+    s.setAttribute("data-request-access", "write");
+    s.setAttribute("data-onauth", "onTelegramAuth(user)");
+    el.appendChild(s);
+    return () => { el.innerHTML = ""; };
+  }, [onAuth]);
+  if (!TG_BOT) return null;
+  return (
+    <div className="mt-6">
+      <div className="mb-4 flex items-center gap-3 text-xs text-muted">
+        <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
+      </div>
+      <div ref={box} className="flex justify-center" />
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -76,6 +110,17 @@ export default function LoginPage() {
   });
   const doReset = () => run(async () => finish(await resetPassword(email.trim(), code, password)));
 
+  // Telegram widget callback. Kept stable (deps: router) so the widget script
+  // mounts once, not on every keystroke. Reads any referral code from the URL.
+  const onTelegramAuth = useCallback((u: Record<string, unknown>) => {
+    setBusy(true); setError(null);
+    const r = new URLSearchParams(window.location.search).get("ref") ?? undefined;
+    loginWithTelegram({ ...u, ...(r ? { ref: r } : {}) })
+      .then((res) => { setSession(res.token, res.user); router.replace(res.user.role ? "/staff" : "/"); })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setBusy(false));
+  }, [router]);
+
   return (
     <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8">
       <div className="mb-8 flex items-center gap-2">
@@ -119,6 +164,8 @@ export default function LoginPage() {
             className="mt-4 w-full text-center text-sm font-semibold text-brand">
             New here? Create an account
           </button>
+
+          <TelegramLoginButton onAuth={onTelegramAuth} />
         </div>
       )}
 
@@ -156,6 +203,8 @@ export default function LoginPage() {
           <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted">
             <ShieldIcon size={14} /> We keep your email safe. We never share it.
           </p>
+
+          <TelegramLoginButton onAuth={onTelegramAuth} />
         </div>
       )}
 
