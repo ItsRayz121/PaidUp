@@ -19,11 +19,15 @@ The server fail-fasts if any secret is still a default, to prevent token forgery
 and forged postbacks. Set all of these:
 
 ```
-JWT_SECRET=a9844b339faa7819dd35e037d82d1d4ef790b1c6b1b4eedb798a32993bbabf87
-OTP_PEPPER=824e9bc615acd8bd47d64d86274c0fa0f3adad9dd70164e3ce4ffdd2b78ccc2c
-POSTBACK_SECRET_OFFERHUB=7aae0e63c2522cb19c168e28aa06c8770069931a39ec3b1f8a3e40deb744a91d
+JWT_SECRET=<64-char random hex>
+OTP_PEPPER=<64-char random hex>
+POSTBACK_SECRET_OFFERHUB=<64-char random hex>
 WEB_ORIGIN=https://paid-up-one.vercel.app
 ```
+Never commit real secret values here — this repo is public. Generate each with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and
+set it only in the Railway dashboard / CLI. The live values are already set on
+Railway.
 - Do **not** set `PORT` — Railway provides it automatically.
 - **Email:** set `RESEND_API_KEY` and `EMAIL_FROM`. Without the key, codes print
   to the Railway logs instead of being emailed.
