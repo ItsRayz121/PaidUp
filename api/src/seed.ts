@@ -7,10 +7,13 @@ import { sql, now, initDb } from "./db.ts";
 // disabled network's offers and postbacks map back to a configured network.
 // commission_split_pct is the user's share of net network payout. Launch
 // decision (founder, 2026-07-11): 60% to users / 40% margin, across the board.
+// Referral launch defaults (founder 2026-07-11): L1 15% + L2 5% + 100pt bonus
+// when an invited user finishes their FIRST task. Generous to drive early growth;
+// all from margin, Admin-tunable in /staff.
 const networks = [
-  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
-  { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
-  { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 10, referral_bonus_days: 0 },
+  { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
+  { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
+  { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
 ];
 
 const tasks = [
@@ -34,14 +37,16 @@ for (const n of networks) {
   // disabled and live /staff tuning of a network's split is only reset on an
   // explicit re-seed, never on a normal boot.
   const res = await sql.run(
-    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_days, created_at)
-     VALUES (?,?,?, 'active', ?,?,?, ?)
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days, created_at)
+     VALUES (?,?,?, 'active', ?,?,?,?,?, ?)
      ON CONFLICT (id) DO UPDATE SET
-       commission_split_pct = EXCLUDED.commission_split_pct,
-       referral_bonus_pct   = EXCLUDED.referral_bonus_pct,
-       referral_bonus_days  = EXCLUDED.referral_bonus_days,
-       updated_at           = EXCLUDED.created_at`,
-    n.id, n.name, n.type, n.commission_split_pct, n.referral_bonus_pct, n.referral_bonus_days, now(),
+       commission_split_pct      = EXCLUDED.commission_split_pct,
+       referral_bonus_pct        = EXCLUDED.referral_bonus_pct,
+       referral_bonus_pct_l2     = EXCLUDED.referral_bonus_pct_l2,
+       referral_first_task_bonus = EXCLUDED.referral_first_task_bonus,
+       referral_bonus_days       = EXCLUDED.referral_bonus_days,
+       updated_at                = EXCLUDED.created_at`,
+    n.id, n.name, n.type, n.commission_split_pct, n.referral_bonus_pct, n.referral_bonus_pct_l2, n.referral_first_task_bonus, n.referral_bonus_days, now(),
   );
   if (res.rowCount) nets++;
 }

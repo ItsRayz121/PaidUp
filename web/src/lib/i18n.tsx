@@ -172,6 +172,20 @@ const dict: Record<Locale, Record<string, string>> = {
     "login.msg.verifyPrompt": "Please check your email for a code to verify your account.",
     "login.msg.codeSent": "We sent a 6-number code to {email}.",
     "login.msg.forgotSent": "If that email has an account, we sent a code to it.",
+    // wallet + withdraw additions
+    "wallet.setupWallet": "Set up my withdrawal wallet",
+    "withdraw.saveAddress": "Save this address",
+    "withdraw.addressSaved": "Address saved",
+    // leaderboard
+    "leaderboard.title": "Leaderboard",
+    "leaderboard.subtitle": "Top earners and top inviters.",
+    "leaderboard.topEarners": "Top earners",
+    "leaderboard.topReferrers": "Top inviters",
+    "leaderboard.emptyTitle": "No one here yet",
+    "leaderboard.emptyBody": "Finish tasks and invite friends to reach the top.",
+    "leaderboard.you": "You",
+    "leaderboard.invitesLabel": "{n} friends invited",
+    "leaderboard.seeLeaderboard": "See the leaderboard",
   },
   ur: {
     // nav + common
@@ -327,6 +341,20 @@ const dict: Record<Locale, Record<string, string>> = {
     "login.msg.verifyPrompt": "براہ کرم اپنے اکاؤنٹ کی تصدیق کے لیے اپنے ای میل میں کوڈ دیکھیں۔",
     "login.msg.codeSent": "ہم نے {email} پر 6 نمبروں کا کوڈ بھیجا ہے۔",
     "login.msg.forgotSent": "اگر اس ای میل کا اکاؤنٹ ہے، تو ہم نے اس پر کوڈ بھیج دیا ہے۔",
+    // wallet + withdraw additions
+    "wallet.setupWallet": "میرا واپسی والٹ سیٹ اپ کریں",
+    "withdraw.saveAddress": "یہ ایڈریس محفوظ کریں",
+    "withdraw.addressSaved": "ایڈریس محفوظ ہو گیا",
+    // leaderboard
+    "leaderboard.title": "لیڈر بورڈ",
+    "leaderboard.subtitle": "سب سے زیادہ کمانے والے اور دعوت دینے والے۔",
+    "leaderboard.topEarners": "سب سے زیادہ کمانے والے",
+    "leaderboard.topReferrers": "سب سے زیادہ دعوت دینے والے",
+    "leaderboard.emptyTitle": "ابھی یہاں کوئی نہیں",
+    "leaderboard.emptyBody": "ٹاپ پر پہنچنے کے لیے کام مکمل کریں اور دوستوں کو دعوت دیں۔",
+    "leaderboard.you": "آپ",
+    "leaderboard.invitesLabel": "{n} دوستوں کو دعوت دی",
+    "leaderboard.seeLeaderboard": "لیڈر بورڈ دیکھیں",
   },
 };
 

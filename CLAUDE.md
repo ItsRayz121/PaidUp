@@ -85,6 +85,23 @@ These override convenience or speed at every step:
   - Verified: api + web typecheck, web production build, payout unit tests (12),
     fraud DB test (4), `security-review` (no findings) — all clean.
 
+- **Phase 3 (cont.)**: earnings/referral/withdrawal upgrade done + verified (2026-07-11):
+  - **Withdrawal networks** narrowed to **USDT BEP20, Base, Aptos** (Polygon dropped;
+    TRC20/Tron is a quick future add — one validator).
+  - **Saved payout address** — set once per chain, reused (`payout_addresses` table
+    + `/withdrawals/addresses` GET/PUT; auto-saved on withdrawal). Withdraw screen
+    pre-fills it and is reachable **below the threshold** so users set it up early.
+  - **2-level referral** — L1 15% + L2 5% of an invite's task points, **from margin
+    (never deducted from the invitee)**, + a **100-point bonus when the invite
+    finishes their FIRST task** (anti-farm: rewards real activity, not signups). All
+    per-network, Admin-tunable in `/staff`. Run `npm run seed` to apply to existing
+    live rows (see DEPLOY.md — old rows keep 10%/no-L2 until seeded).
+  - **Leaderboard** — top earners + top inviters (masked handles), `/leaderboard`
+    page, linked from Refer. Social proof to drive referrals.
+  - Verified: api+web typecheck, web build, i18n parity (143 keys en/ur), a 10-check
+    referral/withdrawal/leaderboard e2e test (L1/L2/first-task math, idempotency,
+    saved-address upsert), `security-review` (no findings) — all clean.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

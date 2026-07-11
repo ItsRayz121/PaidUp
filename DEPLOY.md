@@ -88,16 +88,18 @@ Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return
 `{"ok":true,"service":"rozipay-api"}`.
 
-### Applying launch config (commission split)
-The launch default is **60% of net network payout to users** (40% margin).
+### Applying launch config (commission split + referral)
+Launch defaults: **60% payout to users** (40% margin); referral **L1 15% + L2 5%**
+and a **100-point bonus** when an invited user finishes their first task.
 `initDb()` only inserts a network row if absent — it never overwrites an existing
-one — so to push the decided split to networks already in the live DB, run the
-seed once against production:
+one — so to push these to networks already in the live DB, run the seed once
+against production (do this after deploying this build, or existing rows keep the
+old 10% / no-L2 values):
 ```
-railway run --service api npm run seed   # updates commission/referral on existing rows
+railway run --service api npm run seed   # updates split + L1/L2/first-task bonus on existing rows
 ```
-Admins can still tune each network's split live in `/staff` afterward; a re-seed
-resets those to the launch numbers (status/disabled state is preserved).
+Admins can still tune each network's split and referral numbers live in `/staff`
+afterward; a re-seed resets those to the launch numbers (status/disabled preserved).
 
 ### Persistence — Postgres (required)
 1. Railway → your project → **New** → **Database** → **Add PostgreSQL**.

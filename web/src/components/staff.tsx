@@ -168,7 +168,9 @@ export function NetworkPanel() {
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr>
                   <th className="p-2.5">Network</th><th className="p-2.5">Type</th>
-                  <th className="p-2.5">Split % to user</th><th className="p-2.5">Referral %</th>
+                  <th className="p-2.5">Split % to user</th>
+                  <th className="p-2.5">Referral L1 %</th><th className="p-2.5">Referral L2 %</th>
+                  <th className="p-2.5">1st-task bonus</th>
                   <th className="p-2.5">Referral days</th>
                   <th className="p-2.5">Offers</th><th className="p-2.5">Credited</th><th className="p-2.5">Status</th>
                 </tr>
@@ -186,9 +188,13 @@ export function NetworkPanel() {
 function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void }) {
   const [split, setSplit] = useState(net.commissionSplitPct);
   const [refPct, setRefPct] = useState(net.referralBonusPct);
+  const [refPctL2, setRefPctL2] = useState(net.referralBonusPctL2);
+  const [firstBonus, setFirstBonus] = useState(net.referralFirstTaskBonus);
   const [refDays, setRefDays] = useState(net.referralBonusDays);
   const [busy, setBusy] = useState(false);
-  const dirty = split !== net.commissionSplitPct || refPct !== net.referralBonusPct || refDays !== net.referralBonusDays;
+  const dirty = split !== net.commissionSplitPct || refPct !== net.referralBonusPct
+    || refPctL2 !== net.referralBonusPctL2 || firstBonus !== net.referralFirstTaskBonus
+    || refDays !== net.referralBonusDays;
 
   async function patch(patchObj: Parameters<typeof updateNetwork>[1]) {
     setBusy(true);
@@ -203,14 +209,16 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
       <td className="p-2.5 font-medium text-brand-ink">{net.name}<div className="text-[11px] text-muted">{net.id}</div></td>
       <td className="p-2.5">{net.type === "rewarded_video" ? "Rewarded video" : "Offerwall"}</td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={split} onChange={(e) => setSplit(Number(e.target.value))} className={numInput} /></td>
-      <td className="p-2.5"><input type="number" min={0} max={100} value={refPct} onChange={(e) => setRefPct(Number(e.target.value))} className={numInput} /></td>
+      <td className="p-2.5"><input type="number" min={0} max={100} value={refPct} onChange={(e) => setRefPct(Number(e.target.value))} className={numInput} title="Direct referral %" /></td>
+      <td className="p-2.5"><input type="number" min={0} max={100} value={refPctL2} onChange={(e) => setRefPctL2(Number(e.target.value))} className={numInput} title="Level-2 (indirect) referral %. 0 = off" /></td>
+      <td className="p-2.5"><input type="number" min={0} max={1000000} value={firstBonus} onChange={(e) => setFirstBonus(Number(e.target.value))} className="num w-20 rounded border border-line bg-card p-1 text-sm outline-none" title="Points bonus when an invite finishes their first task. 0 = off" /></td>
       <td className="p-2.5"><input type="number" min={0} max={3650} value={refDays} onChange={(e) => setRefDays(Number(e.target.value))} className={numInput} title="0 = lifetime (no window)" /></td>
       <td className="num p-2.5">{net.taskCount}</td>
       <td className="num p-2.5">{net.creditedCount}</td>
       <td className="p-2.5">
         <div className="flex items-center gap-1.5">
           {dirty && (
-            <button disabled={busy} onClick={() => patch({ commissionSplitPct: split, referralBonusPct: refPct, referralBonusDays: refDays })}
+            <button disabled={busy} onClick={() => patch({ commissionSplitPct: split, referralBonusPct: refPct, referralBonusPctL2: refPctL2, referralFirstTaskBonus: firstBonus, referralBonusDays: refDays })}
               className="rounded bg-brand px-2 py-1 text-xs font-semibold text-white disabled:opacity-50">Save</button>
           )}
           <button disabled={busy} onClick={() => patch({ status: net.status === "active" ? "disabled" : "active" })}

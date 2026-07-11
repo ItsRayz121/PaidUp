@@ -6,6 +6,19 @@ import { getUserId } from "../auth.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
 
+// Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
+async function saveAddress(userId: string, chain: string, address: string): Promise<void> {
+  try {
+    await sql.run(
+      `INSERT INTO payout_addresses (user_id, chain, address, updated_at) VALUES (?,?,?,?)
+       ON CONFLICT (user_id, chain) DO UPDATE SET address = EXCLUDED.address, updated_at = EXCLUDED.updated_at`,
+      userId, chain, address, now(),
+    );
+  } catch {
+    // Saving is a convenience; never let it break a withdrawal.
+  }
+}
+
 function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -19,7 +32,12 @@ function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyRepl
 
 const createSchema = z.object({
   amountPoints: z.number().int().positive(),
-  chain: z.enum(["bep20", "polygon", "base", "aptos"]),
+  chain: z.enum(["bep20", "base", "aptos"]),
+  address: z.string().min(1).max(120),
+});
+
+const addressSchema = z.object({
+  chain: z.enum(["bep20", "base", "aptos"]),
   address: z.string().min(1).max(120),
 });
 
@@ -73,11 +91,37 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       throw e;
     }
 
+    // Save this address for the chain so next time it's pre-filled (set once,
+    // reuse). Best-effort — a failure here must not undo the withdrawal.
+    await saveAddress(userId, chain, address);
+
     // Flag (never block) if this wallet is shared across accounts — staff see it
     // in the fraud queue before approving the payout. Runs after the hold commits.
     await checkPayoutAddressReuse(userId, address);
 
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
+  }));
+
+  // Saved payout addresses — a user sets a USDT address per chain ONCE and the
+  // withdraw screen pre-fills it every time after.
+  app.get("/withdrawals/addresses", guard(async (userId) => {
+    const rows = await sql.all<{ chain: string; address: string }>(
+      "SELECT chain, address FROM payout_addresses WHERE user_id = ?", userId,
+    );
+    const addresses: Record<string, string> = {};
+    for (const r of rows) addresses[r.chain] = r.address;
+    return { addresses };
+  }));
+
+  app.put("/withdrawals/addresses", guard(async (userId, req, reply) => {
+    const parsed = addressSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick a network and enter a wallet address." });
+    const { chain, address: addressRaw } = parsed.data;
+    const check = validateAddress(chain as ChainId, addressRaw);
+    if (!check.ok) return reply.code(400).send({ error: check.error });
+    const address = addressRaw.trim();
+    await saveAddress(userId, chain, address);
+    return { ok: true, chain, address };
   }));
 
   // The user's own payout history.

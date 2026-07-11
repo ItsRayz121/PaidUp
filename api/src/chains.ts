@@ -5,11 +5,14 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
-export type ChainId = "bep20" | "polygon" | "base" | "aptos";
+// Launch set (founder decision 2026-07-11): USDT on BEP20, Base (both EVM,
+// shared 0x address format) and Aptos (non-EVM). Polygon was dropped. TRC20
+// (Tron) is a quick future add — it just needs a base58 "T…" validator here and
+// a CHAINS entry; the rest of the payout/withdraw flow is chain-agnostic.
+export type ChainId = "bep20" | "base" | "aptos";
 
 export const CHAINS: { id: ChainId; label: string; kind: "evm" | "aptos"; note: string }[] = [
   { id: "bep20", label: "BEP20 (BNB Chain)", kind: "evm", note: "USDT on BNB Smart Chain" },
-  { id: "polygon", label: "Polygon", kind: "evm", note: "USDT on Polygon" },
   { id: "base", label: "Base", kind: "evm", note: "USDT on Base" },
   { id: "aptos", label: "Aptos", kind: "aptos", note: "USDT on Aptos" },
 ];

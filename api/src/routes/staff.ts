@@ -175,6 +175,10 @@ export async function staffRoutes(app: FastifyInstance) {
     status: z.enum(["active", "disabled"]).optional(),
     commissionSplitPct: z.number().int().min(0).max(100).optional(),
     referralBonusPct: z.number().int().min(0).max(100).optional(),
+    // Level-2 (indirect) referral share. 0 turns the second level off.
+    referralBonusPctL2: z.number().int().min(0).max(100).optional(),
+    // Flat one-time bonus (points) when an invited user finishes their 1st task.
+    referralFirstTaskBonus: z.number().int().min(0).max(1_000_000).optional(),
     // Referral window in days (0 = lifetime). Up to ~10 years.
     referralBonusDays: z.number().int().min(0).max(3650).optional(),
   });
@@ -190,6 +194,7 @@ export async function staffRoutes(app: FastifyInstance) {
       networks: rows.map((n) => ({
         id: n.id, name: n.name, type: n.type, status: n.status,
         commissionSplitPct: n.commission_split_pct, referralBonusPct: n.referral_bonus_pct,
+        referralBonusPctL2: n.referral_bonus_pct_l2, referralFirstTaskBonus: n.referral_first_task_bonus,
         referralBonusDays: n.referral_bonus_days,
         taskCount: n.task_count, creditedCount: n.credited_count, updatedAt: n.updated_at,
       })),
@@ -206,6 +211,8 @@ export async function staffRoutes(app: FastifyInstance) {
     if (parsed.data.status !== undefined) { cols.push("status = ?"); vals.push(parsed.data.status); }
     if (parsed.data.commissionSplitPct !== undefined) { cols.push("commission_split_pct = ?"); vals.push(parsed.data.commissionSplitPct); }
     if (parsed.data.referralBonusPct !== undefined) { cols.push("referral_bonus_pct = ?"); vals.push(parsed.data.referralBonusPct); }
+    if (parsed.data.referralBonusPctL2 !== undefined) { cols.push("referral_bonus_pct_l2 = ?"); vals.push(parsed.data.referralBonusPctL2); }
+    if (parsed.data.referralFirstTaskBonus !== undefined) { cols.push("referral_first_task_bonus = ?"); vals.push(parsed.data.referralFirstTaskBonus); }
     if (parsed.data.referralBonusDays !== undefined) { cols.push("referral_bonus_days = ?"); vals.push(parsed.data.referralBonusDays); }
     if (!cols.length) return reply.code(400).send({ error: "Nothing to change." });
     cols.push("updated_at = ?"); vals.push(now());

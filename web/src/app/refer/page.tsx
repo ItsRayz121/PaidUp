@@ -64,6 +64,8 @@ export default function ReferPage() {
         <Stat label={t("refer.pointsEarned")} value={formatPoints(ref.data?.earnedPoints ?? 0)} accent />
       </div>
 
+      <Button href="/leaderboard" variant="ghost">🏆 {t("leaderboard.seeLeaderboard")}</Button>
+
       <section>
         <h2 className="mb-2 px-1 text-base font-bold text-brand-ink">{t("refer.howItWorks")}</h2>
         <Card className="divide-y divide-line">

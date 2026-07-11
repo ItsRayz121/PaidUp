@@ -47,10 +47,16 @@ export default function WalletPage() {
             {canWithdraw ? (
               <Button href="/wallet/withdraw" variant="primary"><WalletIcon size={20} /> {t("common.getMyMoney")}</Button>
             ) : (
-              <p className="flex gap-2 rounded-xl bg-pending-tint p-3 text-sm text-pending">
-                <InfoIcon size={18} className="mt-0.5 shrink-0" />
-                {t("wallet.reachAt", { points: formatPoints(min) })}
-              </p>
+              <>
+                <p className="flex gap-2 rounded-xl bg-pending-tint p-3 text-sm text-pending">
+                  <InfoIcon size={18} className="mt-0.5 shrink-0" />
+                  {t("wallet.reachAt", { points: formatPoints(min) })}
+                </p>
+                {/* Let users set + save their wallet address before they qualify. */}
+                <Link href="/wallet/withdraw" className="mt-3 block text-center text-sm font-semibold text-brand">
+                  {t("wallet.setupWallet")} →
+                </Link>
+              </>
             )}
           </div>
         </Card>

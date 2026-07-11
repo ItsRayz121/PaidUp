@@ -79,7 +79,7 @@ export type LedgerEntry = {
 };
 export type Withdrawal = {
   id: string; amount: number; chain: string; address?: string;
-  status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string;
+  status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string; usdtAmount?: string;
 };
 
 // ---- Auth -----------------------------------------------------------------
@@ -135,6 +135,20 @@ export const createWithdrawal = (amountPoints: number, chain: string, address: s
     method: "POST", body: JSON.stringify({ amountPoints, chain, address }),
   });
 
+// Saved payout addresses (set once per chain, reused). `addresses` is keyed by
+// chain id -> the saved wallet address.
+export const fetchPayoutAddresses = () =>
+  apiFetch<{ addresses: Record<string, string> }>("/withdrawals/addresses");
+export const savePayoutAddress = (chain: string, address: string) =>
+  apiFetch<{ ok: true; chain: string; address: string }>("/withdrawals/addresses", {
+    method: "PUT", body: JSON.stringify({ chain, address }),
+  });
+
+// ---- Leaderboard ----------------------------------------------------------
+export type LeaderRow = { rank: number; name: string; points: number; invites?: number; isMe: boolean };
+export const fetchLeaderboard = () =>
+  apiFetch<{ topEarners: LeaderRow[]; topReferrers: LeaderRow[] }>("/leaderboard");
+
 // ---- Staff ----------------------------------------------------------------
 export type StaffWithdrawal = {
   id: string; userId: string; userEmail: string; amount: number;
@@ -185,14 +199,18 @@ export const replyStaffTicket = (id: string, message: string, close = false) =>
 // ---- Admin: ad-network config --------------------------------------------
 export type NetworkConfig = {
   id: string; name: string; type: "offerwall" | "rewarded_video"; status: "active" | "disabled";
-  commissionSplitPct: number; referralBonusPct: number; referralBonusDays: number;
+  commissionSplitPct: number; referralBonusPct: number; referralBonusPctL2: number;
+  referralFirstTaskBonus: number; referralBonusDays: number;
   taskCount: number; creditedCount: number;
   updatedAt: string | null;
 };
 export const fetchNetworks = () => apiFetch<{ networks: NetworkConfig[] }>("/staff/networks");
 export const updateNetwork = (
   id: string,
-  patch: { status?: "active" | "disabled"; commissionSplitPct?: number; referralBonusPct?: number; referralBonusDays?: number },
+  patch: {
+    status?: "active" | "disabled"; commissionSplitPct?: number; referralBonusPct?: number;
+    referralBonusPctL2?: number; referralFirstTaskBonus?: number; referralBonusDays?: number;
+  },
 ) => apiFetch<{ ok: true }>(`/staff/networks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 
 // ---- Manager: KPI dashboard ----------------------------------------------

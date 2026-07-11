@@ -1,29 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, createWithdrawal } from "@/lib/api";
+import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal } from "@/lib/api";
 import { formatPoints, formatMoney } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
 // Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
 // the confirmation is honest: a request we pay within the SLA, not instant.
+// Usable BELOW the threshold too: a user can set + save their wallet address
+// early, then submit once they have enough points.
 export default function WithdrawPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const bal = useApi(fetchBalance, []);
+  const saved = useApi(fetchPayoutAddresses, []);
 
   const [chain, setChain] = useState<ChainId>("bep20");
   const [address, setAddress] = useState("");
   const [amount, setAmount] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [savingAddr, setSavingAddr] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  const savedAddresses = saved.data?.addresses ?? {};
+  // Pre-fill the saved address for the current chain once it loads (only when the
+  // field is still empty, so we never clobber something the user is typing).
+  useEffect(() => {
+    if (!address && savedAddresses[chain]) setAddress(savedAddresses[chain]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved.data]);
+
+  function selectChain(c: ChainId) {
+    setChain(c);
+    setSavedMsg(false);
+    // Switching chain swaps in that chain's saved address (or clears the field).
+    setAddress(savedAddresses[c] ?? "");
+  }
 
   if (!ready || bal.loading) return <div className="p-4 pt-6"><Loading /></div>;
   if (bal.error) return <div className="p-4 pt-6"><ErrorState message={bal.error} onRetry={bal.reload} /></div>;
@@ -36,8 +56,10 @@ export default function WithdrawPage() {
   const overBalance = amt > balance;
   const addressOk = addressLooksValid(chain, address);
   const invalid = belowMin || overBalance || !addressOk;
+  const trimmed = address.trim();
+  const canSaveAddr = addressOk && trimmed !== (savedAddresses[chain] ?? "");
 
-  if (done) return <SentConfirmation amount={amt} chainLabel={chainMeta.label} address={address.trim()} />;
+  if (done) return <SentConfirmation amount={amt} chainLabel={chainMeta.label} address={trimmed} />;
 
   async function submit() {
     setBusy(true); setError(null);
@@ -46,6 +68,16 @@ export default function WithdrawPage() {
       setDone(true);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
+  }
+
+  async function saveAddr() {
+    setSavingAddr(true); setError(null);
+    try {
+      await savePayoutAddress(chain, address.trim());
+      setSavedMsg(true);
+      saved.reload();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSavingAddr(false); }
   }
 
   return (
@@ -72,7 +104,7 @@ export default function WithdrawPage() {
           {CHAINS.map((c) => {
             const active = c.id === chain;
             return (
-              <button key={c.id} onClick={() => setChain(c.id)} aria-pressed={active}
+              <button key={c.id} onClick={() => selectChain(c.id)} aria-pressed={active}
                 className={`rounded-xl border p-3 text-left ${active ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
                 <span className="flex items-center justify-between">
                   <span className="font-semibold text-brand-ink">{c.label}</span>
@@ -99,6 +131,21 @@ export default function WithdrawPage() {
           className="w-full rounded-xl border border-line bg-card p-3.5 text-brand-ink outline-none placeholder:text-muted/60 break-all" />
         {address.length > 0 && !addressOk && (
           <p className="mt-1.5 px-1 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
+        )}
+        {/* Save the address so it's pre-filled next time (works below threshold). */}
+        {(canSaveAddr || savedMsg) && (
+          <div className="mt-2 flex items-center gap-2">
+            {savedMsg && !canSaveAddr ? (
+              <span className="flex items-center gap-1 text-sm font-semibold text-success">
+                <CheckIcon size={16} /> {t("withdraw.addressSaved")}
+              </span>
+            ) : (
+              <button type="button" onClick={saveAddr} disabled={savingAddr}
+                className="rounded-lg border border-brand px-3 py-1.5 text-sm font-semibold text-brand disabled:opacity-60">
+                {savingAddr ? t("withdraw.sending") : t("withdraw.saveAddress")}
+              </button>
+            )}
+          </div>
         )}
         <p className="mt-1.5 flex items-start gap-1.5 px-1 text-xs text-muted">
           <ShieldIcon size={14} className="mt-0.5 shrink-0" />

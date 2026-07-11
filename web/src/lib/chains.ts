@@ -1,11 +1,10 @@
 // USDT payout chains shown in the withdraw screen. USDT only at launch (founder
 // decision); PKR / local rails are "Coming soon". The server does the full
 // address check (EIP-55 for EVM) — this is just instant UI feedback.
-export type ChainId = "bep20" | "polygon" | "base" | "aptos";
+export type ChainId = "bep20" | "base" | "aptos";
 
 export const CHAINS: { id: ChainId; label: string; note: string }[] = [
   { id: "bep20", label: "BEP20 · BNB Chain", note: "Low fees. Most common." },
-  { id: "polygon", label: "Polygon", note: "Low fees." },
   { id: "base", label: "Base", note: "Low fees." },
   { id: "aptos", label: "Aptos", note: "USDT on Aptos." },
 ];

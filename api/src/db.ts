@@ -293,8 +293,16 @@ const SCHEMA = `
     -- comes from the task row, so changing this never alters a promised reward.
     -- Launch default 60 (founder decision 2026-07-11: 60% to users / 40% margin).
     commission_split_pct INTEGER NOT NULL DEFAULT 60,
-    -- % of a referred user's task points paid to their inviter as a bonus.
-    referral_bonus_pct   INTEGER NOT NULL DEFAULT 10,
+    -- Level-1 (direct): % of a referred user's task points paid to their direct
+    -- inviter as a bonus. Launch default 15 (founder decision 2026-07-11).
+    referral_bonus_pct   INTEGER NOT NULL DEFAULT 15,
+    -- Level-2 (indirect): % paid to the inviter's inviter (2-level referral).
+    -- Launch default 5. Set 0 to turn off the second level for a network.
+    referral_bonus_pct_l2 INTEGER NOT NULL DEFAULT 5,
+    -- Flat one-time bonus (points) paid to the direct inviter when their invited
+    -- user completes their FIRST credited task. Rewards real, active referrals —
+    -- not empty signups (anti-farm). Launch default 100. 0 disables it.
+    referral_first_task_bonus INTEGER NOT NULL DEFAULT 100,
     -- Referral bonus WINDOW: pay the inviter only while the invited account is
     -- younger than this many days. 0 = lifetime (no window). Admin-tunable.
     referral_bonus_days  INTEGER NOT NULL DEFAULT 0,
@@ -352,6 +360,18 @@ const MIGRATIONS = `
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS tx_hash TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS usdt_amount TEXT;
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_days INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_pct_l2 INTEGER NOT NULL DEFAULT 5;
+  ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_first_task_bonus INTEGER NOT NULL DEFAULT 100;
+
+  -- Saved payout addresses: a user sets a USDT address per chain ONCE and reuses
+  -- it. The withdraw screen pre-fills from here; a new address overwrites it.
+  CREATE TABLE IF NOT EXISTS payout_addresses (
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    chain      TEXT NOT NULL,
+    address    TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, chain)
+  );
 `;
 
 export async function initDb(): Promise<void> {
@@ -360,19 +380,22 @@ export async function initDb(): Promise<void> {
   // Ensure the known adapter networks have a config row in every environment,
   // so the Admin panel and the disabled-network checks always have something to
   // read. Split percentages are the modeled defaults; Admin tunes them live.
+  // Launch referral defaults: L1 15% + L2 5% + 100pt first-task bonus (founder
+  // decision 2026-07-11). Only inserted when a row is absent; a re-seed
+  // (npm run seed) pushes these to existing rows.
   await sql.run(
-    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES ('offerhub','OfferHub','offerwall','active',60,10,?)
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
+     VALUES ('offerhub','OfferHub','offerwall','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
   await sql.run(
-    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES ('tapvid','TapVid','rewarded_video','active',60,10,?)
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
+     VALUES ('tapvid','TapVid','rewarded_video','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
   await sql.run(
-    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, created_at)
-     VALUES ('surveyx','SurveyX','offerwall','active',60,10,?)
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
+     VALUES ('surveyx','SurveyX','offerwall','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
 }

@@ -28,10 +28,14 @@ export const config = {
   otpTtlMinutes: 10,
   otpMaxAttempts: 5,
 
-  // Referral commission (P1): referrer earns this share of a referred user's
-  // task points, as a separate referral_bonus ledger entry. Business decision.
-  // Used only as the fallback when a network has no config row.
-  referralCommissionPct: 0.1,
+  // Referral commission: referrer earns this share of a referred user's task
+  // points, as a separate referral_bonus ledger entry. Fallbacks used only when
+  // a network has no config row (2-level, launch defaults L1 15% / L2 5%).
+  referralCommissionPct: 0.15, // level 1 (direct inviter)
+  referralCommissionL2Pct: 0.05, // level 2 (the inviter's inviter)
+  // Flat one-time bonus (points) to the direct inviter when their invited user
+  // completes their FIRST credited task. Fallback when a network row is absent.
+  referralFirstTaskBonusPoints: 100,
   // Referral bonus WINDOW (P2 tuning): pay the inviter a bonus only while the
   // invited account is younger than this many days. 0 = lifetime (no window).
   // Per-network `referral_bonus_days` overrides this; this is the fallback.
@@ -82,7 +86,6 @@ export const config = {
   // cannot auto-send and staff must pay it manually.
   payoutRpc: {
     bep20: process.env.RPC_BEP20 ?? "",
-    polygon: process.env.RPC_POLYGON ?? "",
     base: process.env.RPC_BASE ?? "",
   } as Record<string, string>,
 

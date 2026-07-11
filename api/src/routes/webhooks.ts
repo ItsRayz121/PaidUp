@@ -32,8 +32,12 @@ export async function webhookRoutes(app: FastifyInstance) {
     // A network the Admin has disabled stops crediting immediately — no code
     // change or redeploy needed. Row may be absent for a network that predates
     // the table; absence is treated as active so we never silently drop traffic.
-    const net = await sql.get<{ status: string; referral_bonus_pct: number; referral_bonus_days: number }>(
-      "SELECT status, referral_bonus_pct, referral_bonus_days FROM networks WHERE id = ?", network,
+    const net = await sql.get<{
+      status: string; referral_bonus_pct: number; referral_bonus_pct_l2: number;
+      referral_first_task_bonus: number; referral_bonus_days: number;
+    }>(
+      `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
+       FROM networks WHERE id = ?`, network,
     );
     if (net && net.status === "disabled") {
       await logPostback(false, "network_disabled");
@@ -121,6 +125,14 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.send({ ok: true, credited: 0, flagged: "velocity" });
     }
 
+    // 4c. Is this the user's FIRST ever credited task? (Drives the referral
+    // first-task bonus — paid once, only for real activity, not signups.)
+    const priorCredited = await sql.get<{ n: number }>(
+      "SELECT COUNT(*)::int AS n FROM task_completions WHERE user_id = ? AND status = 'credited'",
+      userId,
+    );
+    const isFirstCreditedTask = (priorCredited?.n ?? 0) === 0;
+
     // 5. Verified + clean: record the completion and credit the ledger together.
     // If either write fails, neither lands — no points without a completion row,
     // no completion row without points. Points come from OUR task row, never
@@ -138,24 +150,65 @@ export async function webhookRoutes(app: FastifyInstance) {
         sourceType: "task_completion", sourceRefId: completionId, note: "Task reward",
       }, t);
 
-      // Referral commission (P1): inviter earns a share, tracked separately.
-      // The share is the network's configured referral_bonus_pct (Admin-set,
-      // never hardcoded), falling back to the global default if unset.
-      // P2 tuning: only pay while the invited account is inside the referral
-      // window (referral_bonus_days; 0 = lifetime). Past the window the inviter
-      // stops earning from this referral — caps long-tail cost and farm value.
+      // Referral commission (2-level): the inviter (L1) and the inviter's inviter
+      // (L2) each earn a share of this user's task points, tracked separately.
+      // Shares are the network's configured percentages (Admin-set, never
+      // hardcoded), falling back to global defaults if unset.
+      // Tuning: only pay while the invited account is inside the referral window
+      // (referral_bonus_days; 0 = lifetime). Past the window the inviters stop
+      // earning from this referral — caps long-tail cost and farm value. Every
+      // referral payout comes from margin; it NEVER reduces this user's reward.
       const windowDays = net ? net.referral_bonus_days : config.referralBonusDays;
       const inviteAgeDays = (Date.now() - new Date(user.created_at).getTime()) / 86400_000;
       const withinWindow = windowDays <= 0 || inviteAgeDays <= windowDays;
-      if (user.referred_by && withinWindow) {
-        const pct = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
-        const bonus = Math.floor(task.points * pct);
-        if (bonus > 0) {
-          await postLedger({
-            userId: user.referred_by, points: bonus, direction: "credit",
-            sourceType: "referral_bonus", sourceRefId: completionId,
-            note: "Referral bonus from your invite",
-          }, t);
+
+      const l1 = user.referred_by;
+      if (l1) {
+        // Level 1 + Level 2 percentage shares — only while inside the window.
+        if (withinWindow) {
+          const pct1 = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
+          const bonus1 = Math.floor(task.points * pct1);
+          if (bonus1 > 0) {
+            await postLedger({
+              userId: l1, points: bonus1, direction: "credit",
+              sourceType: "referral_bonus", sourceRefId: completionId,
+              note: "Referral bonus from your invite",
+            }, t);
+          }
+
+          // Level 2 — the inviter's inviter (the person who brought in L1).
+          const pct2 = net ? net.referral_bonus_pct_l2 / 100 : config.referralCommissionL2Pct;
+          if (pct2 > 0) {
+            const l1Row = await t.get<{ referred_by: string | null }>(
+              "SELECT referred_by FROM users WHERE id = ?", l1,
+            );
+            const l2 = l1Row?.referred_by;
+            // Guard against a self/loop referral crediting the same account twice.
+            if (l2 && l2 !== userId && l2 !== l1) {
+              const bonus2 = Math.floor(task.points * pct2);
+              if (bonus2 > 0) {
+                await postLedger({
+                  userId: l2, points: bonus2, direction: "credit",
+                  sourceType: "referral_bonus", sourceRefId: completionId,
+                  note: "Referral bonus (level 2)",
+                }, t);
+              }
+            }
+          }
+        }
+
+        // First-task bonus — a one-time flat reward to the DIRECT inviter when
+        // this invited user completes their first task. Rewards real activity,
+        // not empty signups. Fires once, so it is not window-gated.
+        if (isFirstCreditedTask) {
+          const firstBonus = net ? net.referral_first_task_bonus : config.referralFirstTaskBonusPoints;
+          if (firstBonus > 0) {
+            await postLedger({
+              userId: l1, points: firstBonus, direction: "credit",
+              sourceType: "referral_bonus", sourceRefId: completionId,
+              note: "Bonus — your invite finished their first task",
+            }, t);
+          }
         }
       }
     });

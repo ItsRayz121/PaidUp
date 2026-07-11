@@ -88,6 +88,45 @@ export async function appRoutes(app: FastifyInstance) {
     return { code: user.referral_code, joined: joined?.n ?? 0, earnedPoints: earned?.s ?? 0 };
   }));
 
+  // ---- Leaderboard --------------------------------------------------------
+  // Social proof + friendly competition to drive referrals (founder request).
+  // Two boards: top EARNERS (most points earned from tasks + referrals) and top
+  // REFERRERS (most points earned from their invites). Names are masked for
+  // privacy; the caller's own row is flagged so the UI can highlight it.
+  app.get("/leaderboard", guard(async (userId) => {
+    const LIMIT = 20;
+    const earners = await sql.all<{ id: string; email: string; earned: number }>(
+      `SELECT u.id, u.email,
+              COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
+                                 AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
+       FROM users u JOIN ledger_entries le ON le.user_id = u.id
+       WHERE u.email_verified = 1
+       GROUP BY u.id, u.email
+       HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
+                        AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
+       ORDER BY earned DESC, u.created_at ASC
+       LIMIT ${LIMIT}`,
+    );
+    const referrers = await sql.all<{ id: string; email: string; ref_points: number; invites: number }>(
+      `SELECT u.id, u.email,
+              COALESCE(SUM(le.amount),0)::int AS ref_points,
+              (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
+       FROM users u JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
+       GROUP BY u.id, u.email
+       HAVING SUM(le.amount) > 0
+       ORDER BY ref_points DESC, u.created_at ASC
+       LIMIT ${LIMIT}`,
+    );
+    return {
+      topEarners: earners.map((r, i) => ({
+        rank: i + 1, name: maskName(r.email), points: r.earned, isMe: r.id === userId,
+      })),
+      topReferrers: referrers.map((r, i) => ({
+        rank: i + 1, name: maskName(r.email), points: r.ref_points, invites: r.invites, isMe: r.id === userId,
+      })),
+    };
+  }));
+
   // ---- Support: earner-facing help tickets --------------------------------
   // Simple English, one screen. A ticket is a subject + a thread of messages;
   // staff answer from the Agent queue.
@@ -171,4 +210,12 @@ function kindFor(source: string): string {
   if (source === "referral_bonus") return "referral";
   if (source === "withdrawal") return "withdrawal";
   return "task";
+}
+
+// Mask an email into a public leaderboard handle: first 2 chars of the local
+// part + dots (e.g. "fa•••"). Never exposes the full address or the domain.
+function maskName(email: string): string {
+  const local = (email.split("@")[0] || "user").trim();
+  if (local.length <= 2) return `${local[0] ?? "u"}•••`;
+  return `${local.slice(0, 2)}•••`;
 }
