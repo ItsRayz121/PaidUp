@@ -1,5 +1,5 @@
 // USDT payout chains shown in the withdraw screen. USDT only at launch (founder
-// decision); PKR / local rails are "Coming soon". The server does the full
+// decision); local payment rails are "Coming soon". The server does the full
 // address check (EIP-55 for EVM) — this is just instant UI feedback.
 export type ChainId = "bep20" | "base" | "aptos";
 

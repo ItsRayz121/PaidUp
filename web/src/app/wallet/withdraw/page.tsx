@@ -116,9 +116,10 @@ export default function WithdrawPage() {
               </button>
             );
           })}
-          {/* PKR / local money — not yet */}
+          {/* Local money rails — not live yet. Named generically on purpose: we
+              don't promise a specific provider before one is actually signed. */}
           <div className="col-span-2 flex items-center justify-between rounded-xl border border-dashed border-line bg-card/50 p-3">
-            <span className="font-semibold text-muted">{t("withdraw.pkrRow")}</span>
+            <span className="font-semibold text-muted">{t("withdraw.localRow")}</span>
             <span className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending">{t("withdraw.comingSoon")}</span>
           </div>
         </div>
