@@ -28,10 +28,13 @@ export async function appRoutes(app: FastifyInstance) {
     const user = (await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId))!;
     // Hide offers from a network the Admin has disabled. A task whose network
     // has no row yet (predates the networks table) still shows — absence = active.
+    // A task marked country 'ALL' is global — it shows to every user, whatever
+    // their country. Surveys (CPX) are not in this table at all: that wall is
+    // targeted by the user's IP, so it is already worldwide.
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT t.* FROM tasks t
        LEFT JOIN networks n ON n.id = t.network
-       WHERE t.status = 'active' AND t.country = ?
+       WHERE t.status = 'active' AND (t.country = ? OR t.country = 'ALL')
          AND (n.status IS NULL OR n.status = 'active')
        ORDER BY t.points DESC`,
       user.country,

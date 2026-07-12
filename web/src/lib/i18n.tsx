@@ -37,9 +37,9 @@ const dict: Record<Locale, Record<string, string>> = {
     "tasks.subtitle": "Finish a task and get points.",
     "tasks.disclosure":
       "These are sponsored offers from our partners. We tell you who gives the reward before you start.",
-    "tasks.empty.title": "No tasks right now for {country}",
+    "tasks.empty.title": "More ways to earn are coming",
     "tasks.empty.body":
-      "Check back soon. New tasks come every day. Meanwhile, invite a friend and earn more.",
+      "Surveys are open now — tap “Answer surveys” above to earn today. New task types are added soon.",
     "tasks.seeAll": "See all",
     // home
     "home.hello": "Hello,",
@@ -215,9 +215,9 @@ const dict: Record<Locale, Record<string, string>> = {
     "tasks.subtitle": "ایک کام مکمل کریں اور پوائنٹس پائیں۔",
     "tasks.disclosure":
       "یہ ہمارے شراکت داروں کی طرف سے سپانسر شدہ آفرز ہیں۔ شروع کرنے سے پہلے ہم آپ کو بتاتے ہیں کہ انعام کون دے رہا ہے۔",
-    "tasks.empty.title": "{country} کے لیے ابھی کوئی کام نہیں ہے",
+    "tasks.empty.title": "کمانے کے مزید طریقے آ رہے ہیں",
     "tasks.empty.body":
-      "تھوڑی دیر بعد دوبارہ دیکھیں۔ نئے کام روزانہ آتے ہیں۔ اسی دوران، کسی دوست کو دعوت دیں اور زیادہ کمائیں۔",
+      "سروے ابھی کھلے ہیں — آج کمانے کے لیے اوپر ”سروے کے جواب دیں“ پر ٹیپ کریں۔ نئے کام جلد شامل کیے جائیں گے۔",
     "tasks.seeAll": "سب دیکھیں",
     // home
     "home.hello": "خوش آمدید،",

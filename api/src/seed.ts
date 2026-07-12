@@ -19,6 +19,13 @@ const networks = [
   { id: "cpx", name: "CPX Research", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
 ];
 
+// Demo offers for the three SPEC adapters (offerhub/tapvid/surveyx). No real
+// network sits behind them, so a completion can never produce a verified
+// postback and the user could never be credited. Seeding them into a live DB
+// would show real users offers that cannot pay — so they are OFF unless asked
+// for explicitly (local/dev). Production seeds networks only.
+const seedDemoTasks = process.env.SEED_DEMO_TASKS === "true";
+
 const tasks = [
   { id: "t1", type: "install", title: "Install Cricket Live and open it once", points: 350, network: "offerhub", advertiser: "Cricket Live", minutes: 3, requirement: "Keep the app installed for 24 hours to get your points." },
   { id: "t2", type: "video", title: "Watch a short video", points: 40, network: "tapvid", advertiser: "TapVid", minutes: 1, requirement: null },
@@ -55,16 +62,23 @@ for (const n of networks) {
 }
 
 let added = 0;
-for (const t of tasks) {
-  // Upsert the network key so re-seeding realigns tasks created before the
-  // networks table existed (their old free-text network names).
-  const res = await sql.run(
-    `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, requirement, country, status, created_at)
-     VALUES (?,?,?,?,?,?,?,?, 'Pakistan', 'active', ?)
-     ON CONFLICT (id) DO UPDATE SET network = EXCLUDED.network`,
-    t.id, t.type, t.title, t.points, t.network, t.advertiser, t.minutes, t.requirement, now(),
-  );
-  if (res.rowCount) added++;
+if (seedDemoTasks) {
+  for (const t of tasks) {
+    // Upsert the network key so re-seeding realigns tasks created before the
+    // networks table existed (their old free-text network names).
+    const res = await sql.run(
+      `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, requirement, country, status, created_at)
+       VALUES (?,?,?,?,?,?,?,?, 'Pakistan', 'active', ?)
+       ON CONFLICT (id) DO UPDATE SET network = EXCLUDED.network`,
+      t.id, t.type, t.title, t.points, t.network, t.advertiser, t.minutes, t.requirement, now(),
+    );
+    if (res.rowCount) added++;
+  }
 }
-console.log(`Seed complete. ${nets} network(s) added; ${added} task(s) upserted.`);
+console.log(
+  `Seed complete. ${nets} network(s) added; ` +
+    (seedDemoTasks
+      ? `${added} demo task(s) upserted.`
+      : "demo tasks skipped (set SEED_DEMO_TASKS=true to add them)."),
+);
 process.exit(0);

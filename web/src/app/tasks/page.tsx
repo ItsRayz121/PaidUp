@@ -11,7 +11,7 @@ import { useI18n } from "@/lib/i18n";
 import { fetchTasks } from "@/lib/api";
 
 export default function TasksPage() {
-  const { user, ready } = useRequireAuth();
+  const { ready } = useRequireAuth();
   const { t } = useI18n();
   const tasks = useApi(fetchTasks, []);
 
@@ -33,14 +33,15 @@ export default function TasksPage() {
         {t("tasks.disclosure")}
       </p>
 
-      {/* Live surveys (CPX). The real earner — always show it above the feed. */}
+      {/* Surveys (CPX) are the live earner — they pay real points today, while
+          the task catalog below may be empty. Lead with them, don't bury them. */}
       <Link href="/surveys" className="block">
-        <Card className="flex items-center gap-3 p-4">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent-tint text-accent-ink">
-            <StarIcon size={22} />
+        <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-4">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand text-white">
+            <StarIcon size={24} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-brand-ink">{t("surveys.title")}</p>
+            <p className="font-bold text-brand-ink">{t("surveys.title")}</p>
             <p className="text-sm text-muted">{t("surveys.cta")}</p>
           </div>
           <ArrowRightIcon size={22} className="text-brand" />
@@ -52,10 +53,7 @@ export default function TasksPage() {
       ) : tasks.error ? (
         <ErrorState message={tasks.error} onRetry={tasks.reload} />
       ) : list.length === 0 ? (
-        <EmptyState
-          title={t("tasks.empty.title", { country: user?.country ?? t("common.yourCountry") })}
-          body={t("tasks.empty.body")}
-        />
+        <EmptyState title={t("tasks.empty.title")} body={t("tasks.empty.body")} />
       ) : (
         <TaskFlow tasks={list} />
       )}
