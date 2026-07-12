@@ -196,6 +196,7 @@ const dict: Record<Locale, Record<string, string>> = {
       "These surveys come from our partner. Points are added after they confirm you finished — this can take a little time.",
     "surveys.offTitle": "Surveys are closed right now",
     "surveys.offBody": "Please check again soon.",
+    "surveys.openNewTab": "Surveys not opening? Open them in a new tab",
   },
   ur: {
     // nav + common
@@ -375,6 +376,7 @@ const dict: Record<Locale, Record<string, string>> = {
       "یہ سروے ہمارے پارٹنر کی طرف سے ہیں۔ ان کے تصدیق کرنے کے بعد پوائنٹس شامل کیے جاتے ہیں — اس میں تھوڑا وقت لگ سکتا ہے۔",
     "surveys.offTitle": "ابھی سروے بند ہیں",
     "surveys.offBody": "براہ کرم تھوڑی دیر بعد دوبارہ دیکھیں۔",
+    "surveys.openNewTab": "سروے نہیں کھل رہے؟ انہیں نئے ٹیب میں کھولیں",
   },
 };
 

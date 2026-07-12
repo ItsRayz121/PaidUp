@@ -45,16 +45,35 @@ export default function SurveysPage() {
           <EmptyState title={t("surveys.offTitle")} body={t("surveys.offBody")} />
         </div>
       ) : (
-        // Tall iframe that the page scrolls — CPX's own recommended pattern.
-        <iframe
-          src={url}
-          title={t("surveys.title")}
-          height={1800}
-          className="w-full border-0"
-          // Third-party survey content needs its own JS, forms and navigation.
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-          referrerPolicy="no-referrer-when-downgrade"
-        />
+        // The iframe MUST be viewport-sized and scroll internally — never a tall
+        // fixed height. CPX pins its controls (the "next" arrow that submits a
+        // screening answer) to the bottom of the viewport, and an iframe's
+        // viewport is its own box: at height=1800 that arrow landed 1800px down,
+        // so answering a question looked like it did nothing and the wall
+        // appeared frozen. Sized to the screen, the arrow stays in view.
+        <>
+          <iframe
+            src={url}
+            title={t("surveys.title")}
+            className="block h-[calc(100dvh-13rem)] min-h-[420px] w-full border-0"
+            // Third-party survey content needs its own JS, forms and navigation.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+          {/* Escape hatch: a full-screen tab is the survey wall's native home,
+              so anything the embed gets wrong (cramped screens, a control that
+              lands off-frame) has a one-tap way out. */}
+          <p className="px-4 pt-3 text-center">
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-semibold text-brand underline underline-offset-2"
+            >
+              {t("surveys.openNewTab")}
+            </a>
+          </p>
+        </>
       )}
     </div>
   );
