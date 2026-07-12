@@ -10,32 +10,67 @@ Legend: 🔴 launch blocker · 🟡 strongly recommended · ⚪ optional
 
 ---
 
-## 🔴 1. Sign up with a real ad network (no offers = no product)
+## 🔴 1. Sign up with more ad networks (CPX alone = surveys only)
 
-`offerhub`, `tapvid`, `surveyx` in the code are **adapters built to a spec**, not
-live accounts. Until a real network is connected there are no offers to show and
-no revenue. Pick at least one offerwall to start.
+**Status: CPX Research is LIVE** (app id 34405) — real surveys, real postbacks,
+real revenue. That unblocked the product. But CPX sells **surveys only**, and its
+inventory is thin and swings hard (measured 5 surveys one minute, 1 the next). One
+survey network is not a business.
 
-**Networks that accept publishers in PK/IN/BD/ID/NG and pay by postback:**
-- **AdGate Media**, **Ayet-Studios**, **BitLabs** (surveys), **OfferToro / Torox**,
-  **AdGem**, **CPX Research** (surveys), **Pollfish**.
+`offerhub`, `tapvid`, `surveyx` in the code are **adapters written to an imagined
+spec with no account behind them**. They can never pay a user. Don't count them,
+and don't seed their demo tasks into production (the seed no longer does).
 
-**Steps:**
-1. Apply as a **publisher/app owner**. You'll describe the app (rewarded offerwall,
-   web app on Vercel). Approval can take a few days.
-2. In their dashboard, get: your **publisher/app ID**, and their **postback
-   (server-to-server) secret / signing key**.
-3. Set their **postback URL** to our endpoint:
-   `https://paidup-production-a25f.up.railway.app/webhooks/<network>` (the network
-   id, e.g. `/webhooks/offerhub`). I'll confirm the exact path when we wire the
-   real adapter.
-4. Give me the network's **signature scheme** (what they sign, which header/param
-   holds the HMAC). I map it to an adapter file — that's the only code step left.
-5. Set the secret on Railway as `POSTBACK_SECRET_<NETWORK>` **before** the deploy
-   (the API fail-fasts on boot if a network's secret is still a default).
+**To get installs, game offers and rewarded video, sign up for these** (all work
+on a web app — no Android SDK needed):
 
-> Tell me which network you're approved on and paste their postback docs — I'll
-> build the matching adapter and a smoke test in one session.
+| Network | Gives you | Why |
+|---|---|---|
+| **AdGate Media** | app installs, play-to-level game offers, sign-ups, surveys | Best single addition. Strong PK/South-Asia fill, web iframe wall, clean S2S docs. |
+| **AyeT Studios** | offerwall **+ real rewarded video** | The legitimate "watch videos for points". Good South Asia coverage. |
+| **BitLabs** | surveys | Second survey source, to cover CPX's supply gaps. Adds no task variety. |
+| **Lootably / Torox** | installs, games, video | Fallback — they approve new/small publishers more readily if AdGate says no. |
+
+> ⚠️ **Do not pay users to watch YouTube videos.** Incentivised views violate
+> YouTube's Terms of Service and can get the site banned and a payment processor
+> pulled. "Watch video, earn points" must come from a **rewarded-video ad network**
+> (AyeT), where the ads themselves are the videos.
+
+**For each network, collect exactly these four things and send them to me:**
+
+1. **App / publisher ID.**
+2. **Postback secret / signing key** (their "secure hash", "postback key", etc.).
+3. **Their postback signature scheme** — what string they sign, with which
+   algorithm, and which parameter carries the signature. Paste their postback doc
+   page; that is what I turn into an adapter.
+4. **The reward conversion rate** you set in their dashboard.
+
+**Set their postback URL to (exact path — a wrong path silently drops every
+conversion and users never get paid):**
+
+```
+https://paidup-production-a25f.up.railway.app/webhooks/<network>/postback
+```
+
+e.g. `/webhooks/adgate/postback`, `/webhooks/ayet/postback`,
+`/webhooks/bitlabs/postback`, `/webhooks/lootably/postback`.
+
+**Enforce the 60/40 split in THEIR dashboard**, the way CPX does it. CPX's Reward
+Settings say `1 USD = 600 points`, so CPX pays us $1 → the user gets 600 points
+(= $0.60) → we keep $0.40. Since our rate is **1000 points = 1 USDT**, the rule for
+any network is:
+
+> **set the dashboard rate to `1 USD = 600 points`.**
+
+Then set the secret on Railway as `POSTBACK_SECRET_<NETWORK>` **before** deploying
+(the API fail-fasts on boot if a live network's secret is still a default).
+
+> Send me the four items above for a network and I'll build the adapter + an
+> end-to-end smoke test (accept, replay, forged-signature, reversal) in one
+> session. Adding a network is one adapter file + one registry line — the ledger,
+> fraud layer, referral payouts and postback plumbing are already network-agnostic.
+> **I will not write another adapter without real credentials** — that is precisely
+> how offerhub/tapvid/surveyx became dead code.
 
 ---
 
