@@ -118,6 +118,12 @@ export const config = {
   // log, or you'd silently reject real paid completions.
   cpxEnforceIp: (process.env.CPX_ENFORCE_IP ?? "false").toLowerCase() === "true",
 
+  // Ceiling on a SINGLE hand-made points adjustment by staff. A manual credit
+  // mints money that is redeemable for real USDT, so an admin session is now a
+  // treasury key. This bounds what one stolen session (or one typo — an extra
+  // zero) can cost before anyone notices. Raise it deliberately, not casually.
+  adminAdjustMaxPoints: Number(process.env.ADMIN_ADJUST_MAX_POINTS ?? 50000),
+
   // Static per-network tokens for networks that gate with a shared token in
   // addition to a signature (e.g. tapvid rewarded-video).
   postbackTokens: {

@@ -1,7 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import { sql, now } from "./db.ts";
 import { config } from "./config.ts";
-import { getUserId } from "./auth.ts";
+import { getUserId, requireActiveUser } from "./auth.ts";
 
 export type Role = "agent" | "manager" | "admin";
 
@@ -24,8 +24,15 @@ export async function ensureAdminRole(userId: string, email: string): Promise<vo
 }
 
 // Gate a staff route. Throws {statusCode} which route guards turn into JSON.
+//
+// Suspension must revoke EVERY privilege, staff included. A JWT issued before a
+// suspension stays cryptographically valid until it expires, so without this
+// check a suspended staff account would keep full access — and admins can now
+// mint points redeemable for real USDT. Suspending a compromised admin would
+// have looked like it worked while the attacker kept paying themselves.
 export async function requireStaff(req: FastifyRequest, allowed: Role[]): Promise<{ userId: string; role: Role }> {
   const userId = getUserId(req); // throws 401 if not signed in
+  await requireActiveUser(userId); // 403 if the account is suspended
   const role = await roleOf(userId);
   if (!role || !allowed.includes(role)) {
     throw { statusCode: 403, message: "You do not have access to this." };

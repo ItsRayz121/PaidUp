@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, postLedger, getSetting, setSetting } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger, logAudit, getSetting, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
@@ -352,5 +352,265 @@ export async function staffRoutes(app: FastifyInstance) {
       risk: { openFraud, openTickets },
       series,
     };
+  }));
+
+  // ==========================================================================
+  // SUPER-ADMIN capabilities. `admin` was always the top role, but it had no
+  // tools: no way to find a user, credit one, suspend one, or appoint staff.
+  // ==========================================================================
+
+  // ---- Admin: find users --------------------------------------------------
+  // Search by email or id. Balance is summed from the ledger, never stored.
+  app.get("/staff/users", staffGuard(["manager", "admin"], async (_ctx, req) => {
+    const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
+    const limit = Math.min(Number((req.query as { limit?: string }).limit ?? 50) || 50, 200);
+
+    const rows = await sql.all<{ id: string; email: string; country: string; status: string; created_at: string; balance: number }>(
+      `SELECT u.id, u.email, u.country, u.status, u.created_at,
+              COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance
+       FROM users u
+       WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
+       ORDER BY u.created_at DESC
+       LIMIT ?`,
+      q, `%${q}%`, q, limit,
+    );
+    return { users: rows };
+  }));
+
+  // ---- Admin: suspend / restore an account --------------------------------
+  // Enforced for real: every earner route re-checks users.status on each call
+  // (see requireActiveUser), so an already-issued JWT stops working immediately.
+  const statusSchema = z.object({
+    status: z.enum(["active", "suspended"]),
+    reason: z.string().trim().min(3, "Say why.").max(500),
+  });
+  app.post("/staff/users/:id/status", staffGuard(["admin"], async ({ userId: actorId, role }, req, reply) => {
+    const parsed = statusSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick a status and give a reason." });
+    const targetId = (req.params as { id: string }).id;
+
+    const target = await sql.get<{ id: string; status: string }>("SELECT id, status FROM users WHERE id = ?", targetId);
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    // Locking yourself out of your own product is a bad afternoon.
+    if (targetId === actorId && parsed.data.status === "suspended") {
+      return reply.code(400).send({ error: "You cannot suspend your own account." });
+    }
+
+    await sql.tx(async (t) => {
+      await t.run("UPDATE users SET status = ? WHERE id = ?", parsed.data.status, targetId);
+      await logAudit({
+        actorUserId: actorId, actorRole: role,
+        action: parsed.data.status === "suspended" ? "user_suspended" : "user_restored",
+        targetUserId: targetId, detail: parsed.data.reason,
+      }, t);
+    });
+    return { ok: true, status: parsed.data.status };
+  }));
+
+  // ---- Admin: adjust a user's points by hand ------------------------------
+  // This MINTS MONEY. Points are redeemable for real USDT, so a credit here is a
+  // withdrawal from the treasury with extra steps. Constraints, all deliberate:
+  //   - admin only (not manager, not agent)
+  //   - a written reason is mandatory — it lands in the user's own ledger note
+  //   - capped per adjustment (config.adminAdjustMaxPoints) so one stolen session
+  //     or one extra zero cannot drain the treasury in a single call
+  //   - written through postLedger, so it is an append-only entry like every
+  //     other movement (guardrail #2) — never a mutable balance edit
+  //   - a debit cannot push a user below zero
+  //   - recorded in admin_audit_log against the staff member who did it
+  const adjustSchema = z.object({
+    points: z.number().int().refine((n) => n !== 0, "Enter a non-zero amount."),
+    reason: z.string().trim().min(3, "Say why.").max(500),
+  });
+  app.post("/staff/users/:id/adjust", staffGuard(["admin"], async ({ userId: actorId, role }, req, reply) => {
+    const parsed = adjustSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Enter an amount (not zero) and a reason." });
+    }
+    const { points, reason } = parsed.data;
+    const targetId = (req.params as { id: string }).id;
+
+    if (Math.abs(points) > config.adminAdjustMaxPoints) {
+      return reply.code(400).send({
+        error: `One adjustment cannot be more than ${config.adminAdjustMaxPoints} points.`,
+      });
+    }
+
+    const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    const result = await sql.tx(async (t) => {
+      // Lock the row so a concurrent withdrawal can't race a debit past zero.
+      await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", targetId);
+      const before = await balanceOf(targetId, t);
+      if (points < 0 && before + points < 0) {
+        throw { statusCode: 400, message: `That would take the balance below zero (they have ${before}).` };
+      }
+      const entryId = await postLedger({
+        userId: targetId,
+        points: Math.abs(points),
+        direction: points > 0 ? "credit" : "debit",
+        sourceType: "admin_adjustment",
+        note: reason,
+      }, t);
+      await logAudit({
+        actorUserId: actorId, actorRole: role, action: "points_adjusted",
+        targetUserId: targetId,
+        detail: `${points > 0 ? "+" : ""}${points} points — ${reason}`,
+      }, t);
+      return { entryId, before, after: before + points };
+    });
+    return { ok: true, ...result };
+  }));
+
+  // ---- Admin: appoint / remove staff --------------------------------------
+  app.get("/staff/staff", staffGuard(["admin"], async () => {
+    const rows = await sql.all<{ user_id: string; email: string; role: Role; created_at: string }>(
+      `SELECT a.user_id, u.email, a.role, a.created_at
+       FROM admin_users a JOIN users u ON u.id = a.user_id
+       ORDER BY a.created_at ASC`,
+    );
+    return { staff: rows.map((r) => ({ userId: r.user_id, email: r.email, role: r.role, at: r.created_at })) };
+  }));
+
+  const roleSchema = z.object({ role: z.enum(["agent", "manager", "admin", "none"]) });
+  app.put("/staff/staff/:id", staffGuard(["admin"], async ({ userId: actorId, role: actorRole }, req, reply) => {
+    const parsed = roleSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick a role." });
+    const targetId = (req.params as { id: string }).id;
+    const next = parsed.data.role;
+
+    const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    // Lockout protection: never let the last admin demote or remove themselves.
+    // Without this, one click can leave the product with no one who can appoint
+    // anyone — recoverable only by editing the database by hand.
+    if (next !== "admin") {
+      const admins = await sql.get<{ n: number }>(
+        "SELECT COUNT(*)::int AS n FROM admin_users WHERE role = 'admin'",
+      );
+      const targetIsAdmin = await sql.get<{ role: Role }>(
+        "SELECT role FROM admin_users WHERE user_id = ?", targetId,
+      );
+      if (targetIsAdmin?.role === "admin" && (admins?.n ?? 0) <= 1) {
+        return reply.code(400).send({ error: "This is the last admin. Appoint another admin first." });
+      }
+    }
+
+    await sql.tx(async (t) => {
+      if (next === "none") {
+        await t.run("DELETE FROM admin_users WHERE user_id = ?", targetId);
+      } else {
+        await t.run(
+          "INSERT INTO admin_users (user_id, role, created_at) VALUES (?,?,?) " +
+          "ON CONFLICT(user_id) DO UPDATE SET role = EXCLUDED.role",
+          targetId, next, now(),
+        );
+      }
+      await logAudit({
+        actorUserId: actorId, actorRole,
+        action: next === "none" ? "staff_removed" : "staff_role_set",
+        targetUserId: targetId, detail: next,
+      }, t);
+    });
+    return { ok: true, role: next };
+  }));
+
+  // ---- Admin: the money view ----------------------------------------------
+  // Every figure is derived from the ledger, so it cannot drift from reality.
+  // `outstanding` is the liability that matters: points users hold that they can
+  // still cash out. Compare it against the treasury before you spend.
+  app.get("/staff/money", staffGuard(["admin"], async () => {
+    const one = async (text: string, ...p: unknown[]) =>
+      (await sql.get<{ v: number }>(text, ...p))?.v ?? 0;
+
+    const [credited, debited, paidPoints, pendingPoints, feePoints, adjustments] = await Promise.all([
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE amount > 0"),
+      one("SELECT COALESCE(SUM(-amount),0)::int AS v FROM ledger_entries WHERE amount < 0"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM withdrawal_requests WHERE status = 'paid'"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM withdrawal_requests WHERE status IN ('pending','agent_approved','manager_approved')"),
+      one("SELECT COALESCE(SUM(COALESCE(fee_points,0)),0)::int AS v FROM withdrawal_requests WHERE status = 'paid'"),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE source_type = 'admin_adjustment'"),
+    ]);
+
+    const recentAudit = await sql.all(
+      `SELECT a.action, a.detail, a.created_at, a.actor_role,
+              actor.email AS actor_email, target.email AS target_email
+       FROM admin_audit_log a
+       JOIN users actor ON actor.id = a.actor_user_id
+       LEFT JOIN users target ON target.id = a.target_user_id
+       ORDER BY a.created_at DESC LIMIT 50`,
+    );
+
+    return {
+      points: {
+        credited, debited, adjustments,
+        outstanding: credited - debited, // live user liability
+        paidPoints, pendingPoints, feePoints,
+      },
+      usdt: {
+        outstanding: pointsToUsdt(credited - debited),
+        paid: pointsToUsdt(paidPoints),
+        pending: pointsToUsdt(pendingPoints),
+      },
+      recentAudit,
+    };
+  }));
+
+  // ---- Admin: CSV export --------------------------------------------------
+  // Quotes are doubled per RFC 4180 so a comma or quote in an email or a
+  // free-text reason cannot shift columns.
+  //
+  // A leading = + - @ (or tab/CR) makes Excel treat the cell as a FORMULA, and
+  // RFC quoting does not stop that — Excel strips the quotes first. Some of
+  // these fields are user-supplied (emails), so prefix those cells with a single
+  // quote, which Excel renders as plain text.
+  const csv = (rows: Record<string, unknown>[]): string => {
+    if (!rows.length) return "";
+    const cols = Object.keys(rows[0]);
+    const cell = (v: unknown) => {
+      const s = String(v ?? "");
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\n");
+  };
+
+  app.get("/staff/export/:what", staffGuard(["admin"], async (_ctx, req, reply) => {
+    const what = (req.params as { what: string }).what;
+    let rows: Record<string, unknown>[];
+
+    if (what === "ledger") {
+      rows = await sql.all(
+        `SELECT l.created_at, u.email, l.amount, l.direction, l.source_type, l.note
+         FROM ledger_entries l JOIN users u ON u.id = l.user_id
+         ORDER BY l.created_at DESC LIMIT 10000`,
+      );
+    } else if (what === "withdrawals") {
+      rows = await sql.all(
+        `SELECT w.created_at, u.email, w.amount, w.fee_points, w.payout_rail, w.payout_address,
+                w.status, w.tx_hash, w.paid_at
+         FROM withdrawal_requests w JOIN users u ON u.id = w.user_id
+         ORDER BY w.created_at DESC LIMIT 10000`,
+      );
+    } else if (what === "audit") {
+      rows = await sql.all(
+        `SELECT a.created_at, actor.email AS actor, a.actor_role, a.action,
+                target.email AS target, a.detail
+         FROM admin_audit_log a
+         JOIN users actor ON actor.id = a.actor_user_id
+         LEFT JOIN users target ON target.id = a.target_user_id
+         ORDER BY a.created_at DESC LIMIT 10000`,
+      );
+    } else {
+      return reply.code(404).send({ error: "Unknown export." });
+    }
+
+    return reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="${what}.csv"`)
+      .send(csv(rows));
   }));
 }

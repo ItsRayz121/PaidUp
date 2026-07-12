@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
 import { config } from "../config.ts";
-import { getUserId } from "../auth.ts";
+import { getUserId, requireActiveUser } from "../auth.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -12,6 +12,7 @@ function guard(
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const userId = getUserId(req);
+      await requireActiveUser(userId); // a suspended account is locked out here
       return await handler(userId, req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };

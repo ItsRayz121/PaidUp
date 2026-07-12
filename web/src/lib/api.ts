@@ -169,6 +169,56 @@ export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay
 export const fetchStaffUser = (id: string) =>
   apiFetch<{ user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[] }>(`/staff/users/${id}`);
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
+
+// ---- Super-admin ----------------------------------------------------------
+export type AdminUserRow = {
+  id: string; email: string; country: string; status: string; created_at: string; balance: number;
+};
+export const searchUsers = (q = "") =>
+  apiFetch<{ users: AdminUserRow[] }>(`/staff/users?q=${encodeURIComponent(q)}`);
+export const setUserStatus = (id: string, status: "active" | "suspended", reason: string) =>
+  apiFetch<{ ok: true; status: string }>(`/staff/users/${id}/status`, {
+    method: "POST", body: JSON.stringify({ status, reason }),
+  });
+// Mints/burns points. `points` is signed: positive credits, negative debits.
+export const adjustUserPoints = (id: string, points: number, reason: string) =>
+  apiFetch<{ ok: true; before: number; after: number }>(`/staff/users/${id}/adjust`, {
+    method: "POST", body: JSON.stringify({ points, reason }),
+  });
+
+export type StaffMember = { userId: string; email: string; role: string; at: string };
+export const fetchStaffMembers = () => apiFetch<{ staff: StaffMember[] }>("/staff/staff");
+export const setStaffRole = (userId: string, role: "agent" | "manager" | "admin" | "none") =>
+  apiFetch<{ ok: true; role: string }>(`/staff/staff/${userId}`, {
+    method: "PUT", body: JSON.stringify({ role }),
+  });
+
+export type MoneyView = {
+  points: {
+    credited: number; debited: number; adjustments: number;
+    outstanding: number; paidPoints: number; pendingPoints: number; feePoints: number;
+  };
+  usdt: { outstanding: number; paid: number; pending: number };
+  recentAudit: Record<string, unknown>[];
+};
+export const fetchMoney = () => apiFetch<MoneyView>("/staff/money");
+
+// CSV export can't be a plain <a href>: the API authenticates with a Bearer
+// header, which a browser navigation won't send. Fetch it as a blob instead.
+export async function downloadExport(what: "ledger" | "withdrawals" | "audit"): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/staff/export/${what}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError("Export failed.", res.status);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${what}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 export const resolveFraud = (id: string, note?: string) =>
   apiFetch<{ ok: true }>(`/staff/fraud/${id}/resolve`, { method: "POST", body: JSON.stringify({ note }) });
 

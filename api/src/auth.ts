@@ -111,6 +111,19 @@ export function getUserId(req: FastifyRequest): string {
   }
 }
 
+// Verifying the JWT proves WHO you are, not that you are still allowed in — a
+// token issued before a suspension stays cryptographically valid until it
+// expires. Every earner route must therefore re-check the account's status, or
+// "suspend" would be a button that does nothing while the user keeps earning
+// and withdrawing.
+export async function requireActiveUser(userId: string): Promise<void> {
+  const row = await sql.get<{ status: string }>("SELECT status FROM users WHERE id = ?", userId);
+  if (!row) throw { statusCode: 401, message: "Session expired. Please sign in again." };
+  if (row.status !== "active") {
+    throw { statusCode: 403, message: "This account is suspended. Please contact support." };
+  }
+}
+
 async function uniqueReferralCode(email: string): Promise<string> {
   const base = (email.split("@")[0] || "user").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 6) || "USER";
   for (let i = 0; i < 20; i++) {

@@ -250,6 +250,22 @@ const SCHEMA = `
     created_at TEXT NOT NULL
   );
 
+  -- Append-only record of every privileged staff action (minting points,
+  -- suspending an account, changing a role). Never updated, never deleted: if a
+  -- staff account is ever compromised, this is the only thing that tells you
+  -- what it did. Points can be created by hand now, so this is not optional.
+  CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id             TEXT PRIMARY KEY,
+    actor_user_id  TEXT NOT NULL REFERENCES users(id),
+    actor_role     TEXT NOT NULL,
+    action         TEXT NOT NULL,
+    target_user_id TEXT REFERENCES users(id),
+    detail         TEXT,
+    created_at     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_log(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_actor ON admin_audit_log(actor_user_id);
+
   CREATE TABLE IF NOT EXISTS fraud_flags (
     id           TEXT PRIMARY KEY,
     user_id      TEXT REFERENCES users(id),
@@ -484,6 +500,27 @@ export async function postLedger(
 
 // Balance is always derived — this is the ONLY way balance is computed.
 // ::int because Postgres returns SUM() of an integer column as bigint (a string).
+// Record a privileged staff action. Append-only, like the ledger.
+export async function logAudit(
+  params: {
+    actorUserId: string;
+    actorRole: string;
+    action: string;
+    targetUserId?: string | null;
+    detail?: string;
+  },
+  t: Pick<TxApi, "run"> = sql,
+): Promise<string> {
+  const id = newId();
+  await t.run(
+    `INSERT INTO admin_audit_log (id, actor_user_id, actor_role, action, target_user_id, detail, created_at)
+     VALUES (?,?,?,?,?,?,?)`,
+    id, params.actorUserId, params.actorRole, params.action,
+    params.targetUserId ?? null, params.detail ?? null, now(),
+  );
+  return id;
+}
+
 export async function balanceOf(
   userId: string,
   t: Pick<TxApi, "get"> = sql,

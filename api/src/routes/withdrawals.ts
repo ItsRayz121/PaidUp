@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
-import { getUserId } from "../auth.ts";
+import { getUserId, requireActiveUser } from "../auth.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
 
@@ -22,7 +22,9 @@ async function saveAddress(userId: string, chain: string, address: string): Prom
 function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
-      return await handler(getUserId(req), req, reply);
+      const userId = getUserId(req);
+      await requireActiveUser(userId); // suspended accounts cannot move money
+      return await handler(userId, req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Something went wrong" });

@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton } from "@/components/staff";
+import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -145,11 +146,20 @@ export default function StaffPage() {
         )}
       </section>
 
+      {/* Money: what you owe users vs what you've paid — admin only */}
+      {isAdmin && <MoneyPanel />}
+
+      {/* Find, pay, suspend a user — admin only (manager can search via the API) */}
+      {isAdmin && <UsersPanel />}
+
       {/* Support tickets — all staff */}
       <TicketQueue />
 
       {/* Ad-network config — admin only */}
       {isAdmin && <NetworkPanel />}
+
+      {/* Appoint agents/managers/admins — admin only */}
+      {isAdmin && <StaffRolesPanel />}
 
       {/* Dispute lookup */}
       <UserLookup target={lookupTarget} />
