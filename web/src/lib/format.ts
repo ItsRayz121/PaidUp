@@ -1,27 +1,43 @@
 // Formatting helpers — kept in one place so points/money always read the same.
-// Launch country assumption: Pakistan (see docs/PROJECT_SPEC.md → Open Questions).
+// Launch market: Pakistan. Payout rail: USDT.
 
-// Points-to-currency is a business decision (commission split). This constant is
-// a placeholder for the demo ONLY, so the UI can show "your points are worth X".
-// Real value comes from the backend once the split is set. Do not treat as final.
-export const POINTS_PER_UNIT = 100; // 100 points = 1 rupee (demo rate)
-export const CURRENCY = "PKR";
-export const CURRENCY_SYMBOL = "Rs";
+// Value model (founder decision 2026-07-11):
+//   • 1000 points = 1 USDT  — the REAL payout rate. MUST match the backend
+//     (api/src/config.ts `pointsPerUsdt`, default 1000). If you change
+//     POINTS_PER_USDT on the server, change it here too, or the displayed value
+//     and the actual payout will disagree.
+//   • 1 USDT ≈ 280 PKR — a display-only approximation so users see a familiar
+//     local figure next to the (exact) USDT amount.
+export const POINTS_PER_USDT = 1000;
+export const PKR_PER_USDT = 280;
 
 export function formatPoints(points: number): string {
   return new Intl.NumberFormat("en-PK").format(points);
 }
 
-export function pointsToMoney(points: number): number {
-  return points / POINTS_PER_UNIT;
+export function pointsToUsdt(points: number): number {
+  return points / POINTS_PER_USDT;
+}
+export function pointsToPkr(points: number): number {
+  return pointsToUsdt(points) * PKR_PER_USDT;
 }
 
+// Exact USDT value, e.g. "2.00 USDT".
+export function formatUsdt(points: number): string {
+  return `${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(pointsToUsdt(points))} USDT`;
+}
+// Approximate local value, e.g. "Rs 560".
+export function formatPkr(points: number): string {
+  return `Rs ${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(pointsToPkr(points))}`;
+}
+
+// Primary money string used across the app: exact USDT + an approximate PKR,
+// e.g. "2.00 USDT (≈ Rs 560)". USDT is what the user actually receives; the
+// rupee figure is only an at-a-glance local approximation.
 export function formatMoney(points: number): string {
-  const value = pointsToMoney(points);
-  return `${CURRENCY_SYMBOL} ${new Intl.NumberFormat("en-PK", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(value)}`;
+  return `${formatUsdt(points)} (≈ ${formatPkr(points)})`;
 }
 
 // "2 hours ago", "just now" — plain words, no timestamps in the user UI.
