@@ -10,7 +10,8 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "seed": "tsx src/seed.ts",
-    "test:admin": "tsx src/tests/admin.e2e.ts"
+    "test:admin": "tsx src/tests/admin.e2e.ts",
+    "test:proxy": "tsx src/tests/proxy.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

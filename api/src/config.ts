@@ -118,6 +118,21 @@ export const config = {
   // log, or you'd silently reject real paid completions.
   cpxEnforceIp: (process.env.CPX_ENFORCE_IP ?? "false").toLowerCase() === "true",
 
+  // How many reverse proxies sit in front of us. req.ip is what the IP fraud
+  // rules (ip_reuse, referral-ring-by-IP) and the postback IP pin read, and
+  // Fastify defaults to the socket peer — which behind Railway is RAILWAY'S edge,
+  // identical for every user. Untrusted, those rules compare everyone to everyone.
+  //
+  // This is a hop COUNT, not `true`, on purpose. `trustProxy: true` takes the
+  // left-most X-Forwarded-For entry, which the client writes — so a user could
+  // send `X-Forwarded-For: 1.2.3.4` and choose their own apparent IP, defeating
+  // the very rules this exists to feed. Counting hops from the right reads the
+  // address OUR proxy observed, which the client cannot forge.
+  //
+  //   1 = Railway only (api.rozipay.xyz on "DNS only" / grey cloud)  <- default
+  //   2 = Cloudflare proxy (orange cloud) in front of Railway
+  trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? 1),
+
   // Ceiling on a SINGLE hand-made points adjustment by staff. A manual credit
   // mints money that is redeemable for real USDT, so an admin session is now a
   // treasury key. This bounds what one stolen session (or one typo — an extra

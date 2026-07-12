@@ -46,7 +46,11 @@ if (process.env.NODE_ENV === "production" && !usingRealPostgres) {
 
 await initDb();
 
-const app = Fastify({ logger: true });
+// trustProxy is required for req.ip to be the USER's address rather than the
+// edge proxy's. The IP fraud rules and the postback IP pin are only meaningful
+// if that is right. See config.trustProxyHops for why it is a hop count and not
+// `true` (a client can forge the left-most X-Forwarded-For entry).
+const app = Fastify({ logger: true, trustProxy: config.trustProxyHops });
 
 // In production, only allow the configured web origin(s). In dev, reflect any
 // origin so the app is reachable from localhost AND your phone on the LAN.
