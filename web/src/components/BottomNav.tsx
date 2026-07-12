@@ -29,7 +29,7 @@ export function BottomNav() {
       className="sticky bottom-0 z-20 border-t border-line bg-card/95 backdrop-blur"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-5">
+      <ul className="grid grid-cols-5" style={{ minHeight: "var(--bottomnav-h)" }}>
         {items.map(({ href, key, Icon }) => {
           const active = href === "/" ? path === "/" : path.startsWith(href);
           return (

@@ -32,6 +32,15 @@ const dict: Record<Locale, Record<string, string>> = {
     "common.cancel": "Cancel",
     "common.pointsAmount": "{n} points",
     "lang.label": "Language",
+    // install (PWA add-to-home-screen). Say plainly that nothing is downloaded —
+    // "install" makes people expect an APK, and we must not over-promise.
+    "install.title": "Put RoziPay on your phone",
+    "install.body":
+      "Open RoziPay from your home screen, like an app. Nothing to download — it takes one tap.",
+    "install.iosBody":
+      "Tap the Share button at the bottom of Safari, then choose “Add to Home Screen”.",
+    "install.cta": "Add to home screen",
+    "install.later": "Not now",
     // tasks
     "tasks.title": "Ways to earn",
     "tasks.subtitle": "Finish a task and get points.",
@@ -211,6 +220,13 @@ const dict: Record<Locale, Record<string, string>> = {
     "common.cancel": "منسوخ کریں",
     "common.pointsAmount": "{n} پوائنٹس",
     "lang.label": "زبان",
+    // install (PWA add-to-home-screen)
+    "install.title": "RoziPay کو اپنے فون میں شامل کریں",
+    "install.body":
+      "RoziPay کو ہوم اسکرین سے ایپ کی طرح کھولیں۔ کچھ ڈاؤن لوڈ نہیں کرنا — بس ایک ٹیپ۔",
+    "install.iosBody": "سفاری میں نیچے شیئر کا بٹن دبائیں، پھر ”ہوم اسکرین پر شامل کریں“ چنیں۔",
+    "install.cta": "ہوم اسکرین پر شامل کریں",
+    "install.later": "ابھی نہیں",
     // tasks
     "tasks.title": "کمانے کے طریقے",
     "tasks.subtitle": "ایک کام مکمل کریں اور پوائنٹس پائیں۔",

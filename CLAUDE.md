@@ -138,6 +138,24 @@ These override convenience or speed at every step:
   - ⚠️ `POSTBACK_SECRET_CPX` **must be set on Railway or the API will not boot.**
     Script Tag integration (higher revenue than the iframe) is a pending upgrade.
 
+- **Installable app (PWA) — 2026-07-12**: the website installs to the phone's home
+  screen and opens like a native app. It is **not an APK** — nothing is downloaded
+  and there is no Play Store step; the copy says so plainly, in en + ur.
+  - `web/src/app/manifest.ts` (standalone, brand colours, Tasks/Wallet shortcuts),
+    generated icons in `web/public/icons/` (192/512/maskable/apple — placeholder
+    art, **replace with Canva**), `web/public/sw.js`, `/offline` page.
+  - **The service worker never caches user or money data.** Navigations are
+    network-only; only `/offline`, `/icons/*` and content-hashed `/_next/static/*`
+    are cached. A stale balance from a cache would be a real bug — the door is
+    shut. `/sw.js` is served `no-store` so a bad worker can't get pinned.
+  - **`InstallPrompt` fires only after 5 minutes of *visible* time on site**
+    (accrued across visits in localStorage), never on `/login` or `/surveys`, never
+    inside the installed app; "Not now" snoozes 3 days. iOS gets Share → Add to
+    Home Screen steps (Safari has no install API).
+  - Verified: 17-check real-Chrome e2e (gate, install click, snooze, iOS branch,
+    standalone suppression), lint/typecheck/build clean, `security-review` (no
+    findings).
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

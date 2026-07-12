@@ -11,12 +11,21 @@ const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap"
 export const metadata: Metadata = {
   title: "RoziPay — earn and get real money",
   description: "Do simple tasks, earn points, and get real cash in your mobile wallet.",
+  applicationName: "RoziPay",
+  // Installed to the home screen, the app runs without browser chrome (see
+  // app/manifest.ts). iOS ignores the manifest for this and reads these instead.
+  appleWebApp: { capable: true, title: "RoziPay", statusBarStyle: "default" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#0d5c63",
+  // Standalone mode has no browser bar, so the phone's own gesture area can sit
+  // on top of our UI. This makes env(safe-area-inset-*) report real values so
+  // the bottom nav and install sheet can pad around it.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

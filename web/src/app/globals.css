@@ -39,6 +39,9 @@
 
 :root {
   color-scheme: light;
+  /* Height of the bottom tab bar. Anything floating above it (the install
+     sheet) offsets by this, so the tabs are never covered. */
+  --bottomnav-h: 64px;
 }
 
 html {
