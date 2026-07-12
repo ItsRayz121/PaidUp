@@ -332,16 +332,15 @@ export async function staffRoutes(app: FastifyInstance) {
       one("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status != 'closed'"),
     ]);
 
-    // 7-day activity series (completions + points credited per day).
+    // 7-day activity series (completions + points credited per day). Reads points
+    // off the completion itself, so dynamic-amount networks (CPX surveys, which
+    // have no task row) are included too.
     const series = await sql.all<{ day: string; completions: number; points: number }>(
       `SELECT to_char(created_at::timestamp, 'YYYY-MM-DD') AS day,
               COUNT(*)::int AS completions,
-              COALESCE(SUM(points),0)::int AS points
-       FROM (
-         SELECT tc.created_at, t.points
-         FROM task_completions tc JOIN tasks t ON t.id = tc.task_id
-         WHERE tc.status = 'credited' AND tc.created_at >= ?
-       ) x
+              COALESCE(SUM(COALESCE(points,0)),0)::int AS points
+       FROM task_completions
+       WHERE status = 'credited' AND created_at >= ?
        GROUP BY day ORDER BY day ASC`,
       sevenDaysAgo,
     );

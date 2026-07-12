@@ -14,6 +14,9 @@ const networks = [
   { id: "offerhub", name: "OfferHub", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
   { id: "tapvid", name: "TapVid", type: "rewarded_video", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
   { id: "surveyx", name: "SurveyX", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
+  // CPX Research — REAL, live survey wall. Its split is enforced by the
+  // conversion rate in the CPX dashboard (1 USD = 600 points = 60% to the user).
+  { id: "cpx", name: "CPX Research", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
 ];
 
 const tasks = [

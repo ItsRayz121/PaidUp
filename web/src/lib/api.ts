@@ -144,6 +144,12 @@ export const savePayoutAddress = (chain: string, address: string) =>
     method: "PUT", body: JSON.stringify({ chain, address }),
   });
 
+// ---- Surveys (CPX Research) ----------------------------------------------
+// The backend signs the survey-wall URL for this user (the secure hash is
+// derived from a secret that must never reach the browser).
+export const fetchSurveyWall = () =>
+  apiFetch<{ enabled: boolean; url: string | null }>("/surveys/cpx");
+
 // ---- Leaderboard ----------------------------------------------------------
 export type LeaderRow = { rank: number; name: string; points: number; invites?: number; isMe: boolean };
 export const fetchLeaderboard = () =>

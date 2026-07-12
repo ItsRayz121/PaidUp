@@ -188,6 +188,14 @@ const dict: Record<Locale, Record<string, string>> = {
     "leaderboard.you": "You",
     "leaderboard.invitesLabel": "{n} friends invited",
     "leaderboard.seeLeaderboard": "See the leaderboard",
+    // surveys (CPX)
+    "surveys.title": "Answer surveys",
+    "surveys.subtitle": "Share your opinion and get points.",
+    "surveys.cta": "New surveys for you. Earn real points.",
+    "surveys.disclosure":
+      "These surveys come from our partner. Points are added after they confirm you finished — this can take a little time.",
+    "surveys.offTitle": "Surveys are closed right now",
+    "surveys.offBody": "Please check again soon.",
   },
   ur: {
     // nav + common
@@ -359,6 +367,14 @@ const dict: Record<Locale, Record<string, string>> = {
     "leaderboard.you": "آپ",
     "leaderboard.invitesLabel": "{n} دوستوں کو دعوت دی",
     "leaderboard.seeLeaderboard": "لیڈر بورڈ دیکھیں",
+    // surveys (CPX)
+    "surveys.title": "سروے کے جواب دیں",
+    "surveys.subtitle": "اپنی رائے دیں اور پوائنٹس پائیں۔",
+    "surveys.cta": "آپ کے لیے نئے سروے۔ اصلی پوائنٹس کمائیں۔",
+    "surveys.disclosure":
+      "یہ سروے ہمارے پارٹنر کی طرف سے ہیں۔ ان کے تصدیق کرنے کے بعد پوائنٹس شامل کیے جاتے ہیں — اس میں تھوڑا وقت لگ سکتا ہے۔",
+    "surveys.offTitle": "ابھی سروے بند ہیں",
+    "surveys.offBody": "براہ کرم تھوڑی دیر بعد دوبارہ دیکھیں۔",
   },
 };
 

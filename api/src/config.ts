@@ -100,7 +100,23 @@ export const config = {
     offerhub: process.env.POSTBACK_SECRET_OFFERHUB ?? "dev-postback-secret",
     tapvid: process.env.POSTBACK_SECRET_TAPVID ?? "dev-postback-secret",
     surveyx: process.env.POSTBACK_SECRET_SURVEYX ?? "dev-postback-secret",
+    // CPX Research (REAL network). This is the "app secure hash" from the CPX
+    // dashboard. Production refuses to boot if it's still the dev default.
+    cpx: process.env.POSTBACK_SECRET_CPX ?? "dev-postback-secret",
   } as Record<string, string>,
+
+  // ---- CPX Research -------------------------------------------------------
+  // Public app id (safe to expose to the browser — it's in the survey-wall URL).
+  cpxAppId: process.env.CPX_APP_ID ?? "34405",
+  // Sanity cap: refuse to credit a single survey worth more than this many
+  // points. CPX signs only trans_id, not the amount, so this bounds the blast
+  // radius if the secure hash ever leaks. 600 points = $1 of our revenue, so
+  // 20000 (~$33 of user reward) is far above any real survey.
+  cpxMaxPointsPerSurvey: Number(process.env.CPX_MAX_POINTS ?? 20000),
+  // Pin postbacks to CPX's published IPs. OFF by default — Railway sits behind a
+  // proxy, so turn this on only after confirming the observed IP in the postback
+  // log, or you'd silently reject real paid completions.
+  cpxEnforceIp: (process.env.CPX_ENFORCE_IP ?? "false").toLowerCase() === "true",
 
   // Static per-network tokens for networks that gate with a shared token in
   // addition to a signature (e.g. tapvid rewarded-video).

@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { TaskFlow } from "@/components/TaskFlow";
+import { Card } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
-import { InfoIcon } from "@/components/icons";
+import { InfoIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { LangToggle } from "@/components/LangToggle";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -30,6 +32,20 @@ export default function TasksPage() {
         <InfoIcon size={18} className="mt-0.5 shrink-0 text-brand" />
         {t("tasks.disclosure")}
       </p>
+
+      {/* Live surveys (CPX). The real earner — always show it above the feed. */}
+      <Link href="/surveys" className="block">
+        <Card className="flex items-center gap-3 p-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent-tint text-accent-ink">
+            <StarIcon size={22} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-brand-ink">{t("surveys.title")}</p>
+            <p className="text-sm text-muted">{t("surveys.cta")}</p>
+          </div>
+          <ArrowRightIcon size={22} className="text-brand" />
+        </Card>
+      </Link>
 
       {tasks.loading ? (
         <Loading />

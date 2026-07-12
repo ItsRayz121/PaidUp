@@ -114,6 +114,30 @@ These override convenience or speed at every step:
     referral/withdrawal/leaderboard e2e test (L1/L2/first-task math, idempotency,
     saved-address upsert), `security-review` (no findings) — all clean.
 
+- **CPX Research — FIRST REAL AD NETWORK (2026-07-12)**: live survey wall, app id
+  **34405**. This is the revenue unblock.
+  - **Dynamic-amount networks now supported.** Real survey walls have no fixed task
+    row (payout varies per survey), so `VerifiedCompletion` gained `points` /
+    `offerType` / `reversal`, `task_completions` gained `points` + `offer_type`
+    (task_id now nullable, backfilled), and velocity caps read `offer_type` instead
+    of joining `tasks`. Fixed-catalog adapters are unchanged.
+  - **Split enforced in the CPX dashboard**: Reward Settings `1 USD = 600 points`
+    ⇒ CPX pays $1 → user gets 600 pts (=$0.60) → we keep $0.40 (60/40).
+  - **Security**: CPX signs `md5(trans_id + "-" + secret)` — the signature does NOT
+    cover the amount, so a captured postback could be replayed with a bigger number.
+    Closed by (a) the unique `(network, external_id)` index ⇒ replay is a duplicate
+    no-op, (b) minting a new `trans_id` needs the secret, (c) `CPX_MAX_POINTS` cap.
+    Optional IP pin (`CPX_ENFORCE_IP`, off by default — Railway proxy).
+  - **Fraud reversal**: CPX re-calls with `status=2` up to ~60 days later; we claw
+    back the user's reward AND the referral bonuses it paid, mark the completion
+    `reversed`, and raise a `network_reversal` flag. User may go negative — correct,
+    and flagged for staff.
+  - **Survey wall** at `/surveys` (iframe, URL signed server-side — the app secret
+    never reaches the browser), linked from Tasks. Verified: 22 e2e checks incl.
+    inflated-replay and forgery attacks, `security-review` (no findings).
+  - ⚠️ `POSTBACK_SECRET_CPX` **must be set on Railway or the API will not boot.**
+    Script Tag integration (higher revenue than the iframe) is a pending upgrade.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

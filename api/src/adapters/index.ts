@@ -2,11 +2,13 @@ import type { AdNetworkAdapter } from "./types.ts";
 import { offerhubAdapter } from "./offerhub.ts";
 import { tapvidAdapter } from "./tapvid.ts";
 import { surveyxAdapter } from "./surveyx.ts";
+import { cpxAdapter } from "./cpx.ts";
 
 const registry: Record<string, AdNetworkAdapter> = {
   [offerhubAdapter.name]: offerhubAdapter,
   [tapvidAdapter.name]: tapvidAdapter,
   [surveyxAdapter.name]: surveyxAdapter,
+  [cpxAdapter.name]: cpxAdapter, // CPX Research — the first REAL (live) network.
   // Add the next network here — one line each, no changes to the others.
 };
 

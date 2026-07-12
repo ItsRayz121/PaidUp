@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
 import { config } from "../config.ts";
@@ -88,6 +89,33 @@ export async function appRoutes(app: FastifyInstance) {
       userId,
     );
     return { code: user.referral_code, joined: joined?.n ?? 0, earnedPoints: earned?.s ?? 0 };
+  }));
+
+  // ---- CPX Research survey wall -------------------------------------------
+  // Builds the signed survey-wall URL for THIS user. The secure_hash is
+  // md5(`${ext_user_id}-${APP_SECURE_HASH}`) — it must be computed on the SERVER,
+  // because putting the app secure hash in browser JS would hand anyone the key
+  // to forge postbacks and drain the treasury. The browser only ever sees the
+  // finished URL (which contains a hash valid for that one user).
+  app.get("/surveys/cpx", guard(async (userId) => {
+    const net = await sql.get<{ status: string }>("SELECT status FROM networks WHERE id = 'cpx'");
+    if (net?.status === "disabled") {
+      return { enabled: false as const, url: null };
+    }
+    const user = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", userId);
+    const secureHash = createHash("md5")
+      .update(`${userId}-${config.postbackSecrets.cpx}`)
+      .digest("hex");
+
+    const url = new URL("https://offers.cpx-research.com/index.php");
+    url.searchParams.set("app_id", config.cpxAppId);
+    url.searchParams.set("ext_user_id", userId);
+    url.searchParams.set("secure_hash", secureHash);
+    // CPX uses the email to de-duplicate users across publishers; if we don't
+    // send it they prompt the user for it before any survey can start.
+    if (user?.email) url.searchParams.set("email", user.email);
+
+    return { enabled: true as const, url: url.toString() };
   }));
 
   // ---- Leaderboard --------------------------------------------------------

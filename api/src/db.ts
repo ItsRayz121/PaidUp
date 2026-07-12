@@ -363,6 +363,23 @@ const MIGRATIONS = `
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_pct_l2 INTEGER NOT NULL DEFAULT 5;
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_first_task_bonus INTEGER NOT NULL DEFAULT 100;
 
+  -- Dynamic-amount networks (real survey walls like CPX) have no fixed task row:
+  -- the reward varies per survey and arrives in the SIGNED postback. So a
+  -- completion now carries its own points + offer type, and task_id is optional.
+  -- Fixed-catalog networks still copy these from their tasks row, so every
+  -- completion is self-describing and no query needs to join tasks.
+  ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS points INTEGER;
+  ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS offer_type TEXT;
+  ALTER TABLE task_completions ALTER COLUMN task_id DROP NOT NULL;
+  -- Backfill rows created before those columns existed (idempotent).
+  UPDATE task_completions tc SET points = t.points, offer_type = t.type
+    FROM tasks t WHERE t.id = tc.task_id AND tc.points IS NULL;
+  -- A completion can be reversed later (CPX re-calls with status=2 when a survey
+  -- is found fraudulent up to 60 days on). Reversal writes a compensating debit.
+  ALTER TABLE task_completions DROP CONSTRAINT IF EXISTS task_completions_status_check;
+  ALTER TABLE task_completions ADD CONSTRAINT task_completions_status_check
+    CHECK (status IN ('pending','verified','credited','rejected','reversed'));
+
   -- Saved payout addresses: a user sets a USDT address per chain ONCE and reuses
   -- it. The withdraw screen pre-fills from here; a new address overwrites it.
   CREATE TABLE IF NOT EXISTS payout_addresses (
@@ -407,6 +424,15 @@ export async function initDb(): Promise<void> {
   await sql.run(
     `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
      VALUES ('surveyx','SurveyX','offerwall','active',60,15,5,100,?)
+     ON CONFLICT (id) DO NOTHING`, now(),
+  );
+  // CPX Research — the first REAL (live) network. The 60/40 split is enforced by
+  // the conversion rate set in the CPX dashboard (1 USD = 600 points), so the
+  // amount that arrives in the postback is already the user's share; the split
+  // column here is informational for this network.
+  await sql.run(
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
+     VALUES ('cpx','CPX Research','offerwall','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
   // Default global settings (only inserted when absent). Withdrawal fee off (0)

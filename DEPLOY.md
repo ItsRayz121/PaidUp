@@ -47,6 +47,32 @@ Railway.
 > just generate new random hex strings and update both here and any ad-network
 > config that uses the postback secret.
 
+### CPX Research (the live survey network) — REQUIRED before this build deploys
+`cpx` is a **real** network, so the API **will not boot** until its secret is set.
+On Railway set:
+```
+POSTBACK_SECRET_CPX=<the "app secure hash" from the CPX dashboard>
+CPX_APP_ID=34405
+```
+In the **CPX dashboard**:
+- **Postback Settings → Main Postback URL:**
+  `https://<api-host>/webhooks/cpx/postback?status={status}&trans_id={trans_id}&user_id={user_id}&amount_local={amount_local}&amount_usd={amount_usd}&hash={secure_hash}&ip_click={ip_click}&type={type}`
+  (Leave the three "Expert Settings" boxes empty — the main URL covers everything.)
+- **Reward Settings:** currency `points`, **1 USD = 600 points**. That single number
+  is what enforces the 60/40 split: CPX pays us $1 → the user is credited 600
+  points (= $0.60 at 1000 points = 1 USDT) → we keep $0.40.
+
+How it's secured: CPX signs `md5(trans_id + "-" + secret)` — note the signature
+covers **only** `trans_id`, **not the amount**. So a captured postback could
+otherwise be replayed with a bigger number. Three things stop that: the unique
+`(network, external_id)` index makes a replay a no-op **duplicate**; minting a new
+`trans_id` requires the secret; and `CPX_MAX_POINTS` caps any single survey.
+Optionally set `CPX_ENFORCE_IP=true` to pin CPX's source IPs — but only after
+confirming the IP the app observes behind Railway's proxy, or you'll reject real
+completions. **status=2** postbacks are CPX reversing a survey it later judged
+fraudulent; we automatically claw back the user's reward *and* the referral
+bonuses it paid, and raise a `network_reversal` fraud flag.
+
 **Every ad-network adapter needs its own postback secret.** Each network in
 `api/src/adapters/index.ts` reads `POSTBACK_SECRET_<NAME>` (and some also a
 `POSTBACK_TOKEN_<NAME>`); the API **fail-fasts on boot** if any is still a
