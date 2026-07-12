@@ -40,10 +40,20 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // API + ad networks: never intercepted
 
-  // Page loads: always fresh from the network. If the phone is offline, show the
-  // offline page instead of the browser's dinosaur.
+  // Page loads: always fresh from the network, so a balance is never stale.
+  //
+  // When the phone has no internet we serve the offline page *first*, without
+  // trying the network. Without this, the browser's own HTTP cache answers the
+  // navigation (Next prefetches every tab link) and the user gets the app shell
+  // with "Something went wrong" on every card — it looks broken and it hides the
+  // one thing they need to know: they are offline, and their points are safe.
+  // The .catch still covers the harder case: online, but the request fails.
   if (req.mode === "navigate") {
-    event.respondWith(fetch(req).catch(() => caches.match(OFFLINE_URL)));
+    event.respondWith(
+      self.navigator.onLine === false
+        ? caches.match(OFFLINE_URL).then((hit) => hit || fetch(req))
+        : fetch(req).catch(() => caches.match(OFFLINE_URL)),
+    );
     return;
   }
 
