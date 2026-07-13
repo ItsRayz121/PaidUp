@@ -420,6 +420,15 @@ export const updateMiningSettings = (patch: Record<string, number | string>) =>
 
 export type MiningStats = {
   epoch: number;
+  emissionModel: string;
+  pi: {
+    population: number;
+    baseRate: number;
+    effectiveRate: number;
+    halvingsSoFar: number;
+    nextMilestone: number | null;
+    rateTooLow: boolean;
+  };
   todayEmission: number;
   supply: { cap: number; emitted: number; burned: number; circulating: number; remaining: number };
   today: { miners: number; totalShares: number; activeSessions: number };

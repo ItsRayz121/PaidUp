@@ -126,14 +126,20 @@ export default function MinePage() {
           <p className="num text-3xl font-extrabold text-brand">
             {s.hashrate.toLocaleString()}
           </p>
+          {/* Two genuinely different numbers, and the copy must not blur them.
+              Pool model: a live estimate that MOVES as other people mine — say so,
+              rather than letting users discover it and think we cheated them.
+              Pi model: what they have actually earned. Nobody else can move it, so
+              the "~" and the hedge both come off. */}
           <p className="mt-1 text-sm text-muted">
-            {t("mine.today")}:{" "}
-            <strong className="num text-brand-ink">~{s.estimatedRozi.toLocaleString()} ROZI</strong>
+            {s.estimateIsLive ? t("mine.today") : t("mine.earned")}:{" "}
+            <strong className="num text-brand-ink">
+              {s.estimateIsLive ? "~" : ""}{s.estimatedRozi.toLocaleString()} ROZI
+            </strong>
           </p>
-          {/* The estimate MOVES as other people mine. That is the difficulty
-              adjustment working, not a bug — so we say it, rather than letting
-              users discover it and think we cheated them. */}
-          <p className="mt-1 text-xs text-muted">{t("mine.estimate.note")}</p>
+          <p className="mt-1 text-xs text-muted">
+            {s.estimateIsLive ? t("mine.estimate.note") : t("mine.earned.note")}
+          </p>
         </div>
 
         <div className="mt-4">

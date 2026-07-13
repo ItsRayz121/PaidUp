@@ -16,7 +16,45 @@
 // (mining/settings.ts overlays whatever is stored in app_settings on top of these).
 
 export const MINING_DEFAULTS = {
-  // -- Emission (§ 3.2). 3M/day, halving every 100 days, converging to 600M
+  // -- Emission model (founder decision, 2026-07-13). Two models exist:
+  //
+  //    "pi"   — each miner earns piBaseRate x their multipliers x the fraction of
+  //             a full mining day they actually mined. Their reward does NOT
+  //             depend on how many other people mine, so it is predictable, and a
+  //             halving is a clean 50% cut to the person (not a 20x collapse from
+  //             halving + dilution stacking). The daily total floats with the
+  //             crowd, so the throttle is piHalvingUsers, below.
+  //
+  //    "pool" — the original Bitcoin-style model: a fixed daily pot split
+  //             pro-rata by hashrate-seconds. Kept because it is the only model
+  //             where over-issuance is arithmetically impossible, and it is the
+  //             safe place to fall back to if "pi" ever runs hot.
+  //
+  //    The supplyCap is a hard ceiling under BOTH. It is the promise about ROZI
+  //    that has to be literally true, so it is enforced at settlement either way.
+  emissionModel: "pi",
+
+  // -- "pi" model (§ 3.2). ROZI/day for a BASELINE miner: no multipliers, mining
+  //    a full reference day. A miner with x2 multipliers earns twice this.
+  //
+  //    KEEP THE EFFECTIVE RATE WELL ABOVE ~10. Payouts are floored to whole ROZI,
+  //    so once piBaseRate has been halved down into single digits, a user who
+  //    mined only part of a day rounds to ZERO and earns nothing at all. That is
+  //    the one way this model quietly stops paying people.
+  piBaseRate: 100,
+
+  // Base rate HALVES each time the user base crosses one of these counts. This is
+  // the throttle: growth is what drains the pool, so growth is what slows the tap.
+  // A calendar halving cannot do this — 10x the users on day one would empty the
+  // pool regardless of what the calendar said.
+  piHalvingUsers: "10000,50000,250000,1000000,5000000",
+
+  // What counts as "a full day's mining" for the rate. 24h at 8h sessions means a
+  // user has to come back ~3x a day to earn the full rate — which is the retention
+  // loop, priced in. Mine a third of that, earn a third.
+  piReferenceHours: 24,
+
+  // -- "pool" model (§ 3.2). 3M/day, halving every 100 days, converging to 600M
   //    against a 650M cap — the headroom absorbs referral overhead.
   baseEmission: 3_000_000,
   halvingEpochs: 100,
@@ -209,7 +247,7 @@ export function computeHashrate(i: HashrateInputs): number {
   return Math.floor(Math.min(own + referral, i.maxHashrate));
 }
 
-// ---- Pro-rata settlement --------------------------------------------------
+// ---- Pro-rata settlement ("pool" model) ------------------------------------
 
 // Each miner gets emission * (their shares / total shares), floored. Flooring
 // means the dust stays UNEMITTED, which keeps us strictly under the cap — the
@@ -217,6 +255,71 @@ export function computeHashrate(i: HashrateInputs): number {
 export function payoutFor(shares: number, totalShares: number, emission: number): number {
   if (totalShares <= 0 || shares <= 0) return 0;
   return Math.floor((emission * shares) / totalShares);
+}
+
+// ---- Per-miner settlement ("pi" model) -------------------------------------
+
+// The halving milestones, stored as a comma-separated string so an Admin can
+// retune them in the panel without a migration. Junk is dropped rather than
+// throwing: a fat-fingered milestone list must not be able to take settlement
+// down, and a shorter list only ever means a MORE generous rate, never a mint.
+export function parseMilestones(raw: string): number[] {
+  return String(raw ?? "")
+    .split(",")
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+}
+
+// The base rate halves once per milestone the user base has passed.
+//
+// Halving on USER COUNT, not the calendar (founder decision, 2026-07-13). The
+// pool is drained by people, so people are what must throttle it: a viral month
+// would blow through a calendar-halved pool while the schedule sat there
+// insisting it was still week one.
+export function piBaseRateFor(userCount: number, baseRate: number, milestones: number[]): number {
+  if (!(baseRate > 0)) return 0;
+  let halvings = 0;
+  for (const m of milestones) if (userCount >= m) halvings++;
+  const divisor = Math.pow(2, halvings);
+  if (!Number.isFinite(divisor) || divisor <= 0) return 0;
+  return baseRate / divisor;
+}
+
+// What one miner earns, from THEIR OWN shares alone — no total, no denominator,
+// no dilution. This is the whole point of the model: another miner joining cannot
+// reduce what you get.
+//
+// `shares` is hashrate-seconds and already carries every multiplier, because
+// hashrate = base x streak x boosts x rigs (+ referral). So dividing by the
+// shares a baseline miner would book over a full reference day converts shares
+// straight into "how many baseline-days did this person mine", and the rate is
+// simply multiplied through.
+//
+//   baseline miner, full day  -> shares = baseHashrate * referenceSeconds -> 1.0x rate
+//   x2 multipliers, full day  -> 2.0x rate
+//   baseline miner, 8h of 24h -> 0.33x rate
+//
+// Floored, for the same reason payoutFor is: dust stays unemitted, so the error
+// is always in the treasury's favour. See the warning on piBaseRate — once the
+// effective rate floors to single digits, partial days round away to nothing.
+export function piPayoutFor(
+  shares: number, rate: number, baseHashrate: number, referenceSeconds: number,
+): number {
+  const fullDayShares = baseHashrate * referenceSeconds;
+  if (fullDayShares <= 0 || shares <= 0 || rate <= 0) return 0;
+  return Math.floor((rate * shares) / fullDayShares);
+}
+
+// The "pi" model's daily total floats with the crowd, so unlike the pool model it
+// can ASK for more than the supply cap has left. When it does, every payout is
+// scaled by the same factor rather than paying users in row order until the pool
+// runs dry mid-list — which would hand the whole remainder to whoever happened to
+// sort first. Returns 1 when there is room for everyone.
+export function capScaleFactor(wanted: number, room: number): number {
+  if (wanted <= 0) return 1;
+  if (room <= 0) return 0;
+  return Math.min(1, room / wanted);
 }
 
 // ---- Conversion window ----------------------------------------------------

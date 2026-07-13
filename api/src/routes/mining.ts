@@ -96,9 +96,11 @@ export async function miningRoutes(app: FastifyInstance) {
       breakdown,
       sharesToday: state.sharesToday,
       estimatedRozi: state.estimatedRozi,
-      // The UI MUST show this as an estimate. It moves as other people mine —
+      // Pool model: the UI MUST hedge this — it moves as other people mine, and
       // that is the difficulty adjustment working, not a bug.
-      estimateIsLive: true,
+      // Pi model: it is NOT an estimate. It is what the user has earned, it only
+      // goes up, and hedging it would be a lie in the other direction.
+      estimateIsLive: state.estimateIsLive,
       streak: { current: streak?.current_days ?? 0, best: streak?.best_days ?? 0 },
       boosts: boosts.map((b) => ({ kind: b.kind, pct: b.multiplier_pct, expiresAt: b.expires_at })),
       ads: {

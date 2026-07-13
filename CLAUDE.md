@@ -172,11 +172,38 @@ These override convenience or speed at every step:
   **separate append-only ledger** (`rozi_ledger`) from Points. Built because CPX has
   no survey fill for Pakistani traffic most of the day — mining gives a reason to
   open the app when there is nothing to earn from. Full design: `docs/MINING_SPEC.md`.
-  - **It is a real mining pool, not a tap-to-earn.** Each day is a block with a
-    fixed emission (3M ROZI, halving every 100 days, 650M hard cap). Your payout =
-    your share of that day's total **hashrate-seconds**. More miners ⇒ everyone
-    earns less: difficulty self-adjusts, and **over-issuing is arithmetically
-    impossible**.
+  - **It is real mining, not a tap-to-earn.** Hashrate is earned; nothing is
+    tapped.
+  - ⚠️ **EMISSION MODEL CHANGED 2026-07-13 (founder). Default is now `"pi"`, not
+    `"pool"`.** `emissionModel` in `/staff` → Mining switches between them; both
+    are live and tested, and the **supply cap is a hard ceiling under both**.
+    - **`"pi"` (default, Pi Network-style).** You earn `piBaseRate × your
+      multipliers × the fraction of a full day you mined`. **Your payout does NOT
+      depend on how many other people mine** — no dilution. The throttle is
+      **`piHalvingUsers`: the base rate HALVES each time the user base crosses a
+      milestone** (10k / 50k / 250k / 1M / 5M). Halving on *user count*, not the
+      calendar, because people are what drain the pool, so people must be what
+      slows the tap. The daily total floats with the crowd, so it **can** ask for
+      more than the cap has left — when it does, every payout is scaled by the
+      same factor (`capScaleFactor`), never paid in row order until the pool dries
+      up mid-list.
+    - **`"pool"` (fallback, Bitcoin-style).** Fixed daily pot (3M, halving every
+      100 days) split pro-rata by hashrate-seconds. Over-issuing is
+      *arithmetically* impossible here, which is why it is kept as the safe place
+      to fall back to.
+    - **Why the change:** under `"pool"`, a user's earnings were cut by halving
+      **and** dilution *stacked* — a halving day with 10× the miners was a **20×**
+      drop, not 2×. "Halving" did not mean halving *to the person*. And a lone
+      miner was shown the entire daily pot (`~3,000,000 ROZI`), a number that
+      collapsed by orders of magnitude once real traffic arrived: honest
+      arithmetic that read as a broken promise. Under `"pi"` a halving is a clean
+      50% cut, and **a ×2 multiplier exactly offsets one halving** — which is what
+      makes streaks and referrals worth keeping.
+    - ⚠️ **Keep the effective rate above ~10.** Payouts floor to whole ROZI, so
+      once `piBaseRate` has been halved into single digits, anyone who mined only
+      *part* of a day rounds to **zero**. This is the one way the model quietly
+      stops paying people. The admin panel raises `rateTooLow` when it happens;
+      there is a unit test pinning the behaviour.
   - **Hashrate is earned, never tapped**: streak (up to ×2), **credited task ⇒ +50%
     for 48h** (the line that makes mining *feed* the offerwall instead of competing
     with it), watched ad ⇒ +100% for 4h, rigs bought with ROZI (cost growth 1.6 >

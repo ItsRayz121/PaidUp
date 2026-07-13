@@ -13,8 +13,10 @@ import { settleConversionWindow } from "./mining.ts";
 import {
   loadMiningSettings, setMiningSetting, isMiningKey, totalEmitted, MINING_DEFAULTS,
 } from "../mining/settings.ts";
-import { settleEpoch, settleDueEpochs } from "../mining/engine.ts";
-import { emissionAt, epochOf } from "../mining/core.ts";
+import {
+  settleEpoch, settleDueEpochs, minerPopulation, effectivePiRate,
+} from "../mining/engine.ts";
+import { emissionAt, epochOf, parseMilestones } from "../mining/core.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -53,6 +55,24 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         if (!Number.isFinite(n) || n < 0) {
           return reply.code(400).send({ error: `${k} must be a number >= 0` });
         }
+      }
+      // The model is chosen by string equality at settlement, so a typo here
+      // ("Pi", "pool ", "pie") would not error — it would silently settle every
+      // future day under the OTHER model. That is a change to how everyone is
+      // paid, arriving as a spelling mistake. Refuse anything but the two.
+      if (k === "emissionModel" && v !== "pi" && v !== "pool") {
+        return reply.code(400).send({
+          error: `emissionModel must be exactly "pi" or "pool" (got "${v}").`,
+        });
+      }
+      // An empty milestone list means the rate NEVER halves, which turns the only
+      // throttle on the pi model off and lets growth drain the pool. Refused: if
+      // that is really wanted, it should be a deliberate single huge milestone.
+      if (k === "piHalvingUsers" && parseMilestones(String(v)).length === 0) {
+        return reply.code(400).send({
+          error: "piHalvingUsers needs at least one positive number (e.g. \"10000,50000\"). " +
+            "With no milestones the base rate never halves and growth drains the pool.",
+        });
       }
       await setMiningSetting(k, v);
       applied.push(`${k}=${v}`);
@@ -111,8 +131,30 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       poolCoverage = Math.round(circulating * lastRate);
     }
 
+    // Under the pi model there is no fixed daily emission to report — the daily
+    // total floats with however many people mine. What the Admin needs instead is
+    // the number that actually drives every payout: the effective rate right now,
+    // after however many milestone halvings the user base has triggered.
+    const population = await minerPopulation();
+    const milestones = parseMilestones(s.piHalvingUsers);
+    const piRate = effectivePiRate(s, population);
+    const nextMilestone = milestones.find((m) => m > population) ?? null;
+
     return {
       epoch,
+      emissionModel: s.emissionModel,
+      pi: {
+        population,
+        baseRate: s.piBaseRate,
+        effectiveRate: piRate,
+        halvingsSoFar: milestones.filter((m) => population >= m).length,
+        nextMilestone,
+        // The failure mode that quietly stops paying people: once the effective
+        // rate floors into single digits, a user who mined only part of a day
+        // rounds to ZERO. Surfaced here so it is caught in the panel, not in
+        // support tickets.
+        rateTooLow: piRate > 0 && piRate < 10,
+      },
       todayEmission: emissionAt(epoch, s),
       supply: {
         cap: s.supplyCap,

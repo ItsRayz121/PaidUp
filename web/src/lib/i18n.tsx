@@ -225,6 +225,12 @@ const copy: Record<string, string> = {
   "mine.today": "You will get today",
   "mine.estimate.note":
     "This is a guess, not a promise. It goes down when more people mine. It goes up when you mine faster.",
+  // Pi model: the number is EARNED, not estimated. Other people mining cannot
+  // take it away, so we must not hedge it — hedging a real number teaches users
+  // to distrust the ones that are real.
+  "mine.earned": "You have earned today",
+  "mine.earned.note":
+    "This is yours. It goes up the longer you mine. Other people mining does not take it away.",
   "mine.start": "Start mining for {hours} hours",
   "mine.running": "You are mining now",
   "mine.running.note": "Come back when the time runs out and start again.",

@@ -57,6 +57,11 @@ const addShares = (userId: string, shares: number, epoch = EPOCH) => sql.run(
 
 console.log("\n-- epoch settlement: pro-rata, and the pot is never exceeded --");
 
+// This block tests the POOL model, so it pins the model explicitly rather than
+// relying on the default — which is now "pi" (founder decision, 2026-07-13). The
+// pool model is still the supported fallback, so it still has to work.
+await setMiningSetting("emissionModel", "pool");
+
 // Alice mined 3x what Bob did. She should get 3x the ROZI.
 await addShares(alice, 3_000_000);
 await addShares(bob, 1_000_000);
@@ -406,6 +411,110 @@ check("every Point this window minted is attributable to it, and to nothing else
   `rows=${winPointsRows?.n} total=${winPointsRows?.total} paid=${totalPaid}`);
 
 await setMiningSetting("conversionEnabled", 0);
+
+// ---- PI MODEL (founder decision, 2026-07-13) --------------------------------
+// The unit tests prove the arithmetic. This proves it through the real settlement
+// path: the same lock, the same cap, the same withhold rule, a real ledger.
+
+console.log("\n-- PI model: your payout comes from YOUR shares, not a shared pot --");
+
+await setMiningSetting("emissionModel", "pi");
+await setMiningSetting("piBaseRate", 1000);
+await setMiningSetting("piHalvingUsers", "10000,50000");
+await setMiningSetting("piReferenceHours", 24);
+
+const piS = await loadMiningSettings();
+const FULL_DAY = piS.baseHashrate * piS.piReferenceHours * 3600; // baseline, full day
+
+// A fresh epoch of its own, so nothing above bleeds into these numbers.
+const PI_EPOCH = epochOf() - 3;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", PI_EPOCH);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", PI_EPOCH);
+
+const carol = await mkUser("carol");   // mines a full baseline day
+const dave = await mkUser("dave");     // mines the same, x2 multiplier worth of shares
+const erin = await mkUser("erin");     // mines a third of a day
+
+await addShares(carol, FULL_DAY, PI_EPOCH);
+await addShares(dave, FULL_DAY * 2, PI_EPOCH);
+await addShares(erin, Math.floor(FULL_DAY / 3), PI_EPOCH);
+
+const piR = await settleEpoch(PI_EPOCH);
+const carolRozi = await roziBalanceOf(carol);
+const daveRozi = await roziBalanceOf(dave);
+const erinRozi = await roziBalanceOf(erin);
+
+// The population is small in the test DB, so no milestone has been crossed and
+// the rate is the full base rate.
+check("PI: a baseline miner mining a full day earns exactly the base rate",
+  carolRozi === 1000, `got ${carolRozi}`);
+check("PI: x2 shares earns exactly x2 — multipliers multiply the rate",
+  daveRozi === 2000, `got ${daveRozi}`);
+check("PI: a third of a day earns a third of the rate",
+  Math.abs(erinRozi - 333) <= 1, `got ${erinRozi}`);
+
+// THE property the whole model exists for. Under the pool model, Carol's reward
+// would have been diluted by Dave and Erin showing up. Here it is untouched: she
+// gets the base rate whether she mines alone or beside a million people.
+check("PI: NO DILUTION — Carol got the full rate despite two other miners",
+  carolRozi === 1000, `got ${carolRozi}`);
+check("PI: the epoch's emission is the SUM of what miners earned, not a fixed pot",
+  piR.emission === carolRozi + daveRozi + erinRozi,
+  `emission=${piR.emission} sum=${carolRozi + daveRozi + erinRozi}`);
+
+console.log("\n-- PI model: halving is a clean 50% cut to the person --");
+
+// Re-settle an adjacent epoch with the rate halved by hand. Same shares, half the
+// rate => exactly half the ROZI. "Halving means halving."
+const PI_EPOCH_2 = epochOf() - 4;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", PI_EPOCH_2);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", PI_EPOCH_2);
+
+const frank = await mkUser("frank");
+await addShares(frank, FULL_DAY, PI_EPOCH_2);
+await setMiningSetting("piBaseRate", 500); // one halving of 1000
+await settleEpoch(PI_EPOCH_2);
+const frankRozi = await roziBalanceOf(frank);
+
+check("PI: after one halving the same mining earns exactly half",
+  frankRozi === 500 && frankRozi === carolRozi / 2, `frank=${frankRozi} carol=${carolRozi}`);
+
+console.log("\n-- PI model: the supply cap still holds when the pool runs dry --");
+
+// The endgame, and the one thing the pi model can do that the pool model cannot:
+// ask for more than the cap has left. Squeeze the cap down to just above what has
+// already been emitted, so the next epoch's demand cannot possibly be met.
+const emittedSoFar = await sql.get<{ t: string }>(
+  `SELECT COALESCE(SUM(amount), 0) AS t FROM rozi_ledger
+   WHERE source_type = 'mining' AND direction = 'credit'`);
+const already = Number(emittedSoFar?.t ?? 0);
+
+const PI_EPOCH_3 = epochOf() - 5;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", PI_EPOCH_3);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", PI_EPOCH_3);
+
+const gina = await mkUser("gina");
+const hank = await mkUser("hank");
+await addShares(gina, FULL_DAY, PI_EPOCH_3);   // wants 500
+await addShares(hank, FULL_DAY, PI_EPOCH_3);   // wants 500 — 1000 total
+
+// Only 400 of headroom for a 1000-ROZI demand.
+await setMiningSetting("supplyCap", already + 400);
+const capR = await settleEpoch(PI_EPOCH_3);
+const ginaRozi = await roziBalanceOf(gina);
+const hankRozi = await roziBalanceOf(hank);
+
+check("PI: the supply cap is never breached, even though demand exceeded it",
+  already + capR.emitted <= already + 400, `emitted=${capR.emitted} room=400`);
+check("PI: everyone is scaled by the SAME factor — no one is paid in full while another gets zero",
+  ginaRozi === hankRozi && ginaRozi > 0, `gina=${ginaRozi} hank=${hankRozi}`);
+check("PI: the scaled payouts add up to the room that was left, not more",
+  ginaRozi + hankRozi <= 400, `paid=${ginaRozi + hankRozi}`);
+
+// Put the economy back the way we found it, so a re-run starts clean.
+await setMiningSetting("supplyCap", 650_000_000);
+await setMiningSetting("piBaseRate", 100);
+await setMiningSetting("emissionModel", "pi");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

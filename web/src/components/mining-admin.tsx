@@ -19,8 +19,24 @@ const n = (v: number) => v.toLocaleString();
 // inputs. Labels spell out what the number actually does to the economy.
 const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   {
-    title: "Emission",
-    note: "Changing these affects FUTURE epochs only. Settled epochs are immutable. The supply cap is a hard ceiling enforced at settlement, whatever you put in the other two boxes.",
+    title: "Emission model",
+    note: "\"pi\" = each miner earns their own base rate × their multipliers; nobody else's mining reduces it, and a halving is a clean 50% cut to the person. \"pool\" = the old Bitcoin-style fixed daily pot split pro-rata (a user's earnings then fall from halving AND dilution, stacked). Must be exactly \"pi\" or \"pool\" — the API refuses anything else, because a typo would silently re-price everyone.",
+    keys: [
+      ["emissionModel", "Model — \"pi\" or \"pool\""],
+    ],
+  },
+  {
+    title: "Pi model — rate & halving",
+    note: "Base rate is what a BASELINE miner (no multipliers) earns for a full day. Multipliers multiply it. The rate HALVES each time the user base crosses a milestone — that is the throttle, and it is what stops growth draining the pool. Keep the effective rate above ~10: below that, someone who mined only part of a day rounds down to zero and earns nothing.",
+    keys: [
+      ["piBaseRate", "Base rate (ROZI/day, baseline miner)"],
+      ["piHalvingUsers", "Halve at user counts (comma-separated)"],
+      ["piReferenceHours", "A \"full day\" of mining = N hours"],
+    ],
+  },
+  {
+    title: "Pool model — emission",
+    note: "Only used when the model above is \"pool\". Changing these affects FUTURE epochs only; settled epochs are immutable. The supply cap is a hard ceiling enforced at settlement under BOTH models, whatever you put in the other boxes.",
     keys: [
       ["baseEmission", "ROZI emitted per day (E₀)"],
       ["halvingEpochs", "Halve emission every N days"],
@@ -180,6 +196,7 @@ export function MiningPanel() {
 
 function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) {
   const pctEmitted = (s.supply.emitted / s.supply.cap) * 100;
+  const isPi = s.emissionModel === "pi";
 
   return (
     <div className="rounded-lg border border-line bg-card p-3">
@@ -191,11 +208,47 @@ function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) 
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Today's emission" value={n(s.todayEmission)} sub="ROZI" />
+        {isPi ? (
+          <Stat
+            label="Rate now"
+            value={s.pi.effectiveRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            sub={`ROZI/day · ${s.pi.halvingsSoFar} halving${s.pi.halvingsSoFar === 1 ? "" : "s"}`}
+          />
+        ) : (
+          <Stat label="Today's emission" value={n(s.todayEmission)} sub="ROZI" />
+        )}
         <Stat label="Miners today" value={n(s.today.miners)} sub={`${n(s.today.activeSessions)} mining now`} />
         <Stat label="Circulating" value={n(s.supply.circulating)} sub={`${n(s.supply.burned)} burned`} />
         <Stat label="Emitted of cap" value={`${pctEmitted.toFixed(2)}%`} sub={`${n(s.supply.remaining)} left`} />
       </div>
+
+      {isPi && (
+        <div className="mt-3 rounded-md border border-line bg-card p-2 text-xs">
+          <p className="text-muted">
+            <strong className="text-brand-ink">Pi model.</strong>{" "}
+            A baseline miner earns{" "}
+            <strong className="font-mono text-brand-ink">
+              {s.pi.effectiveRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} ROZI
+            </strong>{" "}
+            for a full day (base {n(s.pi.baseRate)}, halved {s.pi.halvingsSoFar}×).
+            Multipliers multiply this. Population{" "}
+            <strong className="font-mono text-brand-ink">{n(s.pi.population)}</strong>
+            {s.pi.nextMilestone !== null ? (
+              <> — next halving at <strong className="font-mono text-brand-ink">{n(s.pi.nextMilestone)}</strong> users.</>
+            ) : (
+              <> — all milestones passed; the rate no longer halves.</>
+            )}
+          </p>
+          {/* The failure mode that stops paying people without erroring. */}
+          {s.pi.rateTooLow && (
+            <p className="mt-1.5 rounded bg-danger-tint p-1.5 font-semibold text-danger">
+              Rate is below 10 ROZI/day. Payouts are floored to whole ROZI, so anyone who mined
+              only part of a day now rounds down to ZERO. Raise the base rate or widen the
+              milestones.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* MINING POOL TRACKER — total pool, mined so far, and what's left, as raw
           numbers plus a bar. This is the "how much of the whole thing is gone"

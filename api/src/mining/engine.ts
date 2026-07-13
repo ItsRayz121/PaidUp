@@ -7,9 +7,34 @@ import { sql, now, newId, postRozi, type TxApi } from "../db.ts";
 import { flagOnce } from "../fraud.ts";
 import {
   epochOf, epochEndMs, splitByEpoch, cappedEmission, computeHashrate, payoutFor,
-  rigPower,
+  rigPower, parseMilestones, piBaseRateFor, piPayoutFor, capScaleFactor,
 } from "./core.ts";
 import { loadMiningSettings, totalEmitted, type MiningSettings } from "./settings.ts";
+
+// ---- "pi" model helpers ----------------------------------------------------
+
+// The population the halving milestones are measured against.
+//
+// Counted, deliberately, WITHOUT filtering: more users only ever means a LOWER
+// rate, so there is no incentive for anyone to inflate this number — and a
+// stricter filter (verified only, active only) would let a wave of unverified
+// signups mine at the pre-halving rate while the throttle stared past them.
+export async function minerPopulation(t: Pick<TxApi, "get"> = sql): Promise<number> {
+  const r = await t.get<{ n: string }>("SELECT COUNT(*) AS n FROM users");
+  return Number(r?.n ?? 0);
+}
+
+// The rate one baseline miner earns for a full day, right now, after however many
+// milestone halvings the user base has already triggered.
+export function effectivePiRate(s: MiningSettings, userCount: number): number {
+  return piBaseRateFor(userCount, s.piBaseRate, parseMilestones(s.piHalvingUsers));
+}
+
+// Shares a baseline miner (no multipliers) books over one full reference day.
+// Dividing a user's shares by this converts hashrate-seconds into "baseline days".
+export function piFullDayShares(s: MiningSettings): number {
+  return s.baseHashrate * s.piReferenceHours * 3600;
+}
 
 // ---- Hashrate -------------------------------------------------------------
 
@@ -249,6 +274,10 @@ export type SessionState = {
   hashrate: number;
   sharesToday: number;
   estimatedRozi: number;
+  // False under the pi model, where estimatedRozi is what the user has actually
+  // earned and cannot be moved by anyone else. True under the pool model, where
+  // it is a live estimate that shrinks as more people mine.
+  estimateIsLive: boolean;
   deviceBlocked: boolean;
 };
 
@@ -437,11 +466,29 @@ export async function sessionState(userId: string): Promise<SessionState> {
   ]);
 
   const mine = Number(shares?.shares ?? 0);
-  const totalRow = await sql.get<{ total: string }>(
-    "SELECT COALESCE(SUM(shares), 0) AS total FROM mining_shares WHERE epoch = ?", epoch,
-  );
-  const total = Number(totalRow?.total ?? 0);
-  const emission = cappedEmission(epoch, await totalEmitted(), s);
+
+  // What the user has EARNED so far today.
+  //
+  // Under the pi model this is not a guess at all: the payout comes from the
+  // user's own shares, so nobody else joining can move it. It only ever goes up
+  // as they keep mining. That is what killed the old screen's worst behaviour —
+  // it used to show a lone miner the ENTIRE daily pot ("~3,000,000 ROZI"), a
+  // number that silently collapsed by orders of magnitude the moment real traffic
+  // arrived. Honest arithmetic, but it read as a broken promise.
+  //
+  // Under the pool model it remains a genuine estimate that moves with the crowd,
+  // and `estimateIsLive` tells the UI to keep saying so.
+  let earnedToday: number;
+  if (s.emissionModel === "pi") {
+    const rate = effectivePiRate(s, await minerPopulation());
+    earnedToday = piPayoutFor(mine, rate, s.baseHashrate, s.piReferenceHours * 3600);
+  } else {
+    const totalRow = await sql.get<{ total: string }>(
+      "SELECT COALESCE(SUM(shares), 0) AS total FROM mining_shares WHERE epoch = ?", epoch,
+    );
+    const total = Number(totalRow?.total ?? 0);
+    earnedToday = payoutFor(mine, total, cappedEmission(epoch, await totalEmitted(), s));
+  }
 
   const owner = session?.device_id
     ? await sql.get<{ user_id: string }>(
@@ -454,9 +501,10 @@ export async function sessionState(userId: string): Promise<SessionState> {
     expiresAt: session?.expires_at,
     hashrate,
     sharesToday: mine,
-    // An ESTIMATE, and the UI must say so: it moves as other people mine. That
-    // is not a bug, it is the difficulty adjustment doing its job.
-    estimatedRozi: payoutFor(mine, total, emission),
+    estimatedRozi: earnedToday,
+    // Only the pool model's number is a moving estimate. The pi model's is what
+    // the user has actually earned, so the UI must NOT hedge it.
+    estimateIsLive: s.emissionModel !== "pi",
     deviceBlocked: Boolean(owner && owner.user_id !== userId),
   };
 }
@@ -496,22 +544,63 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
     }
 
     const s = await loadMiningSettings();
-    const emission = cappedEmission(epoch, await totalEmitted(t), s);
+    const alreadyEmitted = await totalEmitted(t);
 
     const rows = await t.all<{ user_id: string; shares: string }>(
       "SELECT user_id, shares FROM mining_shares WHERE epoch = ? AND shares > 0", epoch);
     const totalShares = rows.reduce((a, r) => a + Number(r.shares), 0);
 
+    // What each miner is owed, before the supply cap gets a say. The two models
+    // differ ONLY here — everything around it (the lock, the cap, the withhold
+    // rule, the ledger write) is identical, on purpose.
+    let owed: { userId: string; rozi: number }[] = [];
+    let emission = 0;
+
+    if (totalShares > 0) {
+      if (s.emissionModel === "pi") {
+        // PI MODEL: each miner's reward comes from their own shares alone. There
+        // is no denominator, so nobody's payout moves when another miner joins.
+        const rate = effectivePiRate(s, await minerPopulation(t));
+        owed = rows.map((r) => ({
+          userId: r.user_id,
+          rozi: piPayoutFor(Number(r.shares), rate, s.baseHashrate, s.piReferenceHours * 3600),
+        }));
+
+        // The daily total floats with the crowd, so it can outrun what the cap has
+        // left. Scale everyone by the same factor rather than paying in row order
+        // until the pool dries up mid-list, which would hand the remainder to
+        // whoever sorted first. This is the endgame: the pool running out.
+        const wanted = owed.reduce((a, o) => a + o.rozi, 0);
+        const room = Math.max(0, s.supplyCap - alreadyEmitted);
+        const scale = capScaleFactor(wanted, room);
+        if (scale < 1) {
+          owed = owed.map((o) => ({ ...o, rozi: Math.floor(o.rozi * scale) }));
+        }
+        emission = owed.reduce((a, o) => a + o.rozi, 0);
+      } else {
+        // POOL MODEL: a fixed pot, split pro-rata by hashrate-seconds.
+        emission = cappedEmission(epoch, alreadyEmitted, s);
+        if (emission > 0) {
+          owed = rows.map((r) => ({
+            userId: r.user_id,
+            rozi: payoutFor(Number(r.shares), totalShares, emission),
+          }));
+        }
+      }
+    }
+
     let emitted = 0;
     let withheld = 0;
 
-    if (totalShares > 0 && emission > 0) {
+    if (owed.length > 0) {
       // Accounts that are suspended, or carrying an unresolved HIGH-severity
-      // flag, are WITHHELD rather than skipped: their shares stay in the
-      // denominator. If they were removed instead, a farm getting caught would
-      // hand its stolen share back to everyone else and quietly inflate the
-      // epoch — the honest miners' payout must not depend on how much fraud we
-      // happened to detect that day.
+      // flag, are WITHHELD rather than skipped: under the pool model their shares
+      // stay in the denominator, because if they were removed instead, a farm
+      // getting caught would hand its stolen share back to everyone else and
+      // quietly inflate the epoch — the honest miners' payout must not depend on
+      // how much fraud we happened to detect that day. Under the pi model there
+      // is no denominator to poison, but withholding still keeps the cap
+      // accounting honest, so the rule is simply kept the same in both.
       const blocked = new Set(
         (await t.all<{ user_id: string }>(
           `SELECT DISTINCT u.id AS user_id FROM users u
@@ -523,19 +612,18 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
         )).map((r) => r.user_id),
       );
 
-      for (const r of rows) {
-        const payout = payoutFor(Number(r.shares), totalShares, emission);
-        if (payout <= 0) continue;
-        if (blocked.has(r.user_id)) {
-          withheld += payout;
+      for (const o of owed) {
+        if (o.rozi <= 0) continue;
+        if (blocked.has(o.userId)) {
+          withheld += o.rozi;
           continue;
         }
         await postRozi({
-          userId: r.user_id, rozi: payout, direction: "credit",
+          userId: o.userId, rozi: o.rozi, direction: "credit",
           sourceType: "mining", sourceRefId: String(epoch),
           note: `Mining reward, day ${epoch}`,
         }, t);
-        emitted += payout;
+        emitted += o.rozi;
       }
     }
 

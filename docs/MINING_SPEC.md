@@ -82,24 +82,79 @@ Total supply: **1,000,000,000 ROZI** (fixed, hard cap).
 community"*). It is also the honest number: the community is the only reason the
 token has any narrative at all.
 
-### 3.2 Emission (the halving schedule)
+### 3.2 Emission
 
-- **Epoch** = 1 day (UTC midnight to UTC midnight). One epoch = one "block".
+**Epoch** = 1 day (UTC midnight to UTC midnight). One epoch = one "block".
+
+There are **two emission models**, chosen by the `emissionModel` setting in
+`/staff` → Mining. Both are live and tested. **The supply cap is a hard ceiling
+under both** — it is the one promise about ROZI that has to be literally true, so
+it is enforced at settlement regardless of which model is running.
+
+#### 3.2.1 `"pi"` — per-miner rate (DEFAULT since 2026-07-13)
+
+Founder decision. Each miner earns from **their own shares alone**:
+
+```
+your ROZI = piBaseRate × your multipliers × (fraction of a full day you mined)
+```
+
+- **`piBaseRate`** (default 100) = what a *baseline* miner (no multipliers) earns
+  for a full day. Multipliers multiply it.
+- **`piReferenceHours`** (default 24) = what counts as "a full day". With 8h
+  sessions, a user must return ~3× a day to earn the full rate — the retention
+  loop, priced in. Mine a third of that, earn a third.
+- **`piHalvingUsers`** (default `10000,50000,250000,1000000,5000000`) = the base
+  rate **halves each time the user base crosses a milestone**.
+
+**There is no denominator.** Another miner joining cannot reduce what you get.
+
+**Halving on user count, not the calendar.** The pool is drained by *people*, so
+*people* are what must throttle it. A calendar halving cannot do this: a viral
+month would blow through the pool while the schedule sat there insisting it was
+still week one.
+
+**Why this replaced the pool model.** Under `"pool"`, a user's earnings were cut
+by the halving **and** by dilution, *stacked*. A halving day that also brought 10×
+the miners was a **20× drop, not 2×** — "halving" did not mean halving *to the
+person*, which is the thing the founder actually wanted. Under `"pi"` a halving is
+a clean 50% cut, and **a ×2 multiplier exactly offsets one halving**, which is
+precisely what makes a streak or a referral worth keeping through one.
+
+**The daily total floats** with the crowd, so unlike the pool model it *can* ask
+for more than the cap has left. When it does, every payout is scaled by the same
+factor (`capScaleFactor`) — never paid out in row order until the pool runs dry
+mid-list, which would hand the whole remainder to whoever happened to sort first.
+
+⚠️ **Keep the effective rate above ~10.** Payouts floor to whole ROZI. Once
+`piBaseRate` has been halved down into single digits, a user who mined only *part*
+of a day rounds down to **zero** and earns nothing at all. This is the one way the
+model quietly stops paying people. The admin panel flags it (`rateTooLow`), and a
+unit test pins the behaviour so it is never a surprise.
+
+Plain-English version for the app: **"Mine at your own speed. More people mining
+does not take your ROZI away. As the app grows, the rate halves — so mine early."**
+
+#### 3.2.2 `"pool"` — pro-rata pot (fallback)
+
+The original Bitcoin-style model, kept as the safe place to fall back to.
+
 - **Epoch 0 emission (E₀)** = **3,000,000 ROZI**.
 - **Halving** every **100 epochs** (~3.3 months).
 - Emission at epoch *e*: `E(e) = E₀ / 2^floor(e / 100)`
+- Your payout = your share of that day's total **hashrate-seconds**.
 
 The sum of that series converges to `E₀ × halving_period × 2` =
 `3,000,000 × 100 × 2` = **600,000,000**, leaving ~50M of the mining allocation as
 headroom for the referral/bonus overhead in § 4.6 without ever breaching the
-650M cap. A hard cap check at settlement refuses to emit past 650M, whatever the
-settings say.
+650M cap.
 
-Plain-English version for the app: **"3 million ROZI are mined every day. Every
-100 days that halves. Mine early — it never gets easier."**
+Its one genuine advantage: because the pot is a fixed constant, **over-issuing is
+*arithmetically* impossible** — not merely prevented by a check. That is why it
+still exists.
 
-All three numbers (E₀, halving period, cap) are Admin-tunable. Changing E₀
-changes future epochs only; settled epochs are immutable.
+All numbers in both models are Admin-tunable. Changes affect future epochs only;
+settled epochs are immutable.
 
 ### 3.3 Sinks — where ROZI is destroyed
 
