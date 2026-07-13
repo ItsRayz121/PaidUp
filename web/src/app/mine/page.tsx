@@ -185,10 +185,21 @@ export default function MinePage() {
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
             </div>
           ) : (
-            <Button onClick={onStart} disabled={busy}>
-              <MineIcon size={20} />
-              {t("mine.start").replace("{hours}", String(s.session.sessionHours))}
-            </Button>
+            <>
+              <Button onClick={onStart} disabled={busy}>
+                <MineIcon size={20} />
+                {busy && s.ads.gateOnStart
+                  ? t("mine.gate.loading")
+                  : t("mine.start").replace("{hours}", String(s.session.sessionHours))}
+              </Button>
+              {/* Tell them a video comes first, so it is not a surprise. Only when
+                  the gate is actually live (flag + provider + a zone id). */}
+              {s.ads.gateOnStart && !busy && (
+                <p className="mt-2 text-xs text-muted">
+                  {t("mine.gate.body").replace("{hours}", String(s.session.sessionHours))}
+                </p>
+              )}
+            </>
           )}
         </div>
 

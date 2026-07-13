@@ -361,7 +361,10 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       conversionSharePct: s.conversionSharePct,
       marginPointsLast7Days: marginPoints,
       suggestedPotPoints: Math.floor((marginPoints * s.conversionSharePct) / 100),
-      windows: windows.map((w) => ({ ...w, total_burned: Number(w.total_burned) })),
+      // total_burned is stored in MICRO (the boot migration rescaled it). Convert
+      // to whole ROZI here, at the staff edge, so the admin panel shows "5 ROZI
+      // burned" and not "5000000" — the same rule the rest of this file follows.
+      windows: windows.map((w) => ({ ...w, total_burned: fromMicro(Number(w.total_burned)) })),
     };
   }));
 
@@ -396,7 +399,10 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       actorUserId: userId, actorRole: role, action: "mining_conversion_settle",
       detail: `window ${id}: ${result.pointsPaid} points to ${result.users} users for ${fromMicro(result.totalBurnedMicro)} ROZI burned`,
     });
-    return { ok: true, ...result };
+    // Expose `totalBurned` in whole ROZI, not the raw micro field, so the web's
+    // settle-confirmation message reads in ROZI. (`totalBurnedMicro` is dropped.)
+    const { totalBurnedMicro, ...rest } = result;
+    return { ok: true, ...rest, totalBurned: fromMicro(totalBurnedMicro) };
   }));
 
   // ---- Manual ROZI adjustment ----------------------------------------------

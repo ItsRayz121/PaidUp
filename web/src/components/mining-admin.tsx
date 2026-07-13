@@ -231,20 +231,25 @@ function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) 
               {s.pi.effectiveRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} ROZI
             </strong>{" "}
             for a full day (base {n(s.pi.baseRate)}, halved {s.pi.halvingsSoFar}×).
-            Multipliers multiply this. Population{" "}
+            Multipliers multiply this. Verified users{" "}
             <strong className="font-mono text-brand-ink">{n(s.pi.population)}</strong>
             {s.pi.nextMilestone !== null ? (
-              <> — next halving at <strong className="font-mono text-brand-ink">{n(s.pi.nextMilestone)}</strong> users.</>
+              <> — next halving at <strong className="font-mono text-brand-ink">{n(s.pi.nextMilestone)}</strong> verified users.</>
             ) : (
               <> — all milestones passed; the rate no longer halves.</>
             )}
           </p>
-          {/* The failure mode that stops paying people without erroring. */}
+          <p className="mt-1 text-[11px] text-muted">
+            Only ID-verified users count toward a halving, so a wave of fake signups
+            cannot force one.
+          </p>
+          {/* The rate is so low that even a FULL day rounds to nothing. Since the
+              ledger holds millionths now, this needs the rate near zero — it is no
+              longer the old "single digits" whole-ROZI bug. */}
           {s.pi.rateTooLow && (
             <p className="mt-1.5 rounded bg-danger-tint p-1.5 font-semibold text-danger">
-              Rate is below 10 ROZI/day. Payouts are floored to whole ROZI, so anyone who mined
-              only part of a day now rounds down to ZERO. Raise the base rate or widen the
-              milestones.
+              The rate is so low that even a full day of mining now rounds to ZERO.
+              Raise the base rate or widen the milestones.
             </p>
           )}
         </div>

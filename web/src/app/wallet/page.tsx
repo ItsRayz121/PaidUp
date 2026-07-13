@@ -7,7 +7,7 @@ import { Loading, ErrorState, EmptyState, LogoutButton } from "@/components/stat
 import { StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, LockIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchLedger, fetchMiningState, type LedgerEntry } from "@/lib/api";
+import { fetchBalance, fetchLedger, fetchMiningState, fetchKyc, type LedgerEntry } from "@/lib/api";
 import { formatPoints, formatMoney, formatRozi, timeAgo } from "@/lib/format";
 
 export default function WalletPage() {
@@ -16,6 +16,7 @@ export default function WalletPage() {
   const bal = useApi(fetchBalance, []);
   const led = useApi(fetchLedger, []);
   const mining = useApi(fetchMiningState, []);
+  const kyc = useApi(fetchKyc, []);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -23,6 +24,7 @@ export default function WalletPage() {
   const min = bal.data?.minWithdrawPoints ?? 2000;
   const canWithdraw = points >= min;
   const entries = led.data?.entries ?? [];
+  const kycStatus = kyc.data?.status ?? "none";
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -61,6 +63,35 @@ export default function WalletPage() {
             )}
           </div>
         </Card>
+      )}
+
+      {/* Verify-your-ID prompt, shown BEFORE they hit the withdrawal wall.
+          Manual review takes a day or two, so the whole point is to nudge people
+          to start early — by the time they reach the threshold, they are already
+          approved. Hidden once approved. */}
+      {kyc.data && kycStatus !== "approved" && (
+        <Link href="/kyc" className="block">
+          <Card className={`p-4 ${kycStatus === "rejected" ? "border-danger/30 bg-danger-tint" : kycStatus === "pending" ? "border-pending/30 bg-pending-tint" : "border-brand/20 bg-brand-tint/40"}`}>
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand text-white">
+                <LockIcon size={22} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-brand-ink">
+                  {kycStatus === "pending" ? t("kyc.status.pending.title")
+                    : kycStatus === "rejected" ? t("kyc.status.rejected.title")
+                    : t("kyc.title")}
+                </p>
+                <p className="text-sm text-muted">
+                  {kycStatus === "pending" ? t("kyc.status.pending.body")
+                    : kycStatus === "rejected" ? t("kyc.status.rejected.body")
+                    : t("withdraw.kyc.body")}
+                </p>
+              </div>
+              {kycStatus !== "pending" && <ArrowRightIcon size={22} className="shrink-0 text-brand" />}
+            </div>
+          </Card>
+        </Link>
       )}
 
       {/* ROZI is a SEPARATE currency on a SEPARATE ledger. It is deliberately in

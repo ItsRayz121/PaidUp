@@ -10,17 +10,19 @@
 // audit log. "Who looked at my ID" is a question we must be able to answer.
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
-import { fetchKycQueue, decideKyc, type KycSubmission } from "@/lib/api";
+import { fetchKycQueue, decideKyc, API_BASE, getToken, type KycSubmission } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 // The image endpoint is authenticated, so it cannot be a plain <img src>. We fetch
 // it with the bearer token, turn it into an object URL, and revoke that URL as
 // soon as the reviewer closes the submission — an ID card should not linger in
 // browser memory any longer than the moment it is being looked at.
+//
+// Uses the shared API_BASE and getToken() from lib/api rather than re-deriving
+// them, so a trailing slash on NEXT_PUBLIC_API_URL (which api.ts strips) cannot
+// produce a broken `//staff/kyc/...` URL here.
 async function loadImage(id: string, which: "selfie" | "front" | "back"): Promise<string> {
-  const token = localStorage.getItem("rozipay_token");
+  const token = getToken();
   const res = await fetch(`${API_BASE}/staff/kyc/${id}/${which}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
