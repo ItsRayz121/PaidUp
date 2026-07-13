@@ -162,9 +162,11 @@ Only if email hurts signup. Off until configured.
   config-gated for later. The staff panel now prompts for the hash on "Mark paid".
 - **New fraud rule** `payout_address_reuse`: flags (never blocks) when 3+ accounts
   cash out to the same wallet — the classic account-farm signal.
-- **Urdu localization foundation** (Phase 3): language toggle (English / اردو),
-  RTL support, and the Home/Tasks screen + bottom nav translated. More screens to
-  follow.
+- ~~**Urdu localization**~~ — **dropped by the founder on 2026-07-12** and removed
+  from the code. The app is **English only**, in deliberately simple English;
+  phones translate for anyone who wants it. Every user-facing string now lives in
+  one copy deck (`web/src/lib/i18n.tsx`) so the wording can be reviewed in a
+  single pass. **Nothing to collect for this — it is a decision, not a blocker.**
 
 All verified: typecheck (api + web), web production build, payout unit tests,
 fraud DB test, and a security review — all clean.

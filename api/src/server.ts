@@ -6,6 +6,9 @@ import { appRoutes } from "./routes/app.ts";
 import { webhookRoutes } from "./routes/webhooks.ts";
 import { withdrawalRoutes } from "./routes/withdrawals.ts";
 import { staffRoutes } from "./routes/staff.ts";
+import { miningRoutes } from "./routes/mining.ts";
+import { staffMiningRoutes } from "./routes/staffMining.ts";
+import { settleDueEpochs } from "./mining/engine.ts";
 import { initDb, usingRealPostgres } from "./db.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
@@ -66,9 +69,42 @@ await app.register(appRoutes);
 await app.register(webhookRoutes);
 await app.register(withdrawalRoutes);
 await app.register(staffRoutes);
+await app.register(miningRoutes);
+await app.register(staffMiningRoutes);
+
+// ---- Mining: accrual sweep + epoch settlement ------------------------------
+// Each tick does two things, IN ORDER:
+//   1. Accrue every open mining session, so a user who tapped "Start mining" and
+//      closed the app still has their time on the books. Shares used to be written
+//      only when the user polled, which meant a closed app earned nothing.
+//   2. Settle any day that has been closed for longer than the grace period.
+//
+// Running on a timer (rather than an external cron) keeps the deploy a single
+// service, and it is safe to run often: settlement is idempotent on the
+// mining_epochs primary key, and it takes a global advisory lock so two instances
+// cannot jointly mint past the supply cap.
+const SETTLE_INTERVAL_MS = 15 * 60 * 1000;
+async function tickSettlement() {
+  try {
+    const results = await settleDueEpochs();
+    for (const r of results) {
+      if (r.skipped) continue;
+      app.log.info(
+        `Mining epoch ${r.epoch} settled: ${r.emitted} ROZI to ${r.miners} miners ` +
+        `(${r.withheld} withheld, ${r.totalShares} total shares)`,
+      );
+    }
+  } catch (err) {
+    // Never let a settlement failure take the API down — the next tick retries,
+    // and the epoch stays unsettled (not half-settled) because it is one tx.
+    app.log.error({ err }, "Mining settlement tick failed");
+  }
+}
+setInterval(tickSettlement, SETTLE_INTERVAL_MS).unref();
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
+  void tickSettlement();
   if (isProdSecretsMissing) {
     app.log.warn("Using DEV secrets. Set JWT_SECRET and OTP_PEPPER in .env before real use.");
   }

@@ -16,7 +16,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // network's iframe owns that screen — a sheet over it can cost them the reward).
   const canPromptInstall = !isAuth && !path.startsWith("/surveys");
 
-  // Staff panel stays English-only (internal tool); the earner app is localized.
+  // The staff panel writes its copy inline (internal tool, jargon allowed). The
+  // earner app pulls every string from the copy deck in @/lib/i18n, so all
+  // user-facing wording can be reviewed for plain English in one file.
   if (isStaff) {
     return <div className="min-h-[100dvh] bg-bg">{children}</div>;
   }

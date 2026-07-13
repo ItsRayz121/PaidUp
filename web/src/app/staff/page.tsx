@@ -10,6 +10,7 @@ import {
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton } from "@/components/staff";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
+import { MiningPanel } from "@/components/mining-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -157,6 +158,15 @@ export default function StaffPage() {
 
       {/* Ad-network config — admin only */}
       {isAdmin && <NetworkPanel />}
+
+      {/* ROZI mining economy — admin only. Emission, hashrate, rigs, boosts,
+          transfers, and the conversion windows that bridge ROZI into Points. */}
+      {isAdmin && (
+        <section className="mb-8">
+          <h2 className="mb-2 font-bold text-brand-ink">Mining (ROZI)</h2>
+          <MiningPanel />
+        </section>
+      )}
 
       {/* Appoint agents/managers/admins — admin only */}
       {isAdmin && <StaffRolesPanel />}

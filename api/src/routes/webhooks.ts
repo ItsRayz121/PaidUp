@@ -3,6 +3,18 @@ import { sql, now, newId, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { getAdapter } from "../adapters/index.ts";
 import { checkGeoMismatch } from "../fraud.ts";
+import { accrue, grantBoost } from "../mining/engine.ts";
+import { loadMiningSettings } from "../mining/settings.ts";
+
+// A credited task boosts the user's mining hashrate for a while. Accrue first so
+// the seconds already mined this session are paid at the OLD rate — the boost
+// applies from now on, never retroactively.
+async function grantTaskBoost(userId: string, completionId: string): Promise<void> {
+  const s = await loadMiningSettings();
+  if (s.taskBoostPct <= 0) return;
+  await accrue(userId);
+  await grantBoost(userId, "task", s.taskBoostPct, s.taskBoostHours, completionId);
+}
 
 // Inbound ad-network postbacks. THIS is the only place task points are credited
 // (guardrail #1). The frontend can NEVER credit points. Every postback is
@@ -276,6 +288,20 @@ export async function webhookRoutes(app: FastifyInstance) {
     // the credit lands — it never blocks a verified reward, only flags for staff.
     const reportedCountry = input.country ?? input.country_code ?? input.geo;
     await checkGeoMismatch(userId, user.country, reportedCountry);
+
+    // MINING: a credited task grants a temporary hashrate boost (MINING_SPEC.md
+    // § 4.4). This is the line that makes mining FEED the revenue engine instead
+    // of competing with it — the highest-hashrate miners end up being the people
+    // actually doing the surveys that pay us.
+    //
+    // Deliberately outside the transaction above and deliberately swallowed: a
+    // boost is a nice-to-have, and a bug in the mining code must never roll back
+    // or block a real, verified, revenue-generating points credit.
+    try {
+      await grantTaskBoost(userId, completionId);
+    } catch (err) {
+      app.log.error({ err, userId, completionId }, "Failed to grant mining boost for a credited task");
+    }
 
     await logPostback(true, "credited", externalId);
     return reply.send({ ok: true, credited: rewardPoints });

@@ -418,9 +418,241 @@ const MIGRATIONS = `
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS fee_points INTEGER NOT NULL DEFAULT 0;
 `;
 
+// ---------------------------------------------------------------------------
+// ROZI MINING (docs/MINING_SPEC.md)
+//
+// GUARDRAIL #7: ROZI and Points are two SEPARATE append-only ledgers, and the
+// only path between them is a Conversion Window — a pre-committed, hard-capped
+// pot of Points. There is no fixed ROZI->Points rate anywhere in this system,
+// because a fixed rate is a promise to buy back an asset we mint for free, and
+// that is an unfunded liability that grows with our own success.
+//
+// So: rozi_ledger is a mirror of ledger_entries, and nothing may write to both
+// except conversion settlement. Balance is a SUM here too — never a column.
+// ---------------------------------------------------------------------------
+const MINING_SCHEMA = `
+  -- Append-only, exactly like ledger_entries. Signed amounts, never updated.
+  -- BIGINT: total supply is 1e9 ROZI, which overflows nothing, but SUM() over a
+  -- busy account would crowd INTEGER. Amounts are WHOLE ROZI (settlement floors;
+  -- the rounding dust simply stays unemitted, which keeps us under the cap).
+  CREATE TABLE IF NOT EXISTS rozi_ledger (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    amount        BIGINT NOT NULL,
+    direction     TEXT NOT NULL CHECK (direction IN ('credit','debit')),
+    source_type   TEXT NOT NULL CHECK (source_type IN
+                    ('mining','rig_purchase','transfer_in','transfer_out',
+                     'transfer_fee','conversion_burn','admin_adjustment','bonus')),
+    source_ref_id TEXT,
+    note          TEXT,
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_rozi_user ON rozi_ledger(user_id);
+  CREATE INDEX IF NOT EXISTS idx_rozi_source ON rozi_ledger(source_type);
+
+  -- A mining session. Hashrate only accrues while one is live; when it expires
+  -- mining STOPS until the user comes back. That friction is the retention loop
+  -- (and every return visit is an ad impression).
+  CREATE TABLE IF NOT EXISTS mining_sessions (
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES users(id),
+    device_id         TEXT,
+    started_at        TEXT NOT NULL,
+    expires_at        TEXT NOT NULL,
+    -- Accrual is incremental: every poll credits (now - last_accrued_at) seconds
+    -- at the CURRENT hashrate, so a boost that lands mid-session is honoured from
+    -- that moment and not retroactively.
+    last_accrued_at   TEXT NOT NULL,
+    ended_at          TEXT,
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_mining_sessions_user ON mining_sessions(user_id);
+  -- One live session per user, enforced by the database rather than by a check
+  -- that a concurrent request could race past.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_mining_session_active
+    ON mining_sessions(user_id) WHERE status = 'active';
+
+  -- Accrued hashrate-seconds per (epoch, user). This is the numerator of the
+  -- pro-rata split; the epoch's total is the denominator.
+  CREATE TABLE IF NOT EXISTS mining_shares (
+    epoch      INTEGER NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    shares     BIGINT NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (epoch, user_id)
+  );
+
+  -- THE anti-farm rule (MINING_SPEC.md § 9): a device_id may accrue mining
+  -- shares for exactly ONE user per epoch. A second account on the same phone
+  -- may run a session, but accrues zero and is flagged. Enforced by this PK, so
+  -- two concurrent requests cannot both win.
+  CREATE TABLE IF NOT EXISTS mining_epoch_devices (
+    epoch      INTEGER NOT NULL,
+    device_id  TEXT NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch, device_id)
+  );
+
+  -- One row per settled day. Settlement is idempotent on this PK: a re-run after
+  -- a crash cannot credit anybody twice.
+  CREATE TABLE IF NOT EXISTS mining_epochs (
+    epoch        INTEGER PRIMARY KEY,
+    emission     BIGINT NOT NULL,
+    total_shares BIGINT NOT NULL,
+    miners       INTEGER NOT NULL DEFAULT 0,
+    emitted      BIGINT NOT NULL DEFAULT 0,
+    withheld     BIGINT NOT NULL DEFAULT 0,
+    settled_at   TEXT NOT NULL
+  );
+
+  -- Daily streak. A day counts if the user ran at least one session in it.
+  CREATE TABLE IF NOT EXISTS mining_streaks (
+    user_id      TEXT PRIMARY KEY REFERENCES users(id),
+    current_days INTEGER NOT NULL DEFAULT 0,
+    best_days    INTEGER NOT NULL DEFAULT 0,
+    last_epoch   INTEGER,
+    updated_at   TEXT NOT NULL
+  );
+
+  -- The rig catalogue (Admin CRUD). Cost grows FASTER than power on purpose
+  -- (1.6 vs 1.5 per level), so the tree is a treadmill that burns ROZI forever
+  -- and can never be solved into infinite hashrate.
+  CREATE TABLE IF NOT EXISTS rigs (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    icon         TEXT NOT NULL DEFAULT 'chip',
+    base_cost    BIGINT NOT NULL,
+    cost_growth  INTEGER NOT NULL DEFAULT 160,   -- x100, so 160 = 1.60
+    base_power   INTEGER NOT NULL,
+    power_growth INTEGER NOT NULL DEFAULT 150,   -- x100, so 150 = 1.50
+    max_level    INTEGER NOT NULL DEFAULT 10,
+    sort         INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+    created_at   TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS user_rigs (
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    rig_id     TEXT NOT NULL REFERENCES rigs(id),
+    level      INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, rig_id)
+  );
+
+  -- Temporary multipliers. kind='task' (a credited survey), 'ad' (a watched
+  -- rewarded video), 'points' (bought with the CASH currency — a Points sink,
+  -- which quietly reduces withdrawal pressure on the USDT treasury).
+  CREATE TABLE IF NOT EXISTS user_boosts (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    kind           TEXT NOT NULL CHECK (kind IN ('task','ad','points')),
+    multiplier_pct INTEGER NOT NULL,   -- 50 = +50%
+    expires_at     TEXT NOT NULL,
+    source_ref_id  TEXT,
+    created_at     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_boosts_user ON user_boosts(user_id, expires_at);
+
+  -- Points-priced boosters (Admin CRUD). Off until the founder sets prices.
+  CREATE TABLE IF NOT EXISTS boosters (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    price_points   INTEGER NOT NULL,
+    multiplier_pct INTEGER NOT NULL,
+    hours          INTEGER NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'disabled' CHECK (status IN ('active','disabled')),
+    created_at     TEXT NOT NULL
+  );
+
+  -- Every rewarded-video view. The reward is a hashrate BOOST, never currency —
+  -- that is what keeps guardrail #1 intact (see MINING_SPEC.md § 8.1).
+  CREATE TABLE IF NOT EXISTS ad_impressions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    device_id   TEXT,
+    nonce       TEXT NOT NULL UNIQUE,
+    provider    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'issued'
+                  CHECK (status IN ('issued','rewarded','rejected')),
+    issued_at   TEXT NOT NULL,
+    rewarded_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ad_user ON ad_impressions(user_id, issued_at);
+
+  -- ROZI -> Points. The ONLY bridge between the two ledgers, and the pot is a
+  -- hard ceiling enforced inside the settlement transaction (MINING_SPEC.md § 6).
+  CREATE TABLE IF NOT EXISTS conversion_windows (
+    id           TEXT PRIMARY KEY,
+    pot_points   INTEGER NOT NULL,
+    opens_at     TEXT NOT NULL,
+    closes_at    TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','settled','cancelled')),
+    total_burned BIGINT NOT NULL DEFAULT 0,
+    points_paid  INTEGER NOT NULL DEFAULT 0,
+    created_by   TEXT REFERENCES users(id),
+    settled_at   TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS conversion_burns (
+    id          TEXT PRIMARY KEY,
+    window_id   TEXT NOT NULL REFERENCES conversion_windows(id),
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    rozi        BIGINT NOT NULL,
+    points_paid INTEGER,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_burns_window ON conversion_burns(window_id);
+
+  -- Wallet-to-wallet ROZI transfer. NOT an order book: there is no price, no
+  -- matching, and no money leg. If we matched trades or custodied the money we
+  -- would BE an unlicensed exchange (MINING_SPEC.md § 7).
+  CREATE TABLE IF NOT EXISTS rozi_transfers (
+    id           TEXT PRIMARY KEY,
+    from_user_id TEXT NOT NULL REFERENCES users(id),
+    to_user_id   TEXT NOT NULL REFERENCES users(id),
+    amount       BIGINT NOT NULL,   -- gross, debited from sender
+    fee_burned   BIGINT NOT NULL DEFAULT 0,
+    received     BIGINT NOT NULL,   -- amount - fee_burned, credited to recipient
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_transfers_from ON rozi_transfers(from_user_id);
+  CREATE INDEX IF NOT EXISTS idx_transfers_to ON rozi_transfers(to_user_id);
+
+  -- The POINTS ledger gains exactly two new source types, and no others:
+  --   mining_conversion  — credit, paid out of a Conversion Window's fixed pot
+  --   booster_purchase   — debit, Points spent on a hashrate booster
+  -- Both are the only places the two currencies are allowed to be in the same
+  -- sentence, and both are capped. Anything else writing Points from mining is
+  -- a bug and this CHECK is what will catch it.
+  ALTER TABLE ledger_entries DROP CONSTRAINT IF EXISTS ledger_entries_source_type_check;
+  ALTER TABLE ledger_entries ADD CONSTRAINT ledger_entries_source_type_check
+    CHECK (source_type IN ('task_completion','referral_bonus','withdrawal',
+                           'admin_adjustment','mining_conversion','booster_purchase'));
+`;
+
+// Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
+// owns this list at runtime, so a re-deploy must never stomp their edits.
+const SEED_RIGS: [string, string, string, number, number, number][] = [
+  // id, name, icon, base_cost, base_power, sort
+  ["old_phone", "Old Phone", "phone", 500, 5, 1],
+  ["laptop", "Laptop", "laptop", 3_000, 25, 2],
+  ["rig", "Mining Rig", "chip", 20_000, 150, 3],
+  ["server", "Server Rack", "server", 120_000, 800, 4],
+  ["datacentre", "Data Centre", "building", 750_000, 5_000, 5],
+];
+
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
+  await driver.exec(MINING_SCHEMA);
+  for (const [id, name, icon, baseCost, basePower, sort] of SEED_RIGS) {
+    await sql.run(
+      `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, created_at)
+       VALUES (?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`,
+      id, name, icon, baseCost, basePower, sort, now(),
+    );
+  }
   // Ensure the known adapter networks have a config row in every environment,
   // so the Admin panel and the disabled-network checks always have something to
   // read. Split percentages are the modeled defaults; Admin tunes them live.
@@ -480,7 +712,10 @@ export async function postLedger(
     userId: string;
     points: number; // always positive magnitude
     direction: "credit" | "debit";
-    sourceType: "task_completion" | "referral_bonus" | "withdrawal" | "admin_adjustment";
+    sourceType:
+      | "task_completion" | "referral_bonus" | "withdrawal" | "admin_adjustment"
+      // The only two ways mining may touch the Points ledger. Both are capped.
+      | "mining_conversion" | "booster_purchase";
     sourceRefId?: string;
     note?: string;
   },
@@ -530,4 +765,51 @@ export async function balanceOf(
     userId,
   );
   return row?.bal ?? 0;
+}
+
+// ---- ROZI ledger ----------------------------------------------------------
+// Deliberately a mirror of postLedger/balanceOf above. ROZI is a second
+// append-only ledger with a second balance-is-always-a-SUM rule, and keeping the
+// two shapes identical is what makes it obvious when something tries to write
+// across them (guardrail #7 — see MINING_SCHEMA).
+
+export type RoziSource =
+  | "mining" | "rig_purchase" | "transfer_in" | "transfer_out"
+  | "transfer_fee" | "conversion_burn" | "admin_adjustment" | "bonus";
+
+export async function postRozi(
+  params: {
+    userId: string;
+    rozi: number; // always a positive magnitude
+    direction: "credit" | "debit";
+    sourceType: RoziSource;
+    sourceRefId?: string;
+    note?: string;
+  },
+  t: Pick<TxApi, "run"> = sql,
+): Promise<string> {
+  const magnitude = Math.abs(Math.trunc(params.rozi));
+  const amount = params.direction === "credit" ? magnitude : -magnitude;
+  const id = newId();
+  await t.run(
+    `INSERT INTO rozi_ledger (id, user_id, amount, direction, source_type, source_ref_id, note, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    id, params.userId, amount, params.direction, params.sourceType,
+    params.sourceRefId ?? null, params.note ?? null, now(),
+  );
+  return id;
+}
+
+// BIGINT sums come back from node-postgres as a STRING (it will not silently
+// narrow an int8), so Number() is doing real work here — without it every ROZI
+// balance would be a string and every comparison against it would be nonsense.
+export async function roziBalanceOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: string | number }>(
+    "SELECT COALESCE(SUM(amount), 0) AS bal FROM rozi_ledger WHERE user_id = ?",
+    userId,
+  );
+  return Number(row?.bal ?? 0);
 }

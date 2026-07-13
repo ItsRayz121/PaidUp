@@ -11,7 +11,9 @@
     "start": "tsx src/server.ts",
     "seed": "tsx src/seed.ts",
     "test:admin": "tsx src/tests/admin.e2e.ts",
-    "test:proxy": "tsx src/tests/proxy.e2e.ts"
+    "test:proxy": "tsx src/tests/proxy.e2e.ts",
+    "test:mining": "tsx --test src/tests/mining.test.ts",
+    "test:mining:e2e": "tsx src/tests/mining.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

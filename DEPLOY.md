@@ -178,9 +178,51 @@ auto-promoted to `admin` and land on `/staff`. To add more staff, set
 `ADMIN_EMAILS` on Railway to a comma-separated list, or insert rows into
 `admin_users` with role `agent` / `manager` / `admin`.
 
+## ROZI mining
+
+Full design: `docs/MINING_SPEC.md`. Deploy notes only here.
+
+**No new environment variables.** Every number in the mining economy lives in the
+`app_settings` table under a `mining.*` key and is tunable from `/staff` → Mining
+at runtime, with no redeploy. The defaults in `api/src/mining/settings.ts` apply
+until an Admin overrides them. Tables and the rig catalogue are created on boot
+by `initDb()`, so a deploy is all that is needed.
+
+**Settlement runs inside the API**, not as an external cron: a timer every 15
+minutes settles any closed-but-unsettled day, and it also runs once on boot so a
+day the process spent asleep is caught up on wake. Settlement is **idempotent**
+on the `mining_epochs` primary key, so running two API instances is safe — the
+loser of the race is a no-op. There is no lock to configure.
+
+**Things that ship OFF and must be switched on deliberately, in `/staff`:**
+
+| Setting | Default | Turn on when |
+|---|---|---|
+| `conversionEnabled` | `0` (off) | The lock period ends. This is the ONLY path from ROZI to real Points — see § 6 of the spec before touching it. |
+| `transfersEnabled` | `0` (off) | You want wallet-to-wallet ROZI sends. |
+| `adsEnabled` | `0` (off) | You have a Monetag/Adsterra account and have dropped the real ad tag into `web/src/app/mine/page.tsx` (`onWatchAd`). |
+| Boosters (Points-priced) | none seeded | You have decided on prices. Create them in `/staff`. |
+
+⚠️ **Opening a Conversion Window commits real, cash-redeemable Points.** The panel
+shows a suggested pot computed from the margin you actually earned in the last 7
+days — the pot is a hard ceiling the system cannot exceed, but it *can* pay out
+all of it. Do not commit a pot larger than money the business actually made.
+
+**Testing the concurrency guard.** Local dev uses PGlite, which is a single
+Postgres session and therefore cannot isolate concurrent transactions, so the
+double-spend race in `npm run test:mining:e2e` is skipped there. To exercise it
+for real, point `DATABASE_URL` at a real Postgres and re-run.
+
 ## Local development (free, no accounts needed)
 ```
 cd api && npm install && npm start      # backend on :4000, codes print to console
 cd web && npm install && npm run dev     # frontend on :3000
 ```
 Open http://localhost:3000. Local dev ignores the production secret checks.
+
+Mining tests:
+```
+cd api
+npm run test:mining       # the economy maths (emission cap, pro-rata, conversion pot)
+npm run test:mining:e2e   # the plumbing, against a real DB
+```

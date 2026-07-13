@@ -44,7 +44,8 @@ In Pakistan, India, Bangladesh, Indonesia, and Nigeria, smartphone users have re
 ### Nice-to-Have (P1)
 - Referral commission (% of referred user's earnings, TBD)
 - Second and third ad networks
-- Local-language UI (Urdu first)
+- ~~Local-language UI (Urdu first)~~ — **cut (founder, 2026-07-12).** English only,
+  in deliberately simple English. See CLAUDE.md § English only.
 - Automated payout for small amounts under a fraud-safe threshold
 - Basic analytics: cohort retention, per-network revenue per user
 
@@ -65,13 +66,13 @@ In Pakistan, India, Bangladesh, Indonesia, and Nigeria, smartphone users have re
 - **Launch country** (business): confirm Pakistan-first.
 - **Referral commission structure** (business): flat %, one-time bonus, or both?
 - **Sentry authorization** (engineering): authorize via claude.ai connector settings before production error monitoring.
-- **Local-language priority** (product): which language ships first alongside English.
+- ~~**Local-language priority**~~ — **answered: none.** English only (founder, 2026-07-12).
 
 ## Phasing
 
 - **Phase 0** ✅ — docs + architecture + design system. No code.
 - **Phase 1 (MVP)** ✅ **complete (2026-07-10)** — all P0 requirements built + verified: email+password auth, append-only ledger, **two** ad networks with verified postbacks (offerwall + rewarded-video), USDT withdrawals with Agent→Manager approval, Admin/Manager/Agent panels (network config, KPI dashboard, ticket queue), device fingerprinting + velocity/device-reuse/referral-ring fraud detection, sponsored disclosure, referral attribution.
 - **Phase 2** — referral commission tuning, third+ network, fraud rules tightened (geo mismatch), Sentry live.
-- **Phase 3** — additional payout rails (PKR/local), automated low-risk payout, local-language UI (Urdu).
+- **Phase 3** — additional payout rails (PKR/local), automated low-risk payout, **ROZI mining** (`docs/MINING_SPEC.md`).
 
 Phase 1 P0 is done; Phase 2 may begin once its items are prioritized. Note the second ad network (rewarded-video) originally listed under P1 was pulled into P0 because the P0 AC requires one offerwall *and* one rewarded-video network.

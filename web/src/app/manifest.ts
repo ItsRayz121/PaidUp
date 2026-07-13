@@ -24,7 +24,11 @@ export default function manifest(): MetadataRoute.Manifest {
       // mark inside the safe zone so nothing important gets cut off.
       { src: "/icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
+    // Long-press the home-screen icon to jump straight in. Mining is first: it is
+    // the one thing there is always something to do in, on a day when the survey
+    // wall has no offers — which is most days.
     shortcuts: [
+      { name: "Mine ROZI", url: "/mine" },
       { name: "Ways to earn", url: "/tasks" },
       { name: "My money", url: "/wallet" },
     ],

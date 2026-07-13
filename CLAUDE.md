@@ -8,6 +8,8 @@ This file is the entry point. Read this first on every session. Full detail live
 | `docs/ARCHITECTURE.md` | System design — data model, ad-network adapters, fraud layer, deploy topology |
 | `docs/DESIGN_BRIEF.md` | Visual direction, simple-English copy rules, accessibility |
 | `docs/TEAM_AND_AGENTS.md` | The 15-role virtual team, mapped to real Claude Code agents/skills/MCPs |
+| `docs/MINING_SPEC.md` | **ROZI mining** — the second currency: tokenomics, emission, hashrate, sinks, conversion |
+| `docs/MINING_PLAN.md` | The mining build checklist — what's done, what's deliberately not |
 
 ## What this product is
 
@@ -34,6 +36,18 @@ These override convenience or speed at every step:
 4. **Never design a payout threshold to be effectively unreachable.**
 5. **Rate-limit and fingerprint at the device level from day one.**
 6. **Simple English + icon-first UI everywhere user-facing.** No jargon in any user-facing string.
+7. **ROZI and Points are two separate append-only ledgers, and the only path between
+   them is a Conversion Window** — a pre-committed, hard-capped pot of Points
+   (`docs/MINING_SPEC.md` § 6). There is **no fixed ROZI→Points rate anywhere**, by
+   design: a fixed rate is a promise to buy back an asset we mint for free, i.e. an
+   unfunded liability that grows with our own success. ROZI is safe to mint *only*
+   because it is not a claim on the treasury. Never sell it to users as cash.
+8. **Every transaction that reads a balance then debits it must take
+   `pg_advisory_xact_lock(hashtext(userId))` first** (see `lockUser()` in
+   `api/src/routes/mining.ts`, and `routes/withdrawals.ts`). Without it, two
+   concurrent requests both read the same balance, both pass the affordability
+   check, and both debit. This is not theoretical — it was a real bug caught in
+   review on the mining debit paths.
 
 ## Working conventions
 
@@ -77,11 +91,9 @@ These override convenience or speed at every step:
   - **Fraud rule `payout_address_reuse`** — flags (never blocks) when
     `payoutAddressReuseThreshold` (3)+ accounts withdraw to one wallet; the farm
     cash-out signal. Checked at withdrawal-request time, deduped per address.
-  - **Urdu localization (Phase 3)** — client-side i18n (`web/src/lib/i18n.tsx`,
-    en/ur dictionary, RTL, localStorage preference), `LangToggle`, provider in
-    `Shell`. **All earner screens localized**: Home, Tasks, Wallet, Refer, Help,
-    Withdraw (money flow), Login (all 5 modes) + bottom nav. 131 keys, en/ur in
-    sync (verified). Staff panel intentionally stays English (internal tool).
+  - ~~**Urdu localization (Phase 3)**~~ — **REVERSED 2026-07-12, see below.**
+    The Urdu dictionary, `LangToggle` and RTL were removed at the founder's
+    request. `web/src/lib/i18n.tsx` survives as an **English-only copy deck**.
   - Verified: api + web typecheck, web production build, payout unit tests (12),
     fraud DB test (4), `security-review` (no findings) — all clean.
 
@@ -156,6 +168,56 @@ These override convenience or speed at every step:
     standalone suppression), lint/typecheck/build clean, `security-review` (no
     findings).
 
+- **ROZI MINING — SECOND CURRENCY (2026-07-12)**: a mined token, `$ROZI`, on a
+  **separate append-only ledger** (`rozi_ledger`) from Points. Built because CPX has
+  no survey fill for Pakistani traffic most of the day — mining gives a reason to
+  open the app when there is nothing to earn from. Full design: `docs/MINING_SPEC.md`.
+  - **It is a real mining pool, not a tap-to-earn.** Each day is a block with a
+    fixed emission (3M ROZI, halving every 100 days, 650M hard cap). Your payout =
+    your share of that day's total **hashrate-seconds**. More miners ⇒ everyone
+    earns less: difficulty self-adjusts, and **over-issuing is arithmetically
+    impossible**.
+  - **Hashrate is earned, never tapped**: streak (up to ×2), **credited task ⇒ +50%
+    for 48h** (the line that makes mining *feed* the offerwall instead of competing
+    with it), watched ad ⇒ +100% for 4h, rigs bought with ROZI (cost growth 1.6 >
+    power growth 1.5, so the tree is a permanent burn), referral hashrate (L1 10% /
+    L2 3%, **active invitees only**, capped at 100% of own).
+  - **Sinks**: rigs, conversion burns, transfer fees. Plus **Points-priced boosters**
+    — a sink for the *cash* currency, which quietly reduces USDT withdrawal pressure.
+  - **Anti-farm**: **one device mines for ONE account per epoch** (second account
+    accrues zero + high flag, but is not hard-blocked — families share phones);
+    verified email required; flagged accounts are **withheld, not dropped from the
+    denominator**, so catching fraud never inflates honest miners' payouts.
+  - **Ships OFF, deliberately**: conversion, transfers, ads. Users mine for the
+    2–3 month lock period with nothing convertible and nothing tradeable — this is
+    what makes the whole design safe.
+  - **We will NOT build an in-app P2P market.** Wallet-to-wallet transfer, yes.
+    Matching trades or holding the money leg would make us an unlicensed exchange
+    (PVARA). Reason recorded in `MINING_SPEC.md` § 7 so it is not re-litigated.
+  - Everything tunable in `/staff` → Mining, no redeploy. Settlement is an in-API
+    timer, idempotent per epoch.
+  - Verified: **19 unit + 37 e2e + 15 admin + 5 proxy = 76 checks, all green**;
+    api + web typecheck; web production build.
+  - ⚠️ **A senior review pass after the first "done" found 9 real defects** — two of
+    which silently destroyed user earnings (mining across midnight; closing the
+    app), one of which was theft-by-race (ad nonce), and one of which meant the
+    unit tests had never actually been passing. All fixed, each with a regression
+    test. **Read `MINING_PLAN.md` M9.5 before touching the accrual or settlement
+    paths** — several of those bugs are the kind you reintroduce by "simplifying".
+
+- **ENGLISH ONLY — Urdu dropped (founder, 2026-07-12).** The `ur` dictionary,
+  `LangToggle`, RTL and the locale preference are **deleted**. Earners read simple
+  English, and the phone translates for anyone who wants it.
+  - `web/src/lib/i18n.tsx` remains, but it is now a **copy deck, not a translation
+    layer**: one file holding every user-facing string (202 keys), so the whole
+    app's wording can be reviewed for plain English in a single pass.
+  - **The rule that replaces translation is stricter than translation was**: every
+    string must be short, plain, everyday English. **No jargon, ever** — no
+    "postback", "ledger", "hashrate", "pro-rata", "epoch". Say *"mining speed"*, not
+    *"hashrate"* (`H/s` was stripped from the UI for exactly this reason). If a
+    sentence needs a second read, rewrite it.
+  - Staff panel is unaffected — it writes copy inline and jargon is allowed there.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
@@ -164,6 +226,6 @@ Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
 
 **Still open (business decisions):** ✅ all three locked (60% split / Pakistan / RoziPay — domain rozipay.xyz).
 
-**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow). Further fraud tuning + finishing Urdu across all screens are open Phase 3 work.
+**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow). Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
 
 See `docs/` for the full spec.

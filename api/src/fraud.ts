@@ -28,7 +28,7 @@ function canonicalCountry(c: string): string {
 // queue. `scopeKey` is stored in the device_id column: a real device hash for
 // device-scoped flags, or `ip:<addr>` for IP-scoped ones (kept distinct so a
 // device flag and an IP flag on the same cluster dedupe independently).
-async function flagOnce(
+export async function flagOnce(
   flagType: string,
   scopeKey: string,
   userId: string | null,

@@ -87,4 +87,31 @@ export const InboxIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M4 13h4l2 3h4l2-3h4" /><path d="M5 13 6.5 5h11L19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-5Z" /></svg>
 );
 
+// ---- Mining (ROZI) --------------------------------------------------------
+export const MineIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="m14 3 7 7-4 4-7-7 4-4Z" /><path d="m10.5 6.5-7.5 12 12-7.5" /><path d="M3 21h.01" /></svg>
+);
+export const ChipIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="7" y="7" width="10" height="10" rx="1.5" /><path d="M10 2v3M14 2v3M10 19v3M14 19v3M2 10h3M2 14h3M19 10h3M19 14h3" /></svg>
+);
+export const FlameIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 3s5 4 5 8a5 5 0 0 1-10 0c0-1.5.8-2.8 1.5-3.5C9 9 10 10 10 11c0-2 1-6 2-8Z" /></svg>
+);
+export const BoltIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" /></svg>
+);
+export const LockIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+);
+
 export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon };
+
+// Rig art, keyed by the `icon` column on the rigs table (Admin-editable). Falls
+// back to the chip so a rig with an unknown icon name still renders.
+export const rigIcon: Record<string, (p: IconProps) => React.ReactElement> = {
+  phone: (p) => <svg {...base(p)}><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>,
+  laptop: (p) => <svg {...base(p)}><rect x="3" y="5" width="18" height="11" rx="1.5" /><path d="M2 19h20" /></svg>,
+  chip: ChipIcon,
+  server: (p) => <svg {...base(p)}><rect x="3" y="4" width="18" height="6" rx="1.5" /><rect x="3" y="14" width="18" height="6" rx="1.5" /><path d="M7 7h.01M7 17h.01" /></svg>,
+  building: (p) => <svg {...base(p)}><path d="M3 21V7l6-4v18" /><path d="M9 21V9l12 4v8" /><path d="M13 21v-4h4v4" /></svg>,
+};

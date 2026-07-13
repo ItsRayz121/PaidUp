@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { LangToggle } from "@/components/LangToggle";
 import { ShieldIcon, CheckIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -137,7 +136,6 @@ export default function LoginPage() {
             <p className="text-xs text-muted">{t("login.tagline")}</p>
           </div>
         </div>
-        <LangToggle />
       </div>
 
       {error && <p className="mb-4 rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}

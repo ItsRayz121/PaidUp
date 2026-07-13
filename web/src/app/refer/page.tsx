@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
-import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon } from "@/components/icons";
+import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchReferrals } from "@/lib/api";
@@ -37,6 +37,10 @@ export default function ReferPage() {
     { Icon: ShareIcon, text: t("refer.step1") },
     { Icon: CheckIcon, text: t("refer.step2") },
     { Icon: StarIcon, text: t("refer.step3") },
+    // Friends do two things for you, not one: points AND mining speed. The Refer
+    // screen is where people decide whether inviting is worth it, so the mining
+    // half of the reward has to be said here, not only on /mine.
+    { Icon: MineIcon, text: t("refer.step4") },
   ];
 
   return (

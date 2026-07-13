@@ -283,3 +283,118 @@ export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 export const fetchSettings = () => apiFetch<{ withdrawalFeePoints: number }>("/staff/settings");
 export const updateSettings = (patch: { withdrawalFeePoints: number }) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- ROZI mining (docs/MINING_SPEC.md) ------------------------------------
+// ROZI is the MINED currency. It is a SEPARATE ledger from Points, it is not
+// backed by revenue, and it is not withdrawable. Any UI built on these types
+// must say so plainly — see the banner on /mine and in the wallet.
+export type MiningBoost = { kind: "task" | "ad" | "points"; pct: number; expiresAt: string };
+export type MiningState = {
+  rozi: number;
+  session: { active: boolean; expiresAt: string | null; sessionHours: number };
+  hashrate: number;
+  breakdown: {
+    base: number; rigs: number; streakDays: number;
+    streakMultiplierPct: number; boostPct: number; referral: number;
+  };
+  sharesToday: number;
+  estimatedRozi: number;
+  estimateIsLive: boolean;
+  streak: { current: number; best: number };
+  boosts: MiningBoost[];
+  ads: {
+    enabled: boolean; watchedToday: number; dailyCap: number;
+    boostPct: number; boostHours: number;
+  };
+  convertible: boolean;
+  transfersEnabled: boolean;
+  deviceBlocked: boolean;
+};
+export const fetchMiningState = () => apiFetch<MiningState>("/mining/state");
+export const startMining = () =>
+  apiFetch<{ ok: true; expiresAt: string }>("/mining/start", { method: "POST" });
+
+export type Rig = {
+  id: string; name: string; icon: string; level: number; maxLevel: number;
+  power: number; nextPower: number | null; nextCost: number | null;
+};
+export const fetchRigs = () => apiFetch<{ rozi: number; rigs: Rig[] }>("/mining/rigs");
+export const upgradeRig = (id: string) =>
+  apiFetch<{ ok: true; level: number; spent: number; rozi: number }>(
+    `/mining/rigs/${id}/upgrade`, { method: "POST" });
+
+export type RoziEntry = {
+  id: string; amount: number; direction: "credit" | "debit";
+  source_type: string; note: string | null; created_at: string;
+};
+export const fetchRoziHistory = () => apiFetch<{ entries: RoziEntry[] }>("/mining/history");
+
+// Ad-watch: the reward is a hashrate BOOST, never currency. `issue` hands back a
+// nonce; `complete` redeems it once, after a minimum watch time.
+export const issueAd = () =>
+  apiFetch<{ nonce: string; minSeconds: number }>("/mining/ad/issue", { method: "POST" });
+export const completeAd = (nonce: string) =>
+  apiFetch<{ ok: true; boostPct: number; hours: number }>(
+    "/mining/ad/complete", { method: "POST", body: JSON.stringify({ nonce }) });
+
+export type Booster = { id: string; name: string; price_points: number; multiplier_pct: number; hours: number };
+export const fetchBoosters = () => apiFetch<{ points: number; boosters: Booster[] }>("/mining/boosters");
+export const buyBooster = (id: string) =>
+  apiFetch<{ ok: true; points: number }>(`/mining/boosters/${id}/buy`, { method: "POST" });
+
+// Wallet-to-wallet ROZI. NOT a trade: no price, no order book, no money leg.
+export const transferRozi = (to: string, amount: number) =>
+  apiFetch<{ ok: true; fee: number; received: number; rozi: number }>(
+    "/mining/transfer", { method: "POST", body: JSON.stringify({ to, amount }) });
+
+// ---- Admin: mining economy (docs/MINING_SPEC.md § 10) --------------------
+// Every number in the ROZI economy is tunable at runtime, with no redeploy.
+export type MiningSettings = Record<string, number | string>;
+export const fetchMiningSettings = () =>
+  apiFetch<{ settings: MiningSettings; defaults: MiningSettings }>("/staff/mining/settings");
+export const updateMiningSettings = (patch: Record<string, number | string>) =>
+  apiFetch<{ ok: true; settings: MiningSettings }>("/staff/mining/settings", {
+    method: "PATCH", body: JSON.stringify(patch),
+  });
+
+export type MiningStats = {
+  epoch: number;
+  todayEmission: number;
+  supply: { cap: number; emitted: number; burned: number; circulating: number; remaining: number };
+  today: { miners: number; totalShares: number; activeSessions: number };
+  poolCoveragePoints: number | null;
+  epochs: {
+    epoch: number; emission: number; total_shares: number; miners: number;
+    emitted: number; withheld: number; settled_at: string;
+  }[];
+};
+export const fetchMiningStats = () => apiFetch<MiningStats>("/staff/mining/stats");
+export const settleMining = (epoch?: number) =>
+  apiFetch<{ ok: true; results: unknown[] }>("/staff/mining/settle", {
+    method: "POST", body: JSON.stringify(epoch != null ? { epoch } : {}),
+  });
+
+export type AdminRig = {
+  id: string; name: string; icon: string; base_cost: number; cost_growth: number;
+  base_power: number; power_growth: number; max_level: number; sort: number; status: string;
+};
+export const fetchAdminRigs = () => apiFetch<{ rigs: AdminRig[] }>("/staff/mining/rigs");
+export const updateAdminRig = (id: string, patch: Record<string, unknown>) =>
+  apiFetch<{ ok: true }>(`/staff/mining/rigs/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+export type ConversionWindow = {
+  id: string; pot_points: number; opens_at: string; closes_at: string;
+  status: string; total_burned: number; points_paid: number; settled_at: string | null;
+};
+export const fetchConversion = () =>
+  apiFetch<{
+    enabled: boolean; conversionSharePct: number; marginPointsLast7Days: number;
+    suggestedPotPoints: number; windows: ConversionWindow[];
+  }>("/staff/mining/conversion");
+export const openConversionWindow = (potPoints: number, hours: number) =>
+  apiFetch<{ ok: true; id: string }>("/staff/mining/conversion/open", {
+    method: "POST", body: JSON.stringify({ potPoints, hours }),
+  });
+export const settleConversionWindow = (id: string) =>
+  apiFetch<{ ok: true; pointsPaid: number; users: number; totalBurned: number }>(
+    `/staff/mining/conversion/${id}/settle`, { method: "POST" });

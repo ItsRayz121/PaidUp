@@ -5,7 +5,6 @@ import { TaskFlow } from "@/components/TaskFlow";
 import { Card } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { InfoIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
-import { LangToggle } from "@/components/LangToggle";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchTasks } from "@/lib/api";
@@ -25,7 +24,6 @@ export default function TasksPage() {
           <h1 className="text-xl font-bold text-brand-ink">{t("tasks.title")}</h1>
           <p className="text-sm text-muted">{t("tasks.subtitle")}</p>
         </div>
-        <LangToggle className="shrink-0" />
       </header>
 
       <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
