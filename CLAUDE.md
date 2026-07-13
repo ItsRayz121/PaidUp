@@ -247,6 +247,32 @@ These override convenience or speed at every step:
     sentence needs a second read, rewrite it.
   - Staff panel is unaffected — it writes copy inline and jargon is allowed there.
 
+- **Pre-launch cross-check + SEO layer (2026-07-13)**: robots.txt + sitemap.xml
+  (only `/` and `/login` public; `/staff` and all logged-in screens disallowed),
+  `metadataBase` + OpenGraph/Twitter tags (**WhatsApp referral links now show a
+  preview card** — set `NEXT_PUBLIC_SITE_URL` on Vercel, see DEPLOY.md), favicon,
+  branded 404 + root error boundary (both inline-English — they can render
+  outside the I18nProvider), all 8 React-Compiler-era lint errors fixed
+  (`/login` reads `?ref` via `useSearchParams` under `Suspense`).
+
+- **WEB PUSH NOTIFICATIONS (2026-07-13)**: browser push via the service worker,
+  strictly opt-in (card on `/help` + the withdraw success screen; permission
+  prompt only from a user tap). **Sent on exactly four events, never marketing**:
+  withdrawal paid, withdrawal rejected, staff ticket reply, KYC decided.
+  - Backend: `api/src/push.ts` (web-push + VAPID), `push_subscriptions` table
+    (upsert by endpoint — a shared phone logging into a second account HANDS OVER
+    the subscription, so user A's money news never reaches a phone now signed in
+    as user B; delete scoped to owner), routes `GET /push/config`,
+    `POST/DELETE /push/subscriptions`.
+  - **Sends fire AFTER the DB transaction commits, never inside** — a push can't
+    be rolled back, so we never announce money a rollback un-pays. All sends are
+    fire-and-forget: a push failure can never fail a money path. Dead
+    subscriptions (404/410) are pruned on send.
+  - Ships OFF: enabled only when `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are set
+    on Railway (`npx web-push generate-vapid-keys`, see DEPLOY.md). Web hides
+    the toggle while the API reports disabled. iOS Safari (not installed) has no
+    push — the card renders nothing there.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

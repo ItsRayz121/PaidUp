@@ -317,6 +317,23 @@ const copy: Record<string, string> = {
   "withdraw.kyc.cta": "Verify your ID",
   "withdraw.kyc.pending": "We are still checking your ID. You can withdraw as soon as that is done.",
 
+  // ---- Notifications ----------------------------------------------------------
+  // The user turns these on themselves (Help screen, or after a withdrawal).
+  // Honest about what they get: money news and replies — not marketing spam.
+  "notify.title": "Get told when your money moves",
+  "notify.body":
+    "We send a message to your phone when your money is sent, when we reply to you, and when your ID check is done — even when the app is closed.",
+  "notify.enable": "Turn on notifications",
+  "notify.enabling": "Turning on…",
+  "notify.on": "Notifications are on",
+  "notify.onBody": "We will tell you when your money is sent or we reply to you.",
+  "notify.disable": "Turn off",
+  "notify.denied":
+    "Your phone is blocking notifications for this app. Allow them in your browser settings, then try again.",
+  "notify.error": "That did not work. Please try again.",
+  // Shown on the withdraw success screen — the moment they most want to know.
+  "notify.withdraw.hook": "Want to know the moment your money is sent?",
+
   // Shown on the mine screen when an ad plays before mining starts.
   "mine.gate.title": "Watch a short video to start",
   "mine.gate.body": "One short video, then your machine runs for {hours} hours.",

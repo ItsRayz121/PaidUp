@@ -109,6 +109,25 @@ The backend re-verifies Telegram's signature server-side, so the button is inert
 until both values are set. Telegram gives no email, so a Telegram-only account
 gets a synthetic `tg<id>@telegram.local` address and can sign in via Telegram only.
 
+## Push notifications (optional until keys are set)
+
+Browser push ("your money is sent", "we replied", "your ID is checked") ships
+OFF. To turn it on:
+
+1. Generate a VAPID keypair once, anywhere:
+   ```
+   npx web-push generate-vapid-keys
+   ```
+2. Railway → set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` from that output.
+   Optional: `VAPID_SUBJECT=mailto:you@rozipay.xyz` (a contact for the push
+   services; defaults to the founder email).
+3. Nothing to set on Vercel — the web app fetches the public key from the API
+   at runtime and hides the whole feature while the server reports it disabled.
+
+Users then get a "Turn on notifications" card on the Help screen and after
+requesting a withdrawal. Notifications are sent only on: withdrawal paid,
+withdrawal rejected, staff reply to a ticket, ID check decided. Never marketing.
+
 ### After setting variables
 Redeploy (Railway → Deployments → Redeploy, or push any commit). Then check:
 `https://paidup-production-a25f.up.railway.app/health` → should return

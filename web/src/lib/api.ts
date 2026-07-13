@@ -524,3 +524,12 @@ export const openConversionWindow = (potPoints: number, hours: number) =>
 export const settleConversionWindow = (id: string) =>
   apiFetch<{ ok: true; pointsPaid: number; users: number; totalBurned: number }>(
     `/staff/mining/conversion/${id}/settle`, { method: "POST" });
+
+// ---- Web push notifications -------------------------------------------------
+export const fetchPushConfig = () =>
+  apiFetch<{ enabled: boolean; publicKey: string | null }>("/push/config");
+export const registerPushSubscription = (sub: {
+  endpoint: string; keys: { p256dh: string; auth: string };
+}) => apiFetch<{ ok: true }>("/push/subscriptions", { method: "POST", body: JSON.stringify(sub) });
+export const removePushSubscription = (endpoint: string) =>
+  apiFetch<{ ok: true }>("/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint }) });

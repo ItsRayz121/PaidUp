@@ -12,6 +12,8 @@ import { staffMiningRoutes } from "./routes/staffMining.ts";
 import { staffTaskRoutes } from "./routes/staffTasks.ts";
 import { kycRoutes } from "./routes/kyc.ts";
 import { staffKycRoutes } from "./routes/staffKyc.ts";
+import { pushRoutes } from "./routes/push.ts";
+import { pushEnabled } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
 import { initDb, sql, usingRealPostgres } from "./db.ts";
@@ -127,6 +129,7 @@ await app.register(staffMiningRoutes);
 await app.register(staffTaskRoutes);
 await app.register(kycRoutes);
 await app.register(staffKycRoutes);
+await app.register(pushRoutes);
 
 // ---- Mining: accrual sweep + epoch settlement ------------------------------
 // Each tick does two things, IN ORDER:
@@ -177,6 +180,9 @@ try {
     app.log.warn("No RESEND_API_KEY set — login codes will print to this console, not email.");
   } else {
     app.log.info(`Email via Resend, from ${config.emailFrom}`);
+  }
+  if (!pushEnabled) {
+    app.log.warn("Web push OFF — set VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY to enable notifications.");
   }
 } catch (err) {
   app.log.error(err);

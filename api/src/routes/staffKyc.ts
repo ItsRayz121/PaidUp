@@ -11,6 +11,7 @@ import { z } from "zod";
 import { sql, now, logAudit } from "../db.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { decryptImage } from "../kyc.ts";
+import { sendPushToUser } from "../push.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -131,6 +132,12 @@ export async function staffKycRoutes(app: FastifyInstance) {
       actorUserId: userId, actorRole: role, action: `kyc_${b.decision}`,
       detail: `submission ${id} (user ${result.user_id})${b.reason ? `: ${b.reason}` : ""}`,
     });
+
+    // After commit: the decision unblocks (or re-blocks) their payout — tell
+    // them now instead of waiting for them to check. Fire-and-forget.
+    void sendPushToUser(result.user_id, b.decision === "approved"
+      ? { title: "You are verified", body: "All done. You can now take your money out.", url: "/wallet" }
+      : { title: "About your ID photos", body: "We could not accept them. Open the app to see what to fix.", url: "/kyc" });
 
     // Approving a user changes the mining economy: they now count toward a halving
     // milestone, and they start earning their inviter referral hashrate. Both are

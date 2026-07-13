@@ -5,6 +5,7 @@ import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
+import { sendPushToUser } from "../push.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -80,7 +81,13 @@ export async function staffRoutes(app: FastifyInstance) {
     // second waits, then re-reads the status the first set and bails — so a
     // reject can never refund twice. staffGuard maps a thrown {statusCode} to
     // JSON, so throwing here rolls the transaction back cleanly.
-    return await sql.tx(async (t) => {
+    // Set inside the transaction, sent AFTER it commits: a push cannot be
+    // rolled back, so we never announce money the transaction then un-pays.
+    // (A box, not a plain `let`: TS narrows a let assigned only inside the
+    // closure to `never` at the read below.)
+    const notify: { job: { userId: string; note: Parameters<typeof sendPushToUser>[1] } | null } = { job: null };
+
+    const outcome = await sql.tx(async (t) => {
       const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string; fee_points: number }>(
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
@@ -109,6 +116,14 @@ export async function staffRoutes(app: FastifyInstance) {
         }, t);
         const s = stampSql("rejected");
         await t.run(s.text, ...s.vals);
+        notify.job = {
+          userId: w.user_id,
+          note: {
+            title: "About your withdrawal",
+            body: "We could not send this one. Your points are back in your wallet.",
+            url: "/wallet",
+          },
+        };
         return { ok: true, status: "rejected", refunded: w.amount };
       }
 
@@ -137,8 +152,20 @@ export async function staffRoutes(app: FastifyInstance) {
       });
       const s = stampSql("paid", { paid_at: now(), tx_hash: result.txHash, usdt_amount: usdt });
       await t.run(s.text, ...s.vals);
+      notify.job = {
+        userId: w.user_id,
+        note: {
+          title: "Your money is sent",
+          body: `We sent ${usdt} USDT to your wallet. Check it now.`,
+          url: "/wallet",
+        },
+      };
       return { ok: true, status: "paid", txHash: result.txHash, usdt };
     });
+
+    // Committed — now it is safe (and fire-and-forget) to tell the user.
+    if (notify.job) void sendPushToUser(notify.job.userId, notify.job.note);
+    return outcome;
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.
@@ -332,7 +359,8 @@ export async function staffRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "Type a reply first." });
     const id = (req.params as { id: string }).id;
 
-    const ticket = await sql.get<{ id: string }>("SELECT id FROM support_tickets WHERE id = ?", id);
+    const ticket = await sql.get<{ id: string; user_id: string }>(
+      "SELECT id, user_id FROM support_tickets WHERE id = ?", id);
     if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
 
     await sql.tx(async (t) => {
@@ -344,6 +372,12 @@ export async function staffRoutes(app: FastifyInstance) {
         "UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?",
         parsed.data.close ? "closed" : "answered", now(), id,
       );
+    });
+    // After commit: tell the user someone answered (fire-and-forget).
+    void sendPushToUser(ticket.user_id, {
+      title: "We replied to your question",
+      body: "Open the app to read our answer.",
+      url: "/help",
     });
     return { ok: true };
   }));

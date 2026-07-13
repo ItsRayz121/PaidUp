@@ -14,7 +14,8 @@
     "test:proxy": "tsx src/tests/proxy.e2e.ts",
     "test:mining": "tsx --test src/tests/mining.test.ts",
     "test:mining:e2e": "tsx src/tests/mining.e2e.ts",
-    "test:kyc": "tsx src/tests/kyc.e2e.ts"
+    "test:kyc": "tsx src/tests/kyc.e2e.ts",
+    "test:push": "tsx src/tests/push.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
@@ -25,12 +26,14 @@
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0",
     "tsx": "^4.19.2",
+    "web-push": "^3.6.7",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.20.0",
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.7.2"
   }
 }

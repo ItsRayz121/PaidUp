@@ -33,6 +33,44 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// ---- Push notifications -----------------------------------------------------
+// The payload is JSON written by OUR api (api/src/push.ts): {title, body, url}.
+// No user data is stored here — the note is shown and that is all.
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+  let note;
+  try { note = event.data.json(); } catch { return; }
+  event.waitUntil(
+    self.registration.showNotification(note.title || "RoziPay", {
+      body: note.body || "",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url: note.url || "/" },
+    }),
+  );
+});
+
+// Tapping the notification opens (or focuses) the app at the note's URL.
+// Only our api writes these payloads, but resolve against our own origin
+// anyway so a note can never navigate the app off-site.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const raw = (event.notification.data && event.notification.data.url) || "/";
+  const resolved = new URL(raw, self.location.origin);
+  const url = resolved.origin === self.location.origin ? resolved.href : "/";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      for (const w of wins) {
+        if ("focus" in w) {
+          w.navigate(url);
+          return w.focus();
+        }
+      }
+      return clients.openWindow(url);
+    }),
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;

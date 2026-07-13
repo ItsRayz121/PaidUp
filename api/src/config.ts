@@ -145,6 +145,17 @@ export const config = {
     tapvid: process.env.POSTBACK_TOKEN_TAPVID ?? "dev-postback-token",
   } as Record<string, string>,
 
+  // ---- Web push notifications ----------------------------------------------
+  // VAPID keypair for browser push (the "server identity" the push services
+  // require). Generate once with:  npx web-push generate-vapid-keys
+  // Both empty => the whole feature is OFF: the API reports it disabled, the
+  // web app hides the toggle, and sends are no-ops. The PUBLIC key is safe to
+  // hand to browsers; the private key is a server secret like any other.
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? "",
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? "",
+  // Contact URI the push services may use to reach us about misbehaving senders.
+  vapidSubject: process.env.VAPID_SUBJECT ?? "mailto:fazalelahi5577@gmail.com",
+
   // Telegram login fallback (P2): a cheaper alternative to email if email hurts
   // signup. Empty => the /auth/telegram endpoint is off and the web button hides.
   // Set to the BotFather token of the login bot to turn it on. The bot's domain

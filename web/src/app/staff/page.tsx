@@ -100,16 +100,18 @@ export default function StaffPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-5">
-      <header className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between border-b border-line bg-bg/95 px-4 py-3 backdrop-blur">
-        <div>
+      <header className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur">
+        {/* min-w-0 + break-all: a long staff email must wrap on a phone, not
+            shove the Sign out button off the edge. */}
+        <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-lg font-bold text-brand-ink">
             <LogoMark size={24} /> RoziPay — Staff
           </h1>
-          <p className="text-xs text-muted">
+          <p className="break-all text-xs text-muted">
             Signed in as {user?.email} · role: <span className="font-semibold uppercase">{user?.role}</span>
           </p>
         </div>
-        <LogoutButton />
+        <div className="shrink-0"><LogoutButton /></div>
       </header>
 
       {/* Mobile: sections as a horizontal chip bar */}

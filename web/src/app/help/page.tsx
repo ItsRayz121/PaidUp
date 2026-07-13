@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
+import { NotificationsCard } from "@/components/NotificationsCard";
 import { HelpIcon, CheckIcon, ClockIcon, ShieldIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -48,6 +49,9 @@ export default function HelpPage() {
           {list.map((t) => <TicketCard key={t.id} ticket={t} onReplied={tickets.reload} />)}
         </section>
       )}
+
+      {/* Turn notifications on/off — the founder's "settings" home for it. */}
+      <NotificationsCard />
 
       <Card className="flex items-center gap-3 bg-brand-tint p-4">
         <ShieldIcon size={20} className="shrink-0 text-brand" />

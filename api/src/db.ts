@@ -474,6 +474,22 @@ const MIGRATIONS = `
   -- request time so a later Admin change never alters an in-flight request.
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS fee_points INTEGER NOT NULL DEFAULT 0;
 
+  -- ---- Web push subscriptions ----------------------------------------------
+  -- One row per browser/device a user turned notifications on for. The endpoint
+  -- is the push service's URL for that browser and is unique by construction;
+  -- UNIQUE lets a re-subscribe (or the same phone switching accounts) upsert
+  -- instead of piling up dead rows. Rows are pruned when the push service says
+  -- the subscription is gone (404/410 on send).
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    endpoint   TEXT NOT NULL UNIQUE,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+
   -- ---- Hot-path indexes -----------------------------------------------------
   -- Each of these backs a query that runs on EVERY login or EVERY postback.
   -- Without them those are sequential scans that get slower with every user.

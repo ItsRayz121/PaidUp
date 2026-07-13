@@ -444,22 +444,25 @@ function ConversionPanel() {
       )}
 
       {d.windows.filter((w) => w.status === "settled").length > 0 && (
-        <table className="mt-3 w-full text-xs">
-          <thead className="text-left uppercase text-muted">
-            <tr><th className="py-1">Settled</th><th>Pot</th><th>ROZI burned</th><th>Paid</th><th>Rate</th></tr>
-          </thead>
-          <tbody>
-            {d.windows.filter((w) => w.status === "settled").map((w) => (
-              <tr key={w.id} className="border-t border-line font-mono">
-                <td className="py-1">{w.settled_at ? new Date(w.settled_at).toLocaleDateString() : "—"}</td>
-                <td>{formatPoints(w.pot_points)}</td>
-                <td>{n(w.total_burned)}</td>
-                <td>{formatPoints(w.points_paid)}</td>
-                <td>{w.total_burned > 0 ? (w.points_paid / w.total_burned).toFixed(4) : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        // Scrolls inside its own box on a phone, like every other staff table.
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[460px] text-xs">
+            <thead className="text-left uppercase text-muted">
+              <tr><th className="py-1">Settled</th><th>Pot</th><th>ROZI burned</th><th>Paid</th><th>Rate</th></tr>
+            </thead>
+            <tbody>
+              {d.windows.filter((w) => w.status === "settled").map((w) => (
+                <tr key={w.id} className="border-t border-line font-mono">
+                  <td className="py-1">{w.settled_at ? new Date(w.settled_at).toLocaleDateString() : "—"}</td>
+                  <td>{formatPoints(w.pot_points)}</td>
+                  <td>{n(w.total_burned)}</td>
+                  <td>{formatPoints(w.points_paid)}</td>
+                  <td>{w.total_burned > 0 ? (w.points_paid / w.total_burned).toFixed(4) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

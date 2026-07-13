@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
+import { NotificationsCard } from "@/components/NotificationsCard";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -250,6 +251,9 @@ function SentConfirmation({ amount, chainLabel, address }: { amount: number; cha
           <ClockIcon size={20} className="shrink-0" />
           <span className="text-sm font-medium">{t("withdraw.slaNote")}</span>
         </div>
+        {/* The moment they most want to hear "your money is sent" — offer to
+            tell them. Renders nothing if push is off or unsupported. */}
+        <NotificationsCard compact />
       </div>
       <div className="mt-8 w-full max-w-sm space-y-2.5">
         <Button href="/wallet" variant="primary">{t("withdraw.seeWallet")}</Button>
