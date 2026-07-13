@@ -105,8 +105,9 @@ as proof. (This is the new payout flow I just built; see below.)
 
 **Steps:**
 1. Create/choose a **hot wallet** you control on the chains you'll support
-   (BEP20 / Polygon / Base — all EVM, one address; plus Aptos if you offer it).
-2. **Fund it** with USDT + a little native gas token (BNB / MATIC / ETH) on each
+   (BEP20 / Base — both EVM, one address; plus Aptos if you offer it. Polygon
+   was dropped from the withdraw screen).
+2. **Fund it** with USDT + a little native gas token (BNB / ETH / APT) on each
    chain.
 3. Decide the **points → USDT rate** and tell me. Default in code is
    `POINTS_PER_USDT=1000` (1000 points = 1 USDT). Set the real number on Railway.

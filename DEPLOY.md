@@ -28,6 +28,7 @@ and forged postbacks. Set all of these:
 JWT_SECRET=<64-char random hex>
 OTP_PEPPER=<64-char random hex>
 POSTBACK_SECRET_OFFERHUB=<64-char random hex>
+KYC_ENCRYPTION_KEY=<64-char random hex — encrypts ID photos; see LAUNCH_CHECKLIST § 3b>
 WEB_ORIGIN=https://paid-up-one.vercel.app
 ```
 Never commit real secret values here — this repo is public. Generate each with
@@ -90,8 +91,8 @@ proof, shown to the user). Config:
   = 1 USDT). Set the real number here.
 - On-chain **auto-send** is scaffolded but OFF. Do not enable on mainnet until
   proven on a testnet. To turn on later: `PAYOUT_MODE=onchain`,
-  `PAYOUT_SIGNER_KEY=<funded EVM hot-wallet key>`, and `RPC_BEP20` / `RPC_POLYGON`
-  / `RPC_BASE` for the chains you auto-settle (Aptos stays manual). Until the
+  `PAYOUT_SIGNER_KEY=<funded EVM hot-wallet key>`, and `RPC_BEP20` / `RPC_BASE`
+  for the chains you auto-settle (Aptos stays manual). Until the
   broadcast in `api/src/payout.ts` is implemented + tested, onchain mode refuses
   to settle and falls back to requiring a manual hash.
 

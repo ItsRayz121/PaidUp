@@ -232,7 +232,7 @@ const SCHEMA = `
     id             TEXT PRIMARY KEY,
     user_id        TEXT NOT NULL REFERENCES users(id),
     amount         INTEGER NOT NULL,
-    payout_rail    TEXT NOT NULL,          -- chain id: bep20 | polygon | base | aptos
+    payout_rail    TEXT NOT NULL,          -- chain id: bep20 | base | aptos (old rows may hold the dropped "polygon")
     payout_address TEXT,                   -- destination USDT wallet address
     status         TEXT NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending','agent_approved','manager_approved','paid','rejected')),

@@ -1,7 +1,5 @@
 // Supported USDT payout chains and destination-address validation.
-// Founder decision (see docs / memory): USDT only at launch on BEP20, Polygon,
-// Base (all EVM, shared 0x address format) and Aptos (non-EVM). PKR and other
-// local rails are "Coming soon" and are NOT accepted here.
+// PKR and other local rails are "Coming soon" and are NOT accepted here.
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
