@@ -128,14 +128,6 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     return { status: "velocity_blocked", scope: overType ? "type" : "global", detail };
   }
 
-  // Is this the user's FIRST ever credited task? (Drives the referral first-task
-  // bonus — paid once, only for real activity, not signups.)
-  const priorCredited = await sql.get<{ n: number }>(
-    "SELECT COUNT(*)::int AS n FROM task_completions WHERE user_id = ? AND status = 'credited'",
-    userId,
-  );
-  const isFirstCreditedTask = (priorCredited?.n ?? 0) === 0;
-
   // ---- Record the completion and credit together --------------------------
   // If either write fails, neither lands — no points without a completion row,
   // no completion row without points.
@@ -175,8 +167,8 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     // whatever their KYC state. Only the INVITER's commission waits. That keeps
     // the guardrail — a referral payout comes from margin and never reduces the
     // earner's own reward — exactly true.
-    const invitee = await t.get<{ kyc_status: string }>(
-      "SELECT kyc_status FROM users WHERE id = ?", userId);
+    const invitee = await t.get<{ kyc_status: string; kyc_approved_at: string | null }>(
+      "SELECT kyc_status, kyc_approved_at FROM users WHERE id = ?", userId);
     const inviteeIsValid = invitee?.kyc_status === "approved";
 
     const l1 = user.referred_by;
@@ -212,16 +204,37 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
         }
       }
 
-      // One-time flat reward to the DIRECT inviter when this invited user
-      // completes their first task. Rewards real activity, not empty signups.
-      if (isFirstCreditedTask) {
-        const firstBonus = net ? net.referral_first_task_bonus : config.referralFirstTaskBonusPoints;
-        if (firstBonus > 0) {
-          await postLedger({
-            userId: l1, points: firstBonus, direction: "credit",
-            sourceType: "referral_bonus", sourceRefId: completionId,
-            note: "Bonus — your invite finished their first task",
-          }, t);
+      // One-time flat reward to the DIRECT inviter, paid on this invitee's first
+      // credited task ON OR AFTER they verified their ID — NOT their literal first
+      // task ever.
+      //
+      // Why "after verify": referral commission only pays for a verified invitee
+      // (the KYC gate above), but people verify near the withdrawal threshold, long
+      // after their real first task. Anchoring the bonus to the literal first task
+      // therefore meant it almost never fired — the first task was used up while the
+      // invitee was still unverified and the inviter got nothing. Firing on the
+      // first task after approval keeps the incentive alive and rewards the
+      // strongest genuine-activity signal there is: a verified user doing a task.
+      //
+      // We are inside `inviteeIsValid`, so kyc_approved_at is set (the migration
+      // backfilled it for pre-existing approvals). "First since approval" = no other
+      // credited task for this user on/after that stamp; the current completion is
+      // already inserted, so it is excluded by id.
+      if (invitee?.kyc_approved_at) {
+        const priorSinceApproval = await t.get<{ n: number }>(
+          `SELECT COUNT(*)::int AS n FROM task_completions
+           WHERE user_id = ? AND status = 'credited' AND created_at >= ? AND id <> ?`,
+          userId, invitee.kyc_approved_at, completionId,
+        );
+        if ((priorSinceApproval?.n ?? 0) === 0) {
+          const firstBonus = net ? net.referral_first_task_bonus : config.referralFirstTaskBonusPoints;
+          if (firstBonus > 0) {
+            await postLedger({
+              userId: l1, points: firstBonus, direction: "credit",
+              sourceType: "referral_bonus", sourceRefId: completionId,
+              note: "Bonus — your invite finished their first task",
+            }, t);
+          }
         }
       }
     }

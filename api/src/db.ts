@@ -710,6 +710,16 @@ const MINING_SCHEMA = `
     CHECK (kyc_status IN ('none','pending','approved','rejected'));
   CREATE INDEX IF NOT EXISTS idx_users_kyc ON users(kyc_status);
 
+  -- When the user was first approved. This anchors the referral first-task bonus
+  -- (see credit.ts): the bonus pays on the invitee's first credited task ON OR
+  -- AFTER this moment, not their literal first task. Because a user verifies only
+  -- when they near the withdrawal threshold — long after their real first task —
+  -- the literal-first-task bonus almost never fired, so it was moved here.
+  -- Backfilled once from the review row for anyone already approved (the UPDATE
+  -- is below, after kyc_submissions is created); new approvals set it directly in
+  -- staffKyc.ts.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_approved_at TEXT;
+
   -- THE IMAGES ARE ENCRYPTED AT REST (AES-256-GCM, see kyc.ts). These are
   -- Pakistani national ID cards: a plaintext dump of this table is the single
   -- worst thing that could leak out of this product. The key lives in
@@ -737,6 +747,15 @@ const MINING_SCHEMA = `
   -- (that row is no longer pending), but a user cannot flood the review queue.
   CREATE UNIQUE INDEX IF NOT EXISTS idx_kyc_one_pending
     ON kyc_submissions(user_id) WHERE status = 'pending';
+
+  -- One-time backfill for users approved before kyc_approved_at existed: take the
+  -- time of their approving review. Runs every boot but is a cheap no-op after the
+  -- first pass — it only touches approved rows whose stamp is still NULL, and new
+  -- approvals fill the stamp themselves. See kyc_approved_at above / credit.ts.
+  UPDATE users SET kyc_approved_at = (
+    SELECT MAX(k.reviewed_at) FROM kyc_submissions k
+    WHERE k.user_id = users.id AND k.status = 'approved'
+  ) WHERE kyc_status = 'approved' AND kyc_approved_at IS NULL;
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin

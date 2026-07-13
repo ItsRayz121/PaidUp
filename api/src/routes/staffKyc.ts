@@ -114,7 +114,16 @@ export async function staffKycRoutes(app: FastifyInstance) {
         throw { statusCode: 400, message: "That submission has already been reviewed." };
       }
 
-      await t.run("UPDATE users SET kyc_status = ? WHERE id = ?", b.decision, row.user_id);
+      if (b.decision === "approved") {
+        // Stamp the approval time (COALESCE so a re-approval never moves it). This
+        // is what the referral first-task bonus anchors to — see credit.ts.
+        await t.run(
+          "UPDATE users SET kyc_status = 'approved', kyc_approved_at = COALESCE(kyc_approved_at, ?) WHERE id = ?",
+          now(), row.user_id,
+        );
+      } else {
+        await t.run("UPDATE users SET kyc_status = ? WHERE id = ?", b.decision, row.user_id);
+      }
       return row;
     });
 

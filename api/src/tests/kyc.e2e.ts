@@ -8,7 +8,9 @@
 //   • a second submission flooding the review queue
 //
 //   npm run test:kyc
-import { sql, now, newId, initDb } from "../db.ts";
+import { sql, now, newId, initDb, balanceOf } from "../db.ts";
+import { config } from "../config.ts";
+import { creditCompletion } from "../credit.ts";
 import { encryptImage, decryptImage, parseDataUrl } from "../kyc.ts";
 import { minerPopulation } from "../mining/engine.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
@@ -200,6 +202,51 @@ const second = await sql.run(
 check("the first review decision wins", first.rowCount === 1);
 check("a second, concurrent decision on the same submission changes nothing",
   second.rowCount === 0);
+
+console.log("\n-- GATE 4: the referral first-task bonus fires on the first task AFTER verifying --");
+
+// The bug this guards: referral pay is KYC-gated, but people verify near the
+// withdrawal threshold — long after their real first task. Anchored to the literal
+// first task, the bonus was used up while the invitee was still unverified and the
+// inviter never saw it. It now fires on the first credited task on/after approval.
+const silentLog = { error() {} };
+const TASK_POINTS = 500;
+const firstBonus = config.referralFirstTaskBonusPoints;                 // 100
+const commission = Math.floor(TASK_POINTS * config.referralCommissionPct); // 15% of 500 = 75
+
+const boss = await mkUser("boss", "approved");   // the inviter, who collects the pay
+const rookie = await mkUser("rookie", "none");   // the invitee, not yet verified
+await sql.run("UPDATE users SET referred_by = ? WHERE id = ?", boss, rookie);
+
+const doTask = (tag: string) => creditCompletion({
+  userId: rookie, network: "test", externalId: `${tag}-${newId()}`,
+  taskId: null, points: TASK_POINTS, offerType: "offerwall", payload: {},
+}, silentLog);
+
+// 1) An unverified invitee's first task pays the inviter nothing — not the
+//    commission (KYC-gated) and not the one-time bonus.
+const bossBefore = await balanceOf(boss);
+await doTask("pre");
+const afterUnverified = await balanceOf(boss);
+check("an UNVERIFIED invitee's first task pays the inviter nothing",
+  afterUnverified === bossBefore, `delta ${afterUnverified - bossBefore}`);
+
+// 2) The invitee verifies — AFTER they already burned their literal first task.
+await sql.run("UPDATE users SET kyc_status = 'approved', kyc_approved_at = ? WHERE id = ?", now(), rookie);
+
+// 3) Their first task AFTER approval pays commission + the one-time bonus.
+const beforeFirstVerified = await balanceOf(boss);
+await doTask("post1");
+const gain1 = (await balanceOf(boss)) - beforeFirstVerified;
+check("the first task AFTER verifying pays commission + the first-task bonus",
+  gain1 === commission + firstBonus, `got ${gain1}, want ${commission + firstBonus}`);
+
+// 4) The next task pays commission only — the one-time bonus never fires twice.
+const beforeSecond = await balanceOf(boss);
+await doTask("post2");
+const gain2 = (await balanceOf(boss)) - beforeSecond;
+check("the one-time bonus does NOT fire again on the next task",
+  gain2 === commission, `got ${gain2}, want ${commission}`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
