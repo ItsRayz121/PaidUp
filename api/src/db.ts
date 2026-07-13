@@ -740,6 +740,16 @@ export async function initDb(): Promise<void> {
      VALUES ('cpx','CPX Research','offerwall','active',60,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
+  // 'custom' — our OWN tasks, written in /staff. Not an ad network (no external
+  // payout, so its split is 0 and meaningless), but it needs a networks row so
+  // custom tasks can credit, their referral rates stay Admin-tunable, and an
+  // Admin can switch all custom tasks off at once. Inserted here (not only in
+  // seed.ts) so a fresh deploy creates it with no manual seed step.
+  await sql.run(
+    `INSERT INTO networks (id, name, type, status, commission_split_pct, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, created_at)
+     VALUES ('custom','Our own tasks','custom','active',0,15,5,100,?)
+     ON CONFLICT (id) DO NOTHING`, now(),
+  );
   // Default global settings (only inserted when absent). Withdrawal fee off (0)
   // by default so no user is surprised by a deduction until Admin sets one.
   await sql.run(
