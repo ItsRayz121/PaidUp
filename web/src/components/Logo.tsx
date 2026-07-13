@@ -48,19 +48,39 @@ export function LogoMark({ size = 32, className = "" }: { size?: number; classNa
 // Icon + wordmark + tagline. Used on the login screen, where there is room to
 // let the brand breathe.
 export function LogoLockup({ tagline, size = 44 }: { tagline?: string; size?: number }) {
+  // Prefer the real lockup artwork (icon + wordmark + tagline in one image). If
+  // it is missing or slow, we fall back to the mark + typed wordmark below, the
+  // same graceful-degradation trick LogoMark uses — a missing file never shows
+  // the browser's broken-image glyph on the login screen.
+  const [loaded, setLoaded] = useState(false);
+
   return (
     <div className="flex items-center gap-2.5">
-      <LogoMark size={size} />
-      <div>
-        <p className="text-xl font-bold leading-none text-brand-ink">
-          Rozi<span className="text-brand">Pay</span>
-        </p>
-        {tagline && (
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
-            {tagline}
-          </p>
-        )}
-      </div>
+      {/* The full-lockup image already contains the tagline, so when it loads we
+          hide the text fallback (including its separate tagline line). */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/brand/logo-full.png"
+        alt="RoziPay"
+        onLoad={() => setLoaded(true)}
+        style={{ height: size * 1.15, width: "auto", display: loaded ? "block" : "none" }}
+        className="object-contain"
+      />
+      {!loaded && (
+        <>
+          <LogoMark size={size} />
+          <div>
+            <p className="text-xl font-bold leading-none text-brand-ink">
+              Rozi<span className="text-brand">Pay</span>
+            </p>
+            {tagline && (
+              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                {tagline}
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

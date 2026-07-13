@@ -154,8 +154,8 @@ These override convenience or speed at every step:
   screen and opens like a native app. It is **not an APK** — nothing is downloaded
   and there is no Play Store step; the copy says so plainly, in en + ur.
   - `web/src/app/manifest.ts` (standalone, brand colours, Tasks/Wallet shortcuts),
-    generated icons in `web/public/icons/` (192/512/maskable/apple — placeholder
-    art, **replace with Canva**), `web/public/sw.js`, `/offline` page.
+    icons in `web/public/icons/` (192/512/maskable/apple — **real RoziPay brand
+    art**, added by the founder 2026-07-13), `web/public/sw.js`, `/offline` page.
   - **The service worker never caches user or money data.** Navigations are
     network-only; only `/offline`, `/icons/*` and content-hashed `/_next/static/*`
     are cached. A stale balance from a cache would be a real bug — the door is
