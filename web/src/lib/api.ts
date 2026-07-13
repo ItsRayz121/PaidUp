@@ -47,10 +47,23 @@ export class ApiError extends Error {
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
   const deviceId = getDeviceId();
+
+  // Only declare a content type when there IS content.
+  //
+  // We used to send `content-type: application/json` on every request, body or
+  // not. Fastify believes the header, goes looking for JSON, finds an empty body,
+  // and rejects the request before it ever reaches the route — with a payload
+  // whose `error` field is literally "Bad Request". That is the message the user
+  // saw when they tapped "Start mining": the handler was never called.
+  //
+  // It only bit the mining routes because every older POST happens to send a body.
+  // A POST with no entity body should not advertise a content type at all.
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
-      "content-type": "application/json",
+      ...(opts.body !== undefined && opts.body !== null
+        ? { "content-type": "application/json" }
+        : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(deviceId ? { "x-device-id": deviceId } : {}),
       ...(opts.headers ?? {}),

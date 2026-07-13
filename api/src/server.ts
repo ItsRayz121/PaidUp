@@ -62,6 +62,28 @@ await app.register(cors, {
   credentials: true,
 });
 
+// An empty body on a JSON request is an empty object, not an error.
+//
+// Fastify's default JSON parser rejects `content-type: application/json` with a
+// zero-length body — the route never runs and the client gets a bare
+// "Bad Request". That is what broke "Start mining": a POST with nothing to send.
+//
+// The client no longer sends the header when there is no body, but this is the
+// half of the fix that cannot regress: any future body-less POST just works.
+// Safe for postbacks — those are verified over parsed FIELD VALUES (body merged
+// with query), never over a raw body string, so nothing here touches a signature.
+app.addContentTypeParser(
+  "application/json", { parseAs: "string" },
+  (_req, body: string, done) => {
+    if (!body || body.trim() === "") return done(null, {});
+    try {
+      done(null, JSON.parse(body));
+    } catch {
+      done(Object.assign(new Error("Body is not valid JSON"), { statusCode: 400 }), undefined);
+    }
+  },
+);
+
 app.get("/health", async () => ({ ok: true, service: "rozipay-api" }));
 
 await app.register(authRoutes);
