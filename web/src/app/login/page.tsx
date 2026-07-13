@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { ShieldIcon, CheckIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
+import { ShieldIcon, CheckIcon, ArrowRightIcon } from "@/components/icons";
+import { LogoLockup } from "@/components/Logo";
 import { useI18n } from "@/lib/i18n";
 import {
   register, verifyEmail, login, forgotPassword, resetPassword, loginWithTelegram,
@@ -127,15 +128,7 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8">
       <div className="mb-8 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand text-accent">
-            <StarIcon size={24} />
-          </span>
-          <div>
-            <p className="num text-xl font-bold text-brand-ink leading-none">RoziPay</p>
-            <p className="text-xs text-muted">{t("login.tagline")}</p>
-          </div>
-        </div>
+        <LogoLockup tagline={t("login.tagline")} />
       </div>
 
       {error && <p className="mb-4 rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}

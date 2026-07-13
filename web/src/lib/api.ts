@@ -83,8 +83,17 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 // ---- Types (match the backend responses) ---------------------------------
 export type Task = {
-  id: string; type: "install" | "survey" | "video"; title: string;
+  id: string; type: "install" | "survey" | "video" | "custom"; title: string;
   points: number; network: string; advertiser: string; minutes: number; requirement?: string;
+  // Present only on our OWN tasks (source === "custom").
+  source?: "network" | "custom";
+  verifyMode?: "proof" | "postback";
+  instructions?: string;
+  proofLabel?: string;
+  actionUrl?: string;
+  // The current user's standing on a 'proof' task, if they've submitted.
+  proofStatus?: "pending" | "approved" | "rejected";
+  proofNote?: string;
 };
 export type LedgerEntry = {
   id: string; label: string; points: number;
@@ -140,6 +149,10 @@ export const fetchBalance = () =>
   apiFetch<{ points: number; minWithdrawPoints: number; withdrawalFeePoints: number }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
+export const submitTaskProof = (taskId: string, proof: string) =>
+  apiFetch<{ ok: boolean; status?: string; error?: string }>(`/tasks/${taskId}/proof`, {
+    method: "POST", body: JSON.stringify({ proof }),
+  });
 export const fetchReferrals = () =>
   apiFetch<{ code: string; joined: number; earnedPoints: number }>("/referrals/me");
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
@@ -211,7 +224,10 @@ export type MoneyView = {
     credited: number; debited: number; adjustments: number;
     outstanding: number; paidPoints: number; pendingPoints: number; feePoints: number;
   };
-  usdt: { outstanding: number; paid: number; pending: number };
+  // Decimal STRINGS, not numbers: the server floors to USDT's 6-dp smallest unit
+  // (payout.ts `pointsToUsdt`) so a payout can never over-pay from rounding.
+  // Parse before doing arithmetic or formatting — a string has no .toFixed.
+  usdt: { outstanding: string; paid: string; pending: string };
   recentAudit: Record<string, unknown>[];
 };
 export const fetchMoney = () => apiFetch<MoneyView>("/staff/money");
@@ -281,6 +297,38 @@ export const updateNetwork = (
     referralBonusPctL2?: number; referralFirstTaskBonus?: number; referralBonusDays?: number;
   },
 ) => apiFetch<{ ok: true }>(`/staff/networks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- Admin: our own custom tasks -----------------------------------------
+export type CustomTask = {
+  id: string; title: string; points: number; type: string;
+  verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
+  action_url: string | null; minutes: number; country: string; status: string;
+  created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
+};
+export type CustomTaskInput = {
+  title: string; points: number; verifyMode: "proof" | "postback";
+  instructions?: string; proofLabel?: string; actionUrl?: string;
+  minutes?: number; country?: string; status?: "active" | "disabled";
+};
+export const fetchCustomTasks = () => apiFetch<{ tasks: CustomTask[] }>("/staff/tasks");
+export const createCustomTask = (input: CustomTaskInput) =>
+  apiFetch<{ ok: boolean; id?: string }>("/staff/tasks", { method: "POST", body: JSON.stringify(input) });
+export const updateCustomTask = (id: string, patch: Partial<CustomTaskInput>) =>
+  apiFetch<{ ok: boolean }>(`/staff/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const fetchTaskPostback = (id: string) =>
+  apiFetch<{ ok: boolean; error?: string; taskId?: string; secret?: string; path?: string; signature?: string; params?: string[] }>(
+    `/staff/tasks/${id}/postback`);
+
+export type TaskProof = {
+  id: string; task_id: string; user_id: string; proof_text: string; status: string;
+  review_note: string | null; created_at: string; user_email: string;
+  task_title: string; task_points: number; proof_label: string | null;
+};
+export const fetchTaskProofs = (status = "pending") =>
+  apiFetch<{ proofs: TaskProof[] }>(`/staff/task-proofs?status=${status}`);
+export const decideTaskProof = (id: string, action: "approve" | "reject", note?: string) =>
+  apiFetch<{ ok: boolean; error?: string; credited?: number; status?: string }>(
+    `/staff/task-proofs/${id}/decision`, { method: "POST", body: JSON.stringify({ action, note }) });
 
 // ---- Manager: KPI dashboard ----------------------------------------------
 export type Kpis = {

@@ -11,7 +11,7 @@ import {
   fetchMoney, downloadExport,
   type AdminUserRow,
 } from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { formatPoints, formatMoney, formatUsdtAmount, timeAgo } from "@/lib/format";
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -254,9 +254,9 @@ export function MoneyPanel() {
       {/* "Owed to users" is the number that matters: points people still hold and
           can cash out. If it ever exceeds the treasury, you cannot pay everyone. */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile label="Owed to users (live)" value={formatPoints(m.points.outstanding)} sub={`${m.usdt.outstanding.toFixed(2)} USDT`} />
-        <Tile label="Paid out (all time)" value={formatPoints(m.points.paidPoints)} sub={`${m.usdt.paid.toFixed(2)} USDT`} />
-        <Tile label="Awaiting payout" value={formatPoints(m.points.pendingPoints)} sub={`${m.usdt.pending.toFixed(2)} USDT`} />
+        <Tile label="Owed to users (live)" value={formatPoints(m.points.outstanding)} sub={formatUsdtAmount(m.usdt.outstanding)} />
+        <Tile label="Paid out (all time)" value={formatPoints(m.points.paidPoints)} sub={formatUsdtAmount(m.usdt.paid)} />
+        <Tile label="Awaiting payout" value={formatPoints(m.points.pendingPoints)} sub={formatUsdtAmount(m.usdt.pending)} />
         <Tile label="Fees kept" value={formatPoints(m.points.feePoints)} sub="from withdrawals" />
       </div>
       <p className="mt-2 text-xs text-muted">

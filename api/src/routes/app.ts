@@ -40,13 +40,69 @@ export async function appRoutes(app: FastifyInstance) {
        ORDER BY t.points DESC`,
       user.country,
     );
+    // For our own 'proof' tasks, tell the user where they stand: have they
+    // already submitted, was it approved, was it rejected? One query, not N.
+    const proofRows = await sql.all<{ task_id: string; status: string; review_note: string | null }>(
+      `SELECT DISTINCT ON (task_id) task_id, status, review_note
+       FROM task_proofs WHERE user_id = ? ORDER BY task_id, created_at DESC`,
+      userId,
+    );
+    const proofByTask = new Map(proofRows.map((p) => [p.task_id, p]));
+
     return {
-      tasks: rows.map((t) => ({
-        id: t.id, type: t.type, title: t.title, points: t.points,
-        network: t.network, advertiser: t.advertiser, minutes: t.minutes,
-        requirement: t.requirement ?? undefined,
-      })),
+      tasks: rows.map((t) => {
+        const proof = proofByTask.get(t.id as string);
+        return {
+          id: t.id, type: t.type, title: t.title, points: t.points,
+          network: t.network, advertiser: t.advertiser, minutes: t.minutes,
+          requirement: t.requirement ?? undefined,
+          // Custom-task fields (undefined for ordinary network tasks).
+          source: t.source ?? "network",
+          verifyMode: t.verify_mode ?? undefined,
+          instructions: t.instructions ?? undefined,
+          proofLabel: t.proof_label ?? undefined,
+          actionUrl: t.action_url ?? undefined,
+          proofStatus: proof?.status ?? undefined,
+          proofNote: proof?.review_note ?? undefined,
+        };
+      }),
     };
+  }));
+
+  // Submit proof for one of OUR OWN 'proof' custom tasks. This does NOT credit
+  // anything (guardrail #1) — it only files evidence into the staff review
+  // queue. A staff member approves it, and THAT credits the points.
+  app.post("/tasks/:id/proof", guard(async (userId, req) => {
+    const taskId = (req.params as { id: string }).id;
+    const { proof } = z.object({ proof: z.string().trim().min(1).max(2000) }).parse(req.body ?? {});
+
+    const task = await sql.get<{ id: string; source: string; verify_mode: string; status: string }>(
+      "SELECT id, source, verify_mode, status FROM tasks WHERE id = ?", taskId,
+    );
+    if (!task || task.source !== "custom" || task.status !== "active") {
+      return { ok: false, error: "This task is not available." };
+    }
+    if (task.verify_mode !== "proof") {
+      return { ok: false, error: "This task is checked automatically — you do not need to send proof." };
+    }
+
+    // Already approved? Nothing to do — don't let them farm a second payout.
+    const approved = await sql.get<{ id: string }>(
+      "SELECT id FROM task_proofs WHERE task_id = ? AND user_id = ? AND status = 'approved'", taskId, userId,
+    );
+    if (approved) return { ok: false, error: "You already finished this task." };
+
+    // Replace any earlier pending/rejected attempt so the queue holds one row
+    // per user per task. The partial unique index enforces one pending row.
+    await sql.run(
+      "DELETE FROM task_proofs WHERE task_id = ? AND user_id = ? AND status IN ('pending','rejected')",
+      taskId, userId,
+    );
+    await sql.run(
+      "INSERT INTO task_proofs (id, task_id, user_id, proof_text, status, created_at) VALUES (?,?,?,?, 'pending', ?)",
+      newId(), taskId, userId, proof, now(),
+    );
+    return { ok: true, status: "pending" };
   }));
 
   // Balance = SUM(ledger). Never a stored field. Also returns the current

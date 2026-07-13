@@ -38,5 +38,10 @@ export interface AdNetworkAdapter {
   // Verify the signature/token per THIS network's method. For fixed-catalog
   // networks, never trust the point value from the network — points come from
   // our own tasks table.
-  verifyPostback(input: PostbackInput, ctx: PostbackContext): VerifyResult;
+  //
+  // May be async: the `custom` adapter keys each task off its OWN secret, which
+  // it has to read from the database. Every other adapter verifies against a
+  // single env-var secret and simply returns synchronously; the caller awaits
+  // either shape.
+  verifyPostback(input: PostbackInput, ctx: PostbackContext): VerifyResult | Promise<VerifyResult>;
 }

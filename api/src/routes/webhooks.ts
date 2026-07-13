@@ -1,24 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import { sql, now, newId, postLedger } from "../db.ts";
-import { config } from "../config.ts";
 import { getAdapter } from "../adapters/index.ts";
-import { checkGeoMismatch } from "../fraud.ts";
-import { accrue, grantBoost } from "../mining/engine.ts";
-import { loadMiningSettings } from "../mining/settings.ts";
+import { creditCompletion, type NetworkRow } from "../credit.ts";
 
-// A credited task boosts the user's mining hashrate for a while. Accrue first so
-// the seconds already mined this session are paid at the OLD rate — the boost
-// applies from now on, never retroactively.
-async function grantTaskBoost(userId: string, completionId: string): Promise<void> {
-  const s = await loadMiningSettings();
-  if (s.taskBoostPct <= 0) return;
-  await accrue(userId);
-  await grantBoost(userId, "task", s.taskBoostPct, s.taskBoostHours, completionId);
-}
-
-// Inbound ad-network postbacks. THIS is the only place task points are credited
-// (guardrail #1). The frontend can NEVER credit points. Every postback is
-// logged, verified or not, so Agents can resolve disputes.
+// Inbound ad-network postbacks. Together with staff approval of a custom-task
+// proof, this is the only way task points are ever credited (guardrail #1). The
+// frontend can NEVER credit points. Every postback is logged, verified or not,
+// so Agents can resolve disputes.
+//
+// The crediting itself lives in ../credit.ts and is shared with the custom-task
+// approval path, so both get identical referral bonuses, velocity caps and
+// mining boosts. Do not re-implement any of that here.
 export async function webhookRoutes(app: FastifyInstance) {
   app.all("/webhooks/:network/postback", async (req, reply) => {
     const network = (req.params as { network: string }).network;
@@ -45,10 +37,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     // A network the Admin has disabled stops crediting immediately — no code
     // change or redeploy needed. Row may be absent for a network that predates
     // the table; absence is treated as active so we never silently drop traffic.
-    const net = await sql.get<{
-      status: string; referral_bonus_pct: number; referral_bonus_pct_l2: number;
-      referral_first_task_bonus: number; referral_bonus_days: number;
-    }>(
+    const net = await sql.get<NetworkRow>(
       `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
        FROM networks WHERE id = ?`, network,
     );
@@ -59,7 +48,7 @@ export async function webhookRoutes(app: FastifyInstance) {
 
     // 1. Verify the signature per this network's method. The request IP is passed
     // so a network that publishes fixed postback IPs can pin them.
-    const result = adapter.verifyPostback(input, { ip: req.ip });
+    const result = await adapter.verifyPostback(input, { ip: req.ip });
     if (!result.ok) {
       await logPostback(false, `rejected:${result.reason}`, input.txn_id ?? input.trans_id);
       return reply.code(401).send({ error: "verification failed" });
@@ -114,24 +103,7 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.send({ ok: true, reversed: true });
     }
 
-    // ---- 3. Idempotency — already processed this completion? Ack, don't re-credit.
-    const dup = await sql.get<{ status: string }>(
-      "SELECT status FROM task_completions WHERE network = ? AND external_id = ?", network, externalId,
-    );
-    if (dup) {
-      await logPostback(true, "duplicate", externalId);
-      return reply.send({ ok: true, status: dup.status, duplicate: true });
-    }
-
-    // ---- 4. Resolve the user and the reward ---------------------------------
-    const user = await sql.get<{ id: string; referred_by: string | null; created_at: string; country: string }>(
-      "SELECT id, referred_by, created_at, country FROM users WHERE id = ?", userId,
-    );
-    if (!user) {
-      await logPostback(true, "unknown_user", externalId);
-      return reply.code(400).send({ error: "unknown user" });
-    }
-
+    // ---- 3. Resolve the reward ----------------------------------------------
     // Fixed-catalog network -> reward comes from OUR task row (never the payload).
     // Dynamic network (CPX) -> reward is the signed amount the adapter validated
     // and capped; there is no task row for an ad-hoc survey.
@@ -155,155 +127,32 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "no reward on postback" });
     }
 
-    // ---- 5. Fraud velocity caps --------------------------------------------
-    // Per offer TYPE per day. Reads offer_type off the completion, so it works
-    // for dynamic networks that have no task row.
-    const since = new Date(); since.setHours(0, 0, 0, 0);
-    const typeRow = await sql.get<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM task_completions
-       WHERE user_id = ? AND offer_type = ? AND status = 'credited' AND created_at >= ?`,
-      userId, rewardType, since.toISOString(),
-    );
-    const todayCount = typeRow?.n ?? 0;
+    // ---- 4. Credit — the shared path (../credit.ts) --------------------------
+    const outcome = await creditCompletion({
+      userId, network, externalId, taskId, points: rewardPoints, offerType: rewardType,
+      payload: input,
+      reportedCountry: input.country ?? input.country_code ?? input.geo,
+      net,
+    }, app.log);
 
-    const blockForVelocity = async (detail: string, outcome: string) => {
-      await sql.tx(async (t) => {
-        await t.run(
-          `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at)
-           VALUES (?,?,?,?,?, 'rejected', ?,?,?,?)`,
-          newId(), userId, taskId ?? null, network, externalId, rewardPoints, rewardType,
-          JSON.stringify(input), now(),
+    switch (outcome.status) {
+      case "duplicate":
+        await logPostback(true, "duplicate", externalId);
+        return reply.send({ ok: true, status: outcome.completionStatus, duplicate: true });
+
+      case "unknown_user":
+        await logPostback(true, "unknown_user", externalId);
+        return reply.code(400).send({ error: "unknown user" });
+
+      case "velocity_blocked":
+        await logPostback(
+          true, outcome.scope === "global" ? "velocity_blocked_global" : "velocity_blocked", externalId,
         );
-        await t.run(
-          "INSERT INTO fraud_flags (id, user_id, flag_type, severity, detail, created_at) VALUES (?,?,?,?,?,?)",
-          newId(), userId, "velocity", "medium", detail, now(),
-        );
-      });
-      await logPostback(true, outcome, externalId);
-    };
+        return reply.send({ ok: true, credited: 0, flagged: "velocity" });
 
-    if (todayCount >= config.velocityCapPerTypePerDay) {
-      await blockForVelocity(
-        `Over cap for offer type "${rewardType}" (${todayCount} today)`, "velocity_blocked",
-      );
-      return reply.send({ ok: true, credited: 0, flagged: "velocity" });
+      case "credited":
+        await logPostback(true, "credited", externalId);
+        return reply.send({ ok: true, credited: outcome.points });
     }
-
-    // Tighter global cap: total credited completions across ALL offer types today.
-    const allRow = await sql.get<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM task_completions
-       WHERE user_id = ? AND status = 'credited' AND created_at >= ?`,
-      userId, since.toISOString(),
-    );
-    if ((allRow?.n ?? 0) >= config.velocityCapAllTypesPerDay) {
-      await blockForVelocity(
-        `Over daily cap across all offer types (${allRow?.n ?? 0} today)`, "velocity_blocked_global",
-      );
-      return reply.send({ ok: true, credited: 0, flagged: "velocity" });
-    }
-
-    // Is this the user's FIRST ever credited task? (Drives the referral
-    // first-task bonus — paid once, only for real activity, not signups.)
-    const priorCredited = await sql.get<{ n: number }>(
-      "SELECT COUNT(*)::int AS n FROM task_completions WHERE user_id = ? AND status = 'credited'",
-      userId,
-    );
-    const isFirstCreditedTask = (priorCredited?.n ?? 0) === 0;
-
-    // ---- 6. Verified + clean: record the completion and credit together ------
-    // If either write fails, neither lands — no points without a completion row,
-    // no completion row without points.
-    const completionId = newId();
-    await sql.tx(async (t) => {
-      await t.run(
-        `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at, verified_at)
-         VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?)`,
-        completionId, userId, taskId ?? null, network, externalId, rewardPoints, rewardType,
-        JSON.stringify(input), now(), now(),
-      );
-
-      await postLedger({
-        userId, points: rewardPoints, direction: "credit",
-        sourceType: "task_completion", sourceRefId: completionId, note: "Task reward",
-      }, t);
-
-      // Referral commission (2-level): the inviter (L1) and the inviter's inviter
-      // (L2) each earn a share of this user's task points. Shares are the
-      // network's configured percentages (Admin-set, never hardcoded). Every
-      // referral payout comes from margin; it NEVER reduces this user's reward.
-      const windowDays = net ? net.referral_bonus_days : config.referralBonusDays;
-      const inviteAgeDays = (Date.now() - new Date(user.created_at).getTime()) / 86400_000;
-      const withinWindow = windowDays <= 0 || inviteAgeDays <= windowDays;
-
-      const l1 = user.referred_by;
-      if (l1) {
-        if (withinWindow) {
-          const pct1 = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
-          const bonus1 = Math.floor(rewardPoints * pct1);
-          if (bonus1 > 0) {
-            await postLedger({
-              userId: l1, points: bonus1, direction: "credit",
-              sourceType: "referral_bonus", sourceRefId: completionId,
-              note: "Referral bonus from your invite",
-            }, t);
-          }
-
-          const pct2 = net ? net.referral_bonus_pct_l2 / 100 : config.referralCommissionL2Pct;
-          if (pct2 > 0) {
-            const l1Row = await t.get<{ referred_by: string | null }>(
-              "SELECT referred_by FROM users WHERE id = ?", l1,
-            );
-            const l2 = l1Row?.referred_by;
-            // Guard against a self/loop referral crediting the same account twice.
-            if (l2 && l2 !== userId && l2 !== l1) {
-              const bonus2 = Math.floor(rewardPoints * pct2);
-              if (bonus2 > 0) {
-                await postLedger({
-                  userId: l2, points: bonus2, direction: "credit",
-                  sourceType: "referral_bonus", sourceRefId: completionId,
-                  note: "Referral bonus (level 2)",
-                }, t);
-              }
-            }
-          }
-        }
-
-        // One-time flat reward to the DIRECT inviter when this invited user
-        // completes their first task. Rewards real activity, not empty signups.
-        if (isFirstCreditedTask) {
-          const firstBonus = net ? net.referral_first_task_bonus : config.referralFirstTaskBonusPoints;
-          if (firstBonus > 0) {
-            await postLedger({
-              userId: l1, points: firstBonus, direction: "credit",
-              sourceType: "referral_bonus", sourceRefId: completionId,
-              note: "Bonus — your invite finished their first task",
-            }, t);
-          }
-        }
-      }
-    });
-
-    // Geo-mismatch signal: raise a soft fraud flag if the network says the
-    // completion came from a different country than the account's. Runs AFTER
-    // the credit lands — it never blocks a verified reward, only flags for staff.
-    const reportedCountry = input.country ?? input.country_code ?? input.geo;
-    await checkGeoMismatch(userId, user.country, reportedCountry);
-
-    // MINING: a credited task grants a temporary hashrate boost (MINING_SPEC.md
-    // § 4.4). This is the line that makes mining FEED the revenue engine instead
-    // of competing with it — the highest-hashrate miners end up being the people
-    // actually doing the surveys that pay us.
-    //
-    // Deliberately outside the transaction above and deliberately swallowed: a
-    // boost is a nice-to-have, and a bug in the mining code must never roll back
-    // or block a real, verified, revenue-generating points credit.
-    try {
-      await grantTaskBoost(userId, completionId);
-    } catch (err) {
-      app.log.error({ err, userId, completionId }, "Failed to grant mining boost for a credited task");
-    }
-
-    await logPostback(true, "credited", externalId);
-    return reply.send({ ok: true, credited: rewardPoints });
   });
 }

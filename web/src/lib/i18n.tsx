@@ -20,6 +20,9 @@ import { createContext, useCallback, useContext } from "react";
 
 const copy: Record<string, string> = {
   // nav + common
+  "topbar.points": "points",
+  "topbar.balanceLabel": "Your points. Tap to open your wallet.",
+
   "nav.home": "Home",
   "nav.tasks": "Tasks",
   "nav.wallet": "Wallet",
@@ -134,7 +137,9 @@ const copy: Record<string, string> = {
   "withdraw.seeWallet": "See my wallet",
   "withdraw.backHome": "Back to home",
   // login (shared)
-  "login.tagline": "Earn and get real cash",
+  // The brand tagline (founder, 2026-07-13). Three words, three things the user
+  // does. "Get paid" — not "Pay" — because the earner is the one being paid.
+  "login.tagline": "Mine. Earn. Get paid.",
   "login.or": "or",
   "login.yourEmail": "Your email",
   "login.emailPlaceholder": "name@email.com",

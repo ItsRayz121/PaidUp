@@ -33,6 +33,13 @@ export function formatMoney(points: number): string {
   return formatUsdt(points);
 }
 
+// For USDT the SERVER computed and sent as a decimal string (e.g. "3804.521000").
+// Those are the authoritative figures — the server floors them to USDT's 6-dp
+// smallest unit — so we display them rather than recomputing from points.
+export function formatUsdtAmount(usdt: string | number): string {
+  return `${Number(usdt).toFixed(2)} USDT`;
+}
+
 // "2 hours ago", "just now" — plain words, no timestamps in the user UI.
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();

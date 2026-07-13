@@ -17,6 +17,12 @@ const networks = [
   // CPX Research — REAL, live survey wall. Its split is enforced by the
   // conversion rate in the CPX dashboard (1 USD = 600 points = 60% to the user).
   { id: "cpx", name: "CPX Research", type: "offerwall", commission_split_pct: 60, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
+  // Our OWN tasks, written in /staff. Not an ad network — there is no external
+  // payout behind these, so the "commission split" is meaningless here and the
+  // points come straight off margin. It gets a networks row anyway so referral
+  // rates on custom tasks stay Admin-tunable like every other source, and so an
+  // Admin can switch ALL custom tasks off in one click.
+  { id: "custom", name: "Our own tasks", type: "custom", commission_split_pct: 0, referral_bonus_pct: 15, referral_bonus_pct_l2: 5, referral_first_task_bonus: 100, referral_bonus_days: 0 },
 ];
 
 // Demo offers for the three SPEC adapters (offerhub/tapvid/surveyx). No real

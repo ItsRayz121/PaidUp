@@ -104,7 +104,7 @@ export const LockIcon = (p: IconProps) => (
   <svg {...base(p)}><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
 );
 
-export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon };
+export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon, custom: StarIcon };
 
 // Rig art, keyed by the `icon` column on the rigs table (Admin-editable). Falls
 // back to the chip so a rig with an unknown icon name still renders.

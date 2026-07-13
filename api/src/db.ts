@@ -396,6 +396,63 @@ const MIGRATIONS = `
   ALTER TABLE task_completions ADD CONSTRAINT task_completions_status_check
     CHECK (status IN ('pending','verified','credited','rejected','reversed'));
 
+  -- ---- CUSTOM TASKS -------------------------------------------------------
+  -- Tasks we write ourselves in the admin panel, with no ad network behind them
+  -- (join our channel, follow us, try a partner app). Guardrail #1 still holds:
+  -- a custom task cannot credit itself. It carries a verify_mode saying how a
+  -- completion is PROVEN:
+  --
+  --   'proof'    — the user submits evidence, a STAFF MEMBER approves it, and the
+  --                credit is that human decision (audit-logged). Not the user's
+  --                own click.
+  --   'postback' — a partner's server calls our signed postback, exactly like a
+  --                real ad network, using this task's own secret.
+  -- 'custom' is not an ad network, but it gets a networks row so its referral
+  -- rates stay Admin-tunable and all custom tasks can be switched off at once.
+  ALTER TABLE networks DROP CONSTRAINT IF EXISTS networks_type_check;
+  ALTER TABLE networks ADD CONSTRAINT networks_type_check
+    CHECK (type IN ('offerwall','rewarded_video','custom'));
+
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'network';
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS verify_mode TEXT NOT NULL DEFAULT 'postback';
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS instructions TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_label TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS action_url TEXT;
+  -- Per-task postback secret. Only ever leaves the server to an Admin in /staff.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS postback_secret TEXT;
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_type_check
+    CHECK (type IN ('install','survey','video','custom'));
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_verify_mode_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_verify_mode_check
+    CHECK (verify_mode IN ('proof','postback'));
+
+  -- Evidence a user submits for a 'proof' custom task. One row per attempt.
+  -- A rejected user may try again; an approved one may not (the unique index
+  -- below stops a second approved row, so a task cannot be farmed twice).
+  CREATE TABLE IF NOT EXISTS task_proofs (
+    id           TEXT PRIMARY KEY,
+    task_id      TEXT NOT NULL REFERENCES tasks(id),
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    proof_text   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending','approved','rejected')),
+    review_note  TEXT,
+    reviewed_by  TEXT REFERENCES users(id),
+    reviewed_at  TEXT,
+    created_at   TEXT NOT NULL
+  );
+  -- One pending submission per user per task: stops a user flooding the review
+  -- queue with the same task to get a tired Agent to approve it twice.
+  CREATE UNIQUE INDEX IF NOT EXISTS task_proofs_one_open
+    ON task_proofs (task_id, user_id) WHERE status = 'pending';
+  -- And one APPROVED submission per user per task, ever. This is the real
+  -- anti-farm index: even if two Agents approve two rows at the same instant,
+  -- the second write fails rather than paying the task out twice.
+  CREATE UNIQUE INDEX IF NOT EXISTS task_proofs_one_approved
+    ON task_proofs (task_id, user_id) WHERE status = 'approved';
+  CREATE INDEX IF NOT EXISTS task_proofs_status ON task_proofs (status, created_at);
+
   -- Saved payout addresses: a user sets a USDT address per chain ONCE and reuses
   -- it. The withdraw screen pre-fills from here; a new address overwrites it.
   CREATE TABLE IF NOT EXISTS payout_addresses (

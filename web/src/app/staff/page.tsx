@@ -11,6 +11,9 @@ import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton } from "@/components/staff";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
 import { MiningPanel } from "@/components/mining-admin";
+import { Panel } from "@/components/boundary";
+import { LogoMark } from "@/components/Logo";
+import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -60,9 +63,11 @@ export default function StaffPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-5">
-      <header className="mb-5 flex items-center justify-between border-b border-line pb-3">
+      <header className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between border-b border-line bg-bg/95 px-4 py-3 backdrop-blur">
         <div>
-          <h1 className="text-lg font-bold text-brand-ink">RoziPay — Staff</h1>
+          <h1 className="flex items-center gap-2 text-lg font-bold text-brand-ink">
+            <LogoMark size={24} /> RoziPay — Staff
+          </h1>
           <p className="text-xs text-muted">
             Signed in as {user?.email} · role: <span className="font-semibold uppercase">{user?.role}</span>
           </p>
@@ -72,10 +77,12 @@ export default function StaffPage() {
 
       {/* KPI dashboard — managers/admins only */}
       {isManager && (
-        <section className="mb-8">
-          <h2 className="mb-2 font-bold text-brand-ink">Dashboard</h2>
-          <KpiDashboard />
-        </section>
+        <Panel title="Dashboard">
+          <section className="mb-8">
+            <h2 className="mb-2 font-bold text-brand-ink">Dashboard</h2>
+            <KpiDashboard />
+          </section>
+        </Panel>
       )}
 
       {/* Withdrawal queue */}
@@ -148,34 +155,42 @@ export default function StaffPage() {
       </section>
 
       {/* Money: what you owe users vs what you've paid — admin only */}
-      {isAdmin && <MoneyPanel />}
+      {isAdmin && <Panel title="Money"><MoneyPanel /></Panel>}
 
       {/* Find, pay, suspend a user — admin only (manager can search via the API) */}
-      {isAdmin && <UsersPanel />}
+      {isAdmin && <Panel title="Users"><UsersPanel /></Panel>}
+
+      {/* Our own custom tasks — admin only */}
+      {isAdmin && <Panel title="Our own tasks"><TasksPanel /></Panel>}
+
+      {/* Task proof review — all staff */}
+      <Panel title="Task proofs"><ProofQueue /></Panel>
 
       {/* Support tickets — all staff */}
-      <TicketQueue />
+      <Panel title="Support tickets"><TicketQueue /></Panel>
 
       {/* Ad-network config — admin only */}
-      {isAdmin && <NetworkPanel />}
+      {isAdmin && <Panel title="Ad networks"><NetworkPanel /></Panel>}
 
       {/* ROZI mining economy — admin only. Emission, hashrate, rigs, boosts,
           transfers, and the conversion windows that bridge ROZI into Points. */}
       {isAdmin && (
-        <section className="mb-8">
-          <h2 className="mb-2 font-bold text-brand-ink">Mining (ROZI)</h2>
-          <MiningPanel />
-        </section>
+        <Panel title="Mining (ROZI)">
+          <section className="mb-8">
+            <h2 className="mb-2 font-bold text-brand-ink">Mining (ROZI)</h2>
+            <MiningPanel />
+          </section>
+        </Panel>
       )}
 
       {/* Appoint agents/managers/admins — admin only */}
-      {isAdmin && <StaffRolesPanel />}
+      {isAdmin && <Panel title="Staff & roles"><StaffRolesPanel /></Panel>}
 
       {/* Dispute lookup */}
-      <UserLookup target={lookupTarget} />
+      <Panel title="Look up a user"><UserLookup target={lookupTarget} /></Panel>
 
       {/* Fraud flags — managers/admins only */}
-      {isManager && <FraudPanel />}
+      {isManager && <Panel title="Fraud flags"><FraudPanel /></Panel>}
     </div>
   );
 }
