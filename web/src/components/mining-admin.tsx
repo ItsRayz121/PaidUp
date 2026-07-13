@@ -197,6 +197,36 @@ function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) 
         <Stat label="Emitted of cap" value={`${pctEmitted.toFixed(2)}%`} sub={`${n(s.supply.remaining)} left`} />
       </div>
 
+      {/* MINING POOL TRACKER — total pool, mined so far, and what's left, as raw
+          numbers plus a bar. This is the "how much of the whole thing is gone"
+          view: when the bar is near full, the mineable supply is nearly spent. */}
+      <div className="mt-3 rounded-md border border-line bg-brand-tint/40 p-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold text-brand-ink">Mining pool</span>
+          <span className="font-mono text-muted">{pctEmitted.toFixed(2)}% mined</span>
+        </div>
+        <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-line">
+          <div
+            className="h-full rounded-full bg-brand transition-all"
+            style={{ width: `${Math.min(100, pctEmitted)}%` }}
+          />
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-muted">Total pool</p>
+            <p className="font-mono text-sm font-bold text-brand-ink">{n(s.supply.cap)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-muted">Mined so far</p>
+            <p className="font-mono text-sm font-bold text-brand-ink">{n(s.supply.emitted)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-muted">Remaining</p>
+            <p className="font-mono text-sm font-bold text-brand-ink">{n(s.supply.remaining)}</p>
+          </div>
+        </div>
+      </div>
+
       {/* THE number to watch. If the ROZI float would cost, at the last window's
           rate, anything approaching your real margin, the next conversion window
           will be brutal — shrink emission BEFORE that happens, not after. */}
