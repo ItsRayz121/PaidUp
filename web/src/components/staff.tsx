@@ -152,10 +152,88 @@ function TicketThread({ id, onChange }: { id: string; onChange: () => void }) {
   );
 }
 
+// ---- Treasury / hot wallet (admin only) ------------------------------------
+// The wallet the founder funds with USDT and every manual payout is sent FROM.
+// One address per chain. The API stores only the ADDRESS (never a key), so this
+// screen can't move funds — it exists so (a) the founder records where the
+// treasury lives, (b) whoever pays a withdrawal sends from the right wallet,
+// and (c) the deposit address is one copy-click away when topping up.
+const TREASURY_CHAINS = [
+  { id: "bep20" as const, label: "BEP20 (BNB Chain)" },
+  { id: "base" as const, label: "Base" },
+  { id: "aptos" as const, label: "Aptos" },
+];
+
+export function TreasuryPanel() {
+  const s = useApi(fetchSettings, []);
+  const [draft, setDraft] = useState<Partial<Record<"bep20" | "base" | "aptos", string>>>({});
+  const [busy, setBusy] = useState(false);
+
+  async function save(chain: "bep20" | "base" | "aptos") {
+    const address = (draft[chain] ?? "").trim();
+    setBusy(true);
+    try {
+      await updateSettings({ treasury: { [chain]: address } });
+      s.reload();
+      setDraft((d) => ({ ...d, [chain]: undefined }));
+    } catch (e) {
+      window.alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <h2 className="mb-2 font-bold text-brand-ink">Treasury wallet (hot wallet)</h2>
+      <p className="mb-2 text-xs text-muted">
+        This is the wallet you fund with USDT and send every payout from — one address per
+        network. Deposit USDT to it from your exchange; when you mark a withdrawal paid, send
+        from this wallet. Only the address is stored here (never a key), and every change is
+        written to the audit log.
+      </p>
+      {s.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
+        : s.error ? <p className="p-4 text-sm text-danger">{s.error}</p>
+        : (
+          <div className="space-y-2 rounded-lg border border-line p-3">
+            {TREASURY_CHAINS.map((c) => {
+              const saved = s.data?.treasury?.[c.id] ?? "";
+              const value = draft[c.id] ?? saved;
+              const dirty = draft[c.id] !== undefined && draft[c.id] !== saved;
+              return (
+                <div key={c.id} className="flex flex-wrap items-center gap-2">
+                  <span className="w-36 shrink-0 text-sm font-semibold text-brand-ink">{c.label}</span>
+                  <input
+                    value={value}
+                    onChange={(e) => setDraft((d) => ({ ...d, [c.id]: e.target.value }))}
+                    placeholder="0x… (not set yet)"
+                    className="num min-w-0 flex-1 rounded border border-line bg-card p-1.5 text-xs outline-none"
+                  />
+                  {saved && !dirty && (
+                    <button onClick={() => navigator.clipboard?.writeText(saved)}
+                      className="rounded bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand" title="Copy the deposit address">
+                      Copy
+                    </button>
+                  )}
+                  {dirty && (
+                    <button disabled={busy} onClick={() => save(c.id)}
+                      className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                      Save
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+    </section>
+  );
+}
+
 // ---- Withdrawal fee (admin only) -----------------------------------------
 // Flat fee (points) taken out of every withdrawal, deducted from the payout so
 // it covers on-chain gas / protects margin. Snapshotted onto each request.
-function WithdrawalFeePanel() {
+export function WithdrawalFeePanel() {
   const s = useApi(fetchSettings, []);
   const [fee, setFee] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -193,7 +271,6 @@ export function NetworkPanel() {
 
   return (
     <>
-    <WithdrawalFeePanel />
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Ad networks &amp; commission</h2>
       <p className="mb-2 text-xs text-muted">Split and referral bonus are configured here — never in code. Disabling a network stops its postbacks crediting and hides its offers.</p>

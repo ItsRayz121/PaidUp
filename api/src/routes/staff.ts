@@ -4,7 +4,7 @@ import { sql, now, newId, balanceOf, postLedger, logAudit, getSetting, setSettin
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
-import type { ChainId } from "../chains.ts";
+import { validateAddress, type ChainId } from "../chains.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -43,6 +43,14 @@ export async function staffRoutes(app: FastifyInstance) {
       rows = rows.filter((r) => (r.amount as number) <= config.agentApprovalMaxPoints);
     }
     return {
+      // The hot wallet each chain's payouts are sent FROM (admin sets it in
+      // Settings). Shown beside the queue so whoever is paying sends from the
+      // right wallet. Public information once a payout has ever been made.
+      treasury: {
+        bep20: await getSetting("treasury_address_bep20", ""),
+        base: await getSetting("treasury_address_base", ""),
+        aptos: await getSetting("treasury_address_aptos", ""),
+      },
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
         chain: r.payout_rail, address: r.payout_address ?? null,
@@ -224,19 +232,57 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true };
   }));
 
-  // ---- Admin: global settings (withdrawal fee) ---------------------------
+  // ---- Admin: global settings (withdrawal fee + treasury wallet) ----------
+  // The treasury wallet is the HOT WALLET: the founder funds it with USDT, and
+  // every manual payout is sent FROM it. One address per chain, stored in
+  // app_settings. Display/reference only — the API never holds a private key
+  // for these addresses (on-chain auto-send has its own env-gated signer, see
+  // payout.ts), so a leaked admin session cannot move treasury funds from here.
   app.get("/staff/settings", staffGuard(["admin"], async () => ({
     withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+    treasury: {
+      bep20: await getSetting("treasury_address_bep20", ""),
+      base: await getSetting("treasury_address_base", ""),
+      aptos: await getSetting("treasury_address_aptos", ""),
+    },
   })));
 
   const settingsSchema = z.object({
     // Flat fee (points) taken out of every withdrawal. 0 = no fee.
-    withdrawalFeePoints: z.number().int().min(0).max(1_000_000),
+    withdrawalFeePoints: z.number().int().min(0).max(1_000_000).optional(),
+    // Treasury (hot wallet) address per chain. Empty string clears it.
+    treasury: z.object({
+      bep20: z.string().trim().max(120).optional(),
+      base: z.string().trim().max(120).optional(),
+      aptos: z.string().trim().max(120).optional(),
+    }).optional(),
   });
-  app.patch("/staff/settings", staffGuard(["admin"], async (_ctx, req, reply) => {
+  app.patch("/staff/settings", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
     const parsed = settingsSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Enter a fee of 0 or more points." });
-    await setSetting("withdrawal_fee_points", String(parsed.data.withdrawalFeePoints));
+    if (!parsed.success) return reply.code(400).send({ error: "Check the values and try again." });
+
+    if (parsed.data.withdrawalFeePoints !== undefined) {
+      await setSetting("withdrawal_fee_points", String(parsed.data.withdrawalFeePoints));
+    }
+    if (parsed.data.treasury) {
+      for (const [chain, address] of Object.entries(parsed.data.treasury)) {
+        if (address === undefined) continue;
+        // Same validator users' payout addresses go through — a typo'd treasury
+        // address on the staff screen would misdirect every manual payout.
+        if (address !== "") {
+          const check = validateAddress(chain as ChainId, address);
+          if (!check.ok) return reply.code(400).send({ error: `${chain}: ${check.error}` });
+        }
+        await setSetting(`treasury_address_${chain}`, address);
+        // A treasury address swap is exactly what an attacker with a stolen
+        // admin session would do (payouts start flowing to THEIR wallet), so
+        // every change lands in the append-only audit log.
+        await logAudit({
+          actorUserId: userId, actorRole: role, action: "treasury_address_change",
+          detail: `${chain} -> ${address || "(cleared)"}`,
+        });
+      }
+    }
     return { ok: true };
   }));
 

@@ -192,8 +192,10 @@ export type StaffWithdrawal = {
   id: string; userId: string; userEmail: string; amount: number;
   chain: string; address: string | null; status: string; at: string; withinAgentLimit: boolean;
 };
+// Treasury (hot wallet) address per chain — where payouts are sent FROM.
+export type TreasuryAddresses = { bep20: string; base: string; aptos: string };
 export const fetchStaffQueue = (status = "pending") =>
-  apiFetch<{ requests: StaffWithdrawal[] }>(`/staff/withdrawals?status=${encodeURIComponent(status)}`);
+  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses }>(`/staff/withdrawals?status=${encodeURIComponent(status)}`);
 export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
   apiFetch<{ ok: true; status: string; txHash?: string; usdt?: string }>(`/staff/withdrawals/${id}/decision`, {
     method: "POST", body: JSON.stringify({ action, note, txHash }),
@@ -347,8 +349,9 @@ export type Kpis = {
 export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 
 // ---- Admin: global settings (withdrawal fee) -----------------------------
-export const fetchSettings = () => apiFetch<{ withdrawalFeePoints: number }>("/staff/settings");
-export const updateSettings = (patch: { withdrawalFeePoints: number }) =>
+export const fetchSettings = () =>
+  apiFetch<{ withdrawalFeePoints: number; treasury: TreasuryAddresses }>("/staff/settings");
+export const updateSettings = (patch: { withdrawalFeePoints?: number; treasury?: Partial<TreasuryAddresses> }) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
 
 // ---- ROZI mining (docs/MINING_SPEC.md) ------------------------------------
