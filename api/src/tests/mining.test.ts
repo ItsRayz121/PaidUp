@@ -12,10 +12,11 @@ import test from "node:test";
 // the whole file as failed even though every assertion passed. That is exactly
 // what happened, and it is why MINING_DEFAULTS lives in core.ts.
 import {
-  emissionAt, cappedEmission, computeHashrate, payoutFor,
+  emissionMicroAt, cappedEmissionMicro, computeHashrate, payoutMicroFor,
   rigUpgradeCost, rigPower, rigIsDeflationary, conversionPayout,
   epochOf, epochEndMs, splitByEpoch, MINING_GENESIS_MS,
-  parseMilestones, piBaseRateFor, piPayoutFor, capScaleFactor,
+  parseMilestones, piBaseRateFor, piPayoutMicroFor, capScaleFactor,
+  ROZI_SCALE, toMicro, fromMicro,
   MINING_DEFAULTS as D,
 } from "../mining/core.ts";
 
@@ -24,6 +25,17 @@ const EMISSION = {
   halvingEpochs: D.halvingEpochs,
   supplyCap: D.supplyCap,
 };
+
+// The core functions all speak MICRO-ROZI now. These wrappers convert back to
+// whole ROZI so the assertions below read as economics ("a full day pays 10")
+// rather than as arithmetic ("a full day pays 10000000"). Where the MICRO value
+// is the actual point of the test — the flooring ones — the raw function is
+// called directly.
+const emissionRozi = (epoch: number) => fromMicro(emissionMicroAt(epoch, EMISSION));
+const cappedRozi = (epoch: number, emittedRozi: number, e = EMISSION) =>
+  fromMicro(cappedEmissionMicro(epoch, toMicro(emittedRozi), e));
+const pool = (shares: number, total: number, emissionRozi: number) =>
+  fromMicro(payoutMicroFor(shares, total, toMicro(emissionRozi)));
 
 test("epochs are whole UTC days from genesis", () => {
   assert.equal(epochOf(new Date(MINING_GENESIS_MS)), 0);
@@ -71,11 +83,11 @@ test("epochEndMs is the exact start of the next day", () => {
 });
 
 test("emission halves every halvingEpochs", () => {
-  assert.equal(emissionAt(0, EMISSION), 3_000_000);
-  assert.equal(emissionAt(99, EMISSION), 3_000_000);
-  assert.equal(emissionAt(100, EMISSION), 1_500_000);
-  assert.equal(emissionAt(200, EMISSION), 750_000);
-  assert.equal(emissionAt(300, EMISSION), 375_000);
+  assert.equal(emissionRozi(0), 3_000_000);
+  assert.equal(emissionRozi(99), 3_000_000);
+  assert.equal(emissionRozi(100), 1_500_000);
+  assert.equal(emissionRozi(200), 750_000);
+  assert.equal(emissionRozi(300), 375_000);
 });
 
 test("total emission over all time converges under the supply cap", () => {
@@ -83,7 +95,7 @@ test("total emission over all time converges under the supply cap", () => {
   // E0 * halving * 2 = 600M, comfortably under the 650M cap — and the headroom
   // is what absorbs referral overhead without ever breaching the hard limit.
   let total = 0;
-  for (let e = 0; e < 10_000; e++) total += emissionAt(e, EMISSION);
+  for (let e = 0; e < 10_000; e++) total += emissionRozi(e);
   assert.ok(total <= 600_000_000, `emitted ${total} > 600M`);
   assert.ok(total > 599_000_000, `emitted ${total}, expected ~600M`);
   assert.ok(total < EMISSION.supplyCap);
@@ -94,30 +106,41 @@ test("the supply cap is a hard ceiling even if an Admin fat-fingers the emission
   // Already emitted 649M of the 650M cap: only 1M may be minted, whatever the
   // settings say. This is the last line of defence and it must not depend on the
   // Admin being careful.
-  assert.equal(cappedEmission(0, 649_000_000, reckless), 1_000_000);
-  assert.equal(cappedEmission(0, 650_000_000, reckless), 0);
-  assert.equal(cappedEmission(0, 999_000_000, reckless), 0); // never negative
+  assert.equal(cappedRozi(0, 649_000_000, reckless), 1_000_000);
+  assert.equal(cappedRozi(0, 650_000_000, reckless), 0);
+  assert.equal(cappedRozi(0, 999_000_000, reckless), 0); // never negative
+});
+
+test("the supply cap holds in MICRO — the unit change did not widen the ceiling", () => {
+  // The cap is 650M ROZI = 6.5e14 micro. That is the number the ledger is
+  // actually checked against now, and it has to be exact: it sits well inside
+  // 2^53 (9.007e15), so it is representable, but it would NOT be if the scale
+  // were raised much further. This test is the tripwire on that headroom.
+  assert.equal(toMicro(EMISSION.supplyCap), 650_000_000_000_000);
+  assert.ok(Number.isSafeInteger(toMicro(EMISSION.supplyCap)));
+  assert.equal(cappedEmissionMicro(0, toMicro(650_000_000), EMISSION), 0);
 });
 
 test("a miner's payout is a SHARE of the pot, so the pot can never be exceeded", () => {
-  const emission = 3_000_000;
+  const emissionMicro = toMicro(3_000_000);
   const shares = [500, 1500, 3000, 17, 999_999];
   const total = shares.reduce((a, b) => a + b, 0);
-  const paid = shares.reduce((a, s) => a + payoutFor(s, total, emission), 0);
-  assert.ok(paid <= emission, `paid ${paid} > emission ${emission}`);
+  const paid = shares.reduce((a, s) => a + payoutMicroFor(s, total, emissionMicro), 0);
+  assert.ok(paid <= emissionMicro, `paid ${paid} > emission ${emissionMicro}`);
   // Flooring leaves dust unemitted. The error is always in the treasury's
-  // favour — never the other way.
-  assert.ok(emission - paid < shares.length);
+  // favour — never the other way. The dust is now at most one MICRO per miner,
+  // i.e. a millionth of a ROZI each, rather than a whole ROZI each.
+  assert.ok(emissionMicro - paid < shares.length);
 });
 
 test("no shares mined => nothing is emitted", () => {
-  assert.equal(payoutFor(0, 0, 3_000_000), 0);
-  assert.equal(payoutFor(100, 0, 3_000_000), 0);
+  assert.equal(payoutMicroFor(0, 0, toMicro(3_000_000)), 0);
+  assert.equal(payoutMicroFor(100, 0, toMicro(3_000_000)), 0);
 });
 
 test("adding miners dilutes everyone — difficulty self-adjusts", () => {
-  const solo = payoutFor(1000, 1000, 3_000_000);
-  const crowded = payoutFor(1000, 1_000_000, 3_000_000);
+  const solo = pool(1000, 1000, 3_000_000);
+  const crowded = pool(1000, 1_000_000, 3_000_000);
   assert.equal(solo, 3_000_000);
   assert.ok(crowded < solo / 100);
 });
@@ -222,7 +245,11 @@ test("CONVERSION: burning nothing pays nothing", () => {
 
 const FULL_DAY_SECS = D.piReferenceHours * 3600;
 const pi = (shares: number, rate: number) =>
-  piPayoutFor(shares, rate, D.baseHashrate, FULL_DAY_SECS);
+  fromMicro(piPayoutMicroFor(shares, rate, D.baseHashrate, FULL_DAY_SECS));
+
+// The same thing in raw MICRO, for the tests where the sub-unit IS the point.
+const piMicro = (shares: number, rate: number) =>
+  piPayoutMicroFor(shares, rate, D.baseHashrate, FULL_DAY_SECS);
 
 // Shares a baseline miner (no multipliers) books over a full reference day.
 const BASELINE_FULL_DAY = D.baseHashrate * FULL_DAY_SECS;
@@ -254,8 +281,8 @@ test("PI: NO DILUTION — another miner joining cannot reduce your payout", () =
 
   // Contrast, so the difference is pinned by a test rather than by a comment:
   // under the pool model the same miner's share collapses as others arrive.
-  assert.equal(payoutFor(1000, 1000, 3_000_000), 3_000_000);
-  assert.equal(payoutFor(1000, 1_000_000, 3_000_000), 3_000);
+  assert.equal(pool(1000, 1000, 3_000_000), 3_000_000);
+  assert.equal(pool(1000, 1_000_000, 3_000_000), 3_000);
 });
 
 test("PI: halving is a clean 50% cut to the PERSON, not a 20x collapse", () => {
@@ -308,18 +335,54 @@ test("PI: the supply cap still holds — payouts scale down when the pool runs d
 });
 
 test("PI: flooring keeps the error in the treasury's favour, never the user's", () => {
-  // Same invariant the pool model has: dust stays unemitted. We can never pay out
-  // more than we meant to.
-  assert.equal(pi(BASELINE_FULL_DAY - 1, 100), 99);
+  // Same invariant the pool model has: dust stays unemitted, so we can never pay
+  // out more than we owe. What changed is the SIZE of the dust: the floor is now
+  // one micro (0.000001 ROZI) instead of one whole ROZI.
+  //
+  // Note the thing this test previously got wrong: a miner one SHARE short of a
+  // full day is not one micro short of the rate. A share is a hashrate-second,
+  // worth ~116 micro at rate 100 — so they honestly earn ~116 micro less. The
+  // flooring dust is the separate, tiny gap between the exact owed value and the
+  // integer we actually pay, and THAT is what must stay under one micro.
+  const shares = BASELINE_FULL_DAY - 1;
+  const exactMicro = 100 * ROZI_SCALE * (shares / BASELINE_FULL_DAY);
+  const paidMicro = piMicro(shares, 100);
+
+  assert.ok(paidMicro <= exactMicro, "must never pay more than is owed");
+  assert.ok(exactMicro - paidMicro < 1, "the dust we keep is under one micro");
+  assert.ok(paidMicro < toMicro(100), "a partial day never pays a full day's rate");
+
   assert.equal(pi(0, 100), 0);
   assert.equal(pi(BASELINE_FULL_DAY, 0), 0);
 });
 
-test("PI: THE FAILURE MODE — a rate floored into single digits pays partial days ZERO", () => {
-  // Not a bug to fix here, but the thing that quietly stops paying people, so it
-  // is pinned by a test and surfaced in the admin panel (rateTooLow).
-  // A rate of 2/day: someone who mined a third of a day earns floor(0.66) = 0.
-  assert.equal(pi(BASELINE_FULL_DAY / 3, 2), 0);
-  // The same miner at a healthy rate is paid properly.
-  assert.ok(pi(BASELINE_FULL_DAY / 3, 100) > 0);
+test("PI: THE OLD FAILURE MODE IS FIXED — a low rate still pays a partial day", () => {
+  // This test used to assert the OPPOSITE, and it was right to: the ledger held
+  // whole ROZI, so a rate of 2/day paid a third-of-a-day miner floor(0.66) = ZERO.
+  // The app took eight hours of someone's time and gave them nothing. That is the
+  // bug the micro-ROZI migration exists to kill, so the test is inverted rather
+  // than deleted — if anyone reintroduces a whole-ROZI floor, this goes red.
+  assert.ok(piMicro(BASELINE_FULL_DAY / 3, 2) > 0);
+  assert.equal(pi(BASELINE_FULL_DAY / 3, 2), 0.666666); // floored to the millionth
+
+  // The real launch numbers. Base rate 10/day, one 8-hour session out of a 24h
+  // reference day => a third of 10.
+  assert.equal(pi(BASELINE_FULL_DAY / 3, D.piBaseRate), 3.333333);
+
+  // And it survives all five halvings. 10 -> 5 -> 2.5 -> 1.25 -> 0.625 -> 0.3125.
+  // A single 8h session at the FINAL rate still pays a real, non-zero number.
+  const finalRate = piBaseRateFor(
+    9_999_999, D.piBaseRate, parseMilestones(D.piHalvingUsers));
+  assert.equal(finalRate, 0.3125);
+  assert.ok(piMicro(BASELINE_FULL_DAY / 3, finalRate) > 0,
+    "an 8h session at the fully-halved rate must still pay something");
+  assert.equal(pi(BASELINE_FULL_DAY / 3, finalRate), 0.104166);
+});
+
+test("PI: the launch rate of 10/day is what the founder asked for", () => {
+  // A baseline miner, mining a full reference day, earns exactly 10 ROZI.
+  assert.equal(D.piBaseRate, 10);
+  assert.equal(pi(BASELINE_FULL_DAY, D.piBaseRate), 10);
+  // Scarcity is the product: this is a number a person can hold in their head.
+  assert.ok(D.piBaseRate <= 10);
 });

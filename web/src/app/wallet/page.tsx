@@ -8,7 +8,7 @@ import { StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, LockIcon, ArrowRigh
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchLedger, fetchMiningState, type LedgerEntry } from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { formatPoints, formatMoney, formatRozi, timeAgo } from "@/lib/format";
 
 export default function WalletPage() {
   const { ready } = useRequireAuth();
@@ -78,7 +78,7 @@ export default function WalletPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-muted">{t("wallet.rozi.label")}</p>
                 <p className="num text-2xl font-bold text-brand-ink">
-                  {mining.data.rozi.toLocaleString()}{" "}
+                  {formatRozi(mining.data.roziMicro)}{" "}
                   <span className="text-base text-brand">ROZI</span>
                 </p>
               </div>

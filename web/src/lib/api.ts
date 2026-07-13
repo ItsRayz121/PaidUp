@@ -350,8 +350,11 @@ export const updateSettings = (patch: { withdrawalFeePoints: number }) =>
 // backed by revenue, and it is not withdrawable. Any UI built on these types
 // must say so plainly — see the banner on /mine and in the wallet.
 export type MiningBoost = { kind: "task" | "ad" | "points"; pct: number; expiresAt: string };
+// EVERY ROZI amount below is MICRO-ROZI (an integer count of millionths), and the
+// `...Micro` suffix is the contract. Run it through formatRozi() from lib/format
+// before it reaches a screen — printed raw, a balance of 3.33 ROZI reads "3333333".
 export type MiningState = {
-  rozi: number;
+  roziMicro: number;
   session: { active: boolean; expiresAt: string | null; sessionHours: number };
   hashrate: number;
   breakdown: {
@@ -359,7 +362,7 @@ export type MiningState = {
     streakMultiplierPct: number; boostPct: number; referral: number;
   };
   sharesToday: number;
-  estimatedRozi: number;
+  estimatedRoziMicro: number;
   estimateIsLive: boolean;
   streak: { current: number; best: number };
   boosts: MiningBoost[];
@@ -377,15 +380,15 @@ export const startMining = () =>
 
 export type Rig = {
   id: string; name: string; icon: string; level: number; maxLevel: number;
-  power: number; nextPower: number | null; nextCost: number | null;
+  power: number; nextPower: number | null; nextCostMicro: number | null;
 };
-export const fetchRigs = () => apiFetch<{ rozi: number; rigs: Rig[] }>("/mining/rigs");
+export const fetchRigs = () => apiFetch<{ roziMicro: number; rigs: Rig[] }>("/mining/rigs");
 export const upgradeRig = (id: string) =>
-  apiFetch<{ ok: true; level: number; spent: number; rozi: number }>(
+  apiFetch<{ ok: true; level: number; spentMicro: number; roziMicro: number }>(
     `/mining/rigs/${id}/upgrade`, { method: "POST" });
 
 export type RoziEntry = {
-  id: string; amount: number; direction: "credit" | "debit";
+  id: string; amountMicro: number; direction: "credit" | "debit";
   source_type: string; note: string | null; created_at: string;
 };
 export const fetchRoziHistory = () => apiFetch<{ entries: RoziEntry[] }>("/mining/history");
@@ -404,8 +407,11 @@ export const buyBooster = (id: string) =>
   apiFetch<{ ok: true; points: number }>(`/mining/boosters/${id}/buy`, { method: "POST" });
 
 // Wallet-to-wallet ROZI. NOT a trade: no price, no order book, no money leg.
+//
+// `amount` goes out in WHOLE ROZI (what the user typed, decimals allowed — the
+// server converts). Everything coming back is micro.
 export const transferRozi = (to: string, amount: number) =>
-  apiFetch<{ ok: true; fee: number; received: number; rozi: number }>(
+  apiFetch<{ ok: true; feeMicro: number; receivedMicro: number; roziMicro: number }>(
     "/mining/transfer", { method: "POST", body: JSON.stringify({ to, amount }) });
 
 // ---- Admin: mining economy (docs/MINING_SPEC.md § 10) --------------------

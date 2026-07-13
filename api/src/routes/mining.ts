@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
-  sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceOf, type TxApi,
+  sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf, type TxApi,
 } from "../db.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
@@ -16,7 +16,12 @@ import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
 } from "../mining/engine.ts";
-import { rigUpgradeCost, rigPower, conversionPayout } from "../mining/core.ts";
+import { rigUpgradeCost, rigPower, conversionPayout, toMicro } from "../mining/core.ts";
+
+// Every ROZI amount crossing this API is MICRO-ROZI, and every field carrying one
+// is named `...Micro`. The web formats it for display (web/src/lib/format.ts).
+// Naming them plainly `rozi` would be a trap: a client that read the number
+// straight would show someone 3,333,333 ROZI instead of 3.33.
 
 function guard(
   handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
@@ -72,8 +77,8 @@ export async function miningRoutes(app: FastifyInstance) {
     const s = await loadMiningSettings();
     const state = await sessionState(userId);
     const { breakdown } = await hashrateOf(userId, s);
-    const [rozi, streak, boosts, adsToday] = await Promise.all([
-      roziBalanceOf(userId),
+    const [roziMicro, streak, boosts, adsToday] = await Promise.all([
+      roziBalanceMicroOf(userId),
       sql.get<{ current_days: number; best_days: number }>(
         "SELECT current_days, best_days FROM mining_streaks WHERE user_id = ?", userId),
       sql.all<{ kind: string; multiplier_pct: number; expires_at: string }>(
@@ -86,7 +91,7 @@ export async function miningRoutes(app: FastifyInstance) {
     ]);
 
     return {
-      rozi,
+      roziMicro,
       session: {
         active: state.active,
         expiresAt: state.expiresAt ?? null,
@@ -95,7 +100,7 @@ export async function miningRoutes(app: FastifyInstance) {
       hashrate: state.hashrate,
       breakdown,
       sharesToday: state.sharesToday,
-      estimatedRozi: state.estimatedRozi,
+      estimatedRoziMicro: state.estimatedRoziMicro,
       // Pool model: the UI MUST hedge this — it moves as other people mine, and
       // that is the difficulty adjustment working, not a bug.
       // Pi model: it is NOT an estimate. It is what the user has earned, it only
@@ -128,11 +133,26 @@ export async function miningRoutes(app: FastifyInstance) {
 
   // ---- ROZI history --------------------------------------------------------
   app.get("/mining/history", guard(async (userId) => {
-    const rows = await sql.all<Record<string, unknown>>(
+    const rows = await sql.all<{
+      id: string; amount: string; direction: string; source_type: string;
+      note: string | null; created_at: string;
+    }>(
       "SELECT id, amount, direction, source_type, note, created_at FROM rozi_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 100",
       userId,
     );
-    return { entries: rows.map((r) => ({ ...r, amount: Number(r.amount) })) };
+    // `amount` is dropped rather than passed through: it is a BIGINT that arrives
+    // as a string, and leaving it beside amountMicro invites a client to read the
+    // wrong one.
+    return {
+      entries: rows.map((r) => ({
+        id: r.id,
+        amountMicro: Number(r.amount),
+        direction: r.direction,
+        source_type: r.source_type,
+        note: r.note,
+        created_at: r.created_at,
+      })),
+    };
   }));
 
   // ---- Rigs (a ROZI sink) --------------------------------------------------
@@ -145,7 +165,7 @@ export async function miningRoutes(app: FastifyInstance) {
         .map((r) => [r.rig_id, r.level]),
     );
     return {
-      rozi: await roziBalanceOf(userId),
+      roziMicro: await roziBalanceMicroOf(userId),
       rigs: rigs.map((r) => {
         const level = owned.get(r.id) ?? 0;
         const def = defOf(r);
@@ -154,7 +174,10 @@ export async function miningRoutes(app: FastifyInstance) {
           id: r.id, name: r.name, icon: r.icon, level, maxLevel: r.max_level,
           power: rigPower(def, level),
           nextPower: maxed ? null : rigPower(def, level + 1),
-          nextCost: maxed ? null : rigUpgradeCost(def, level),
+          // The catalogue prices rigs in WHOLE ROZI (an admin types "50", not
+          // "50000000"), so the cost is converted here, at the API edge, to the
+          // same micro unit as the balance it will be compared against.
+          nextCostMicro: maxed ? null : toMicro(rigUpgradeCost(def, level)),
         };
       }),
     };
@@ -179,14 +202,16 @@ export async function miningRoutes(app: FastifyInstance) {
       const level = cur?.level ?? 0;
       if (level >= rig.max_level) throw { statusCode: 400, message: "This rig is already at max level." };
 
-      const cost = rigUpgradeCost(defOf(rig), level);
-      const bal = await roziBalanceOf(userId, t);
-      if (bal < cost) {
-        throw { statusCode: 400, message: `Not enough ROZI. You need ${cost}, you have ${bal}.` };
+      // Catalogue price is whole ROZI; the ledger is micro. Convert once, here,
+      // and compare like with like.
+      const costMicro = toMicro(rigUpgradeCost(defOf(rig), level));
+      const balMicro = await roziBalanceMicroOf(userId, t);
+      if (balMicro < costMicro) {
+        throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
       }
 
       await postRozi({
-        userId, rozi: cost, direction: "debit", sourceType: "rig_purchase",
+        userId, micro: costMicro, direction: "debit", sourceType: "rig_purchase",
         sourceRefId: rigId, note: `${rig.name} level ${level + 1}`,
       }, t);
       await t.run(
@@ -194,7 +219,10 @@ export async function miningRoutes(app: FastifyInstance) {
          ON CONFLICT (user_id, rig_id) DO UPDATE SET level = EXCLUDED.level, updated_at = EXCLUDED.updated_at`,
         userId, rigId, level + 1, now(),
       );
-      return { ok: true, level: level + 1, spent: cost, rozi: bal - cost };
+      return {
+        ok: true, level: level + 1,
+        spentMicro: costMicro, roziMicro: balMicro - costMicro,
+      };
     });
   }));
 
@@ -374,14 +402,20 @@ export async function miningRoutes(app: FastifyInstance) {
   // exchange, which under Pakistan's PVARA regime is the most prosecutable thing
   // in this product. See MINING_SPEC.md § 7. Do not add a `price` field here.
   app.post("/mining/transfer", guard(async (userId, req) => {
+    // ROZI is divisible now, so a user can send 0.5. The wire carries whole ROZI
+    // as a decimal (what the user typed); it becomes micro before it touches the
+    // ledger, and .int() would reject the fractions the whole migration was for.
     const body = z.object({
       to: z.string().min(1),          // referral code or email
-      amount: z.number().int().positive(),
+      amount: z.number().positive(),  // in whole ROZI, may be fractional
     }).parse(req.body);
+    const amountMicro = toMicro(body.amount);
+    if (amountMicro <= 0) throw { statusCode: 400, message: "That amount is too small to send." };
 
     const s = await loadMiningSettings();
     if (!s.transfersEnabled) throw { statusCode: 400, message: "Sending ROZI is not switched on yet." };
-    if (body.amount > s.transferDailyCap) {
+    const dailyCapMicro = toMicro(s.transferDailyCap);
+    if (amountMicro > dailyCapMicro) {
       throw { statusCode: 400, message: `You can send at most ${s.transferDailyCap} ROZI per day.` };
     }
 
@@ -400,27 +434,31 @@ export async function miningRoutes(app: FastifyInstance) {
     if (target.id === userId) throw { statusCode: 400, message: "You cannot send ROZI to yourself." };
     if (target.status !== "active") throw { statusCode: 400, message: "That account cannot receive ROZI." };
 
+    // rozi_transfers.amount is micro too (the boot migration rescaled it), so this
+    // sum and the cap it is checked against are in the same unit.
     const sentToday = await sql.get<{ t: string }>(
       "SELECT COALESCE(SUM(amount), 0) AS t FROM rozi_transfers WHERE from_user_id = ? AND created_at > ?",
       userId, new Date(Date.now() - 86_400_000).toISOString(),
     );
-    if (Number(sentToday?.t ?? 0) + body.amount > s.transferDailyCap) {
+    if (Number(sentToday?.t ?? 0) + amountMicro > dailyCapMicro) {
       throw { statusCode: 429, message: `That is over your ${s.transferDailyCap} ROZI daily sending limit.` };
     }
 
     const result = await sql.tx(async (t) => {
       await lockUser(t, userId);
 
-      const bal = await roziBalanceOf(userId, t);
-      if (bal < body.amount) throw { statusCode: 400, message: "You do not have that much ROZI." };
+      const balMicro = await roziBalanceMicroOf(userId, t);
+      if (balMicro < amountMicro) {
+        throw { statusCode: 400, message: "You do not have that much ROZI." };
+      }
 
-      const fee = Math.floor((body.amount * s.transferFeePct) / 100);
-      const received = body.amount - fee;
+      const feeMicro = Math.floor((amountMicro * s.transferFeePct) / 100);
+      const receivedMicro = amountMicro - feeMicro;
       const id = newId();
 
-      await postRozi({ userId, rozi: body.amount, direction: "debit",
+      await postRozi({ userId, micro: amountMicro, direction: "debit",
         sourceType: "transfer_out", sourceRefId: id, note: `Sent to ${body.to}` }, t);
-      await postRozi({ userId: target.id, rozi: received, direction: "credit",
+      await postRozi({ userId: target.id, micro: receivedMicro, direction: "credit",
         sourceType: "transfer_in", sourceRefId: id, note: "Received ROZI" }, t);
       // The fee is BURNED, not collected — it is a sink, not revenue. There is no
       // credit row for it anywhere, which is exactly what makes it a burn.
@@ -428,9 +466,11 @@ export async function miningRoutes(app: FastifyInstance) {
       await t.run(
         `INSERT INTO rozi_transfers (id, from_user_id, to_user_id, amount, fee_burned, received, created_at)
          VALUES (?,?,?,?,?,?,?)`,
-        id, userId, target.id, body.amount, fee, received, now(),
+        id, userId, target.id, amountMicro, feeMicro, receivedMicro, now(),
       );
-      return { id, fee, received, rozi: bal - body.amount };
+      return {
+        id, feeMicro, receivedMicro, roziMicro: balMicro - amountMicro,
+      };
     });
 
     // A farm funnelling many accounts' ROZI into one wallet is the cash-out
@@ -461,15 +501,21 @@ export async function miningRoutes(app: FastifyInstance) {
     }>("SELECT id, pot_points, closes_at, total_burned FROM conversion_windows WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1");
 
     if (!s.conversionEnabled || !w) {
-      return { open: false, enabled: Boolean(s.conversionEnabled), rozi: await roziBalanceOf(userId) };
+      return {
+        open: false, enabled: Boolean(s.conversionEnabled),
+        roziMicro: await roziBalanceMicroOf(userId),
+      };
     }
 
+    // Burns are stored in micro. conversionPayout takes a RATIO of burns, so the
+    // unit cancels — it returns POINTS (a whole integer) either way. That is why
+    // it needs no micro variant: it never returns ROZI.
     const mine = await sql.get<{ t: string }>(
       "SELECT COALESCE(SUM(rozi), 0) AS t FROM conversion_burns WHERE window_id = ? AND user_id = ?",
       w.id, userId,
     );
-    const myBurn = Number(mine?.t ?? 0);
-    const totalBurn = Number(w.total_burned);
+    const myBurnMicro = Number(mine?.t ?? 0);
+    const totalBurnMicro = Number(w.total_burned);
 
     return {
       open: true,
@@ -477,17 +523,21 @@ export async function miningRoutes(app: FastifyInstance) {
       windowId: w.id,
       potPoints: w.pot_points,
       closesAt: w.closes_at,
-      totalBurned: totalBurn,
-      myBurn,
+      totalBurnedMicro: totalBurnMicro,
+      myBurnMicro,
       // What they'd get if the window closed right now. It WILL change as others
       // convert, and the UI says so in plain English.
-      myPointsIfClosedNow: conversionPayout(myBurn, totalBurn, w.pot_points),
-      rozi: await roziBalanceOf(userId),
+      myPointsIfClosedNow: conversionPayout(myBurnMicro, totalBurnMicro, w.pot_points),
+      roziMicro: await roziBalanceMicroOf(userId),
     };
   }));
 
   app.post("/mining/conversion/burn", guard(async (userId, req) => {
-    const body = z.object({ rozi: z.number().int().positive() }).parse(req.body);
+    // Whole ROZI on the wire, possibly fractional; micro in the ledger.
+    const body = z.object({ rozi: z.number().positive() }).parse(req.body);
+    const burnMicro = toMicro(body.rozi);
+    if (burnMicro <= 0) throw { statusCode: 400, message: "That amount is too small to convert." };
+
     const s = await loadMiningSettings();
     if (!s.conversionEnabled) {
       throw { statusCode: 400, message: "Converting ROZI is not open yet." };
@@ -507,22 +557,26 @@ export async function miningRoutes(app: FastifyInstance) {
         throw { statusCode: 400, message: "This conversion window has closed." };
       }
 
-      const bal = await roziBalanceOf(userId, t);
-      if (bal < body.rozi) throw { statusCode: 400, message: "You do not have that much ROZI." };
+      const balMicro = await roziBalanceMicroOf(userId, t);
+      if (balMicro < burnMicro) {
+        throw { statusCode: 400, message: "You do not have that much ROZI." };
+      }
 
       await postRozi({
-        userId, rozi: body.rozi, direction: "debit", sourceType: "conversion_burn",
+        userId, micro: burnMicro, direction: "debit", sourceType: "conversion_burn",
         sourceRefId: w.id, note: "Converted to points",
       }, t);
       await t.run(
         "INSERT INTO conversion_burns (id, window_id, user_id, rozi, created_at) VALUES (?,?,?,?,?)",
-        newId(), w.id, userId, body.rozi, now(),
+        newId(), w.id, userId, burnMicro, now(),
       );
       await t.run(
         "UPDATE conversion_windows SET total_burned = total_burned + ? WHERE id = ?",
-        body.rozi, w.id,
+        burnMicro, w.id,
       );
-      return { ok: true, burned: body.rozi, rozi: bal - body.rozi };
+      return {
+        ok: true, burnedMicro: burnMicro, roziMicro: balMicro - burnMicro,
+      };
     });
   }));
 }
@@ -533,8 +587,11 @@ export async function miningRoutes(app: FastifyInstance) {
 // THE INVARIANT: the Points minted here can never exceed `pot_points`. It is
 // asserted below, inside the transaction, and if it ever trips we roll back
 // rather than mint cash-redeemable Points that no revenue backs.
+// `rozi` on conversion_burns is MICRO. conversionPayout takes a ratio of burns,
+// so the unit cancels out and it still returns whole POINTS — the pot is Points
+// and cannot be exceeded regardless of what unit the burns are counted in.
 export async function settleConversionWindow(windowId: string): Promise<{
-  windowId: string; potPoints: number; totalBurned: number; pointsPaid: number; users: number;
+  windowId: string; potPoints: number; totalBurnedMicro: number; pointsPaid: number; users: number;
 }> {
   return sql.tx(async (t) => {
     const w = await t.get<{ id: string; pot_points: number; status: string; total_burned: string }>(
@@ -554,11 +611,11 @@ export async function settleConversionWindow(windowId: string): Promise<{
       "SELECT id, user_id, rozi FROM conversion_burns WHERE window_id = ? ORDER BY created_at",
       windowId,
     );
-    const totalBurn = burns.reduce((a, b) => a + Number(b.rozi), 0);
+    const totalBurnMicro = burns.reduce((a, b) => a + Number(b.rozi), 0);
 
     let paid = 0;
     for (const b of burns) {
-      const points = conversionPayout(Number(b.rozi), totalBurn, w.pot_points);
+      const points = conversionPayout(Number(b.rozi), totalBurnMicro, w.pot_points);
       if (points <= 0) continue;
       await postLedger({
         userId: b.user_id, points, direction: "credit",
@@ -584,7 +641,7 @@ export async function settleConversionWindow(windowId: string): Promise<{
       paid, now(), windowId,
     );
     return {
-      windowId, potPoints: w.pot_points, totalBurned: totalBurn,
+      windowId, potPoints: w.pot_points, totalBurnedMicro: totalBurnMicro,
       pointsPaid: paid,
       // Distinct PEOPLE, not burn rows — one user may have burned several times.
       users: new Set(burns.map((b) => b.user_id)).size,

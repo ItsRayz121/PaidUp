@@ -489,9 +489,15 @@ const MIGRATIONS = `
 // ---------------------------------------------------------------------------
 const MINING_SCHEMA = `
   -- Append-only, exactly like ledger_entries. Signed amounts, never updated.
-  -- BIGINT: total supply is 1e9 ROZI, which overflows nothing, but SUM() over a
-  -- busy account would crowd INTEGER. Amounts are WHOLE ROZI (settlement floors;
-  -- the rounding dust simply stays unemitted, which keeps us under the cap).
+  --
+  -- AMOUNTS ARE MICRO-ROZI (millionths). 1 ROZI = 1_000_000 here. See ROZI_SCALE
+  -- in mining/core.ts for why: with a base rate of 10/day, a whole-ROZI ledger
+  -- floored an 8-hour session's honest 0.104 ROZI down to zero, and the app would
+  -- have paid people nothing for real work. Settlement still floors — just six
+  -- decimal places lower, so the unemitted dust is a millionth of a token rather
+  -- than someone's whole day, and we stay strictly under the supply cap.
+  --
+  -- BIGINT because the cap in micro is 6.5e14, which is far past INTEGER.
   CREATE TABLE IF NOT EXISTS rozi_ledger (
     id            TEXT PRIMARY KEY,
     user_id       TEXT NOT NULL REFERENCES users(id),
@@ -690,19 +696,69 @@ const MINING_SCHEMA = `
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
 // owns this list at runtime, so a re-deploy must never stomp their edits.
+// Costs are in WHOLE ROZI (the ledger is in micro; the conversion happens at the
+// moment of the debit). Rescaled 10x down when piBaseRate dropped 100 -> 10, so
+// the tree paces exactly as designed: the first rig is ~5 days of baseline
+// mining, not 50. If the rate is retuned again, these have to move with it or
+// the whole sink silently becomes unreachable.
 const SEED_RIGS: [string, string, string, number, number, number][] = [
   // id, name, icon, base_cost, base_power, sort
-  ["old_phone", "Old Phone", "phone", 500, 5, 1],
-  ["laptop", "Laptop", "laptop", 3_000, 25, 2],
-  ["rig", "Mining Rig", "chip", 20_000, 150, 3],
-  ["server", "Server Rack", "server", 120_000, 800, 4],
-  ["datacentre", "Data Centre", "building", 750_000, 5_000, 5],
+  ["old_phone", "Old Phone", "phone", 50, 5, 1],
+  ["laptop", "Laptop", "laptop", 300, 25, 2],
+  ["rig", "Mining Rig", "chip", 2_000, 150, 3],
+  ["server", "Server Rack", "server", 12_000, 800, 4],
+  ["datacentre", "Data Centre", "building", 75_000, 5_000, 5],
 ];
+
+// ONE-TIME: rescale every ROZI amount from whole ROZI to micro-ROZI (x1e6).
+//
+// The ledger used to hold whole ROZI. It now holds millionths, so every historical
+// row means something a million times too small until it is scaled. Rig costs are
+// NOT touched — those stay in whole ROZI and are converted at the debit.
+//
+// THIS MUST NEVER RUN TWICE. A second pass would multiply every balance by 1e12,
+// so it is gated on a marker row written inside the SAME transaction as the
+// update: either both land or neither does, and a crash halfway through rolls the
+// whole thing back rather than leaving half the ledger in the wrong unit.
+async function migrateRoziToMicro(): Promise<void> {
+  const done = await sql.get<{ value: string }>(
+    "SELECT value FROM app_settings WHERE key = 'rozi_micro_migrated'");
+  if (done) return;
+
+  await sql.tx(async (t) => {
+    // Re-check inside the transaction: two API instances booting at once must not
+    // both pass the check above and both scale the ledger.
+    await t.run("SELECT pg_advisory_xact_lock(hashtext('rozi-micro-migration'))");
+    const already = await t.get<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'rozi_micro_migrated'");
+    if (already) return;
+
+    const M = 1_000_000;
+    await t.run(`UPDATE rozi_ledger SET amount = amount * ${M}`);
+    await t.run(
+      `UPDATE mining_epochs SET emission = emission * ${M},
+                                emitted  = emitted  * ${M},
+                                withheld = withheld * ${M}`);
+    await t.run(
+      `UPDATE rozi_transfers SET amount     = amount     * ${M},
+                                 fee_burned = fee_burned * ${M},
+                                 received   = received   * ${M}`);
+    await t.run(`UPDATE conversion_burns SET rozi = rozi * ${M}`);
+    await t.run(`UPDATE conversion_windows SET total_burned = total_burned * ${M}`);
+
+    await t.run(
+      "INSERT INTO app_settings (key, value, updated_at) VALUES ('rozi_micro_migrated','1',?)",
+      now(),
+    );
+  });
+  console.log("MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.");
+}
 
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
   await driver.exec(MINING_SCHEMA);
+  await migrateRoziToMicro();
   for (const [id, name, icon, baseCost, basePower, sort] of SEED_RIGS) {
     await sql.run(
       `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, created_at)
@@ -844,10 +900,13 @@ export type RoziSource =
   | "mining" | "rig_purchase" | "transfer_in" | "transfer_out"
   | "transfer_fee" | "conversion_burn" | "admin_adjustment" | "bonus";
 
+// Amounts are MICRO-ROZI (millionths). The parameter is named `micro`, not
+// `rozi`, on purpose: it is the one thing that makes a unit mistake a compile
+// error instead of a silent factor-of-a-million in someone's balance.
 export async function postRozi(
   params: {
     userId: string;
-    rozi: number; // always a positive magnitude
+    micro: number; // always a positive magnitude, in MICRO-ROZI
     direction: "credit" | "debit";
     sourceType: RoziSource;
     sourceRefId?: string;
@@ -855,7 +914,7 @@ export async function postRozi(
   },
   t: Pick<TxApi, "run"> = sql,
 ): Promise<string> {
-  const magnitude = Math.abs(Math.trunc(params.rozi));
+  const magnitude = Math.abs(Math.trunc(params.micro));
   const amount = params.direction === "credit" ? magnitude : -magnitude;
   const id = newId();
   await t.run(
@@ -867,10 +926,16 @@ export async function postRozi(
   return id;
 }
 
+// Returns MICRO-ROZI. Renamed from roziBalanceOf when the ledger moved to
+// millionths, so that every caller had to be revisited by the compiler rather
+// than silently keeping a number that now means something a million times smaller.
+//
 // BIGINT sums come back from node-postgres as a STRING (it will not silently
 // narrow an int8), so Number() is doing real work here — without it every ROZI
 // balance would be a string and every comparison against it would be nonsense.
-export async function roziBalanceOf(
+// The largest value possible here is the supply cap in micro (650M x 1e6 =
+// 6.5e14), comfortably inside 2^53, so Number is exact.
+export async function roziBalanceMicroOf(
   userId: string,
   t: Pick<TxApi, "get"> = sql,
 ): Promise<number> {

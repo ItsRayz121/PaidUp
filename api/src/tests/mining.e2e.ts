@@ -8,12 +8,12 @@
 //
 //   npm run test:mining:e2e
 import {
-  sql, now, newId, initDb, postRozi, postLedger, roziBalanceOf, balanceOf,
-  usingRealPostgres,
+  sql, now, newId, initDb, postRozi, postLedger, roziBalanceMicroOf, balanceOf,
+  usingRealPostgres, type TxApi,
 } from "../db.ts";
 import { setMiningSetting, loadMiningSettings } from "../mining/settings.ts";
 import { settleEpoch, hashrateOf, grantBoost, accrueAllSessions } from "../mining/engine.ts";
-import { epochOf, rigUpgradeCost } from "../mining/core.ts";
+import { epochOf, rigUpgradeCost, toMicro, fromMicro } from "../mining/core.ts";
 import { settleConversionWindow } from "../routes/mining.ts";
 
 let pass = 0, fail = 0;
@@ -21,6 +21,16 @@ function check(name: string, ok: boolean, extra = "") {
   if (ok) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name} ${extra}`); }
 }
+
+// The ledger is in MICRO-ROZI. These convert at the edge so the assertions below
+// stay readable as economics ("she earned 1000") instead of arithmetic ("she
+// earned 1000000000"). Anything asserting a sub-unit calls the micro form.
+const roziOf = async (userId: string, t?: Pick<TxApi, "get">) =>
+  fromMicro(await roziBalanceMicroOf(userId, t));
+const creditRozi = (userId: string, rozi: number, note: string) => postRozi({
+  userId, micro: toMicro(rozi), direction: "credit",
+  sourceType: "admin_adjustment", note,
+});
 
 await initDb();
 
@@ -69,29 +79,29 @@ await addShares(bob, 1_000_000);
 const s = await loadMiningSettings();
 const r1 = await settleEpoch(EPOCH);
 
-const aliceRozi = await roziBalanceOf(alice);
-const bobRozi = await roziBalanceOf(bob);
+const aliceRozi = await roziOf(alice);
+const bobRozi = await roziOf(bob);
 
-check("emission for the epoch is the configured base", r1.emission === s.baseEmission, `got ${r1.emission}`);
+check("emission for the epoch is the configured base", fromMicro(r1.emissionMicro) === s.baseEmission, `got ${fromMicro(r1.emissionMicro)}`);
 check("both miners were paid", aliceRozi > 0 && bobRozi > 0, `alice=${aliceRozi} bob=${bobRozi}`);
 check("payout is pro-rata to shares (alice mined 3x bob)",
   Math.abs(aliceRozi / bobRozi - 3) < 0.001, `ratio=${aliceRozi / bobRozi}`);
 check("total emitted never exceeds the epoch emission",
-  aliceRozi + bobRozi <= r1.emission, `paid=${aliceRozi + bobRozi} emission=${r1.emission}`);
-check("epoch row records what was emitted", r1.emitted === aliceRozi + bobRozi);
+  aliceRozi + bobRozi <= fromMicro(r1.emissionMicro), `paid=${aliceRozi + bobRozi} emission=${fromMicro(r1.emissionMicro)}`);
+check("epoch row records what was emitted", fromMicro(r1.emitted) === aliceRozi + bobRozi);
 
 console.log("\n-- settlement is idempotent (a retry must not double-pay) --");
 
 const r2 = await settleEpoch(EPOCH);
 check("a second settlement of the same epoch is a no-op", r2.skipped === "already settled");
-check("balances did not move on the re-run", (await roziBalanceOf(alice)) === aliceRozi);
+check("balances did not move on the re-run", (await roziOf(alice)) === aliceRozi);
 
 console.log("\n-- the ROZI ledger is append-only, balance = SUM --");
 
 const rows = await sql.all<{ amount: string }>(
   "SELECT amount FROM rozi_ledger WHERE user_id = ?", alice);
 check("balance is exactly the sum of the ledger rows",
-  rows.reduce((a, r) => a + Number(r.amount), 0) === aliceRozi);
+  fromMicro(rows.reduce((a, r) => a + Number(r.amount), 0)) === aliceRozi);
 
 console.log("\n-- a fraud flag WITHHOLDS, and does not inflate honest miners --");
 
@@ -103,14 +113,14 @@ await sql.run(
   newId(), mallory, "dev-mallory", "mining_device_share", "high", "test", now(),
 );
 
-const aliceBefore = await roziBalanceOf(alice);
+const aliceBefore = await roziOf(alice);
 const r3 = await settleEpoch(E2);
-const aliceGain = (await roziBalanceOf(alice)) - aliceBefore;
+const aliceGain = (await roziOf(alice)) - aliceBefore;
 
-check("the flagged miner is paid nothing", (await roziBalanceOf(mallory)) === 0);
-check("their share is recorded as withheld, not voided", r3.withheld > 0, `withheld=${r3.withheld}`);
+check("the flagged miner is paid nothing", (await roziOf(mallory)) === 0);
+check("their share is recorded as withheld, not voided", fromMicro(r3.withheld) > 0, `withheld=${fromMicro(r3.withheld)}`);
 check("the honest miner still gets only HER half — fraud does not enrich others",
-  Math.abs(aliceGain - r3.emission / 2) <= 1, `gain=${aliceGain} half=${r3.emission / 2}`);
+  Math.abs(aliceGain - fromMicro(r3.emissionMicro) / 2) <= 1, `gain=${aliceGain} half=${fromMicro(r3.emissionMicro) / 2}`);
 // This is the subtle one. If the flagged user were dropped from the DENOMINATOR
 // instead of withheld, Alice would have received the whole epoch — meaning our
 // honest miners' payouts would swing with how much fraud we happened to catch.
@@ -150,7 +160,7 @@ check("an unverified account is refused", g.ok === false);
 console.log("\n-- rigs burn ROZI and raise hashrate --");
 
 const miner = await mkUser("miner");
-await postRozi({ userId: miner, rozi: 10_000, direction: "credit", sourceType: "admin_adjustment", note: "test float" });
+await creditRozi(miner, 10_000, "test float");
 
 const before = await hashrateOf(miner);
 const rig = await sql.get<{ id: string; base_cost: number; cost_growth: number; base_power: number; power_growth: number; max_level: number }>(
@@ -160,11 +170,11 @@ const cost = rigUpgradeCost({
   basePower: rig!.base_power, powerGrowth: rig!.power_growth, maxLevel: rig!.max_level,
 }, 0);
 
-await postRozi({ userId: miner, rozi: cost, direction: "debit", sourceType: "rig_purchase", sourceRefId: "old_phone", note: "L1" });
+await postRozi({ userId: miner, micro: toMicro(cost), direction: "debit", sourceType: "rig_purchase", sourceRefId: "old_phone", note: "L1" });
 await sql.run("INSERT INTO user_rigs (user_id, rig_id, level, updated_at) VALUES (?,?,1,?)", miner, "old_phone", now());
 
 const after = await hashrateOf(miner);
-check("buying a rig burns ROZI", (await roziBalanceOf(miner)) === 10_000 - cost, `bal=${await roziBalanceOf(miner)}`);
+check("buying a rig burns ROZI", (await roziOf(miner)) === 10_000 - cost, `bal=${await roziOf(miner)}`);
 check("buying a rig raises hashrate", after.hashrate > before.hashrate, `${before.hashrate} -> ${after.hashrate}`);
 
 console.log("\n-- boosts stack additively and expire --");
@@ -246,8 +256,8 @@ const burners: [string, number][] = [
 ];
 let totalBurn = 0;
 for (const [uid, amt] of burners) {
-  await postRozi({ userId: uid, rozi: amt, direction: "credit", sourceType: "admin_adjustment", note: "test" });
-  await postRozi({ userId: uid, rozi: amt, direction: "debit", sourceType: "conversion_burn", sourceRefId: winId, note: "burn" });
+  await creditRozi(uid, amt, "test");
+  await postRozi({ userId: uid, micro: toMicro(amt), direction: "debit", sourceType: "conversion_burn", sourceRefId: winId, note: "burn" });
   await sql.run(
     "INSERT INTO conversion_burns (id, window_id, user_id, rozi, created_at) VALUES (?,?,?,?,?)",
     newId(), winId, uid, amt, now(),
@@ -267,7 +277,7 @@ check("the window records what it actually paid", conv.pointsPaid === totalPaid)
 check("the big burner gets the biggest share",
   pointsAfter[1] > pointsAfter[0] && pointsAfter[0] > pointsAfter[2]);
 check("burned ROZI is gone from the burners' balances",
-  (await roziBalanceOf(burners[0][0])) === 0);
+  (await roziOf(burners[0][0])) === 0);
 check("a settled window cannot be settled twice",
   await settleConversionWindow(winId).then(() => false).catch(() => true));
 
@@ -335,10 +345,10 @@ async function spendRozi(userId: string, amount: number): Promise<boolean> {
   try {
     await sql.tx(async (t) => {
       await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
-      const bal = await roziBalanceOf(userId, t);
+      const bal = await roziOf(userId, t);
       if (bal < amount) throw new Error("insufficient");
       await postRozi({
-        userId, rozi: amount, direction: "debit",
+        userId, micro: toMicro(amount), direction: "debit",
         sourceType: "conversion_burn", note: "race test",
       }, t);
     });
@@ -349,7 +359,7 @@ async function spendRozi(userId: string, amount: number): Promise<boolean> {
 }
 
 const racer = await mkUser("racer");
-await postRozi({ userId: racer, rozi: 1_000, direction: "credit", sourceType: "admin_adjustment", note: "float" });
+await creditRozi(racer, 1_000, "float");
 
 // Fire five simultaneous attempts to spend the entire balance.
 const results = await Promise.all([1, 2, 3, 4, 5].map(() => spendRozi(racer, 1_000)));
@@ -357,8 +367,8 @@ const succeeded = results.filter(Boolean).length;
 
 if (usingRealPostgres) {
   check("exactly ONE of five concurrent full-balance spends succeeds", succeeded === 1, `${succeeded} succeeded`);
-  check("the balance lands at zero, never negative", (await roziBalanceOf(racer)) === 0,
-    `bal=${await roziBalanceOf(racer)}`);
+  check("the balance lands at zero, never negative", (await roziOf(racer)) === 0,
+    `bal=${await roziOf(racer)}`);
 } else {
   // PGlite is a SINGLE-CONNECTION embedded Postgres. Every sql.tx() shares one
   // session, so (a) transactions do not isolate from each other and (b) an
@@ -372,7 +382,7 @@ if (usingRealPostgres) {
   // DATABASE_URL set against a real Postgres to actually exercise it.
   console.log(`  skip concurrent-spend race — PGlite is single-session, so it cannot ` +
     `isolate transactions (${succeeded}/5 spends went through, balance ` +
-    `${await roziBalanceOf(racer)}). Set DATABASE_URL to test this for real.`);
+    `${await roziOf(racer)}). Set DATABASE_URL to test this for real.`);
   // Structural tripwire, so the protection cannot be silently deleted under a
   // driver that cannot exercise it. Every user-scoped transaction that spends
   // something — ROZI, Points, or a single-use ad nonce — must take the advisory
@@ -440,9 +450,9 @@ await addShares(dave, FULL_DAY * 2, PI_EPOCH);
 await addShares(erin, Math.floor(FULL_DAY / 3), PI_EPOCH);
 
 const piR = await settleEpoch(PI_EPOCH);
-const carolRozi = await roziBalanceOf(carol);
-const daveRozi = await roziBalanceOf(dave);
-const erinRozi = await roziBalanceOf(erin);
+const carolRozi = await roziOf(carol);
+const daveRozi = await roziOf(dave);
+const erinRozi = await roziOf(erin);
 
 // The population is small in the test DB, so no milestone has been crossed and
 // the rate is the full base rate.
@@ -459,8 +469,8 @@ check("PI: a third of a day earns a third of the rate",
 check("PI: NO DILUTION — Carol got the full rate despite two other miners",
   carolRozi === 1000, `got ${carolRozi}`);
 check("PI: the epoch's emission is the SUM of what miners earned, not a fixed pot",
-  piR.emission === carolRozi + daveRozi + erinRozi,
-  `emission=${piR.emission} sum=${carolRozi + daveRozi + erinRozi}`);
+  fromMicro(piR.emissionMicro) === carolRozi + daveRozi + erinRozi,
+  `emission=${fromMicro(piR.emissionMicro)} sum=${carolRozi + daveRozi + erinRozi}`);
 
 console.log("\n-- PI model: halving is a clean 50% cut to the person --");
 
@@ -474,7 +484,7 @@ const frank = await mkUser("frank");
 await addShares(frank, FULL_DAY, PI_EPOCH_2);
 await setMiningSetting("piBaseRate", 500); // one halving of 1000
 await settleEpoch(PI_EPOCH_2);
-const frankRozi = await roziBalanceOf(frank);
+const frankRozi = await roziOf(frank);
 
 check("PI: after one halving the same mining earns exactly half",
   frankRozi === 500 && frankRozi === carolRozi / 2, `frank=${frankRozi} carol=${carolRozi}`);
@@ -484,10 +494,14 @@ console.log("\n-- PI model: the supply cap still holds when the pool runs dry --
 // The endgame, and the one thing the pi model can do that the pool model cannot:
 // ask for more than the cap has left. Squeeze the cap down to just above what has
 // already been emitted, so the next epoch's demand cannot possibly be met.
+// The ledger sum is in MICRO; supplyCap is a WHOLE-ROZI setting. Converting here
+// is load-bearing: feeding the raw micro number into setMiningSetting("supplyCap")
+// sets a cap a million times too high, it never binds, and this whole test
+// silently passes everyone in full while claiming to prove the cap works.
 const emittedSoFar = await sql.get<{ t: string }>(
   `SELECT COALESCE(SUM(amount), 0) AS t FROM rozi_ledger
    WHERE source_type = 'mining' AND direction = 'credit'`);
-const already = Number(emittedSoFar?.t ?? 0);
+const alreadyRozi = fromMicro(Number(emittedSoFar?.t ?? 0));
 
 const PI_EPOCH_3 = epochOf() - 5;
 await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", PI_EPOCH_3);
@@ -498,23 +512,70 @@ const hank = await mkUser("hank");
 await addShares(gina, FULL_DAY, PI_EPOCH_3);   // wants 500
 await addShares(hank, FULL_DAY, PI_EPOCH_3);   // wants 500 — 1000 total
 
-// Only 400 of headroom for a 1000-ROZI demand.
-await setMiningSetting("supplyCap", already + 400);
+// Only 400 ROZI of headroom for a 1000-ROZI demand.
+await setMiningSetting("supplyCap", alreadyRozi + 400);
 const capR = await settleEpoch(PI_EPOCH_3);
-const ginaRozi = await roziBalanceOf(gina);
-const hankRozi = await roziBalanceOf(hank);
+const emittedRozi = fromMicro(capR.emitted);
+const ginaRozi = await roziOf(gina);
+const hankRozi = await roziOf(hank);
 
 check("PI: the supply cap is never breached, even though demand exceeded it",
-  already + capR.emitted <= already + 400, `emitted=${capR.emitted} room=400`);
+  emittedRozi <= 400, `emitted=${emittedRozi} room=400`);
 check("PI: everyone is scaled by the SAME factor — no one is paid in full while another gets zero",
   ginaRozi === hankRozi && ginaRozi > 0, `gina=${ginaRozi} hank=${hankRozi}`);
 check("PI: the scaled payouts add up to the room that was left, not more",
   ginaRozi + hankRozi <= 400, `paid=${ginaRozi + hankRozi}`);
 
-// Put the economy back the way we found it, so a re-run starts clean.
+// Put the economy back the way we found it, so a re-run starts clean. piBaseRate
+// resets to the real default (10), not the 1000 this block set.
 await setMiningSetting("supplyCap", 650_000_000);
-await setMiningSetting("piBaseRate", 100);
+await setMiningSetting("piBaseRate", 10);
 await setMiningSetting("emissionModel", "pi");
+
+console.log("\n-- THE LAUNCH CONFIG: rate 10/day, an 8h session, through real settlement --");
+
+// The regression that the whole micro-ROZI migration exists for, proved end to end
+// rather than in the pure maths: at the founder's actual launch numbers, a user who
+// mines ONE 8-hour session must be paid a real, non-zero, correctly-rounded amount.
+//
+// Under the old whole-ROZI ledger this paid 3 (floor of 3.33) at launch and — after
+// two halvings — ZERO. A user would have mined all day and been given nothing.
+const LAUNCH_EPOCH = epochOf() - 6;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", LAUNCH_EPOCH);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", LAUNCH_EPOCH);
+
+const launchS = await loadMiningSettings();
+// One 8-hour session's worth of baseline shares out of a 24h reference day.
+const EIGHT_HOURS = launchS.baseHashrate * launchS.sessionHours * 3600;
+
+const nadia = await mkUser("nadia");
+await addShares(nadia, EIGHT_HOURS, LAUNCH_EPOCH);
+await settleEpoch(LAUNCH_EPOCH);
+const nadiaRozi = await roziOf(nadia);
+
+check("LAUNCH: one 8h session at rate 10 pays a real amount, not zero",
+  nadiaRozi > 0, `got ${nadiaRozi}`);
+check("LAUNCH: and it is exactly a third of the daily rate (8h of 24h)",
+  Math.abs(nadiaRozi - 10 / 3) < 0.00001, `got ${nadiaRozi}, expected ~3.333333`);
+
+// The same session, at the rate AFTER all five halvings (0.3125/day). This is the
+// number that used to be zero, and it is the one that matters at scale.
+const HALVED_EPOCH = epochOf() - 7;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", HALVED_EPOCH);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", HALVED_EPOCH);
+
+const omar = await mkUser("omar");
+await addShares(omar, EIGHT_HOURS, HALVED_EPOCH);
+await setMiningSetting("piBaseRate", 0.3125); // 10 halved five times
+await settleEpoch(HALVED_EPOCH);
+const omarRozi = await roziOf(omar);
+
+check("LAUNCH: an 8h session at the FULLY-HALVED rate still pays, not zero",
+  omarRozi > 0, `got ${omarRozi}`);
+check("LAUNCH: the fully-halved 8h session pays ~0.104166 ROZI",
+  Math.abs(omarRozi - 0.3125 / 3) < 0.00001, `got ${omarRozi}`);
+
+await setMiningSetting("piBaseRate", 10);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

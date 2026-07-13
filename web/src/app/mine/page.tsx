@@ -12,6 +12,7 @@ import { useI18n } from "@/lib/i18n";
 import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
+import { formatRozi } from "@/lib/format";
 
 // Countdown to a session's expiry, in words. Ticks locally so we are not
 // polling the API once a second just to move a clock.
@@ -116,7 +117,7 @@ export default function MinePage() {
       <Card className="p-5 text-center">
         <p className="text-sm font-semibold text-muted">{t("mine.balance")}</p>
         <p className="num mt-1 text-4xl font-extrabold text-brand-ink">
-          {s.rozi.toLocaleString()} <span className="text-2xl text-brand">ROZI</span>
+          {formatRozi(s.roziMicro)} <span className="text-2xl text-brand">ROZI</span>
         </p>
 
         <div className="mt-4 rounded-xl bg-brand-tint/60 p-4">
@@ -134,7 +135,7 @@ export default function MinePage() {
           <p className="mt-1 text-sm text-muted">
             {s.estimateIsLive ? t("mine.today") : t("mine.earned")}:{" "}
             <strong className="num text-brand-ink">
-              {s.estimateIsLive ? "~" : ""}{s.estimatedRozi.toLocaleString()} ROZI
+              {s.estimateIsLive ? "~" : ""}{formatRozi(s.estimatedRoziMicro)} ROZI
             </strong>
           </p>
           <p className="mt-1 text-xs text-muted">

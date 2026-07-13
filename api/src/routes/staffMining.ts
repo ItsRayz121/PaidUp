@@ -11,12 +11,21 @@ import { sql, now, newId, postRozi, logAudit } from "../db.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
-  loadMiningSettings, setMiningSetting, isMiningKey, totalEmitted, MINING_DEFAULTS,
+  loadMiningSettings, setMiningSetting, isMiningKey, totalEmittedMicro, MINING_DEFAULTS,
 } from "../mining/settings.ts";
 import {
   settleEpoch, settleDueEpochs, minerPopulation, effectivePiRate,
 } from "../mining/engine.ts";
-import { emissionAt, epochOf, parseMilestones } from "../mining/core.ts";
+import {
+  emissionMicroAt, epochOf, parseMilestones, toMicro, fromMicro,
+} from "../mining/core.ts";
+
+// UNITS, and they differ from the earner API on purpose. The ledger is micro
+// everywhere, but this panel deals in aggregates (a 650M cap, a 14-day emission
+// history) where six decimal places are noise, and an Admin types "50 ROZI", not
+// "50000000". So the staff surface converts to WHOLE ROZI at its edge with
+// fromMicro() / toMicro(). The earner API (routes/mining.ts) does the opposite and
+// speaks micro, because there the decimals ARE the number.
 
 function staffGuard(
   allowed: Role[],
@@ -92,7 +101,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
 
     const [emitted, circulatingRow, sinkBurns, feeBurns, activeMiners, hashRow, epochs, lastWindow] =
       await Promise.all([
-        totalEmitted(),
+        totalEmittedMicro(),
         // Circulating float, straight from the ledger. This is the ONLY definition
         // that cannot drift: it is the sum of every ROZI row ever written, so it
         // stays right no matter what new source types get added later.
@@ -116,19 +125,24 @@ export async function staffMiningRoutes(app: FastifyInstance) {
           "SELECT pot_points, total_burned FROM conversion_windows WHERE status = 'settled' ORDER BY settled_at DESC LIMIT 1"),
       ]);
 
-    const emittedN = Number(emitted);
-    const burnedN = Number(sinkBurns?.t ?? 0) + Number(feeBurns?.t ?? 0);
-    const circulating = Number(circulatingRow?.t ?? 0);
+    // All four are MICRO here — they come straight off the ledger.
+    const emittedMicro = Number(emitted);
+    const burnedMicro = Number(sinkBurns?.t ?? 0) + Number(feeBurns?.t ?? 0);
+    const circulatingMicro = Number(circulatingRow?.t ?? 0);
 
     // POOL COVERAGE: what the entire circulating ROZI float would cost, in
     // Points, at the last window's clearing rate. This is the number that tells
     // you whether the economy is healthy — if it is drifting toward the size of
     // your actual margin, the next conversion window will be brutal and you
     // should be shrinking emission, not growing it.
+    //
+    // Computed in MICRO on both sides: total_burned is micro, so the rate is
+    // points-per-micro, and multiplying it by a micro float gives points. The unit
+    // cancels — converting to whole ROZI first would inflate this by 1e6.
     let poolCoverage: number | null = null;
     if (lastWindow && Number(lastWindow.total_burned) > 0) {
-      const lastRate = lastWindow.pot_points / Number(lastWindow.total_burned);
-      poolCoverage = Math.round(circulating * lastRate);
+      const pointsPerMicro = lastWindow.pot_points / Number(lastWindow.total_burned);
+      poolCoverage = Math.round(circulatingMicro * pointsPerMicro);
     }
 
     // Under the pi model there is no fixed daily emission to report — the daily
@@ -149,19 +163,25 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         effectiveRate: piRate,
         halvingsSoFar: milestones.filter((m) => population >= m).length,
         nextMilestone,
-        // The failure mode that quietly stops paying people: once the effective
-        // rate floors into single digits, a user who mined only part of a day
-        // rounds to ZERO. Surfaced here so it is caught in the panel, not in
-        // support tickets.
-        rateTooLow: piRate > 0 && piRate < 10,
+        // This used to warn at `piRate < 10`, because the ledger held WHOLE ROZI
+        // and a single-digit rate meant a partial day floored to zero — the app
+        // silently paying nothing for real work. The ledger now holds millionths
+        // (ROZI_SCALE), so that failure mode is gone, and a rate of 10 is the
+        // deliberate launch setting rather than an alarm.
+        //
+        // The alarm is kept, re-aimed at what is still genuinely broken: a rate so
+        // small that even a FULL day of baseline mining rounds away to nothing.
+        // Below a thousandth of a ROZI a day, the tap has effectively been turned
+        // off and somebody should know.
+        rateTooLow: piRate > 0 && piRate < 0.001,
       },
-      todayEmission: emissionAt(epoch, s),
+      todayEmission: fromMicro(emissionMicroAt(epoch, s)),
       supply: {
         cap: s.supplyCap,
-        emitted: emittedN,
-        burned: burnedN,
-        circulating,
-        remaining: Math.max(0, s.supplyCap - emittedN),
+        emitted: fromMicro(emittedMicro),
+        burned: fromMicro(burnedMicro),
+        circulating: fromMicro(circulatingMicro),
+        remaining: Math.max(0, s.supplyCap - fromMicro(emittedMicro)),
       },
       today: {
         miners: Number(hashRow?.n ?? 0),
@@ -169,12 +189,12 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         activeSessions: Number(activeMiners?.n ?? 0),
       },
       poolCoveragePoints: poolCoverage,
-      epochs: epochs.map((e) => ({
+      epochs: epochs.map((e: Record<string, unknown>) => ({
         ...e,
-        emission: Number(e.emission),
+        emission: fromMicro(Number(e.emission)),
         total_shares: Number(e.total_shares),
-        emitted: Number(e.emitted),
-        withheld: Number(e.withheld),
+        emitted: fromMicro(Number(e.emitted)),
+        withheld: fromMicro(Number(e.withheld)),
       })),
     };
   }));
@@ -374,7 +394,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     const result = await settleConversionWindow(id);
     await logAudit({
       actorUserId: userId, actorRole: role, action: "mining_conversion_settle",
-      detail: `window ${id}: ${result.pointsPaid} points to ${result.users} users for ${result.totalBurned} ROZI burned`,
+      detail: `window ${id}: ${result.pointsPaid} points to ${result.users} users for ${fromMicro(result.totalBurnedMicro)} ROZI burned`,
     });
     return { ok: true, ...result };
   }));
@@ -385,14 +405,19 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // unbounded mint here still dilutes every honest miner.
   app.post("/staff/mining/users/:id/adjust", staffGuard(["admin"], async ({ userId: actorId, role }, req) => {
     const targetId = (req.params as { id: string }).id;
+    // Whole ROZI, and no longer .int(): ROZI is divisible, so an Admin correcting
+    // a 0.104 mining payout has to be able to type 0.104.
     const b = z.object({
-      rozi: z.number().int(),
+      rozi: z.number(),
       note: z.string().min(3).max(200),
     }).parse(req.body);
 
     const s = await loadMiningSettings();
     const magnitude = Math.abs(b.rozi);
-    if (magnitude === 0) throw { statusCode: 400, message: "Amount cannot be zero." };
+    const magnitudeMicro = toMicro(magnitude);
+    // Checked in MICRO: a 0.0000001 adjustment is non-zero as a decimal but rounds
+    // to zero micro, and would post an empty ledger row.
+    if (magnitudeMicro === 0) throw { statusCode: 400, message: "Amount cannot be zero." };
     if (magnitude > s.adminAdjustMaxRozi) {
       throw {
         statusCode: 400,
@@ -404,7 +429,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     if (!target) throw { statusCode: 404, message: "No such user." };
 
     await postRozi({
-      userId: targetId, rozi: magnitude,
+      userId: targetId, micro: magnitudeMicro,
       direction: b.rozi > 0 ? "credit" : "debit",
       sourceType: "admin_adjustment", note: b.note,
     });

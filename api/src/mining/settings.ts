@@ -43,13 +43,13 @@ export function isMiningKey(k: string): k is Key {
   return Object.prototype.hasOwnProperty.call(MINING_DEFAULTS, k);
 }
 
-// Cumulative ROZI ever emitted by mining. The supply cap is checked against this
-// and nothing else, so it is derived from the ledger every time — never cached.
-// A stale cache here would silently let us mint past the hard cap, which is the
-// one number in the whole token that we promised is real.
+// Cumulative MICRO-ROZI ever emitted by mining. The supply cap is checked against
+// this and nothing else, so it is derived from the ledger every time — never
+// cached. A stale cache here would silently let us mint past the hard cap, which
+// is the one number in the whole token that we promised is real.
 //
 // Pass `t` to read it inside the settlement transaction.
-export async function totalEmitted(t: Pick<TxApi, "get"> = sql): Promise<number> {
+export async function totalEmittedMicro(t: Pick<TxApi, "get"> = sql): Promise<number> {
   const r = await t.get<{ total: string }>(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM rozi_ledger
      WHERE source_type = 'mining' AND direction = 'credit'`,

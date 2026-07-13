@@ -6,10 +6,11 @@
 import { sql, now, newId, postRozi, type TxApi } from "../db.ts";
 import { flagOnce } from "../fraud.ts";
 import {
-  epochOf, epochEndMs, splitByEpoch, cappedEmission, computeHashrate, payoutFor,
-  rigPower, parseMilestones, piBaseRateFor, piPayoutFor, capScaleFactor,
+  epochOf, epochEndMs, splitByEpoch, cappedEmissionMicro, computeHashrate,
+  payoutMicroFor, rigPower, parseMilestones, piBaseRateFor, piPayoutMicroFor,
+  capScaleFactor, toMicro,
 } from "./core.ts";
-import { loadMiningSettings, totalEmitted, type MiningSettings } from "./settings.ts";
+import { loadMiningSettings, totalEmittedMicro, type MiningSettings } from "./settings.ts";
 
 // ---- "pi" model helpers ----------------------------------------------------
 
@@ -273,7 +274,7 @@ export type SessionState = {
   expiresAt?: string;
   hashrate: number;
   sharesToday: number;
-  estimatedRozi: number;
+  estimatedRoziMicro: number;
   // False under the pi model, where estimatedRozi is what the user has actually
   // earned and cannot be moved by anyone else. True under the pool model, where
   // it is a live estimate that shrinks as more people mine.
@@ -478,16 +479,17 @@ export async function sessionState(userId: string): Promise<SessionState> {
   //
   // Under the pool model it remains a genuine estimate that moves with the crowd,
   // and `estimateIsLive` tells the UI to keep saying so.
-  let earnedToday: number;
+  let earnedTodayMicro: number;
   if (s.emissionModel === "pi") {
     const rate = effectivePiRate(s, await minerPopulation());
-    earnedToday = piPayoutFor(mine, rate, s.baseHashrate, s.piReferenceHours * 3600);
+    earnedTodayMicro = piPayoutMicroFor(mine, rate, s.baseHashrate, s.piReferenceHours * 3600);
   } else {
     const totalRow = await sql.get<{ total: string }>(
       "SELECT COALESCE(SUM(shares), 0) AS total FROM mining_shares WHERE epoch = ?", epoch,
     );
     const total = Number(totalRow?.total ?? 0);
-    earnedToday = payoutFor(mine, total, cappedEmission(epoch, await totalEmitted(), s));
+    earnedTodayMicro = payoutMicroFor(
+      mine, total, cappedEmissionMicro(epoch, await totalEmittedMicro(), s));
   }
 
   const owner = session?.device_id
@@ -501,7 +503,7 @@ export async function sessionState(userId: string): Promise<SessionState> {
     expiresAt: session?.expires_at,
     hashrate,
     sharesToday: mine,
-    estimatedRozi: earnedToday,
+    estimatedRoziMicro: earnedTodayMicro,
     // Only the pool model's number is a moving estimate. The pi model's is what
     // the user has actually earned, so the UI must NOT hedge it.
     estimateIsLive: s.emissionModel !== "pi",
@@ -511,8 +513,9 @@ export async function sessionState(userId: string): Promise<SessionState> {
 
 // ---- Epoch settlement -----------------------------------------------------
 
+// emissionMicro / emitted / withheld are all MICRO-ROZI.
 export type SettlementResult = {
-  epoch: number; emission: number; totalShares: number;
+  epoch: number; emissionMicro: number; totalShares: number;
   miners: number; emitted: number; withheld: number; skipped?: string;
 };
 
@@ -523,7 +526,7 @@ export type SettlementResult = {
 // the only place ROZI is ever minted.
 export async function settleEpoch(epoch: number): Promise<SettlementResult> {
   if (epoch >= epochOf()) {
-    return { epoch, emission: 0, totalShares: 0, miners: 0, emitted: 0, withheld: 0,
+    return { epoch, emissionMicro: 0, totalShares: 0, miners: 0, emitted: 0, withheld: 0,
              skipped: "epoch is still open" };
   }
 
@@ -539,22 +542,22 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
     const already = await t.get<{ epoch: number }>(
       "SELECT epoch FROM mining_epochs WHERE epoch = ?", epoch);
     if (already) {
-      return { epoch, emission: 0, totalShares: 0, miners: 0, emitted: 0, withheld: 0,
+      return { epoch, emissionMicro: 0, totalShares: 0, miners: 0, emitted: 0, withheld: 0,
                skipped: "already settled" };
     }
 
     const s = await loadMiningSettings();
-    const alreadyEmitted = await totalEmitted(t);
+    const alreadyEmittedMicro = await totalEmittedMicro(t);
 
     const rows = await t.all<{ user_id: string; shares: string }>(
       "SELECT user_id, shares FROM mining_shares WHERE epoch = ? AND shares > 0", epoch);
     const totalShares = rows.reduce((a, r) => a + Number(r.shares), 0);
 
-    // What each miner is owed, before the supply cap gets a say. The two models
-    // differ ONLY here — everything around it (the lock, the cap, the withhold
-    // rule, the ledger write) is identical, on purpose.
-    let owed: { userId: string; rozi: number }[] = [];
-    let emission = 0;
+    // What each miner is owed, in MICRO, before the supply cap gets a say. The two
+    // models differ ONLY here — everything around it (the lock, the cap, the
+    // withhold rule, the ledger write) is identical, on purpose.
+    let owed: { userId: string; micro: number }[] = [];
+    let emissionMicro = 0;
 
     if (totalShares > 0) {
       if (s.emissionModel === "pi") {
@@ -563,27 +566,28 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
         const rate = effectivePiRate(s, await minerPopulation(t));
         owed = rows.map((r) => ({
           userId: r.user_id,
-          rozi: piPayoutFor(Number(r.shares), rate, s.baseHashrate, s.piReferenceHours * 3600),
+          micro: piPayoutMicroFor(
+            Number(r.shares), rate, s.baseHashrate, s.piReferenceHours * 3600),
         }));
 
         // The daily total floats with the crowd, so it can outrun what the cap has
         // left. Scale everyone by the same factor rather than paying in row order
         // until the pool dries up mid-list, which would hand the remainder to
         // whoever sorted first. This is the endgame: the pool running out.
-        const wanted = owed.reduce((a, o) => a + o.rozi, 0);
-        const room = Math.max(0, s.supplyCap - alreadyEmitted);
-        const scale = capScaleFactor(wanted, room);
+        const wantedMicro = owed.reduce((a, o) => a + o.micro, 0);
+        const roomMicro = Math.max(0, toMicro(s.supplyCap) - alreadyEmittedMicro);
+        const scale = capScaleFactor(wantedMicro, roomMicro);
         if (scale < 1) {
-          owed = owed.map((o) => ({ ...o, rozi: Math.floor(o.rozi * scale) }));
+          owed = owed.map((o) => ({ ...o, micro: Math.floor(o.micro * scale) }));
         }
-        emission = owed.reduce((a, o) => a + o.rozi, 0);
+        emissionMicro = owed.reduce((a, o) => a + o.micro, 0);
       } else {
         // POOL MODEL: a fixed pot, split pro-rata by hashrate-seconds.
-        emission = cappedEmission(epoch, alreadyEmitted, s);
-        if (emission > 0) {
+        emissionMicro = cappedEmissionMicro(epoch, alreadyEmittedMicro, s);
+        if (emissionMicro > 0) {
           owed = rows.map((r) => ({
             userId: r.user_id,
-            rozi: payoutFor(Number(r.shares), totalShares, emission),
+            micro: payoutMicroFor(Number(r.shares), totalShares, emissionMicro),
           }));
         }
       }
@@ -613,27 +617,27 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
       );
 
       for (const o of owed) {
-        if (o.rozi <= 0) continue;
+        if (o.micro <= 0) continue;
         if (blocked.has(o.userId)) {
-          withheld += o.rozi;
+          withheld += o.micro;
           continue;
         }
         await postRozi({
-          userId: o.userId, rozi: o.rozi, direction: "credit",
+          userId: o.userId, micro: o.micro, direction: "credit",
           sourceType: "mining", sourceRefId: String(epoch),
           note: `Mining reward, day ${epoch}`,
         }, t);
-        emitted += o.rozi;
+        emitted += o.micro;
       }
     }
 
     await t.run(
       `INSERT INTO mining_epochs (epoch, emission, total_shares, miners, emitted, withheld, settled_at)
        VALUES (?,?,?,?,?,?,?)`,
-      epoch, emission, totalShares, rows.length, emitted, withheld, now(),
+      epoch, emissionMicro, totalShares, rows.length, emitted, withheld, now(),
     );
 
-    return { epoch, emission, totalShares, miners: rows.length, emitted, withheld };
+    return { epoch, emissionMicro, totalShares, miners: rows.length, emitted, withheld };
   });
 }
 

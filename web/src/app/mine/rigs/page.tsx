@@ -8,6 +8,7 @@ import { rigIcon, ChipIcon, InfoIcon, ArrowRightIcon } from "@/components/icons"
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchRigs, upgradeRig } from "@/lib/api";
+import { formatRozi } from "@/lib/format";
 
 export default function RigsPage() {
   const { ready } = useRequireAuth();
@@ -35,7 +36,7 @@ export default function RigsPage() {
     return <div className="p-4 pt-6"><ErrorState message={rigs.error ?? "…"} onRetry={rigs.reload} /></div>;
   }
 
-  const { rozi, rigs: list } = rigs.data;
+  const { roziMicro, rigs: list } = rigs.data;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -51,7 +52,7 @@ export default function RigsPage() {
       <Card className="flex items-center justify-between p-4">
         <span className="text-sm font-semibold text-muted">{t("rigs.yourRozi")}</span>
         <span className="num text-xl font-extrabold text-brand-ink">
-          {rozi.toLocaleString()} <span className="text-base text-brand">ROZI</span>
+          {formatRozi(roziMicro)} <span className="text-base text-brand">ROZI</span>
         </span>
       </Card>
 
@@ -64,8 +65,10 @@ export default function RigsPage() {
         <div className="space-y-2">
           {list.map((r) => {
             const Icon = rigIcon[r.icon] ?? ChipIcon;
-            const maxed = r.nextCost === null;
-            const affordable = !maxed && rozi >= (r.nextCost ?? 0);
+            // Compared in MICRO on both sides — the balance and the cost are the
+            // same unit, so no conversion is needed to decide affordability.
+            const maxed = r.nextCostMicro === null;
+            const affordable = !maxed && roziMicro >= (r.nextCostMicro ?? 0);
 
             return (
               <Card key={r.id} className="p-4">
@@ -102,7 +105,7 @@ export default function RigsPage() {
                         </strong>
                       </p>
                       <p className="num font-semibold text-brand">
-                        {r.nextCost?.toLocaleString()} ROZI
+                        {formatRozi(r.nextCostMicro ?? 0)} ROZI
                       </p>
                     </div>
                     <Button

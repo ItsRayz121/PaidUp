@@ -40,6 +40,38 @@ export function formatUsdtAmount(usdt: string | number): string {
   return `${Number(usdt).toFixed(2)} USDT`;
 }
 
+// ---- ROZI ------------------------------------------------------------------
+//
+// The API sends every ROZI amount as MICRO-ROZI: an integer count of millionths.
+// Fields carrying one are named `...Micro` (roziMicro, estimatedRoziMicro,
+// nextCostMicro). NEVER print one of those numbers directly — a balance of 3.33
+// ROZI arrives as 3333333, and showing that to a user is the whole reason the
+// fields are named the way they are.
+//
+// MUST stay in sync with ROZI_SCALE in api/src/mining/core.ts.
+export const ROZI_SCALE = 1_000_000;
+
+export function roziFromMicro(micro: number): number {
+  return (micro ?? 0) / ROZI_SCALE;
+}
+
+// How ROZI reads to a user. The base rate is 10/day and an 8-hour session pays
+// ~3.33, so the decimals ARE the number — rounding to whole ROZI would show a
+// real day's mining as "3" and, after a few halvings, as "0".
+//
+// Trailing zeros are trimmed: "10" not "10.000000", but "0.104166" in full. A
+// miner watching a small balance grow needs to see it move.
+export function formatRozi(micro: number): string {
+  const rozi = roziFromMicro(micro);
+  if (rozi === 0) return "0";
+  // Below a thousandth, show enough places that a real balance is never "0.00".
+  const decimals = Math.abs(rozi) < 1 ? 6 : Math.abs(rozi) < 1000 ? 4 : 2;
+  const s = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0, maximumFractionDigits: decimals,
+  }).format(rozi);
+  return s;
+}
+
 // "2 hours ago", "just now" — plain words, no timestamps in the user UI.
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();

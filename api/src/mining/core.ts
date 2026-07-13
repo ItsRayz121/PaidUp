@@ -15,6 +15,37 @@
 // Every number in the mining economy. Admin-tunable at runtime with no redeploy
 // (mining/settings.ts overlays whatever is stored in app_settings on top of these).
 
+// ---- Units -----------------------------------------------------------------
+//
+// ROZI IS STORED AS AN INTEGER COUNT OF MILLIONTHS ("micro-ROZI"). 1 ROZI =
+// 1_000_000 micro. The ledger column is BIGINT and holds micro; nothing anywhere
+// stores a fractional ROZI as a float, because a float ledger is how money
+// systems lose cents.
+//
+// This exists because payouts are FLOORED, and the floor used to be a whole ROZI.
+// With a base rate of 10/day and an 8-hour session, a miner earns 3.33 ROZI — and
+// after two halvings, 0.83, which floored to ZERO. The app would have gone on
+// taking people's time and paying them nothing. Flooring to a millionth instead
+// means the dust we keep is 0.000001 ROZI, which is a rounding error rather than
+// a user's whole day.
+//
+// The floor still runs in the treasury's favour (dust stays unemitted, so we
+// remain strictly under the supply cap) — it is just six decimal places further
+// down. See docs/MINING_SPEC.md § 3.2.
+//
+// Convention: any variable holding micro-ROZI is named `...Micro`. Settings and
+// the rig catalogue are in WHOLE ROZI (they are human-facing admin numbers) and
+// are converted with toMicro() at the moment they meet the ledger.
+export const ROZI_SCALE = 1_000_000;
+
+export function toMicro(rozi: number): number {
+  return Math.round(rozi * ROZI_SCALE);
+}
+
+export function fromMicro(micro: number): number {
+  return micro / ROZI_SCALE;
+}
+
 export const MINING_DEFAULTS = {
   // -- Emission model (founder decision, 2026-07-13). Two models exist:
   //
@@ -37,11 +68,12 @@ export const MINING_DEFAULTS = {
   // -- "pi" model (§ 3.2). ROZI/day for a BASELINE miner: no multipliers, mining
   //    a full reference day. A miner with x2 multipliers earns twice this.
   //
-  //    KEEP THE EFFECTIVE RATE WELL ABOVE ~10. Payouts are floored to whole ROZI,
-  //    so once piBaseRate has been halved down into single digits, a user who
-  //    mined only part of a day rounds to ZERO and earns nothing at all. That is
-  //    the one way this model quietly stops paying people.
-  piBaseRate: 100,
+  //    10/day (founder decision, 2026-07-13). Deliberately a SMALL number: a token
+  //    people count in single digits feels scarce, and scarcity is the entire
+  //    product here. It survives all five halvings down to 0.3125/day because the
+  //    ledger holds millionths (see ROZI_SCALE above) — under the old whole-ROZI
+  //    ledger a rate this low would have paid partial days literally nothing.
+  piBaseRate: 10,
 
   // Base rate HALVES each time the user base crosses one of these counts. This is
   // the throttle: growth is what drains the pool, so growth is what slows the tap.
@@ -160,25 +192,27 @@ export type Emission = {
   supplyCap: number;      // hard ceiling on cumulative mining emission, ever
 };
 
-// E(e) = E0 / 2^floor(e / halving). Halving is what makes "mine early" true
-// rather than a marketing line — it never gets easier, and we never have to lie
-// about that.
-export function emissionAt(epoch: number, s: Emission): number {
+// E(e) = E0 / 2^floor(e / halving), in MICRO. Halving is what makes "mine early"
+// true rather than a marketing line — it never gets easier, and we never have to
+// lie about that.
+export function emissionMicroAt(epoch: number, s: Emission): number {
   if (epoch < 0) return 0;
   const halvings = Math.floor(epoch / Math.max(1, s.halvingEpochs));
   // 2^halvings overflows to Infinity long before this matters; guard anyway so a
   // far-future epoch emits 0 rather than NaN.
   const divisor = Math.pow(2, halvings);
   if (!Number.isFinite(divisor) || divisor <= 0) return 0;
-  return Math.floor(s.baseEmission / divisor);
+  return Math.floor(toMicro(s.baseEmission) / divisor);
 }
 
-// What we are allowed to emit this epoch given everything already emitted. The
-// cap is the last line of defence: even if an Admin fat-fingers the base
-// emission to a billion, cumulative mining emission cannot pass supplyCap.
-export function cappedEmission(epoch: number, alreadyEmitted: number, s: Emission): number {
-  const want = emissionAt(epoch, s);
-  const room = Math.max(0, s.supplyCap - alreadyEmitted);
+// What we are allowed to emit this epoch, in MICRO, given everything already
+// emitted. The cap is the last line of defence: even if an Admin fat-fingers the
+// base emission to a billion, cumulative mining emission cannot pass supplyCap.
+export function cappedEmissionMicro(
+  epoch: number, alreadyEmittedMicro: number, s: Emission,
+): number {
+  const want = emissionMicroAt(epoch, s);
+  const room = Math.max(0, toMicro(s.supplyCap) - alreadyEmittedMicro);
   return Math.min(want, room);
 }
 
@@ -249,12 +283,19 @@ export function computeHashrate(i: HashrateInputs): number {
 
 // ---- Pro-rata settlement ("pool" model) ------------------------------------
 
-// Each miner gets emission * (their shares / total shares), floored. Flooring
-// means the dust stays UNEMITTED, which keeps us strictly under the cap — the
-// error, if any, is always in the treasury's favour, never the other way.
-export function payoutFor(shares: number, totalShares: number, emission: number): number {
-  if (totalShares <= 0 || shares <= 0) return 0;
-  return Math.floor((emission * shares) / totalShares);
+// Each miner gets emission * (their shares / total shares), in MICRO, floored.
+// Flooring means the dust stays UNEMITTED, which keeps us strictly under the cap
+// — the error, if any, is always in the treasury's favour, never the other way.
+//
+// The ratio is taken FIRST, deliberately. The natural `(emissionMicro * shares)`
+// is emission up to 6.5e14 times shares up to ~8.6e9, which is 5.6e24 — far past
+// 2^53, where JS integers stop being exact. Dividing first keeps both operands
+// small and the result exact to well within the 1-micro floor.
+export function payoutMicroFor(
+  shares: number, totalShares: number, emissionMicro: number,
+): number {
+  if (totalShares <= 0 || shares <= 0 || emissionMicro <= 0) return 0;
+  return Math.floor(emissionMicro * (shares / totalShares));
 }
 
 // ---- Per-miner settlement ("pi" model) -------------------------------------
@@ -300,15 +341,18 @@ export function piBaseRateFor(userCount: number, baseRate: number, milestones: n
 //   x2 multipliers, full day  -> 2.0x rate
 //   baseline miner, 8h of 24h -> 0.33x rate
 //
-// Floored, for the same reason payoutFor is: dust stays unemitted, so the error
-// is always in the treasury's favour. See the warning on piBaseRate — once the
-// effective rate floors to single digits, partial days round away to nothing.
-export function piPayoutFor(
+// Returns MICRO-ROZI, floored to the millionth. Dust stays unemitted, so the
+// error is always in the treasury's favour — but it is now a millionth of a ROZI
+// rather than a whole one, which is what lets the rate be as low as 10/day (and
+// survive five halvings down to 0.3125/day) while still paying an 8-hour session
+// its honest 0.104 ROZI. Under the old whole-ROZI floor that session paid zero.
+export function piPayoutMicroFor(
   shares: number, rate: number, baseHashrate: number, referenceSeconds: number,
 ): number {
   const fullDayShares = baseHashrate * referenceSeconds;
   if (fullDayShares <= 0 || shares <= 0 || rate <= 0) return 0;
-  return Math.floor((rate * shares) / fullDayShares);
+  // Ratio first, for the same 2^53 reason as payoutMicroFor.
+  return Math.floor(rate * ROZI_SCALE * (shares / fullDayShares));
 }
 
 // The "pi" model's daily total floats with the crowd, so unlike the pool model it
