@@ -158,6 +158,12 @@ up in every request path (`//tasks`) and makes the whole API 404.
 Optional: `NEXT_PUBLIC_TELEGRAM_BOT=<bot username>` turns on the Telegram login
 button (see the backend Telegram section). Leave unset to hide it.
 
+Optional but recommended: `NEXT_PUBLIC_SITE_URL=<the live web origin, no trailing
+slash>` — feeds the social-share (OpenGraph) tags, robots.txt and sitemap.xml.
+Set it to the live `*.vercel.app` URL today; change it to `https://rozipay.xyz`
+when the domain is pointed. Unset, it falls back to `https://rozipay.xyz`, so
+WhatsApp link previews can't load their image until that domain is actually live.
+
 `NEXT_PUBLIC_*` values are baked into the JS **at build time**. After changing
 this, you must redeploy with **"Use existing build cache" unticked**, or the old
 value stays live.

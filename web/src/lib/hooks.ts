@@ -15,6 +15,10 @@ export function useRequireAuth(): { user: SessionUser | null; ready: boolean } {
       router.replace("/login");
       return;
     }
+    // Syncing FROM localStorage (an external system) after mount. It can't be
+    // state's initial value: the page is statically prerendered, and reading
+    // storage during the first render would make hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUser(getStoredUser());
     setReady(true);
   }, [router]);
@@ -30,7 +34,9 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // fn identity changes each render; we intentionally key off caller-provided deps.
+  // fn identity changes each render; we intentionally key off caller-provided
+  // deps, exactly like useEffect's second argument. That opts this hook out of
+  // the compiler's memoization analysis (use-memo needs a literal array).
   const run = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -38,7 +44,7 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
       .then((d) => setData(d))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
   }, deps);
 
   useEffect(() => { run(); }, [run]);

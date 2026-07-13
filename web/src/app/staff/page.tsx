@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { LogoutButton } from "@/components/state";
@@ -55,6 +56,10 @@ export default function StaffPage() {
   useEffect(() => {
     if (!ready || section !== null || visible.length === 0) return;
     const fromHash = window.location.hash.replace("#", "") as SectionId;
+    // Syncing FROM the URL hash (an external system) once auth resolves — the
+    // hash isn't readable during the static prerender, so it can't be state's
+    // initial value.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSection(visible.some((s) => s.id === fromHash) ? fromHash : visible[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, visible.length]);
@@ -75,7 +80,7 @@ export default function StaffPage() {
       <div className="mx-auto max-w-md p-8 text-center">
         <h1 className="text-xl font-bold text-brand-ink">Staff only</h1>
         <p className="mt-2 text-muted">This area is for support staff. You do not have access.</p>
-        <a href="/" className="mt-4 inline-block font-semibold text-brand">Back to the app</a>
+        <Link href="/" className="mt-4 inline-block font-semibold text-brand">Back to the app</Link>
       </div>
     );
   }
@@ -315,8 +320,10 @@ function UserLookup({ target }: { target: string | null }) {
   const [query, setQuery] = useState("");
   const res = useApi(() => (query ? fetchStaffUser(query) : Promise.resolve(null)), [query]);
 
-  // When a "view ledger" link elsewhere sets a target, search for it.
+  // When a "view ledger" link elsewhere sets a target, search for it. This is
+  // the "adjust state when a prop changes" case — the prop is the event.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (target) { setId(target); setQuery(target); }
   }, [target]);
 

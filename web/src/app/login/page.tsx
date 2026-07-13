@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui";
 import { ShieldIcon, CheckIcon, ArrowRightIcon } from "@/components/icons";
 import { LogoLockup } from "@/components/Logo";
@@ -51,24 +51,32 @@ function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) 
   );
 }
 
+// useSearchParams needs a Suspense boundary above it for the static prerender,
+// so the page is a thin wrapper around the real form.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const { t } = useI18n();
+  // Referral code from an invite link (/login?ref=CODE), straight off the URL.
+  const ref = useSearchParams().get("ref") ?? undefined;
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [ref, setRef] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // Already signed in? Skip to the app. Also read a referral code from the URL.
+  // Already signed in? Skip to the app.
   useEffect(() => {
     if (getToken()) router.replace("/");
-    const params = new URLSearchParams(window.location.search);
-    const r = params.get("ref");
-    if (r) setRef(r);
   }, [router]);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -114,16 +122,16 @@ export default function LoginPage() {
   });
   const doReset = () => run(async () => finish(await resetPassword(email.trim(), code, password)));
 
-  // Telegram widget callback. Kept stable (deps: router) so the widget script
-  // mounts once, not on every keystroke. Reads any referral code from the URL.
+  // Telegram widget callback. Kept stable (deps: router + the URL's ref, which
+  // never changes within a page view) so the widget script mounts once, not on
+  // every keystroke.
   const onTelegramAuth = useCallback((u: Record<string, unknown>) => {
     setBusy(true); setError(null);
-    const r = new URLSearchParams(window.location.search).get("ref") ?? undefined;
-    loginWithTelegram({ ...u, ...(r ? { ref: r } : {}) })
+    loginWithTelegram({ ...u, ...(ref ? { ref } : {}) })
       .then((res) => { setSession(res.token, res.user); router.replace(res.user.role ? "/staff" : "/"); })
       .catch((e) => setError((e as Error).message))
       .finally(() => setBusy(false));
-  }, [router]);
+  }, [router, ref]);
 
   return (
     <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8">

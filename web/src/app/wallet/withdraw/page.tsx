@@ -37,7 +37,9 @@ export default function WithdrawPage() {
   const savedAddresses = saved.data?.addresses ?? {};
   // Pre-fill the saved address for the current chain once it loads (only when the
   // field is still empty, so we never clobber something the user is typing).
+  // Syncing FROM the API response (an external system) into the input's state.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!address && savedAddresses[chain]) setAddress(savedAddresses[chain]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved.data]);

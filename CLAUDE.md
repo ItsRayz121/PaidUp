@@ -111,10 +111,12 @@ These override convenience or speed at every step:
   - **Leaderboard** — top earners + top inviters (masked handles), `/leaderboard`
     page, linked from Refer. Social proof to drive referrals.
   - **Value model locked (founder 2026-07-11)** — **1000 points = 1 USDT** (the real
-    payout rate; backend `pointsPerUsdt` / `POINTS_PER_USDT`) and **1 USDT ≈ 280 PKR**
-    (display-only). The UI now shows the exact USDT with an approximate rupee
-    figure beside it, e.g. `2.00 USDT (≈ Rs 560)`. This replaced a stale demo rate
-    (100 pts = Rs 1) that under-stated value ~28x and disagreed with the payout.
+    payout rate; backend `pointsPerUsdt` / `POINTS_PER_USDT`). This replaced a stale
+    demo rate (100 pts = Rs 1) that under-stated value ~28x and disagreed with the
+    payout. **USDT is the ONLY money figure shown (founder, 2026-07-12)** — the
+    earlier "≈ Rs" approximation beside it was removed: a rupee figure derived from
+    a hard-coded rate goes stale and reads as a promise we don't control (see
+    `web/src/lib/format.ts`).
     Minimum withdrawal = **2000 points = 2 USDT** (`minWithdrawPoints`).
     ⚠️ `web/src/lib/format.ts` `POINTS_PER_USDT` must stay in sync with the backend.
   - **Admin-tunable withdrawal fee** — flat points fee (global, `app_settings`

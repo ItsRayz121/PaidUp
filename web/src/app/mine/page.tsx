@@ -26,6 +26,9 @@ function useCountdown(until: string | null | undefined): string | null {
   }, [until]);
 
   if (!until) return null;
+  // A countdown exists to read the clock: the interval above re-renders us once
+  // a second precisely so this render-time Date.now() is fresh.
+  // eslint-disable-next-line react-hooks/purity
   const ms = Date.parse(until) - Date.now();
   if (ms <= 0) return null;
   const h = Math.floor(ms / 3_600_000);
