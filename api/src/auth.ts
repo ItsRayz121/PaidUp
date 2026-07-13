@@ -36,6 +36,11 @@ async function hashPassword(password: string): Promise<string> {
   return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
 }
 
+// A real scrypt hash of a random secret nobody knows. Login verifies against
+// this when the email has no account, so "unknown email" and "wrong password"
+// take the same time — the timing can't be used to discover which emails exist.
+const DECOY_PASSWORD_HASH = await hashPassword(randomBytes(32).toString("hex"));
+
 async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
   if (!stored) return false;
   const [algo, saltHex, hashHex] = stored.split("$");
@@ -162,6 +167,14 @@ async function publicUser(u: UserRow) {
   };
 }
 
+// Per-route rate-limit budgets (the plugin is registered global:false in
+// server.ts — see the note there for why only these routes are limited).
+// Keyed by IP: on CGNAT that is a shared budget, so the numbers are sized for
+// a busy shared network, not a single user.
+const limited = (max: number, timeWindow: string) => ({
+  config: { rateLimit: { max, timeWindow } },
+});
+
 // ---- routes ---------------------------------------------------------------
 const registerSchema = z.object({
   email: z.string().email(),
@@ -186,16 +199,14 @@ const resetSchema = z.object({
 export async function authRoutes(app: FastifyInstance) {
   // Register: create an UNVERIFIED account with a password, then email a code
   // to prove the address. The account can't log in until the email is verified.
-  app.post("/auth/register", async (req, reply) => {
+  // Each register sends an email — the budget bounds inbox bombing and what an
+  // attacker can burn of our Resend quota from one address.
+  app.post("/auth/register", limited(10, "10 minutes"), async (req, reply) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Enter a valid email and a password of at least 8 letters." });
     }
     const email = parsed.data.email.toLowerCase().trim();
-    // Hash now, but do NOT write it to the account. The password is bound to the
-    // verification code and applied only when that code is confirmed — otherwise
-    // anyone could overwrite an unverified account's password (account takeover).
-    const passwordHash = await hashPassword(parsed.data.password);
 
     const existing = await sql.get<{ id: string; email_verified: number }>(
       "SELECT id, email_verified FROM users WHERE email = ?", email,
@@ -203,6 +214,13 @@ export async function authRoutes(app: FastifyInstance) {
     if (existing && existing.email_verified) {
       return reply.code(409).send({ error: "This email already has an account. Please log in." });
     }
+
+    // Hash only now that we know the request can proceed (scrypt is deliberately
+    // expensive — don't pay it for a 409). Do NOT write it to the account yet:
+    // the password is bound to the verification code and applied only when that
+    // code is confirmed — otherwise anyone could overwrite an unverified
+    // account's password (account takeover).
+    const passwordHash = await hashPassword(parsed.data.password);
 
     if (!existing) {
       // Create the account with NO password yet (email_verified = 0). The
@@ -241,7 +259,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // Verify the email with the signup code -> mark verified and sign in.
-  app.post("/auth/verify-email", async (req, reply) => {
+  app.post("/auth/verify-email", limited(30, "10 minutes"), async (req, reply) => {
     const parsed = verifyEmailSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter the 6-number code." });
     const email = parsed.data.email.toLowerCase().trim();
@@ -267,7 +285,9 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // Log in with email + password. No code needed once the email is verified.
-  app.post("/auth/login", async (req, reply) => {
+  // Brute-force cap. scrypt already makes each guess expensive for US; this
+  // makes volume impossible for THEM. 30/min is generous for a shared NAT.
+  app.post("/auth/login", limited(30, "1 minute"), async (req, reply) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter your email and password." });
     const email = parsed.data.email.toLowerCase().trim();
@@ -276,8 +296,13 @@ export async function authRoutes(app: FastifyInstance) {
       "SELECT * FROM users WHERE email = ?", email,
     );
     // Same generic message whether the email is unknown or the password is
-    // wrong, so the endpoint can't be used to discover which emails exist.
-    if (!user || !(await verifyPassword(parsed.data.password, user.password_hash))) {
+    // wrong, so the endpoint can't be used to discover which emails exist —
+    // and the same scrypt cost on both paths (verify against a decoy hash when
+    // the account doesn't exist), so response TIMING doesn't reveal it either.
+    const passwordOk = await verifyPassword(
+      parsed.data.password, user?.password_hash ?? DECOY_PASSWORD_HASH,
+    );
+    if (!user || !passwordOk) {
       return reply.code(401).send({ error: "Wrong email or password." });
     }
     // A set password implies a verified email (password is only written at
@@ -294,7 +319,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Forgot password: email a reset code. Always returns ok so the endpoint
   // can't reveal whether an account exists.
-  app.post("/auth/forgot", async (req, reply) => {
+  app.post("/auth/forgot", limited(5, "10 minutes"), async (req, reply) => {
     const parsed = forgotSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Please enter a valid email." });
     const email = parsed.data.email.toLowerCase().trim();
@@ -308,7 +333,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Reset password with the reset code -> set new password and sign in. A
   // successful reset also verifies the email (they proved control of it).
-  app.post("/auth/reset", async (req, reply) => {
+  app.post("/auth/reset", limited(30, "10 minutes"), async (req, reply) => {
     const parsed = resetSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Enter the code and a new password of at least 8 letters." });
@@ -334,7 +359,7 @@ export async function authRoutes(app: FastifyInstance) {
   // keyed by SHA256(bot_token). A first-time Telegram user is created with a
   // synthetic, never-emailed address (Telegram gives no email) and no password,
   // so they can only ever sign in through Telegram. Off unless a bot token is set.
-  app.post("/auth/telegram", async (req, reply) => {
+  app.post("/auth/telegram", limited(30, "1 minute"), async (req, reply) => {
     if (!config.telegramBotToken) {
       return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
     }

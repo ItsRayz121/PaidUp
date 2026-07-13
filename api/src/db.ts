@@ -473,6 +473,32 @@ const MIGRATIONS = `
   -- Fee (in points) charged on a withdrawal, snapshotted from app_settings at
   -- request time so a later Admin change never alters an in-flight request.
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS fee_points INTEGER NOT NULL DEFAULT 0;
+
+  -- ---- Hot-path indexes -----------------------------------------------------
+  -- Each of these backs a query that runs on EVERY login or EVERY postback.
+  -- Without them those are sequential scans that get slower with every user.
+
+  -- Velocity caps (credit.ts): two COUNTs per postback over the user's
+  -- completions today, plus the first-task-since-KYC-approval count.
+  CREATE INDEX IF NOT EXISTS idx_completions_user_created
+    ON task_completions(user_id, created_at);
+  -- flagOnce dedupe (fraud.ts): looked up on every login and every flag check.
+  CREATE INDEX IF NOT EXISTS idx_fraud_scope
+    ON fraud_flags(flag_type, device_id) WHERE resolved_by IS NULL;
+  -- ip_reuse detection (fraud.ts): DISTINCT user_id per IP, on every login.
+  CREATE INDEX IF NOT EXISTS idx_user_devices_ip ON user_devices(ip);
+  -- The user's own withdrawal history, and the staff status queues.
+  CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawal_requests(user_id);
+  CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawal_requests(status);
+  -- payout_address_reuse (fraud.ts) compares LOWER(payout_address) across all
+  -- requests at withdrawal time — an expression index or it scans the table.
+  CREATE INDEX IF NOT EXISTS idx_withdrawals_addr
+    ON withdrawal_requests(LOWER(payout_address));
+  -- Telegram login looks a user up by telegram_id (no index meant a full scan).
+  CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram_id);
+  -- referrals/me (SUM of referral_bonus per user) and the leaderboard.
+  CREATE INDEX IF NOT EXISTS idx_ledger_user_source
+    ON ledger_entries(user_id, source_type);
 `;
 
 // ---------------------------------------------------------------------------

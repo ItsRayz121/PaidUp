@@ -59,6 +59,10 @@ export async function kycRoutes(app: FastifyInstance) {
   // route, behind auth, gets the big body.
   app.post("/kyc", {
     bodyLimit: 20 * 1024 * 1024,
+    // A 20MB body plus three AES passes per call is the most expensive request
+    // on the API. A real user submits once (twice after a rejection); ten an
+    // hour per IP is family-on-one-NAT headroom, not a real constraint.
+    config: { rateLimit: { max: 10, timeWindow: "1 hour" } },
     handler: guard(async (userId, req) => {
     const body = z.object({
       selfie: z.string().min(1),

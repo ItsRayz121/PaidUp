@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import { config, isProdSecretsMissing } from "./config.ts";
 import { authRoutes } from "./auth.ts";
 import { appRoutes } from "./routes/app.ts";
@@ -13,7 +14,7 @@ import { kycRoutes } from "./routes/kyc.ts";
 import { staffKycRoutes } from "./routes/staffKyc.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
-import { initDb, usingRealPostgres } from "./db.ts";
+import { initDb, sql, usingRealPostgres } from "./db.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -70,6 +71,26 @@ const app = Fastify({ logger: true, trustProxy: config.trustProxyHops });
 await app.register(cors, {
   origin: process.env.NODE_ENV === "production" ? config.webOrigins : true,
   credentials: true,
+});
+
+// Rate limiting (guardrail #5). Registered with global: false ON PURPOSE:
+// carrier-grade NAT in our launch markets puts hundreds of legitimate users
+// behind one IP, and ad-network postbacks arrive in bursts from a handful of
+// addresses — a blanket per-IP cap would lock out real earners and silently
+// drop paid completions. So only the endpoints an attacker can abuse WITHOUT
+// an account opt in, each with its own budget (see auth.ts / kyc.ts):
+//   - login (password brute force — scrypt makes each guess costly, this
+//     makes volume impossible)
+//   - register / forgot (each call sends an email: inbox bombing + it burns
+//     our Resend quota and sender reputation)
+//   - verify / reset (6-digit code guessing, on top of the per-code attempt cap)
+//   - kyc submit (20MB body + three AES passes per call)
+await app.register(rateLimit, {
+  global: false,
+  errorResponseBuilder: () => ({
+    statusCode: 429,
+    error: "Too many tries. Please wait a minute and try again.",
+  }),
 });
 
 // An empty body on a JSON request is an empty object, not an error.
@@ -133,6 +154,15 @@ async function tickSettlement() {
     // Never let a settlement failure take the API down — the next tick retries,
     // and the epoch stays unsettled (not half-settled) because it is one tx.
     app.log.error({ err }, "Mining settlement tick failed");
+  }
+  // Housekeeping on the same tick: drop dead login/reset codes. Every code
+  // expires within minutes, so anything older than a day is unreachable — it
+  // only makes the table (and the per-login index lookups) grow forever.
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await sql.run("DELETE FROM email_codes WHERE created_at < ?", cutoff);
+  } catch (err) {
+    app.log.error({ err }, "email_codes purge failed");
   }
 }
 setInterval(tickSettlement, SETTLE_INTERVAL_MS).unref();

@@ -184,29 +184,7 @@ export async function appRoutes(app: FastifyInstance) {
   // REFERRERS (most points earned from their invites). Names are masked for
   // privacy; the caller's own row is flagged so the UI can highlight it.
   app.get("/leaderboard", guard(async (userId) => {
-    const LIMIT = 20;
-    const earners = await sql.all<{ id: string; email: string; earned: number }>(
-      `SELECT u.id, u.email,
-              COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                                 AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
-       FROM users u JOIN ledger_entries le ON le.user_id = u.id
-       WHERE u.email_verified = 1
-       GROUP BY u.id, u.email
-       HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                        AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
-       ORDER BY earned DESC, u.created_at ASC
-       LIMIT ${LIMIT}`,
-    );
-    const referrers = await sql.all<{ id: string; email: string; ref_points: number; invites: number }>(
-      `SELECT u.id, u.email,
-              COALESCE(SUM(le.amount),0)::int AS ref_points,
-              (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
-       FROM users u JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
-       GROUP BY u.id, u.email
-       HAVING SUM(le.amount) > 0
-       ORDER BY ref_points DESC, u.created_at ASC
-       LIMIT ${LIMIT}`,
-    );
+    const { earners, referrers } = await loadLeaderboard();
     return {
       topEarners: earners.map((r, i) => ({
         rank: i + 1, name: maskName(r.email), points: r.earned, isMe: r.id === userId,
@@ -241,21 +219,33 @@ export async function appRoutes(app: FastifyInstance) {
     return { ticket: { id, subject: parsed.data.subject, status: "open" } };
   }));
 
-  // My tickets, newest first, each with its full message thread.
+  // My tickets, newest first, each with its full message thread. One query for
+  // the tickets + one for ALL their messages — not one query per ticket.
   app.get("/support/tickets", guard(async (userId) => {
     const tickets = await sql.all<Record<string, unknown>>(
       "SELECT id, subject, status, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC",
       userId,
     );
-    const out = [];
-    for (const t of tickets) {
-      const messages = await sql.all(
-        "SELECT author_role, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC",
-        t.id,
-      );
-      out.push({ id: t.id, subject: t.subject, status: t.status, at: t.created_at, updatedAt: t.updated_at, messages });
+    const messages = tickets.length === 0 ? [] : await sql.all<{
+      ticket_id: string; author_role: string; body: string; created_at: string;
+    }>(
+      `SELECT m.ticket_id, m.author_role, m.body, m.created_at
+       FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
+       WHERE s.user_id = ? ORDER BY m.created_at ASC`,
+      userId,
+    );
+    const byTicket = new Map<string, { author_role: string; body: string; created_at: string }[]>();
+    for (const m of messages) {
+      const list = byTicket.get(m.ticket_id) ?? [];
+      list.push({ author_role: m.author_role, body: m.body, created_at: m.created_at });
+      byTicket.set(m.ticket_id, list);
     }
-    return { tickets: out };
+    return {
+      tickets: tickets.map((t) => ({
+        id: t.id, subject: t.subject, status: t.status, at: t.created_at,
+        updatedAt: t.updated_at, messages: byTicket.get(t.id as string) ?? [],
+      })),
+    };
   }));
 
   // Add a message to my own ticket (reopens it so staff see it again).
@@ -276,6 +266,48 @@ export async function appRoutes(app: FastifyInstance) {
     });
     return { ok: true };
   }));
+}
+
+// ---- Leaderboard data (cached) ---------------------------------------------
+// These two aggregates scan the whole ledger, and the leaderboard is a page
+// every user opens. Recomputing it per request is per-user cost for a board
+// that is identical for everyone — so the RAW rows are cached for a minute
+// (the personal isMe flag is applied per request, never cached). A stale
+// leaderboard is harmless; a ledger scan per view is not.
+type EarnerRow = { id: string; email: string; earned: number };
+type ReferrerRow = { id: string; email: string; ref_points: number; invites: number };
+const LEADERBOARD_TTL_MS = 60_000;
+let leaderboardCache: { at: number; earners: EarnerRow[]; referrers: ReferrerRow[] } | null = null;
+
+async function loadLeaderboard(): Promise<{ earners: EarnerRow[]; referrers: ReferrerRow[] }> {
+  if (leaderboardCache && Date.now() - leaderboardCache.at < LEADERBOARD_TTL_MS) {
+    return leaderboardCache;
+  }
+  const LIMIT = 20;
+  const earners = await sql.all<EarnerRow>(
+    `SELECT u.id, u.email,
+              COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
+                                 AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
+       FROM users u JOIN ledger_entries le ON le.user_id = u.id
+       WHERE u.email_verified = 1
+       GROUP BY u.id, u.email
+       HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
+                        AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
+       ORDER BY earned DESC, u.created_at ASC
+       LIMIT ${LIMIT}`,
+  );
+  const referrers = await sql.all<ReferrerRow>(
+    `SELECT u.id, u.email,
+              COALESCE(SUM(le.amount),0)::int AS ref_points,
+              (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
+       FROM users u JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
+       GROUP BY u.id, u.email
+       HAVING SUM(le.amount) > 0
+       ORDER BY ref_points DESC, u.created_at ASC
+       LIMIT ${LIMIT}`,
+  );
+  leaderboardCache = { at: Date.now(), earners, referrers };
+  return leaderboardCache;
 }
 
 // Display status for a ledger row. Withdrawals track their request; everything
