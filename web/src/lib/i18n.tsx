@@ -273,6 +273,55 @@ const copy: Record<string, string> = {
   "wallet.rozi.label": "Your mined ROZI",
   "wallet.rozi.notcash":
     "ROZI is not money yet. You cannot withdraw it. Only your points above can be paid out.",
+
+  // ---- Verify your ID -------------------------------------------------------
+  // The word "KYC" appears nowhere a user can see it. It is jargon, and half our
+  // users would not know it. "Verify your ID" says the same thing to everyone.
+  "kyc.title": "Verify your ID",
+  "kyc.subtitle": "We need to check you are a real person before we send you money.",
+  "kyc.why.title": "Why we ask",
+  "kyc.why.body":
+    "It stops one person making many accounts. It also keeps your money safe, and it is how we know where to send it.",
+  "kyc.safe":
+    "Your photos are locked so only our checking team can open them. We never show them to anyone else.",
+  "kyc.need": "You need three photos",
+  "kyc.selfie": "A photo of your face",
+  "kyc.selfie.hint": "Look at the camera. Good light. No sunglasses or cap.",
+  "kyc.front": "Front of your ID card",
+  "kyc.front.hint": "All four corners in the photo. No blur.",
+  "kyc.back": "Back of your ID card",
+  "kyc.back.hint": "All four corners in the photo. No blur.",
+  "kyc.take": "Take photo",
+  "kyc.retake": "Take again",
+  "kyc.submit": "Send for checking",
+  "kyc.sending": "Sending…",
+  "kyc.status.pending.title": "We are checking your ID",
+  "kyc.status.pending.body":
+    "This usually takes a day or two. We will tell you as soon as it is done. You can keep mining while you wait.",
+  "kyc.status.approved.title": "You are verified",
+  "kyc.status.approved.body":
+    "All done. You can withdraw your money, and your friends now earn you a bonus.",
+  "kyc.status.rejected.title": "We could not accept your photos",
+  "kyc.status.rejected.body": "Please read the note below and send new photos.",
+  "kyc.status.rejected.again": "Send new photos",
+  "kyc.unlocks.title": "What this gives you",
+  "kyc.unlocks.withdraw": "You can take your money out",
+  "kyc.unlocks.referral": "Friends you invite start earning you a bonus",
+  "kyc.unlocks.trust": "Your account is marked as a real person",
+  "kyc.error.missing": "Please add all three photos first.",
+  "kyc.error.big": "That photo is too big. Try again.",
+
+  // Shown on the withdraw screen when they have not verified yet.
+  "withdraw.kyc.title": "Verify your ID first",
+  "withdraw.kyc.body": "We check who you are before we send money. It only takes a minute.",
+  "withdraw.kyc.cta": "Verify your ID",
+  "withdraw.kyc.pending": "We are still checking your ID. You can withdraw as soon as that is done.",
+
+  // Shown on the mine screen when an ad plays before mining starts.
+  "mine.gate.title": "Watch a short video to start",
+  "mine.gate.body": "One short video, then your machine runs for {hours} hours.",
+  "mine.gate.loading": "Getting your video…",
+  "mine.gate.skipped": "No video right now. Your machine started anyway.",
 };
 
 type Ctx = { t: (key: string, vars?: Record<string, string>) => string };

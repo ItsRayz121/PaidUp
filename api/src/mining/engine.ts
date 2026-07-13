@@ -16,12 +16,23 @@ import { loadMiningSettings, totalEmittedMicro, type MiningSettings } from "./se
 
 // The population the halving milestones are measured against.
 //
-// Counted, deliberately, WITHOUT filtering: more users only ever means a LOWER
-// rate, so there is no incentive for anyone to inflate this number — and a
-// stricter filter (verified only, active only) would let a wave of unverified
-// signups mine at the pre-halving rate while the throttle stared past them.
+// KYC-APPROVED USERS ONLY (founder decision, 2026-07-13). A "valid user" is one
+// who has held a real ID card up to a camera and had a human confirm it.
+//
+// This cuts both ways and both ways are intended:
+//   • It cannot be gamed UPWARD to trigger an early halving — nobody wants that,
+//     since more users only ever means a lower rate.
+//   • It CAN be gamed downward only by not doing KYC, which costs the user their
+//     ability to withdraw and their inviter's referral income. Nobody sane pays
+//     that price to slow a halving that hurts everyone equally.
+//
+// The real effect is that a botnet of ten thousand fake signups no longer drags
+// the whole user base through a halving and cuts every honest miner's rate in
+// half. Fake accounts can still mine — we don't hard-block them — but they no
+// longer get a vote on how fast the tap closes.
 export async function minerPopulation(t: Pick<TxApi, "get"> = sql): Promise<number> {
-  const r = await t.get<{ n: string }>("SELECT COUNT(*) AS n FROM users");
+  const r = await t.get<{ n: string }>(
+    "SELECT COUNT(*) AS n FROM users WHERE kyc_status = 'approved'");
   return Number(r?.n ?? 0);
 }
 
@@ -157,9 +168,19 @@ async function ownHashrateBatch(
   return out;
 }
 
-// Hashrate inherited from the downline. An invitee who has not mined within
-// `referralActiveHours` contributes ZERO — dead signups are worth nothing, which
-// is the whole anti-farm point of doing it this way instead of paying per signup.
+// Hashrate inherited from the downline. An invitee contributes ZERO unless they
+// are BOTH:
+//   • KYC-approved — a real person, confirmed by a human looking at their ID, and
+//   • active (mined within `referralActiveHours`).
+//
+// The KYC condition is the anti-farm line the founder asked for, and it is the
+// one that actually bites. Activity alone was never enough: a farm can script a
+// thousand accounts that each open a session once a day, and under the old rule
+// every one of them fed hashrate to the same referrer. Now each of those thousand
+// accounts would have to hold a distinct real ID card up to a camera and get past
+// a human. That is not a script; that is a thousand people.
+//
+// Dead signups were already worth nothing. Fake signups are now worth nothing too.
 async function referralHashrateOf(userId: string, s: MiningSettings): Promise<number> {
   const cutoff = new Date(Date.now() - s.referralActiveHours * 3600_000).toISOString();
 
@@ -171,6 +192,7 @@ async function referralHashrateOf(userId: string, s: MiningSettings): Promise<nu
        JOIN mining_sessions ms ON ms.user_id = u.id
        WHERE u.referred_by IN (${placeholders})
          AND u.status = 'active'
+         AND u.kyc_status = 'approved'
          AND ms.started_at > ?`,
       ...referrerIds, cutoff,
     );

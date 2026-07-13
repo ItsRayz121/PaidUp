@@ -154,6 +154,26 @@ export const config = {
   // Comma-separated founder/admin emails seeded as role=admin on first run.
   adminEmails: (process.env.ADMIN_EMAILS ?? "fazalelahi5577@gmail.com")
     .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
+
+  // ---- KYC ------------------------------------------------------------------
+  // AES-256-GCM key for the ID photos, as 64 hex chars (32 bytes). Generate with:
+  //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  //
+  // We are storing Pakistani national ID cards. The key lives HERE (an env var),
+  // never in the database, so a leaked DB backup on its own decrypts to nothing.
+  // Empty in dev => a fixed dev key, and production refuses to boot (see below):
+  // shipping real IDs under a key that is in the git history would be worse than
+  // not encrypting at all, because it would look safe.
+  kycEncryptionKey: process.env.KYC_ENCRYPTION_KEY ?? "",
+
+  // Max bytes per uploaded photo, AFTER base64 decode. Phone cameras produce
+  // 2-5MB; the web compresses before upload, and this is the hard backstop.
+  kycMaxImageBytes: Number(process.env.KYC_MAX_IMAGE_BYTES ?? 4_000_000),
+
+  // Require an approved KYC before a withdrawal can be requested. On by default:
+  // you should know who you are sending money to.
+  kycRequiredForWithdrawal:
+    (process.env.KYC_REQUIRED_FOR_WITHDRAWAL ?? "true").toLowerCase() === "true",
 };
 
 export const isProdSecretsMissing =

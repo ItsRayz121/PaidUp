@@ -692,6 +692,51 @@ const MINING_SCHEMA = `
   ALTER TABLE ledger_entries ADD CONSTRAINT ledger_entries_source_type_check
     CHECK (source_type IN ('task_completion','referral_bonus','withdrawal',
                            'admin_adjustment','mining_conversion','booster_purchase'));
+
+  -- ---------------------------------------------------------------------------
+  -- KYC (founder decision, 2026-07-13): manual staff review of a selfie + the
+  -- front and back of a national ID card.
+  --
+  -- A user only becomes a VALID user by passing this, and "valid" is load-bearing
+  -- in three places: they are the only ones counted toward a halving milestone,
+  -- the only invitees who earn their inviter anything, and the only accounts that
+  -- can withdraw. That is the anti-farm line — a thousand fake signups can no
+  -- longer inflate a referrer's mining rate, because a fake signup cannot hold up
+  -- a real ID card to a camera.
+  --
+  -- Mining itself is NOT gated. A new user mines from minute one; making them wait
+  -- days for a human review before the app does anything would kill signup.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_status TEXT NOT NULL DEFAULT 'none'
+    CHECK (kyc_status IN ('none','pending','approved','rejected'));
+  CREATE INDEX IF NOT EXISTS idx_users_kyc ON users(kyc_status);
+
+  -- THE IMAGES ARE ENCRYPTED AT REST (AES-256-GCM, see kyc.ts). These are
+  -- Pakistani national ID cards: a plaintext dump of this table is the single
+  -- worst thing that could leak out of this product. The key lives in
+  -- KYC_ENCRYPTION_KEY on Railway and never in the database, so a stolen DB
+  -- backup alone is not enough to read them.
+  --
+  -- Deliberately NOT stored: ID number, name, date of birth. We do not need them
+  -- — a human is looking at the picture — and every field we do not keep is a
+  -- field that cannot leak.
+  CREATE TABLE IF NOT EXISTS kyc_submissions (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    selfie        TEXT NOT NULL,   -- encrypted, base64(iv:tag:ciphertext)
+    id_front      TEXT NOT NULL,
+    id_back       TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','approved','rejected')),
+    reject_reason TEXT,
+    reviewed_by   TEXT REFERENCES users(id),
+    reviewed_at   TEXT,
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_kyc_status ON kyc_submissions(status, created_at);
+  -- One OPEN submission per user. A resubmission after a rejection is allowed
+  -- (that row is no longer pending), but a user cannot flood the review queue.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_kyc_one_pending
+    ON kyc_submissions(user_id) WHERE status = 'pending';
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin

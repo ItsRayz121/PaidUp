@@ -14,6 +14,7 @@ import { MiningPanel } from "@/components/mining-admin";
 import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
 import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
+import { KycPanel } from "@/components/kyc-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -159,6 +160,10 @@ export default function StaffPage() {
 
       {/* Find, pay, suspend a user — admin only (manager can search via the API) */}
       {isAdmin && <Panel title="Users"><UsersPanel /></Panel>}
+
+      {/* ID review. Admin only, deliberately narrower than the rest of the panel:
+          nobody else needs to see a stranger's national ID card. */}
+      {isAdmin && <Panel title="Verify IDs"><KycPanel /></Panel>}
 
       {/* Our own custom tasks — admin only */}
       {isAdmin && <Panel title="Our own tasks"><TasksPanel /></Panel>}

@@ -118,6 +118,49 @@ as proof. (This is the new payout flow I just built; see below.)
 
 ---
 
+## 🔴 3b. Set the KYC encryption key (or ID uploads will not boot in prod)
+
+We now collect a selfie + both sides of a national ID card and store the photos
+**AES-256-GCM encrypted**. The key lives only in the environment, never in the
+database, so a leaked DB backup alone decrypts to nothing. Production **refuses to
+boot** without a real key — deliberately, because encrypting real IDs under the
+public dev key (it is in the git history) would only *look* safe.
+
+**Steps:**
+1. Generate a key:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+2. On **Railway** set `KYC_ENCRYPTION_KEY=<the 64-hex-char output>`.
+3. ⚠️ **Back this key up somewhere safe and never rotate it casually.** If it is
+   lost, every stored ID photo is unrecoverable and every user must re-verify.
+
+> KYC gates three things: withdrawals (you must know who you pay), referral
+> earnings, and the mining halving count — so a farm of fake signups can no longer
+> inflate a referrer or drag everyone through a halving. Set
+> `KYC_REQUIRED_FOR_WITHDRAWAL=false` only if you deliberately want to allow
+> unverified cash-out (not recommended).
+
+---
+
+## 🟡 3c. Monetag account + zone (the website ad revenue you chose)
+
+You picked Monetag as the first ad provider for the site. Mining is gated behind
+one short rewarded video: a user taps "Start mining", watches one ad, then the
+8-hour session runs. It is a **soft** gate — if Monetag has no ad to show (common
+in Pakistan at night), mining starts anyway, so an ad outage never breaks a streak.
+
+**Steps:**
+1. Sign up at **monetag.com** and add your site. ⚠️ Monetag reviews the domain, and
+   a `vercel.app` subdomain will likely be **rejected** — so this depends on item 5
+   (point `rozipay.xyz`) being done first.
+2. Create a **Rewarded Interstitial** zone; copy its **zone ID**.
+3. In **/staff → Mining** set `adProvider = monetag`, `monetagZoneId = <the id>`,
+   and `adsEnabled = 1`. (All three are needed; the flag alone does nothing.)
+4. ⚠️ **Read Monetag's terms on incentivised/rewarded traffic first.** We are not
+   paying cash to watch an ad — we unlock mining, and ROZI has no fixed cash value
+   by design — but confirm their policy before you rely on the revenue.
+
+---
+
 ## 🟡 4. Authorize Sentry (error monitoring before you have real users)
 
 Blocked from my side: it needs an **OAuth flow** I can't run in a non-interactive

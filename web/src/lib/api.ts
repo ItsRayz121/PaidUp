@@ -38,9 +38,15 @@ export function clearSession() {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  // The full error payload. Some routes send structured fields alongside the
+  // message — the withdrawal gate sends `kycRequired`, so the UI can offer the
+  // "Verify your ID" button instead of a dead end. Reading a flag is honest;
+  // string-matching the message would break the moment someone reworded it.
+  body: Record<string, unknown>;
+  constructor(message: string, status: number, body: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -76,7 +82,7 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) clearSession();
     const msg = (body as { error?: string })?.error || "Something went wrong. Please try again.";
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, (body as Record<string, unknown>) ?? {});
   }
   return body as T;
 }
@@ -369,14 +375,25 @@ export type MiningState = {
   ads: {
     enabled: boolean; watchedToday: number; dailyCap: number;
     boostPct: number; boostHours: number;
+    // Show a video before mining starts. Soft: the server still starts the
+    // session if no ad was watched.
+    gateOnStart: boolean;
+    provider: string;
+    monetagZoneId: string;
   };
   convertible: boolean;
   transfersEnabled: boolean;
   deviceBlocked: boolean;
 };
 export const fetchMiningState = () => apiFetch<MiningState>("/mining/state");
-export const startMining = () =>
-  apiFetch<{ ok: true; expiresAt: string }>("/mining/start", { method: "POST" });
+
+// `adNonce` is OPTIONAL, and that is the whole design of the ad gate. If the user
+// watched the video, we hand back the nonce and they get the speed boost. If
+// Monetag had nothing to show — routine here at night — we start mining anyway.
+// An ad network outage must never stop someone mining or break their streak.
+export const startMining = (adNonce?: string) =>
+  apiFetch<{ ok: true; expiresAt: string; boost: { pct: number; hours: number } | null }>(
+    "/mining/start", { method: "POST", body: JSON.stringify({ adNonce }) });
 
 export type Rig = {
   id: string; name: string; icon: string; level: number; maxLevel: number;
@@ -400,6 +417,36 @@ export const issueAd = () =>
 export const completeAd = (nonce: string) =>
   apiFetch<{ ok: true; boostPct: number; hours: number }>(
     "/mining/ad/complete", { method: "POST", body: JSON.stringify({ nonce }) });
+
+// ---- Verify your ID (KYC) ---------------------------------------------------
+// Manual review by staff. The photos go UP and never come back down: not even to
+// the user who sent them. There is no endpoint that returns them to a browser
+// outside the admin review screen.
+export type KycState = {
+  status: "none" | "pending" | "approved" | "rejected";
+  rejectReason: string | null;
+  submittedAt: string | null;
+};
+export const fetchKyc = () => apiFetch<KycState>("/kyc");
+
+// The three images are `data:image/jpeg;base64,...` strings. The server checks
+// their MAGIC BYTES, not the type they claim, then encrypts them before storage.
+export const submitKyc = (selfie: string, idFront: string, idBack: string) =>
+  apiFetch<{ ok: true; status: "pending" }>("/kyc", {
+    method: "POST", body: JSON.stringify({ selfie, idFront, idBack }),
+  });
+
+// ---- Admin: the ID review queue --------------------------------------------
+export type KycSubmission = {
+  id: string; user_id: string; email: string; country: string;
+  status: string; created_at: string; reviewed_at: string | null;
+};
+export const fetchKycQueue = (status = "pending") =>
+  apiFetch<{ submissions: KycSubmission[] }>(`/staff/kyc?status=${status}`);
+export const decideKyc = (id: string, decision: "approved" | "rejected", reason?: string) =>
+  apiFetch<{ ok: true; status: string }>(`/staff/kyc/${id}/decide`, {
+    method: "POST", body: JSON.stringify({ decision, reason }),
+  });
 
 export type Booster = { id: string; name: string; price_points: number; multiplier_pct: number; hours: number };
 export const fetchBoosters = () => apiFetch<{ points: number; boosters: Booster[] }>("/mining/boosters");

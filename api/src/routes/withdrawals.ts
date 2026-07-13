@@ -58,6 +58,26 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       });
     }
 
+    // KYC GATE (founder decision, 2026-07-13). You should know who you are sending
+    // money to. Checked here, at REQUEST time, rather than at approval: a user who
+    // cannot be paid should be told so before their points are held, not after
+    // they have sat in a queue for two days waiting for a payout that will not come.
+    if (config.kycRequiredForWithdrawal) {
+      const u = await sql.get<{ kyc_status: string }>(
+        "SELECT kyc_status FROM users WHERE id = ?", userId);
+      if (u?.kyc_status !== "approved") {
+        return reply.code(403).send({
+          error: u?.kyc_status === "pending"
+            ? "We are still checking your ID. You can withdraw as soon as that is done."
+            : "Verify your ID first, then you can withdraw.",
+          // The web uses this to send them straight to /kyc instead of showing a
+          // dead end.
+          kycRequired: true,
+          kycStatus: u?.kyc_status ?? "none",
+        });
+      }
+    }
+
     // Validate the destination address for the chosen chain BEFORE holding funds
     // — a payout to a malformed address is unrecoverable.
     const addrCheck = validateAddress(chain as ChainId, addressRaw);

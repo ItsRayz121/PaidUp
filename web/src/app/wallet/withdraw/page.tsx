@@ -7,7 +7,7 @@ import { Loading, ErrorState } from "@/components/state";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal } from "@/lib/api";
+import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal, ApiError } from "@/lib/api";
 import { formatPoints, formatMoney } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
@@ -29,6 +29,10 @@ export default function WithdrawPage() {
   const [savedMsg, setSavedMsg] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Set when the server refuses the withdrawal because the user has not verified
+  // their ID yet. Drives the "Verify your ID" card below instead of a dead error.
+  const [needsKyc, setNeedsKyc] = useState(false);
+  const [kycStatus, setKycStatus] = useState("none");
 
   const savedAddresses = saved.data?.addresses ?? {};
   // Pre-fill the saved address for the current chain once it loads (only when the
@@ -64,11 +68,19 @@ export default function WithdrawPage() {
   if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} />;
 
   async function submit() {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setNeedsKyc(false);
     try {
       await createWithdrawal(amt, chain, address.trim());
       setDone(true);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      // The server sends a `kycRequired` flag, not just a sentence. Show them the
+      // way to fix it rather than an error they can do nothing about.
+      if (e instanceof ApiError && e.body.kycRequired) {
+        setNeedsKyc(true);
+        setKycStatus(String(e.body.kycStatus ?? "none"));
+      }
+      setError((e as Error).message);
+    }
     finally { setBusy(false); }
   }
 
@@ -91,7 +103,23 @@ export default function WithdrawPage() {
         <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
       </header>
 
-      {error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}
+      {/* An unverified user gets a way FORWARD, not just a refusal. This is the
+          most common reason a first withdrawal fails, so it must not be a wall. */}
+      {needsKyc ? (
+        <Card className="border-pending/30 bg-pending-tint p-4">
+          <p className="font-bold text-pending">{t("withdraw.kyc.title")}</p>
+          <p className="mt-1 text-sm text-brand-ink">
+            {kycStatus === "pending" ? t("withdraw.kyc.pending") : t("withdraw.kyc.body")}
+          </p>
+          {kycStatus !== "pending" && (
+            <div className="mt-3">
+              <Button href="/kyc" full>{t("withdraw.kyc.cta")}</Button>
+            </div>
+          )}
+        </Card>
+      ) : (
+        error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
+      )}
 
       <Card className="p-4">
         <p className="text-sm text-muted">{t("withdraw.youHave")}</p>

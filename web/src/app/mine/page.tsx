@@ -13,6 +13,7 @@ import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
 import { formatRozi } from "@/lib/format";
+import { showRewardedAd } from "@/lib/ads";
 
 // Countdown to a session's expiry, in words. Ticks locally so we are not
 // polling the API once a second just to move a clock.
@@ -50,11 +51,42 @@ export default function MinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countdown, s?.session.active]);
 
+  // Start mining. If the ad gate is on, one short video plays first.
+  //
+  // Every failure here FAILS OPEN — no ad tag, an ad blocker, no fill, a wedged
+  // SDK — and mining starts anyway with no boost. A hard gate would mean that a
+  // bad night at Monetag stops the whole country mining and breaks streaks people
+  // earned. Losing one impression is the cheaper mistake by a wide margin.
   async function onStart() {
     setBusy(true);
     setNotice(null);
     try {
-      await startMining();
+      let nonce: string | undefined;
+
+      if (s?.ads.gateOnStart && s.ads.monetagZoneId) {
+        try {
+          // The nonce is issued BEFORE the video. The server times the watch from
+          // the moment it hands this out, so a user cannot request one, sit on it,
+          // and redeem it instantly later.
+          const issued = await issueAd();
+          const watched = await showRewardedAd(s.ads.monetagZoneId);
+          if (watched) nonce = issued.nonce;
+          else setNotice(t("mine.gate.skipped"));
+        } catch {
+          // Includes the daily cap (429). They have had their ads for today; they
+          // can still mine.
+          setNotice(t("mine.gate.skipped"));
+        }
+      }
+
+      const res = await startMining(nonce);
+      if (res.boost) {
+        setNotice(
+          t("mine.ad.done")
+            .replace("{pct}", String(res.boost.pct))
+            .replace("{hours}", String(res.boost.hours)),
+        );
+      }
       mining.reload();
     } catch (e) {
       setNotice((e as Error).message);
@@ -63,18 +95,20 @@ export default function MinePage() {
     }
   }
 
-  // Watch an ad -> hashrate boost. The reward is a BOOST, never currency, which
-  // is why this flow can exist without a server-to-server postback behind it.
+  // The standalone "watch a video for a speed boost" button, separate from the
+  // start-mining gate. Same server path, same nonce, same daily cap.
   async function onWatchAd() {
     setBusy(true);
     setNotice(null);
     try {
-      const { nonce, minSeconds } = await issueAd();
-      // TODO(founder): drop the real ad tag (Monetag / Adsterra) in here. Until
-      // an account exists, this is the dwell window the provider's player would
-      // occupy — the backend enforces the same minimum, so nothing is trusted
-      // from this side.
-      await new Promise((r) => setTimeout(r, (minSeconds + 1) * 1000));
+      const { nonce } = await issueAd();
+      const watched = s?.ads.monetagZoneId
+        ? await showRewardedAd(s.ads.monetagZoneId)
+        : false;
+      if (!watched) {
+        setNotice(t("mine.gate.skipped"));
+        return;
+      }
       const res = await completeAd(nonce);
       setNotice(t("mine.ad.done").replace("{pct}", String(res.boostPct)).replace("{hours}", String(res.hours)));
       mining.reload();

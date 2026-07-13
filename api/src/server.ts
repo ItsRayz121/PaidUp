@@ -9,6 +9,9 @@ import { staffRoutes } from "./routes/staff.ts";
 import { miningRoutes } from "./routes/mining.ts";
 import { staffMiningRoutes } from "./routes/staffMining.ts";
 import { staffTaskRoutes } from "./routes/staffTasks.ts";
+import { kycRoutes } from "./routes/kyc.ts";
+import { staffKycRoutes } from "./routes/staffKyc.ts";
+import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
 import { initDb, usingRealPostgres } from "./db.ts";
 
@@ -29,6 +32,12 @@ if (process.env.NODE_ENV === "production") {
   for (const [name, token] of Object.entries(config.postbackTokens)) {
     if (token.startsWith("dev-")) missing.push(`POSTBACK_TOKEN_${name.toUpperCase()}`);
   }
+  // The KYC key is in this list, not warned about, because the failure is silent
+  // and permanent: without it we would encrypt real Pakistani ID cards under a key
+  // that is published in this repository's git history. That is worse than storing
+  // them in plaintext, because it LOOKS encrypted. Refuse to start.
+  if (usingDevKycKey()) missing.push("KYC_ENCRYPTION_KEY");
+
   if (missing.length) {
     console.error(`FATAL: not starting — these secrets are still defaults: ${missing.join(", ")}. Set them in the host environment and redeploy.`);
     process.exit(1);
@@ -95,6 +104,8 @@ await app.register(staffRoutes);
 await app.register(miningRoutes);
 await app.register(staffMiningRoutes);
 await app.register(staffTaskRoutes);
+await app.register(kycRoutes);
+await app.register(staffKycRoutes);
 
 // ---- Mining: accrual sweep + epoch settlement ------------------------------
 // Each tick does two things, IN ORDER:

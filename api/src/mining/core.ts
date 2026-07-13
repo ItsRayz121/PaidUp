@@ -115,6 +115,32 @@ export const MINING_DEFAULTS = {
   adWatchDailyCap: 10,
   adsEnabled: 0,            // off until the founder has a Monetag/Adsterra account
   adProvider: "",           // ads stay off until this is set too, even if the flag is 1
+  monetagZoneId: "",        // the Monetag rewarded-interstitial zone; empty => no ad tag
+
+  // -- The ad GATE on starting a session (founder decision, 2026-07-13).
+  //
+  //    The retention + revenue loop: sessions are 8h, so a user comes back ~3x a
+  //    day, and each return shows one ad before mining starts. Three impressions
+  //    per user per day, and not one more — we are not trying to annoy anyone.
+  //
+  //    IT IS A SOFT GATE, and that is deliberate. Monetag has no server-to-server
+  //    callback: its rewarded format resolves a JavaScript promise in the browser,
+  //    so "the user watched it" is a client-side claim we cannot verify. Two
+  //    consequences, and we accept both:
+  //
+  //    1. A technical user can skip the ad and mine anyway. That costs us ONE
+  //       impression. It cannot mint ROZI, because the ad's reward is a hashrate
+  //       boost against a capped emission, never currency. Toll evasion, not theft.
+  //
+  //    2. When Monetag has no fill — routine in Pakistan at 3am — mining MUST
+  //       start regardless. A hard gate would mean an outage at the ad network
+  //       stops the whole country from mining and breaks their streaks through no
+  //       fault of their own. That is a far worse failure than a lost impression.
+  //
+  //    So: the client shows the ad and hands back a nonce; the server rewards the
+  //    nonce and caps how often. The server never REFUSES to start a session for
+  //    want of an ad.
+  adGateOnStart: 1,
 
   // -- Referral hashrate (§ 4.6). Dead signups are worth exactly zero.
   referralL1Pct: 10,

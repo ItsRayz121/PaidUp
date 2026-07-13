@@ -69,6 +69,112 @@ const defOf = (r: RigRow) => ({
   basePower: r.base_power, powerGrowth: r.power_growth, maxLevel: r.max_level,
 });
 
+// ---- Ad-watch (revenue line #2) ---------------------------------------------
+//
+// The reward for watching an ad is a hashrate BOOST, never a direct currency
+// credit — so a faked ad view cannot mint ROZI out of nothing, and guardrail #1
+// (points only from verified events) is untouched. Note the nuance under the "pi"
+// emission model, now the default: a boost multiplies the miner's OWN payout, so a
+// faked view DOES increase the faker's own minted ROZI — it is not the "reshuffles
+// a fixed pot, mints nothing" story that held under the pool model. What keeps the
+// weak, no-postback verification acceptable (Monetag has no S2S callback) is that
+// the boost is temporary, capped per day (adWatchDailyCap), identical to what an
+// honest ad-watcher earns, and bounded by the supply cap — with conversion to
+// Points OFF at launch. It is toll evasion, not theft.
+//
+// State lives in ad_impressions, never in process memory: the API runs more than
+// one instance on Railway, so an in-memory nonce set would reject a valid
+// completion that happened to land on a different instance.
+const MIN_WATCH_SECONDS = 15;
+
+// Ads need BOTH the flag and a configured provider. Without the provider check, an
+// Admin who flips adsEnabled=1 before the ad tag is actually integrated would be
+// handing out free hashrate boosts for a video nobody watched — all of the
+// dilution, none of the revenue. The flag alone is not consent to pay out.
+const adsLive = (s: { adsEnabled: number; adProvider: string }) =>
+  Boolean(s.adsEnabled) && Boolean(s.adProvider);
+
+// Consume one ad nonce and grant the boost. Throws if the nonce is invalid, not
+// yours, too fresh, already spent, or over the daily cap.
+//
+// ONE copy of this, called by both /mining/ad/complete and /mining/start, because
+// it carries a fix that is easy to lose. It used to SELECT the row, check
+// `status = 'issued'`, and only UPDATE it several statements later. That gap is
+// exploitable: fire fifty concurrent POSTs with the SAME nonce and every one reads
+// `issued`, every one passes the check, and every one grants a boost. The daily cap
+// had the same hole.
+//
+// That is not cosmetic. Hashrate decides your share of the day's ROZI emission, and
+// ROZI is a claim on future Conversion Window pots, which pay out real Points.
+// Inflating your hashrate takes real money from honest miners. So: an advisory lock
+// per user (guardrail #8), and the nonce is consumed by a CONDITIONAL update whose
+// row count is the authority — the database picks the winner, not a read we did
+// earlier. Duplicating this logic instead of calling it would reintroduce the race.
+async function redeemAdNonce(
+  userId: string,
+  nonce: string,
+  s: { adsEnabled: number; adProvider: string; adBoostPct: number; adBoostHours: number; adWatchDailyCap: number },
+): Promise<{ watchedSeconds: number }> {
+  await accrue(userId); // pay out the pre-boost seconds at the pre-boost rate
+
+  const result = await sql.tx(async (t) => {
+    await lockUser(t, userId);
+
+    const row = await t.get<{ id: string; user_id: string; status: string; issued_at: string }>(
+      "SELECT id, user_id, status, issued_at FROM ad_impressions WHERE nonce = ?", nonce);
+    if (!row) throw { statusCode: 400, message: "That ad view is not valid." };
+
+    // The nonce is bound to the user it was issued to. Compared in constant time so
+    // it cannot be probed byte-by-byte to harvest another user's nonce.
+    const a = Buffer.from(row.user_id);
+    const b = Buffer.from(userId);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      throw { statusCode: 403, message: "That ad view is not yours." };
+    }
+
+    const watchedSeconds = (Date.now() - Date.parse(row.issued_at)) / 1000;
+    if (watchedSeconds < MIN_WATCH_SECONDS) {
+      await t.run(
+        "UPDATE ad_impressions SET status = 'rejected' WHERE id = ? AND status = 'issued'", row.id);
+      throw { statusCode: 400, message: "Watch the whole ad to get your boost." };
+    }
+
+    // The cap is enforced HERE, at spend, not at issue. Issuing a nonce is free and
+    // does not count toward the cap (only 'rewarded' rows do), so a user could bank
+    // 50 nonces while their rewarded count was still 0, wait out the dwell timer
+    // once, and redeem them all.
+    const rewardedToday = await t.get<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM ad_impressions
+       WHERE user_id = ? AND status = 'rewarded' AND rewarded_at > ?`,
+      userId, new Date(Date.now() - 86_400_000).toISOString(),
+    );
+    if (Number(rewardedToday?.n ?? 0) >= s.adWatchDailyCap) {
+      await t.run(
+        "UPDATE ad_impressions SET status = 'rejected' WHERE id = ? AND status = 'issued'", row.id);
+      throw { statusCode: 429, message: `You have watched your ${s.adWatchDailyCap} ads for today. Come back tomorrow.` };
+    }
+
+    const consumed = await t.run(
+      "UPDATE ad_impressions SET status = 'rewarded', rewarded_at = ? WHERE id = ? AND status = 'issued'",
+      now(), row.id,
+    );
+    if (consumed.rowCount === 0) {
+      throw { statusCode: 400, message: "That ad was already counted." };
+    }
+
+    await grantBoost(userId, "ad", s.adBoostPct, s.adBoostHours, row.id, t);
+    return { watchedSeconds };
+  });
+
+  // Machine-regular completions (always redeemed at exactly the dwell minimum) are
+  // the bot signature here. Flag, never block.
+  if (result.watchedSeconds < MIN_WATCH_SECONDS + 0.5) {
+    await flagOnce("mining_bot_pattern", `ad:${userId}`, userId, "medium",
+      `Ad completions land at exactly the ${MIN_WATCH_SECONDS}s dwell minimum.`);
+  }
+  return result;
+}
+
 export async function miningRoutes(app: FastifyInstance) {
   // ---- State ---------------------------------------------------------------
   // The one call the /mine screen polls. Accrues first, so the numbers it
@@ -109,12 +215,17 @@ export async function miningRoutes(app: FastifyInstance) {
       streak: { current: streak?.current_days ?? 0, best: streak?.best_days ?? 0 },
       boosts: boosts.map((b) => ({ kind: b.kind, pct: b.multiplier_pct, expiresAt: b.expires_at })),
       ads: {
-        // Needs the flag AND a provider — see adsLive() below.
-        enabled: Boolean(s.adsEnabled) && Boolean(s.adProvider),
+        // Needs the flag AND a provider — see adsLive().
+        enabled: adsLive(s),
         watchedToday: Number(adsToday?.n ?? 0),
         dailyCap: s.adWatchDailyCap,
         boostPct: s.adBoostPct,
         boostHours: s.adBoostHours,
+        // Show an ad before mining starts. The client honours this; the server
+        // never refuses to start a session for want of one (see adGateOnStart).
+        gateOnStart: Boolean(s.adGateOnStart) && adsLive(s),
+        provider: s.adProvider,
+        monetagZoneId: s.monetagZoneId,
       },
       // Told plainly, and repeated in the UI. Pretending otherwise is the
       // fastest way to burn the brand.
@@ -125,10 +236,36 @@ export async function miningRoutes(app: FastifyInstance) {
     };
   }));
 
+  // Start a session, optionally redeeming the ad the user just watched.
+  //
+  // The ad is a SOFT gate (see adGateOnStart in mining/core.ts). If `adNonce` is
+  // present it is redeemed and the boost granted; if it is absent — because
+  // Monetag had no fill, or because the user skipped it — the session starts
+  // anyway. Refusing to start mining because an ad network was down would punish
+  // the user for our supplier's outage and break a streak they had earned.
   app.post("/mining/start", guard(async (userId, req) => {
+    const body = z.object({ adNonce: z.string().optional() }).parse(req.body ?? {});
+
+    // Redeem BEFORE starting, so the boost is live for the whole session rather
+    // than being applied a second later to a session already accruing at the
+    // un-boosted rate.
+    let boost: { pct: number; hours: number } | null = null;
+    if (body.adNonce) {
+      const s = await loadMiningSettings();
+      if (adsLive(s)) {
+        try {
+          await redeemAdNonce(userId, body.adNonce, s);
+          boost = { pct: s.adBoostPct, hours: s.adBoostHours };
+        } catch {
+          // A bad, stale or already-spent nonce must NOT stop the user mining.
+          // They lose the boost, not the session.
+        }
+      }
+    }
+
     const r = await startSession(userId, deviceOf(req));
     if (!r.ok) throw { statusCode: 400, message: r.reason };
-    return { ok: true, expiresAt: r.expiresAt };
+    return { ok: true, expiresAt: r.expiresAt, boost };
   }));
 
   // ---- ROZI history --------------------------------------------------------
@@ -265,28 +402,6 @@ export async function miningRoutes(app: FastifyInstance) {
     });
   }));
 
-  // ---- Ad-watch mining (revenue line #2) -----------------------------------
-  //
-  // The reward for watching an ad is a hashrate BOOST, never currency. That is
-  // what keeps guardrail #1 intact: a boost is not a point, it is a multiplier
-  // on a pot that was going to be emitted anyway. So even a bot that fakes ad
-  // views perfectly steals a slightly larger slice of a fixed pot — it cannot
-  // mint anything, and it costs the treasury nothing.
-  //
-  // This is the only reason the weaker no-postback verification below is
-  // acceptable at all.
-  // State lives in ad_impressions, never in process memory: the API runs more
-  // than one instance on Railway, so an in-memory nonce set would reject a valid
-  // completion that happened to land on a different instance.
-  const MIN_WATCH_SECONDS = 15;
-
-  // Ads need BOTH the flag and a configured provider. Without the provider check,
-  // an Admin who flips adsEnabled=1 before the ad tag is actually integrated would
-  // be handing out free hashrate boosts for a video nobody watched — all of the
-  // dilution, none of the revenue. The flag alone is not consent to pay out.
-  const adsLive = (s: { adsEnabled: number; adProvider: string }) =>
-    Boolean(s.adsEnabled) && Boolean(s.adProvider);
-
   app.post("/mining/ad/issue", guard(async (userId, req) => {
     const s = await loadMiningSettings();
     if (!adsLive(s)) throw { statusCode: 400, message: "Ads are not available right now." };
@@ -309,89 +424,16 @@ export async function miningRoutes(app: FastifyInstance) {
     return { nonce, minSeconds: MIN_WATCH_SECONDS };
   }));
 
+  // Redeem an ad watched OUTSIDE the start-mining flow (the standalone "watch an
+  // ad for a boost" button). The start-mining path calls redeemAdNonce directly.
   app.post("/mining/ad/complete", guard(async (userId, req) => {
     const body = z.object({ nonce: z.string().min(1) }).parse(req.body);
     const s = await loadMiningSettings();
-    // Re-checked here too: an Admin could switch ads off between issue and
-    // complete, and an outstanding nonce must not still pay out afterwards.
+    // Re-checked here: an Admin could switch ads off between issue and complete,
+    // and an outstanding nonce must not still pay out afterwards.
     if (!adsLive(s)) throw { statusCode: 400, message: "Ads are not available right now." };
 
-    await accrue(userId); // pay out the pre-boost seconds at the pre-boost rate
-
-    // The whole redemption is one serialized transaction.
-    //
-    // It used to SELECT the row, check `status = 'issued'`, and only UPDATE it
-    // several statements later. That gap is exploitable: fire fifty concurrent
-    // POSTs with the SAME nonce and every one of them reads `issued`, every one
-    // passes the check, and every one grants a boost. The daily cap had the same
-    // hole — fifty concurrent redemptions of fifty different nonces all read the
-    // same rewarded-count of zero.
-    //
-    // That is not cosmetic. Hashrate decides your share of the day's ROZI
-    // emission, and ROZI is a claim on future Conversion Window pots, which pay
-    // out real Points. Inflating your hashrate takes real money from honest
-    // miners. So: advisory lock per user (guardrail #8), and the nonce is
-    // consumed by a CONDITIONAL update whose row count is the authority — the
-    // database decides the winner, not a read we did earlier.
-    const result = await sql.tx(async (t) => {
-      await lockUser(t, userId);
-
-      const row = await t.get<{ id: string; user_id: string; status: string; issued_at: string }>(
-        "SELECT id, user_id, status, issued_at FROM ad_impressions WHERE nonce = ?", body.nonce);
-      if (!row) throw { statusCode: 400, message: "That ad view is not valid." };
-
-      // The nonce is bound to the user it was issued to. Compared in constant
-      // time so it cannot be probed byte-by-byte to harvest another user's nonce.
-      const a = Buffer.from(row.user_id);
-      const b = Buffer.from(userId);
-      if (a.length !== b.length || !timingSafeEqual(a, b)) {
-        throw { statusCode: 403, message: "That ad view is not yours." };
-      }
-
-      const watchedSeconds = (Date.now() - Date.parse(row.issued_at)) / 1000;
-      if (watchedSeconds < MIN_WATCH_SECONDS) {
-        await t.run(
-          "UPDATE ad_impressions SET status = 'rejected' WHERE id = ? AND status = 'issued'", row.id);
-        throw { statusCode: 400, message: "Watch the whole ad to get your boost." };
-      }
-
-      // The cap is enforced HERE, at spend, not at issue. Issuing a nonce is free
-      // and does not count toward the cap (only 'rewarded' rows do), so a user
-      // could bank 50 nonces while their rewarded count was still 0, wait out the
-      // dwell timer once, and redeem them all.
-      const rewardedToday = await t.get<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM ad_impressions
-         WHERE user_id = ? AND status = 'rewarded' AND rewarded_at > ?`,
-        userId, new Date(Date.now() - 86_400_000).toISOString(),
-      );
-      if (Number(rewardedToday?.n ?? 0) >= s.adWatchDailyCap) {
-        await t.run(
-          "UPDATE ad_impressions SET status = 'rejected' WHERE id = ? AND status = 'issued'", row.id);
-        throw { statusCode: 429, message: `You have watched your ${s.adWatchDailyCap} ads for today. Come back tomorrow.` };
-      }
-
-      // Consume the nonce. `AND status = 'issued'` makes this the single point of
-      // truth: exactly one concurrent request can match, and rowCount tells us
-      // whether we were the one. A stale read cannot win here.
-      const consumed = await t.run(
-        "UPDATE ad_impressions SET status = 'rewarded', rewarded_at = ? WHERE id = ? AND status = 'issued'",
-        now(), row.id,
-      );
-      if (consumed.rowCount === 0) {
-        throw { statusCode: 400, message: "That ad was already counted." };
-      }
-
-      await grantBoost(userId, "ad", s.adBoostPct, s.adBoostHours, row.id, t);
-      return { watchedSeconds };
-    });
-
-    // Machine-regular completions (always redeemed at exactly the dwell minimum)
-    // are the bot signature here. Flag, never block.
-    if (result.watchedSeconds < MIN_WATCH_SECONDS + 0.5) {
-      await flagOnce("mining_bot_pattern", `ad:${userId}`, userId, "medium",
-        `Ad completions land at exactly the ${MIN_WATCH_SECONDS}s dwell minimum.`);
-    }
-
+    await redeemAdNonce(userId, body.nonce, s);
     return { ok: true, boostPct: s.adBoostPct, hours: s.adBoostHours };
   }));
 

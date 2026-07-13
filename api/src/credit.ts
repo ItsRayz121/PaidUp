@@ -161,8 +161,26 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     const inviteAgeDays = (Date.now() - new Date(user.created_at).getTime()) / 86400_000;
     const withinWindow = windowDays <= 0 || inviteAgeDays <= windowDays;
 
+    // KYC GATE (founder decision, 2026-07-13): an invitee earns their inviter
+    // NOTHING until they are a verified, valid user.
+    //
+    // This is the same anti-farm line as the mining referral hashrate, applied to
+    // the CASH currency, where it matters more — referral bonuses here are real
+    // Points, redeemable for real USDT out of the treasury. Without this gate, a
+    // farm of scripted accounts completing cheap offers pays its operator a
+    // commission on every one of them. With it, each of those accounts needs a
+    // distinct real ID card and a human's approval before it is worth a rupee.
+    //
+    // The invitee is unaffected: they are paid their full task reward above,
+    // whatever their KYC state. Only the INVITER's commission waits. That keeps
+    // the guardrail — a referral payout comes from margin and never reduces the
+    // earner's own reward — exactly true.
+    const invitee = await t.get<{ kyc_status: string }>(
+      "SELECT kyc_status FROM users WHERE id = ?", userId);
+    const inviteeIsValid = invitee?.kyc_status === "approved";
+
     const l1 = user.referred_by;
-    if (l1) {
+    if (l1 && inviteeIsValid) {
       if (withinWindow) {
         const pct1 = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
         const bonus1 = Math.floor(points * pct1);
