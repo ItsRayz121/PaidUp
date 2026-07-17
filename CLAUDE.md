@@ -273,6 +273,22 @@ These override convenience or speed at every step:
     the toggle while the API reports disabled. iOS Safari (not installed) has no
     push — the card renders nothing there.
 
+- **MONETAG LIVE — mining ad revenue (2026-07-17)**: real account, site 3411999
+  (`rozipay.xyz`) verified via meta tag in `web/src/app/layout.tsx`. ⚠️ **Their
+  "verification file" is named `sw.js` — never use the file method; it would
+  clobber our service worker (push + offline).** Key discovery: Monetag's
+  rewarded SDK (`show_zone()` promise) is **Telegram-Mini-App-only**, and the old
+  SDK host coded into `web/src/lib/ads.ts` was a dead domain — so `ads.ts` was
+  rewritten for the two formats a website really gets: **vignette** (zone
+  `11331636`, loaded on `/mine` only — the ad around the Start-mining tap;
+  passive, grants NO boost) and **direct link** (the watch-to-boost button: tab
+  opens pre-`await` to dodge pop-up blockers, then the existing server nonce +
+  15s dwell + daily cap decide the boost — server code unchanged). New setting
+  `monetagDirectLink` (admin-tunable); enable = `adProvider`+`adsEnabled`+the two
+  Monetag values in `/staff → Mining`. Also fixed: the mining admin panel
+  Number()-coerced every setting except `adProvider`, silently NaN-ing
+  `emissionModel`/`piHalvingUsers` edits. See `docs/LAUNCH_CHECKLIST.md` § 3c.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

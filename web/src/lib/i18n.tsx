@@ -239,11 +239,16 @@ const copy: Record<string, string> = {
   "mine.boost.title": "Mine faster",
   "mine.boost.task.title": "Finish a survey",
   "mine.boost.task.body": "Get points, and mine faster for 2 days.",
-  "mine.boost.ad.title": "Watch a short video",
+  "mine.boost.ad.title": "Watch an ad",
   "mine.boost.ad.body": "Mine {pct}% faster for {hours} hours.",
   "mine.boost.ad.left": "{n} left today",
   "mine.boost.ad.cta": "Watch",
   "mine.ad.done": "Done. You now mine {pct}% faster for {hours} hours.",
+  // The ad opens in a new tab; the user comes back and taps Claim.
+  "mine.ad.open": "The ad opened in a new tab. Watch it, then come back here.",
+  "mine.ad.claimWait": "Claim in {s}s",
+  "mine.ad.claim": "Claim my boost",
+  "mine.ad.blocked": "Your phone blocked the ad window. Allow pop-ups for this app, then try again.",
   "mine.boost.rigs.title": "Buy a machine",
   "mine.boost.rigs.body": "Spend ROZI to mine faster from now on.",
   "mine.breakdown.title": "What makes your speed",
@@ -334,11 +339,9 @@ const copy: Record<string, string> = {
   // Shown on the withdraw success screen — the moment they most want to know.
   "notify.withdraw.hook": "Want to know the moment your money is sent?",
 
-  // Shown on the mine screen when an ad plays before mining starts.
-  "mine.gate.title": "Watch a short video to start",
-  "mine.gate.body": "One short video, then your machine runs for {hours} hours.",
-  "mine.gate.loading": "Getting your video…",
-  "mine.gate.skipped": "No video right now. Your machine started anyway.",
+  // Shown on the mine screen when an ad may show before mining starts.
+  "mine.gate.title": "An ad may show first",
+  "mine.gate.body": "A short ad may show first. Your machine then runs for {hours} hours.",
 };
 
 type Ctx = { t: (key: string, vars?: Record<string, string>) => string };

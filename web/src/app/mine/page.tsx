@@ -13,7 +13,7 @@ import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
 import { formatRozi } from "@/lib/format";
-import { showRewardedAd } from "@/lib/ads";
+import { ensureVignette, openAdTab } from "@/lib/ads";
 
 // Countdown to a session's expiry, in words. Ticks locally so we are not
 // polling the API once a second just to move a clock.
@@ -43,6 +43,9 @@ export default function MinePage() {
   const mining = useApi(fetchMiningState, []);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A direct-link ad the user opened and has not claimed yet. `readyAt` is when
+  // the server's minimum watch time will have passed and the claim can succeed.
+  const [adClaim, setAdClaim] = useState<{ nonce: string; readyAt: number } | null>(null);
 
   const s: MiningState | null = mining.data;
   const countdown = useCountdown(s?.session.expiresAt);
@@ -54,35 +57,37 @@ export default function MinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countdown, s?.session.active]);
 
-  // Start mining. If the ad gate is on, one short video plays first.
-  //
-  // Every failure here FAILS OPEN — no ad tag, an ad blocker, no fill, a wedged
-  // SDK — and mining starts anyway with no boost. A hard gate would mean that a
-  // bad night at Monetag stops the whole country mining and breaks streaks people
-  // earned. Losing one impression is the cheaper mistake by a wide margin.
+  // Monetag's vignette: the "an ad appears when you start mining" line. It is
+  // passive — once its script is on the page it decorates the user's next taps
+  // with a full-screen ad on its own schedule, so loading it HERE, only when
+  // there is a Start button to tap, is what scopes the ads to mining. It cannot
+  // prove a watch, so the gate ad grants no boost (see lib/ads.ts).
+  useEffect(() => {
+    if (s && !s.session.active && s.ads.gateOnStart && s.ads.monetagZoneId) {
+      ensureVignette(s.ads.monetagZoneId);
+    }
+  }, [s]);
+
+  // Tick once a second while a claim is pending so its countdown moves.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!adClaim) return;
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [adClaim]);
+  // Fresh at every render — the interval above re-renders us for exactly this.
+  // eslint-disable-next-line react-hooks/purity
+  const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
+
+  // Start mining. The vignette (if it loaded — ad blockers are a normal Tuesday
+  // here) shows an ad around this tap; nothing is awaited and nothing can fail
+  // closed. An ad network having a bad night must never stop mining or cost a
+  // streak someone earned.
   async function onStart() {
     setBusy(true);
     setNotice(null);
     try {
-      let nonce: string | undefined;
-
-      if (s?.ads.gateOnStart && s.ads.monetagZoneId) {
-        try {
-          // The nonce is issued BEFORE the video. The server times the watch from
-          // the moment it hands this out, so a user cannot request one, sit on it,
-          // and redeem it instantly later.
-          const issued = await issueAd();
-          const watched = await showRewardedAd(s.ads.monetagZoneId);
-          if (watched) nonce = issued.nonce;
-          else setNotice(t("mine.gate.skipped"));
-        } catch {
-          // Includes the daily cap (429). They have had their ads for today; they
-          // can still mine.
-          setNotice(t("mine.gate.skipped"));
-        }
-      }
-
-      const res = await startMining(nonce);
+      const res = await startMining();
       if (res.boost) {
         setNotice(
           t("mine.ad.done")
@@ -98,26 +103,51 @@ export default function MinePage() {
     }
   }
 
-  // The standalone "watch a video for a speed boost" button, separate from the
-  // start-mining gate. Same server path, same nonce, same daily cap.
-  async function onWatchAd() {
+  // The "watch an ad, mine faster" button — a Monetag direct link in a new tab.
+  // The server issued the nonce BEFORE the tab opened and times the watch from
+  // that moment, enforces the daily cap, and consumes the nonce exactly once;
+  // the claim button below merely comes back to collect.
+  function onWatchAd() {
+    const url = s?.ads.monetagDirectLink;
+    if (!url) return;
+    // The tab must open synchronously inside this tap — window.open after an
+    // `await` is exactly what pop-up blockers kill.
+    const tab = openAdTab();
+    if (!tab) {
+      setNotice(t("mine.ad.blocked"));
+      return;
+    }
+    setBusy(true);
+    setNotice(null);
+    issueAd()
+      .then(({ nonce, minSeconds }) => {
+        tab.navigate(url);
+        // +2s of slack so an honest claim can never land under the server's
+        // minimum by clock or network jitter.
+        setAdClaim({ nonce, readyAt: Date.now() + (minSeconds + 2) * 1000 });
+        setNotice(t("mine.ad.open"));
+      })
+      .catch((e) => {
+        // Over the daily cap, or the API is down — either way no ad is owed.
+        tab.close();
+        setNotice((e as Error).message);
+      })
+      .finally(() => setBusy(false));
+  }
+
+  async function onClaimBoost() {
+    if (!adClaim) return;
     setBusy(true);
     setNotice(null);
     try {
-      const { nonce } = await issueAd();
-      const watched = s?.ads.monetagZoneId
-        ? await showRewardedAd(s.ads.monetagZoneId)
-        : false;
-      if (!watched) {
-        setNotice(t("mine.gate.skipped"));
-        return;
-      }
-      const res = await completeAd(nonce);
+      const res = await completeAd(adClaim.nonce);
       setNotice(t("mine.ad.done").replace("{pct}", String(res.boostPct)).replace("{hours}", String(res.hours)));
       mining.reload();
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
+      // Success or failure, the nonce is spent — a dead claim has no second life.
+      setAdClaim(null);
       setBusy(false);
     }
   }
@@ -191,13 +221,11 @@ export default function MinePage() {
             <>
               <Button onClick={onStart} disabled={busy}>
                 <MineIcon size={20} />
-                {busy && s.ads.gateOnStart
-                  ? t("mine.gate.loading")
-                  : t("mine.start").replace("{hours}", String(s.session.sessionHours))}
+                {t("mine.start").replace("{hours}", String(s.session.sessionHours))}
               </Button>
-              {/* Tell them a video comes first, so it is not a surprise. Only when
-                  the gate is actually live (flag + provider + a zone id). */}
-              {s.ads.gateOnStart && !busy && (
+              {/* Tell them an ad may come first, so it is not a surprise. Only
+                  when the gate is actually live (flag + provider + a zone id). */}
+              {s.ads.gateOnStart && s.ads.monetagZoneId !== "" && !busy && (
                 <p className="mt-2 text-xs text-muted">
                   {t("mine.gate.body").replace("{hours}", String(s.session.sessionHours))}
                 </p>
@@ -236,7 +264,7 @@ export default function MinePage() {
             </Card>
           </Link>
 
-          {s.ads.enabled && (
+          {s.ads.enabled && s.ads.monetagDirectLink !== "" && (
             <Card className="flex items-center gap-3 p-4">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
                 <VideoIcon size={22} />
@@ -252,15 +280,29 @@ export default function MinePage() {
                   {t("mine.boost.ad.left").replace("{n}", String(adsLeft))}
                 </p>
               </div>
-              <Button
-                onClick={onWatchAd}
-                disabled={busy || adsLeft === 0}
-                variant="accent"
-                size="md"
-                full={false}
-              >
-                {t("mine.boost.ad.cta")}
-              </Button>
+              {adClaim ? (
+                <Button
+                  onClick={onClaimBoost}
+                  disabled={busy || claimWait > 0}
+                  variant="accent"
+                  size="md"
+                  full={false}
+                >
+                  {claimWait > 0
+                    ? t("mine.ad.claimWait").replace("{s}", String(claimWait))
+                    : t("mine.ad.claim")}
+                </Button>
+              ) : (
+                <Button
+                  onClick={onWatchAd}
+                  disabled={busy || adsLeft === 0}
+                  variant="accent"
+                  size="md"
+                  full={false}
+                >
+                  {t("mine.boost.ad.cta")}
+                </Button>
+              )}
             </Card>
           )}
 

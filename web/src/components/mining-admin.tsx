@@ -55,7 +55,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   },
   {
     title: "Boosts",
-    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated.",
+    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get two formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost) and the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost). Each empty value disables its own half.",
     keys: [
       ["taskBoostPct", "Task boost (%)"],
       ["taskBoostHours", "Task boost lasts (hours)"],
@@ -65,6 +65,8 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
       ["adWatchDailyCap", "Ads per user per day"],
       ["adsEnabled", "Ads on (1) / off (0)"],
       ["adProvider", "Ad provider (monetag / adsterra)"],
+      ["monetagZoneId", "Monetag vignette zone id"],
+      ["monetagDirectLink", "Monetag direct link URL"],
     ],
   },
   {
@@ -112,7 +114,11 @@ export function MiningPanel() {
     try {
       const patch: Record<string, number | string> = {};
       for (const [k, v] of Object.entries(draft)) {
-        patch[k] = k === "adProvider" ? v : Number(v);
+        // String settings pass through as typed. Deciding by the CURRENT value's
+        // type (not a hand-kept key list) is what keeps this from mangling the
+        // next string setting someone adds — the old `k === "adProvider"` check
+        // was quietly turning an edited emissionModel or piHalvingUsers into NaN.
+        patch[k] = typeof cur[k] === "number" ? Number(v) : v;
       }
       await updateMiningSettings(patch);
       setDraft({});

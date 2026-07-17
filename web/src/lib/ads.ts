@@ -1,100 +1,65 @@
-// Monetag rewarded interstitial.
+// Monetag glue — the two formats a real website account actually gets.
 //
-// HOW IT WORKS, and its one hard limit: Monetag's rewarded format hands us a
-// JavaScript promise that resolves when the user finishes the video. There is NO
-// server-to-server callback. So "the user watched it" is a claim made by the
-// browser, and a browser is a thing the user controls.
+// The first version of this file was written for Monetag's rewarded SDK: a
+// `show_<zone>()` promise that resolves when the user finishes the video. When
+// the real account arrived (2026-07-17) that format turned out to be Telegram-
+// Mini-App-only, and the SDK host we had coded against no longer even resolves.
+// A website gets two humbler tools, and this file adapts to them:
 //
-// We accept that, and here is the honest reason it is safe enough. Watching an ad
-// grants a hashrate BOOST, never currency directly — so a faked view cannot mint
-// ROZI out of nothing. Under the OLD pool model it truly minted nothing at all: a
-// boost only reshuffled a fixed daily pot. Under the "pi" model that is now the
-// default, that is no longer strictly true — a boost multiplies the faker's OWN
-// payout, so a faked ad view does increase their own minted ROZI.
+//   1. VIGNETTE (ensureVignette). A script that, once loaded, shows a full-screen
+//      ad around the user's next taps. Purely passive: there is no "the user
+//      watched it" signal, no promise, nothing to await. We load it on the /mine
+//      screen only, so the tap it decorates is "Start mining" — the founder's
+//      "an ad appears when you start mining". Because it cannot prove a watch,
+//      the gate ad grants NO boost; it is an impression, full stop.
 //
-// What keeps it a non-issue rather than a hole: the boost is temporary (4h), the
-// server caps redemptions per day (adWatchDailyCap), an honest heavy ad-watcher
-// gets the exact same boost so this is "watch the ad you were offered" not an
-// exploit, conversion to Points is OFF at launch, and the supply cap bounds the
-// whole system regardless. The cost of a skipped ad is one lost impression and a
-// slightly larger honest-sized boost — not a mint. If that ever stops being an
-// acceptable trade, the fix is a server-verified ad network, not a code tweak here.
+//   2. DIRECT LINK (openAdTab). A plain URL that shows ads when visited. The
+//      boost button opens it in a new tab. Verification is the server's job and
+//      always was: it issues a nonce BEFORE the tab opens, enforces a minimum
+//      dwell time, caps redemptions per day, and consumes the nonce exactly once
+//      under a lock. That is the same trust level the old SDK promise gave us —
+//      a client-side claim bounded by server-side teeth — see the long honesty
+//      note in api/src/routes/mining.ts: toll evasion, not theft.
 //
-// The server still does the real work: it issues a nonce, enforces a minimum watch
-// time, caps the number of ads per day, and consumes the nonce exactly once under
-// a lock. This file is only the glue that puts a video on the screen.
-//
-// FAILS OPEN, ALWAYS. Every path below — no script, no fill, an SDK that never
-// settles, an exception — resolves to `false` rather than rejecting. The caller
-// then starts mining with no boost. Monetag having a bad night must never be the
-// reason a user in Karachi cannot mine and loses the streak they earned.
+// FAILS OPEN, ALWAYS. An ad blocker (very common — even the founder's own DNS
+// blocks Monetag hosts), no fill, a blocked pop-up: none of these may ever stop
+// a user mining or cost them a streak. Every failure path here is a quiet no-op.
 
-declare global {
-  interface Window {
-    [key: string]: unknown;
-  }
+// The host comes from the tag Monetag generated for our zone. They rotate these
+// domains; if vignette ads silently stop appearing, regenerate the tag in the
+// dashboard and update this one constant.
+const VIGNETTE_SRC = "https://n6wxm.com/vignette.min.js";
+const SCRIPT_ID = "monetag-vignette";
+
+// Load the vignette script once. Safe to call on every render — it bails if the
+// tag is already there. Nothing to await: the script decides for itself when an
+// ad is due (Monetag's own frequency capping applies).
+export function ensureVignette(zoneId: string): void {
+  if (typeof window === "undefined" || !zoneId) return;
+  if (document.getElementById(SCRIPT_ID)) return;
+
+  const el = document.createElement("script");
+  el.id = SCRIPT_ID;
+  el.src = VIGNETTE_SRC;
+  el.async = true;
+  el.dataset.zone = zoneId;
+  // An ad blocker lands here. Not an error — mining works the same without it.
+  el.onerror = () => el.remove();
+  document.head.appendChild(el);
 }
 
-const SCRIPT_ID = "monetag-sdk";
-
-// Monetag serves the zone's SDK from its own host and exposes a global named
-// `show_<zoneId>`. Both come from the dashboard, so the zone id is config, not a
-// constant.
-function sdkUrl(zoneId: string): string {
-  return `https://vemtoutcheeg.com/400/${zoneId}`;
-}
-
-function loadScript(zoneId: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined") return resolve(false);
-    if (typeof window[`show_${zoneId}`] === "function") return resolve(true);
-
-    const existing = document.getElementById(SCRIPT_ID);
-    if (existing) {
-      // Already loading from an earlier click. Give it a moment to finish rather
-      // than injecting a second copy.
-      existing.addEventListener("load", () => resolve(true), { once: true });
-      existing.addEventListener("error", () => resolve(false), { once: true });
-      return;
-    }
-
-    const el = document.createElement("script");
-    el.id = SCRIPT_ID;
-    el.src = sdkUrl(zoneId);
-    el.async = true;
-    el.dataset.zone = zoneId;
-    el.onload = () => resolve(true);
-    // An ad blocker will land here. That is not an error to report — it is a
-    // normal Tuesday, and the user should simply mine without the boost.
-    el.onerror = () => resolve(false);
-    document.head.appendChild(el);
-  });
-}
-
-// Show one rewarded video. Resolves TRUE only if the user actually finished it.
+// Open a tab for the direct-link ad, dodging the pop-up blocker.
 //
-// The timeout is the important part. If the SDK loads but never settles its
-// promise — no fill, a wedged iframe, a network stall — we would otherwise hang
-// on a spinner forever with the user staring at a dead "Start mining" button.
-// After 45 seconds we give up and let them mine.
-export async function showRewardedAd(zoneId: string): Promise<boolean> {
-  if (!zoneId) return false;
-
-  const loaded = await loadScript(zoneId);
-  if (!loaded) return false;
-
-  const show = window[`show_${zoneId}`];
-  if (typeof show !== "function") return false;
-
-  try {
-    const watched = await Promise.race([
-      (show as () => Promise<unknown>)().then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 45_000)),
-    ]);
-    return watched === true;
-  } catch {
-    // The SDK rejects when the user closes the video early, and when there is no
-    // ad to serve. Neither is an error we should surface — they just get no boost.
-    return false;
-  }
+// Browsers only allow window.open inside a user gesture — an `await` between the
+// tap and the open is enough to get it blocked. So the caller opens the tab
+// FIRST, synchronously in the click handler, and points it at the ad only after
+// the nonce request succeeds (or closes it if that request fails).
+export function openAdTab(): { navigate: (url: string) => void; close: () => void } | null {
+  if (typeof window === "undefined") return null;
+  const tab = window.open("about:blank", "_blank");
+  if (!tab) return null; // pop-up blocked — the caller tells the user
+  return {
+    navigate: (url: string) => { tab.location.href = url; },
+    close: () => tab.close(),
+  };
 }

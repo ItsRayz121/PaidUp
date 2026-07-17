@@ -226,7 +226,7 @@ loser of the race is a no-op. There is no lock to configure.
 |---|---|---|
 | `conversionEnabled` | `0` (off) | The lock period ends. This is the ONLY path from ROZI to real Points — see § 6 of the spec before touching it. |
 | `transfersEnabled` | `0` (off) | You want wallet-to-wallet ROZI sends. |
-| `adsEnabled` | `0` (off) | You have a Monetag/Adsterra account and have dropped the real ad tag into `web/src/app/mine/page.tsx` (`onWatchAd`). |
+| `adsEnabled` | `0` (off) | You have a Monetag account and have set `adProvider = monetag`, `monetagZoneId` (vignette zone — the ad on mining start) and `monetagDirectLink` (direct-link URL — the watch-to-boost button) in `/staff → Mining`. No code change needed. See `docs/LAUNCH_CHECKLIST.md` § 3c. |
 | Boosters (Points-priced) | none seeded | You have decided on prices. Create them in `/staff`. |
 
 ⚠️ **Opening a Conversion Window commits real, cash-redeemable Points.** The panel

@@ -142,21 +142,31 @@ public dev key (it is in the git history) would only *look* safe.
 
 ---
 
-## 🟡 3c. Monetag account + zone (the website ad revenue you chose)
+## ✅ 3c. Monetag account + zones (the website ad revenue you chose)
 
-You picked Monetag as the first ad provider for the site. Mining is gated behind
-one short rewarded video: a user taps "Start mining", watches one ad, then the
-8-hour session runs. It is a **soft** gate — if Monetag has no ad to show (common
-in Pakistan at night), mining starts anyway, so an ad outage never breaks a streak.
+**Account is live (2026-07-17): site 3411999 (`rozipay.xyz`) verified via meta
+tag.** One important discovery from the real account: Monetag's **Rewarded
+Interstitial (the `show_zone()` SDK with a "user finished watching" promise) is
+Telegram-Mini-App-only** — a website account does not get it. The app therefore
+uses the two formats a website actually gets:
 
-**Steps:**
-1. Sign up at **monetag.com** and add your site. ⚠️ Monetag reviews the domain, and
-   a `vercel.app` subdomain will likely be **rejected** — so this depends on item 5
-   (point `rozipay.xyz`) being done first.
-2. Create a **Rewarded Interstitial** zone; copy its **zone ID**.
-3. In **/staff → Mining** set `adProvider = monetag`, `monetagZoneId = <the id>`,
-   and `adsEnabled = 1`. (All three are needed; the flag alone does nothing.)
-4. ⚠️ **Read Monetag's terms on incentivised/rewarded traffic first.** We are not
+- **Vignette zone** (`11331636`, created) — the full-screen ad around the
+  "Start mining" tap. Passive, no completion signal, so it grants **no boost**;
+  it is the impression revenue on session starts.
+- **Direct Link zone** — powers the "watch an ad, mine faster" button: the ad
+  opens in a new tab, the server's nonce + minimum-watch timer + daily cap decide
+  the boost. Same server-side teeth as before; only the ad surface changed.
+
+Both remain **soft**: an ad blocker or empty fill never stops mining or breaks a
+streak.
+
+**Remaining steps:**
+1. Create a **Direct Link** zone in the Monetag dashboard; copy its **URL**.
+2. In **/staff → Mining** set `adProvider = monetag`,
+   `monetagZoneId = 11331636`, `monetagDirectLink = <the URL>`, and
+   `adsEnabled = 1`. (Flag + provider are both needed; each empty Monetag value
+   disables its own half.)
+3. ⚠️ **Read Monetag's terms on incentivised/rewarded traffic first.** We are not
    paying cash to watch an ad — we unlock mining, and ROZI has no fixed cash value
    by design — but confirm their policy before you rely on the revenue.
 

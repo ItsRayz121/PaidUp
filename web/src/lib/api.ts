@@ -378,11 +378,14 @@ export type MiningState = {
   ads: {
     enabled: boolean; watchedToday: number; dailyCap: number;
     boostPct: number; boostHours: number;
-    // Show a video before mining starts. Soft: the server still starts the
-    // session if no ad was watched.
+    // Show an ad around the start-mining tap. Soft: the server still starts
+    // the session if no ad was shown.
     gateOnStart: boolean;
     provider: string;
+    // Vignette zone (the ad on mining start) + direct-link URL (the
+    // watch-to-boost button). Either may be empty; each disables its own half.
     monetagZoneId: string;
+    monetagDirectLink: string;
   };
   convertible: boolean;
   transfersEnabled: boolean;
