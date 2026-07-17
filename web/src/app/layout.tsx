@@ -43,6 +43,10 @@ export const metadata: Metadata = {
     description: DESCRIPTION,
     images: ["/icons/icon-512.png"],
   },
+  // Monetag site-ownership verification. The file-upload method was NOT used
+  // because their file is named sw.js and would clobber our service worker
+  // (push + offline). This tag only proves ownership; it loads no ads.
+  other: { monetag: "25b677620d04ee3a6b34fc326cec1ff8" },
 };
 
 export const viewport: Viewport = {
