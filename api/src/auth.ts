@@ -57,7 +57,7 @@ async function verifyPassword(password: string, stored: string | null): Promise<
 // set by anyone who doesn't control the inbox. Throws if the email can't be sent.
 async function issueCode(
   email: string,
-  purpose: "verify" | "reset",
+  purpose: "verify" | "reset" | "link",
   pendingPasswordHash: string | null = null,
 ): Promise<void> {
   const code = makeCode();
@@ -78,7 +78,7 @@ async function issueCode(
 type CodeResult =
   | { ok: true; pendingPasswordHash: string | null }
   | { ok: false; statusCode: number; error: string };
-async function consumeCode(email: string, code: string, purpose: "verify" | "reset"): Promise<CodeResult> {
+async function consumeCode(email: string, code: string, purpose: "verify" | "reset" | "link"): Promise<CodeResult> {
   const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number; pending_password_hash: string | null }>(
     "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
     email, purpose,
@@ -167,6 +167,9 @@ async function publicUser(u: UserRow) {
     role: await roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
     // Presence only, never the id itself — the UI just needs "connected or not".
     hasTelegram: Boolean(u.telegram_id),
+    // False for Telegram-created accounts still on their synthetic
+    // @telegram.local address — the cue to offer "add your email".
+    hasEmail: !u.email.endsWith("@telegram.local"),
   };
 }
 
@@ -191,6 +194,10 @@ const verifyEmailSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1).max(200),
+});
+const emailLinkStartSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8, "at least 8 letters").max(200),
 });
 const forgotSchema = z.object({ email: z.string().email() });
 const resetSchema = z.object({
@@ -489,6 +496,83 @@ export async function authRoutes(app: FastifyInstance) {
       now(),
     );
     return { startParam: `link-${code}`, expiresInMinutes: 10 };
+  });
+
+  // ADD AN EMAIL to a Telegram-created account (founder, 2026-07-18) — the
+  // mirror of "Connect Telegram". A Telegram-first user picks an email and a
+  // password, proves the inbox with a one-time code, and from then on the SAME
+  // account works on the website with email + password. Same code machinery
+  // as signup, under its own purpose; the password rides on the code and is
+  // applied only at confirmation, exactly like registration.
+  app.post("/auth/email/link-start", limited(10, "10 minutes"), async (req, reply) => {
+    let userId: string;
+    try {
+      userId = getUserId(req);
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+    const parsed = emailLinkStartSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Enter a valid email and a password of at least 8 letters." });
+    }
+    const me = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+    if (!me) return reply.code(404).send({ error: "User not found" });
+    if (!me.email.endsWith("@telegram.local")) {
+      return reply.code(400).send({ error: "This account already has an email." });
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+    const existing = await sql.get<{ id: string }>("SELECT id FROM users WHERE email = ?", email);
+    if (existing) {
+      // Saying so is required UX here (the fix is to log in with that email
+      // and connect Telegram from there instead).
+      return reply.code(409).send({ error: "This email already has an account. Log in with it on the website, then connect Telegram there." });
+    }
+    const passwordHash = await hashPassword(parsed.data.password);
+    try {
+      await issueCode(email, "link", passwordHash);
+    } catch (err) {
+      req.log.error({ err }, "email send failed");
+      return reply.code(502).send({ error: "We could not send the email. Please try again." });
+    }
+    return { ok: true };
+  });
+
+  app.post("/auth/email/link-confirm", limited(30, "10 minutes"), async (req, reply) => {
+    let userId: string;
+    try {
+      userId = getUserId(req);
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+    const parsed = verifyEmailSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter the 6-number code." });
+    const me = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+    if (!me) return reply.code(404).send({ error: "User not found" });
+    if (!me.email.endsWith("@telegram.local")) {
+      return reply.code(400).send({ error: "This account already has an email." });
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const result = await consumeCode(email, parsed.data.code, "link");
+    if (!result.ok) return reply.code(result.statusCode).send({ error: result.error });
+    if (!result.pendingPasswordHash) {
+      return reply.code(400).send({ error: "Please start again." });
+    }
+    try {
+      // The UNIQUE index on users.email is the last line against a race where
+      // the email was registered between start and confirm.
+      await sql.run(
+        "UPDATE users SET email = ?, email_verified = 1, password_hash = ? WHERE id = ?",
+        email, result.pendingPasswordHash, userId,
+      );
+    } catch {
+      return reply.code(409).send({ error: "This email already has an account. Log in with it on the website, then connect Telegram there." });
+    }
+    const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+    if (!fresh) return reply.code(500).send({ error: "Could not save. Please try again." });
+    return { ok: true, user: await publicUser(fresh) };
   });
 
   // Who am I (used by the app after it has a token)

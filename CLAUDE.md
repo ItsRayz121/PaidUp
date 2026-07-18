@@ -324,9 +324,16 @@ These override convenience or speed at every step:
   login consumes it — binds + signs into the website account; stale/spent
   codes fall back to a normal login. The login screen's Telegram option is a
   plain "Continue in Telegram" t.me link (ref rides in startapp). No
-  /setdomain needed anymore. 37-check e2e (`npm run test:telegram`).
-  Founder steps left: BotFather "Enable Mini App" + a Monetag Rewarded zone
-  (see LAUNCH_CHECKLIST § 6).
+  /setdomain needed anymore. **Fourth pass: the mirror direction** — a
+  Telegram-created account ADDS AN EMAIL + password (`/auth/email/link-start`
+  + `link-confirm`, authed; OTP purpose `"link"` on the existing email_codes
+  machinery, password rides on the code) so the same account logs in on the
+  website; `hasEmail` on publicUser (false = still on the synthetic
+  @telegram.local address), Profile shows an "Add your email" card for those
+  accounts and hides the synthetic address. 45-check e2e
+  (`npm run test:telegram`). Founder steps left: BotFather "Enable Mini App"
+  + a Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6). NOTE: sending the
+  real code emails still needs the Resend key — same blocker as signup.
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its

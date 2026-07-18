@@ -80,6 +80,9 @@ export const InfoIcon = (p: IconProps) => (
 export const ProfileIcon = (p: IconProps) => (
   <svg {...base(p)}><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>
 );
+export const MailIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3.5 7 8.5 6 8.5-6" /></svg>
+);
 // Paper plane — the universal Telegram shape.
 export const TelegramIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M21.3 3.3 3.9 10.2c-.8.3-.8 1.4 0 1.7l4.6 1.7 1.8 5.6c.2.8 1.2.9 1.7.3l2.4-2.9 4.6 3.3c.6.4 1.4.1 1.6-.6l2.1-14.6c.1-.9-.7-1.6-1.4-1.4Z" /><path d="m8.5 13.6 9.5-7.6-7.2 8.7v3.4" /></svg>

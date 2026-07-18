@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ConnectTelegramCard } from "@/components/ConnectTelegramCard";
+import { ConnectEmailCard } from "@/components/ConnectEmailCard";
 import { Loading, LogoutButton } from "@/components/state";
 import {
   ProfileIcon,
@@ -38,7 +39,11 @@ export default function ProfilePage() {
         </span>
         <div className="min-w-0">
           <h1 className="truncate text-xl font-bold text-brand-ink">{name}</h1>
-          <p className="truncate text-sm text-muted">{user?.email}</p>
+          {/* A Telegram-created account's stored address is a synthetic
+              placeholder — showing it would only confuse. */}
+          <p className="truncate text-sm text-muted">
+            {user?.hasEmail === false ? t("profile.telegramAccount") : user?.email}
+          </p>
         </div>
       </header>
 
@@ -70,8 +75,10 @@ export default function ProfilePage() {
         />
       </div>
 
-      {/* Connect Telegram — same account through both doors. Renders nothing
-          when Telegram is off and we're not inside it. */}
+      {/* Same account through both doors: Telegram-first users add an email
+          (works on the website), email-first users connect Telegram. Each
+          card renders nothing when there is nothing to do. */}
+      {user && <ConnectEmailCard user={user} />}
       {user && <ConnectTelegramCard user={user} />}
 
       {/* Turn notifications on/off. The card renders nothing when push can't

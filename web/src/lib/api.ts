@@ -19,6 +19,9 @@ export type SessionUser = {
   // Whether a Telegram account is connected (presence only, never the id).
   // Optional: sessions stored before this field existed simply lack it.
   hasTelegram?: boolean;
+  // False for Telegram-created accounts that haven't added a real email yet
+  // (their stored address is a synthetic placeholder, never shown or mailed).
+  hasEmail?: boolean;
 };
 
 export function getToken(): string | null {
@@ -174,6 +177,18 @@ export const linkTelegram = (payload: { initData?: string; widget?: Record<strin
 export const createTelegramLinkCode = () =>
   apiFetch<{ startParam: string; expiresInMinutes: number }>("/auth/telegram/link-code", {
     method: "POST",
+  });
+
+// The mirror direction: a Telegram-created account adds an email + password
+// (code to the inbox proves it), and the SAME account then works on the
+// website with a normal email login.
+export const startEmailLink = (email: string, password: string) =>
+  apiFetch<{ ok: true }>("/auth/email/link-start", {
+    method: "POST", body: JSON.stringify({ email, password }),
+  });
+export const confirmEmailLink = (email: string, code: string) =>
+  apiFetch<{ ok: true; user: SessionUser }>("/auth/email/link-confirm", {
+    method: "POST", body: JSON.stringify({ email, code }),
   });
 
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");

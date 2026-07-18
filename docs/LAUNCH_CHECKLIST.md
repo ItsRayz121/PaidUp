@@ -242,6 +242,11 @@ blocked network can never slow the site.
 - **Both invite links on /refer**: the website link and
   `t.me/<bot>?startapp=<code>`, with a native share-to-Telegram button. The
   Telegram card appears automatically once the bot is live.
+- **Telegram-first users can ADD AN EMAIL (2026-07-18)**: Profile shows an
+  "Add your email" card on Telegram-created accounts — email + new password,
+  a code to the inbox proves it, and the same account then logs in on the
+  website. ⚠️ Needs the **Resend key** to actually send codes (same blocker
+  as signup) — in dev the code prints to the API console.
 
 **Founder steps left (inside Telegram — use the account that owns the bot):**
 1. BotFather → `/mybots` → the bot → **Configure Mini App → Enable** → Web App

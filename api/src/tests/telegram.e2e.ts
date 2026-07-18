@@ -285,6 +285,66 @@ check("...and does not bind", lateRow?.telegram_id === null);
 res = await app.inject({ method: "POST", url: "/auth/telegram/link-code" });
 check("minting a code without a session is refused", res.statusCode === 401);
 
+console.log("\n-- adding an EMAIL to a Telegram-created account --");
+
+res = await post(signInitData({ user: tgUser(tgId(9)), auth_date: freshDate() }));
+const tgAcct = res.json();
+const tgHdr = { authorization: `Bearer ${tgAcct.token}` };
+check("a Telegram account starts with hasEmail=false", tgAcct.user?.hasEmail === false);
+
+const newEmail = `linked-${RUN}@t.test`;
+res = await app.inject({
+  method: "POST", url: "/auth/email/link-start", headers: tgHdr,
+  payload: { email: newEmail, password: "hunter2pass" },
+});
+check("link-start sends a code", res.statusCode === 200);
+
+// The code goes to the inbox (dev: console) — patch a KNOWN code into the row
+// the same way the pepper hashes it, so the test can type it.
+const knownCode = "123456";
+await sql.run(
+  "UPDATE email_codes SET code_hash = ? WHERE email = ? AND purpose = 'link' AND consumed = 0",
+  createHash("sha256").update(`${knownCode}:${config.otpPepper}`).digest("hex"), newEmail,
+);
+
+res = await app.inject({
+  method: "POST", url: "/auth/email/link-confirm", headers: tgHdr,
+  payload: { email: newEmail, code: "999999" },
+});
+check("a wrong code is rejected", res.statusCode === 400);
+
+res = await app.inject({
+  method: "POST", url: "/auth/email/link-confirm", headers: tgHdr,
+  payload: { email: newEmail, code: knownCode },
+});
+body = res.json();
+check("the right code attaches the email", res.statusCode === 200 && body.user?.hasEmail === true);
+
+// THE POINT: the same account now works on the website.
+res = await app.inject({
+  method: "POST", url: "/auth/login",
+  payload: { email: newEmail, password: "hunter2pass" },
+});
+body = res.json();
+check("email+password now log into the SAME account", res.statusCode === 200 && body.user?.id === tgAcct.user?.id);
+check("...which still has its Telegram connected", body.user?.hasTelegram === true);
+
+res = await app.inject({
+  method: "POST", url: "/auth/email/link-start", headers: tgHdr,
+  payload: { email: `x${newEmail}`, password: "hunter2pass" },
+});
+check("an account WITH an email cannot start again", res.statusCode === 400);
+
+// An email someone else already uses is refused with a helpful message.
+res = await post(signInitData({ user: tgUser(tgId(3)), auth_date: freshDate() }));
+const tg2Hdr = { authorization: `Bearer ${res.json().token}` };
+const taken = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", emailUser);
+res = await app.inject({
+  method: "POST", url: "/auth/email/link-start", headers: tg2Hdr,
+  payload: { email: taken?.email, password: "hunter2pass" },
+});
+check("an email already in use is refused (409)", res.statusCode === 409);
+
 await app.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
