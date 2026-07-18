@@ -255,14 +255,15 @@ Monetag generated (`libtl.com/sdk.js`, `data-sdk="show_11343471"`) matches
 from OUR server (nonce + watch timer + daily cap), not Monetag's sample
 callback.
 
-**Founder steps left:**
-1. **/staff → Mining → `monetagRewardedZone` = `11343471`** (and when going
-   live overall: `adProvider = monetag`, `adsEnabled = 1`). Live immediately,
-   no deploy — inside Telegram the boost button then plays the real video.
-2. BotFather → `/mybots` → the bot → **Configure Mini App → Enable** → Web App
-   URL `https://rozipay.xyz`. This single toggle is what makes every
-   `t.me/<bot>?startapp=...` link (invites, login, account-binding) open the
-   app directly.
+**✅ ALL TELEGRAM STEPS DONE (founder, 2026-07-18):**
+1. ✅ `/staff → Mining → monetagRewardedZone = 11343471` set (ads were already
+   on: provider monetag, vignette + direct link configured).
+2. ✅ BotFather **Mini App enabled** → `https://rozipay.xyz`. Every
+   `t.me/RoziPayOfficial_Bot?startapp=...` link (invites, login,
+   account-binding, Monetag ad delivery) now opens the app directly.
+
+**The Telegram side is fully live**: Mini App auto-login, menu button,
+two-way account linking, dual invite links, rewarded video ads.
 
 ---
 
