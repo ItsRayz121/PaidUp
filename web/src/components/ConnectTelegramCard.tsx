@@ -5,19 +5,19 @@
 // inside Telegram lands on the same points and the same history:
 //   • inside the Telegram Mini App: one tap — the webview's signed initData
 //     proves which Telegram is asking.
-//   • on the website: Telegram's Login Widget provides the signed payload.
-// Either way the backend re-verifies the signature; being signed in here is
-// never proof of owning a Telegram account.
-//
-// Renders NOTHING when there is nothing to do (Telegram off server-side and
-// not inside Telegram) — never an orphan card.
-import { useCallback, useEffect, useState } from "react";
+//   • on the website: a BINDING LINK (founder-corrected flow) — we mint a
+//     one-time code, t.me/<bot>?startapp=link-<code> opens the Telegram APP,
+//     and the Mini App login binds + signs in over there. No Telegram login
+//     form, ever; while they're away this card polls until the account comes
+//     back connected.
+// Renders NOTHING when there is nothing to do — never an orphan card.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, Button } from "./ui";
 import { TelegramIcon, CheckIcon } from "./icons";
-import { TelegramWidget } from "./TelegramWidget";
 import { useI18n } from "@/lib/i18n";
 import {
-  linkTelegram, fetchTelegramConfig, getToken, setSession, type SessionUser,
+  linkTelegram, createTelegramLinkCode, fetchTelegramConfig, fetchMe,
+  getToken, setSession, type SessionUser,
 } from "@/lib/api";
 import { telegramInitData, useInsideTelegram } from "@/lib/telegram";
 
@@ -25,43 +25,71 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
   const { t } = useI18n();
   const inTelegram = useInsideTelegram();
   const [linked, setLinked] = useState(Boolean(user.hasTelegram));
-  const [enabled, setEnabled] = useState(false);
-  // On the website the button is Telegram's widget, whose script host is
-  // blocked on many local networks. The whole card stays hidden until that
-  // script really loaded — never a card with a hole where the button goes.
-  const [widgetReady, setWidgetReady] = useState(false);
+  const [bot, setBot] = useState("");
   const [busy, setBusy] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     let gone = false;
     fetchTelegramConfig()
-      .then((c) => { if (!gone) setEnabled(c.enabled); })
+      .then((c) => { if (!gone && c.enabled && c.botUsername) setBot(c.botUsername); })
       .catch(() => { /* API hiccup — card hides, profile still works */ });
     return () => { gone = true; };
   }, []);
+
+  // Stop polling when the card unmounts.
+  useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
 
   const finish = useCallback((u: SessionUser) => {
     // Persist the refreshed user so every screen (and the next visit) knows.
     const token = getToken();
     if (token) setSession(token, u);
     setLinked(true);
+    setWaiting(false);
     setError(null);
+    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
   }, []);
 
-  const connect = useCallback((payload: { initData?: string; widget?: Record<string, unknown> }) => {
+  // In-Telegram: one tap, initData is the proof.
+  const connectHere = useCallback(() => {
     setBusy(true);
     setError(null);
-    linkTelegram(payload)
+    linkTelegram({ initData: telegramInitData() })
       .then((r) => finish(r.user))
       .catch((e) => setError((e as Error).message))
       .finally(() => setBusy(false));
   }, [finish]);
 
-  const fromWidget = useCallback(
-    (u: Record<string, unknown>) => connect({ widget: u }),
-    [connect],
-  );
+  // Website: mint the binding code, hand off to the Telegram app, then poll —
+  // the actual binding happens over there, this tab just waits for the news.
+  const connectViaTelegram = useCallback(() => {
+    setBusy(true);
+    setError(null);
+    createTelegramLinkCode()
+      .then(({ startParam }) => {
+        setWaiting(true);
+        // Same-tab navigation: the OS hands t.me links to the Telegram app
+        // directly (no web request on blocked networks), and this page stays.
+        window.location.href = `https://t.me/${bot}?startapp=${startParam}`;
+        if (pollTimer.current) clearInterval(pollTimer.current);
+        let polls = 0;
+        pollTimer.current = setInterval(() => {
+          polls += 1;
+          if (polls > 45) { // ~3 minutes, then give up quietly
+            if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
+            setWaiting(false);
+            return;
+          }
+          fetchMe()
+            .then(({ user: u }) => { if (u.hasTelegram) finish(u); })
+            .catch(() => { /* transient — keep polling */ });
+        }, 4000);
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setBusy(false));
+  }, [bot, finish]);
 
   if (linked) {
     return (
@@ -78,10 +106,11 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
     );
   }
 
-  if (!inTelegram && !enabled) return null;
+  // Nothing to offer: Telegram off server-side and we're not inside it.
+  if (!inTelegram && !bot) return null;
 
   return (
-    <Card className={`p-4 ${inTelegram || widgetReady ? "" : "hidden"}`}>
+    <Card className="p-4">
       <div className="flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
           <TelegramIcon size={22} />
@@ -93,16 +122,13 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
       </div>
       <div className="mt-3">
         {inTelegram ? (
-          <Button
-            onClick={() => connect({ initData: telegramInitData() })}
-            disabled={busy}
-            variant="primary"
-            size="md"
-          >
+          <Button onClick={connectHere} disabled={busy} variant="primary" size="md">
             {t("profile.telegramConnect")}
           </Button>
         ) : (
-          <TelegramWidget onAuth={fromWidget} onReady={() => setWidgetReady(true)} />
+          <Button onClick={connectViaTelegram} disabled={busy || waiting} variant="primary" size="md">
+            <TelegramIcon size={18} /> {waiting ? t("profile.telegramWaiting") : t("profile.telegramOpen")}
+          </Button>
         )}
       </div>
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}

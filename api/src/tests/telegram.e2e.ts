@@ -236,6 +236,55 @@ check("a Telegram account with points is NOT taken over (409)", res.statusCode =
 const activeShellAfter = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", activeShellId);
 check("the active account keeps its telegram id", activeShellAfter?.telegram_id === String(tgId(5)));
 
+console.log("\n-- BINDING LINK (connect from the website, no Telegram login form) --");
+
+// The website mints a one-time code; t.me/<bot>?startapp=link-<code> carries
+// it into the Mini App, whose login binds + signs into the website account.
+const bindUser = await mkEmailUser("bind");
+res = await app.inject({
+  method: "POST", url: "/auth/telegram/link-code",
+  headers: { authorization: bearerFor(bindUser) },
+});
+body = res.json();
+check("minting a binding code needs only a session", res.statusCode === 200
+  && /^link-[a-f0-9]{32}$/.test(body.startParam));
+
+res = await post(signInitData({ user: tgUser(tgId(6)), auth_date: freshDate(), start_param: body.startParam }));
+const bindLogin = res.json();
+check("the Mini App login with the code signs into the WEBSITE account",
+  res.statusCode === 200 && bindLogin.user?.id === bindUser);
+check("...and that account is now connected", bindLogin.user?.hasTelegram === true);
+const bindRow = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", bindUser);
+check("the telegram id landed on the website account", bindRow?.telegram_id === String(tgId(6)));
+
+// REPLAY: the code is single-use. A second login with the SAME code but a
+// DIFFERENT Telegram must fall back to a normal login, never touch bindUser.
+res = await post(signInitData({ user: tgUser(tgId(7)), auth_date: freshDate(), start_param: body.startParam }));
+const replayLogin = res.json();
+check("a spent code falls back to a normal login", res.statusCode === 200 && replayLogin.user?.id !== bindUser);
+const bindRowAfter = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", bindUser);
+check("...and the website account is untouched", bindRowAfter?.telegram_id === String(tgId(6)));
+
+// EXPIRED: an old link logs in normally instead of binding.
+const lateUser = await mkEmailUser("late");
+res = await app.inject({
+  method: "POST", url: "/auth/telegram/link-code",
+  headers: { authorization: bearerFor(lateUser) },
+});
+const lateParam = res.json().startParam as string;
+await sql.run(
+  "UPDATE telegram_link_codes SET expires_at = ? WHERE user_id = ?",
+  new Date(Date.now() - 1000).toISOString(), lateUser,
+);
+res = await post(signInitData({ user: tgUser(tgId(8)), auth_date: freshDate(), start_param: lateParam }));
+check("an EXPIRED code falls back to a normal login", res.statusCode === 200 && res.json().user?.id !== lateUser);
+const lateRow = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", lateUser);
+check("...and does not bind", lateRow?.telegram_id === null);
+
+// No session, no code: minting requires being signed in.
+res = await app.inject({ method: "POST", url: "/auth/telegram/link-code" });
+check("minting a code without a session is refused", res.statusCode === 401);
+
 await app.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

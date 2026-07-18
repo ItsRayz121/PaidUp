@@ -61,6 +61,8 @@ const copy: Record<string, string> = {
   "profile.telegram": "Telegram",
   "profile.telegramHint": "Use the same account here and on Telegram.",
   "profile.telegramConnect": "Connect Telegram",
+  "profile.telegramOpen": "Open Telegram to connect",
+  "profile.telegramWaiting": "Finish in Telegram… this updates by itself.",
   "profile.telegramConnected": "Telegram connected",
   "profile.telegramConnectedHint": "Open RoziPay in Telegram and you stay on this account.",
   // tasks
@@ -167,6 +169,7 @@ const copy: Record<string, string> = {
   // does. "Get paid" — not "Pay" — because the earner is the one being paid.
   "login.tagline": "Mine. Earn. Get paid.",
   "login.or": "or",
+  "login.telegramOpen": "Continue in Telegram",
   "login.yourEmail": "Your email",
   "login.emailPlaceholder": "name@email.com",
   "login.min8Placeholder": "At least 8 letters",

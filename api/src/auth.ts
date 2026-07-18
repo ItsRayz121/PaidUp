@@ -390,6 +390,17 @@ export async function authRoutes(app: FastifyInstance) {
     const v = verifyMiniAppInitData(req.body);
     if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
+    // BINDING LINK: "Connect Telegram" on the website mints a one-time code
+    // and opens Telegram with it in start_param. Telegram signing this login
+    // proves the Telegram side; the code proves the website account — so this
+    // login BINDS the two and signs into the website account. An invalid,
+    // used, or expired code falls through to a normal login: a stale link
+    // must never strand someone at a dead screen.
+    if (v.startParam?.startsWith("link-")) {
+      const bound = await loginViaLinkCode(v.startParam.slice(5), v.telegramId, req);
+      if (bound) return bound;
+    }
+
     const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam);
     if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
@@ -443,33 +454,41 @@ export async function authRoutes(app: FastifyInstance) {
       : verifyWidgetPayload(body.widget);
     if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
-    const owner = await sql.get<UserRow>(
-      "SELECT * FROM users WHERE telegram_id = ?", v.telegramId,
-    );
-    if (owner && owner.id !== me.id) {
-      // Opening the Mini App before linking auto-creates a Telegram-only shell
-      // account. An EMPTY shell may be absorbed — unlink it so the real account
-      // wins. Any activity at all (points, ROZI, a withdrawal) and we refuse
-      // rather than guess which account the person meant.
-      const isShell = owner.email.endsWith("@telegram.local");
-      const [led, rozi, wd] = await Promise.all([
-        sql.get("SELECT 1 AS x FROM ledger_entries WHERE user_id = ? LIMIT 1", owner.id),
-        sql.get("SELECT 1 AS x FROM rozi_ledger WHERE user_id = ? LIMIT 1", owner.id),
-        sql.get("SELECT 1 AS x FROM withdrawal_requests WHERE user_id = ? LIMIT 1", owner.id),
-      ]);
-      if (!isShell || led || rozi || wd) {
-        return reply.code(409).send({ error: "This Telegram is already connected to another account." });
-      }
-      await sql.tx(async (t) => {
-        await t.run("UPDATE users SET telegram_id = NULL WHERE id = ?", owner.id);
-        await t.run("UPDATE users SET telegram_id = ? WHERE id = ?", v.telegramId, me.id);
-      });
-    } else if (!owner) {
-      await sql.run("UPDATE users SET telegram_id = ? WHERE id = ?", v.telegramId, me.id);
-    }
+    const bindErr = await bindTelegramToUser(me, v.telegramId);
+    if (bindErr) return reply.code(bindErr.code).send({ error: bindErr.error });
     const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
     if (!fresh) return reply.code(500).send({ error: "Could not connect. Please try again." });
     return { ok: true, user: await publicUser(fresh) };
+  });
+
+  // Mint a BINDING LINK code (founder, 2026-07-18): the website's "Connect
+  // Telegram" no longer shows Telegram's login form. It mints this one-time
+  // code, opens t.me/<bot>?startapp=link-<code>, and the Mini App login above
+  // consumes it — Telegram itself proves who the user is, no form. The
+  // client builds the URL (it knows the bot from /auth/telegram/config);
+  // this endpoint only vouches for WHO the code belongs to.
+  app.post("/auth/telegram/link-code", limited(10, "1 minute"), async (req, reply) => {
+    if (!config.telegramBotToken) {
+      return reply.code(503).send({ error: "Telegram is not set up yet." });
+    }
+    let userId: string;
+    try {
+      userId = getUserId(req);
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+    const code = randomBytes(16).toString("hex");
+    // One live code per account: minting again invalidates the previous link.
+    await sql.run("DELETE FROM telegram_link_codes WHERE user_id = ?", userId);
+    await sql.run(
+      "INSERT INTO telegram_link_codes (code_hash, user_id, expires_at, created_at) VALUES (?,?,?,?)",
+      createHash("sha256").update(code).digest("hex"),
+      userId,
+      new Date(Date.now() + 10 * 60_000).toISOString(),
+      now(),
+    );
+    return { startParam: `link-${code}`, expiresInMinutes: 10 };
   });
 
   // Who am I (used by the app after it has a token)
@@ -567,6 +586,63 @@ function verifyMiniAppInitData(body: unknown): TgVerified {
     username: tgUser.username ?? "",
     startParam: params.get("start_param") ?? undefined,
   };
+}
+
+// Attach a verified telegram_id to an account. Returns null on success or a
+// plain-English refusal. Shared by /auth/telegram/link (in-Telegram one-tap)
+// and the binding-link login. Rules:
+//   • already bound to the same Telegram — fine (idempotent);
+//   • the Telegram belongs to an EMPTY @telegram.local shell (auto-created by
+//     a Mini App open, never used) — the shell is absorbed;
+//   • the Telegram belongs to any account with activity — refuse, never guess.
+async function bindTelegramToUser(me: UserRow, telegramId: string): Promise<{ code: number; error: string } | null> {
+  if (me.telegram_id) {
+    return me.telegram_id === telegramId
+      ? null
+      : { code: 409, error: "This account is connected to a different Telegram." };
+  }
+  const owner = await sql.get<UserRow>("SELECT * FROM users WHERE telegram_id = ?", telegramId);
+  if (owner && owner.id !== me.id) {
+    const isShell = owner.email.endsWith("@telegram.local");
+    const [led, rozi, wd] = await Promise.all([
+      sql.get("SELECT 1 AS x FROM ledger_entries WHERE user_id = ? LIMIT 1", owner.id),
+      sql.get("SELECT 1 AS x FROM rozi_ledger WHERE user_id = ? LIMIT 1", owner.id),
+      sql.get("SELECT 1 AS x FROM withdrawal_requests WHERE user_id = ? LIMIT 1", owner.id),
+    ]);
+    if (!isShell || led || rozi || wd) {
+      return { code: 409, error: "This Telegram is already connected to another account." };
+    }
+    await sql.tx(async (t) => {
+      await t.run("UPDATE users SET telegram_id = NULL WHERE id = ?", owner.id);
+      await t.run("UPDATE users SET telegram_id = ? WHERE id = ?", telegramId, me.id);
+    });
+  } else if (!owner) {
+    await sql.run("UPDATE users SET telegram_id = ? WHERE id = ?", telegramId, me.id);
+  }
+  return null;
+}
+
+// Consume a binding-link code inside a Mini App login: claim it atomically
+// (single-use even under two racing opens), bind, and mint a session for the
+// WEBSITE account it belongs to. Any failure returns null and the caller
+// falls back to a normal Telegram login.
+async function loginViaLinkCode(code: string, telegramId: string, req: FastifyRequest) {
+  if (!/^[a-f0-9]{32}$/.test(code)) return null;
+  const claimed = await sql.get<{ user_id: string }>(
+    `UPDATE telegram_link_codes SET used_at = ?
+     WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
+     RETURNING user_id`,
+    now(), createHash("sha256").update(code).digest("hex"), now(),
+  );
+  if (!claimed) return null;
+  const me = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", claimed.user_id);
+  if (!me) return null;
+  if (await bindTelegramToUser(me, telegramId)) return null; // refused — normal login instead
+  const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", me.id);
+  if (!fresh) return null;
+  await ensureAdminRole(fresh.id, fresh.email);
+  await recordDevice(fresh.id, deviceOf(req), req.ip);
+  return { token: signToken(fresh.id), user: await publicUser(fresh) };
 }
 
 // Find-or-create shared by the Login Widget and Mini App routes — the two

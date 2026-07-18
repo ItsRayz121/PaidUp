@@ -14,9 +14,20 @@ export function TelegramBoot() {
     if (!initData) return;
     // Tell Telegram we're alive and want the full-height webview.
     telegramReady();
-    if (getToken()) return; // already signed in on this device
+    // A BINDING link (Profile -> Connect Telegram on the website) must log in
+    // even over an existing session: the server consumes the one-time code and
+    // signs into the website account it belongs to. Once handled, remember it
+    // so reloads within this webview don't re-post a spent code.
+    const startParam = new URLSearchParams(initData).get("start_param") ?? "";
+    const binding =
+      startParam.startsWith("link-") &&
+      sessionStorage.getItem("tg-link-done") !== startParam;
+    if (getToken() && !binding) return; // already signed in on this device
 
     let cancelled = false;
+    if (binding) {
+      try { sessionStorage.setItem("tg-link-done", startParam); } catch { /* private mode */ }
+    }
     loginWithTelegramMiniApp(initData)
       .then((res) => {
         if (cancelled) return;

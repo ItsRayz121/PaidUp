@@ -1,14 +1,13 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui";
-import { ShieldIcon, CheckIcon, ArrowRightIcon } from "@/components/icons";
+import { ShieldIcon, CheckIcon, ArrowRightIcon, TelegramIcon } from "@/components/icons";
 import { LogoLockup } from "@/components/Logo";
-import { TelegramWidget } from "@/components/TelegramWidget";
 import { useI18n } from "@/lib/i18n";
 import {
-  register, verifyEmail, login, forgotPassword, resetPassword, loginWithTelegram,
+  register, verifyEmail, login, forgotPassword, resetPassword, fetchTelegramConfig,
   setSession, getToken, ApiError, type SessionUser,
 } from "@/lib/api";
 
@@ -17,20 +16,30 @@ type Mode = "login" | "register" | "verify" | "forgot" | "reset";
 const inputClass =
   "w-full rounded-xl border border-line bg-card p-3.5 text-lg text-brand-ink outline-none placeholder:text-muted/60";
 
-// The shared Telegram widget (components/TelegramWidget) wrapped with this
-// screen's "or" divider — shown only when the widget really renders.
-function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) => void }) {
+// "Continue in Telegram" — a plain link into the Telegram APP, where the Mini
+// App signs the user in with no form at all. This replaced Telegram's Login
+// Widget (founder, 2026-07-18): the widget asked people to log into Telegram
+// in the browser — wrong for this market — and its script host is blocked on
+// many local networks anyway. A referral code rides along in startapp so an
+// invited user who picks Telegram still credits their inviter.
+function TelegramLoginButton({ refCode }: { refCode?: string }) {
   const { t } = useI18n();
+  const [bot, setBot] = useState("");
+  useEffect(() => {
+    let gone = false;
+    fetchTelegramConfig()
+      .then((c) => { if (!gone && c.enabled && c.botUsername) setBot(c.botUsername); })
+      .catch(() => { /* API unreachable — the button just stays hidden */ });
+    return () => { gone = true; };
+  }, []);
+  if (!bot) return null;
+  const url = `https://t.me/${bot}${refCode ? `?startapp=${encodeURIComponent(refCode)}` : ""}`;
   return (
     <div className="mt-6">
-      <TelegramWidget
-        onAuth={onAuth}
-        before={
-          <div className="mb-4 flex items-center gap-3 text-xs text-muted">
-            <span className="h-px flex-1 bg-line" /> {t("login.or")} <span className="h-px flex-1 bg-line" />
-          </div>
-        }
-      />
+      <div className="mb-4 flex items-center gap-3 text-xs text-muted">
+        <span className="h-px flex-1 bg-line" /> {t("login.or")} <span className="h-px flex-1 bg-line" />
+      </div>
+      <Button href={url} variant="ghost"><TelegramIcon size={20} /> {t("login.telegramOpen")}</Button>
     </div>
   );
 }
@@ -106,17 +115,6 @@ function LoginForm() {
   });
   const doReset = () => run(async () => finish(await resetPassword(email.trim(), code, password)));
 
-  // Telegram widget callback. Kept stable (deps: router + the URL's ref, which
-  // never changes within a page view) so the widget script mounts once, not on
-  // every keystroke.
-  const onTelegramAuth = useCallback((u: Record<string, unknown>) => {
-    setBusy(true); setError(null);
-    loginWithTelegram({ ...u, ...(ref ? { ref } : {}) })
-      .then((res) => { setSession(res.token, res.user); router.replace(res.user.role ? "/staff" : "/"); })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setBusy(false));
-  }, [router, ref]);
-
   return (
     <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8">
       <div className="mb-8 flex items-center justify-between gap-2">
@@ -155,7 +153,7 @@ function LoginForm() {
             {t("login.newHere")}
           </button>
 
-          <TelegramLoginButton onAuth={onTelegramAuth} />
+          <TelegramLoginButton refCode={ref} />
         </div>
       )}
 
@@ -194,7 +192,7 @@ function LoginForm() {
             <ShieldIcon size={14} /> {t("login.emailSafe")}
           </p>
 
-          <TelegramLoginButton onAuth={onTelegramAuth} />
+          <TelegramLoginButton refCode={ref} />
         </div>
       )}
 

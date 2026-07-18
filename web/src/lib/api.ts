@@ -162,11 +162,18 @@ export const loginWithTelegramMiniApp = (initData: string) =>
 export const fetchTelegramConfig = () =>
   apiFetch<{ enabled: boolean; botUsername: string }>("/auth/telegram/config");
 
-// Connect Telegram to the signed-in account. Pass the Mini App's initData when
-// inside Telegram, or the Login Widget's signed payload on the website.
+// Connect Telegram to the signed-in account with the Mini App's own signed
+// initData — the one-tap path when already inside Telegram.
 export const linkTelegram = (payload: { initData?: string; widget?: Record<string, unknown> }) =>
   apiFetch<{ ok: true; user: SessionUser }>("/auth/telegram/link", {
     method: "POST", body: JSON.stringify(payload),
+  });
+
+// Mint a one-time BINDING code for the website flow: t.me/<bot>?startapp=<startParam>
+// opens Telegram, and the Mini App login consumes it — no Telegram login form.
+export const createTelegramLinkCode = () =>
+  apiFetch<{ startParam: string; expiresInMinutes: number }>("/auth/telegram/link-code", {
+    method: "POST",
   });
 
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");

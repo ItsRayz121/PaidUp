@@ -158,6 +158,19 @@ const SCHEMA = `
 
   -- Email verification codes. We store only a HASH of the code, never the
   -- code itself, plus expiry + attempt count (auth security).
+  -- One-time codes that BIND a Telegram to an existing account. The website
+  -- mints one, the t.me link carries it into the Mini App, the Mini App login
+  -- consumes it (start_param "link-<code>"). Hash only, 10-minute expiry,
+  -- single use — a leaked link must not let someone else attach THEIR
+  -- Telegram to your account later.
+  CREATE TABLE IF NOT EXISTS telegram_link_codes (
+    code_hash  TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS email_codes (
     id                   TEXT PRIMARY KEY,
     email                TEXT NOT NULL,

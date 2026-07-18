@@ -316,9 +316,17 @@ These override convenience or speed at every step:
   Telegram): initData OR widget payload re-verified, `hasTelegram` on
   publicUser, empty tg-only shells absorbed / active accounts 409;
   (d) `/refer` shows BOTH invite links (site + `t.me/<bot>?startapp=<code>`).
-  28-check e2e (`npm run test:telegram`): tamper/wrong-bot/replay/cross-scheme/
-  linking/shell-takeover. Founder steps left: BotFather "Enable Mini App" +
-  /setdomain, and a Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6).
+  **Third pass (same day): the Login Widget is GONE** — it asked users to log
+  into Telegram in a browser form (founder veto). Connecting from the website
+  is now a **binding link**: `POST /auth/telegram/link-code` mints a one-time
+  10-min code (`telegram_link_codes`, hash-stored, single-use, atomic claim),
+  `t.me/<bot>?startapp=link-<code>` opens the Telegram app, and the miniapp
+  login consumes it — binds + signs into the website account; stale/spent
+  codes fall back to a normal login. The login screen's Telegram option is a
+  plain "Continue in Telegram" t.me link (ref rides in startapp). No
+  /setdomain needed anymore. 37-check e2e (`npm run test:telegram`).
+  Founder steps left: BotFather "Enable Mini App" + a Monetag Rewarded zone
+  (see LAUNCH_CHECKLIST § 6).
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
