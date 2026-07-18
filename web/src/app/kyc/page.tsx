@@ -147,9 +147,11 @@ export default function KycPage() {
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
       <header>
-        <Link href="/wallet" className="inline-flex items-center gap-1 text-sm font-semibold text-brand">
+        {/* Profile is this screen's home in the tab bar (it stays lit here),
+            so "back" goes there — even when arriving from the Wallet nudge. */}
+        <Link href="/profile" className="inline-flex items-center gap-1 text-sm font-semibold text-brand">
           <ArrowRightIcon size={16} className="rotate-180" />
-          {t("nav.wallet")}
+          {t("nav.profile")}
         </Link>
         <h1 className="mt-2 text-xl font-bold text-brand-ink">{t("kyc.title")}</h1>
         <p className="text-sm text-muted">{t("kyc.subtitle")}</p>

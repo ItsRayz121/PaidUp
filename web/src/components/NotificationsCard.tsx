@@ -8,13 +8,16 @@
 // browser has no push support (iOS Safari outside the installed app), or we
 // are server-rendering. A toggle that can't deliver would only burn trust.
 import { useEffect, useState } from "react";
-import { Card, Button } from "./ui";
+import { Card, Button, SectionTitle } from "./ui";
 import { BellIcon } from "./icons";
 import { useI18n } from "@/lib/i18n";
 import { fetchPushConfig } from "@/lib/api";
 import { getPushState, enablePush, disablePush, pushSupported, type PushState } from "@/lib/push";
 
-export function NotificationsCard({ compact = false }: { compact?: boolean }) {
+// `heading` renders a section title ABOVE the card — inside this component on
+// purpose, so a screen never shows an orphan "Notifications" heading when the
+// card itself renders nothing (push unsupported or turned off server-side).
+export function NotificationsCard({ compact = false, heading }: { compact?: boolean; heading?: string }) {
   const { t } = useI18n();
   const [state, setState] = useState<PushState | "loading">("loading");
   const [busy, setBusy] = useState(false);
@@ -46,7 +49,7 @@ export function NotificationsCard({ compact = false }: { compact?: boolean }) {
     }
   }
 
-  return (
+  const card = (
     <Card className="p-4">
       <div className="flex items-start gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
@@ -76,5 +79,13 @@ export function NotificationsCard({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
     </Card>
+  );
+
+  if (!heading) return card;
+  return (
+    <section>
+      <SectionTitle>{heading}</SectionTitle>
+      {card}
+    </section>
   );
 }

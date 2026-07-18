@@ -11,6 +11,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: ["/", "/login"],
       disallow: [
         "/staff",
+        "/profile",
         "/wallet",
         "/kyc",
         "/mine",
