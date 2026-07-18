@@ -15,6 +15,7 @@
     "test:mining": "tsx --test src/tests/mining.test.ts",
     "test:mining:e2e": "tsx src/tests/mining.e2e.ts",
     "test:kyc": "tsx src/tests/kyc.e2e.ts",
+    "test:telegram": "tsx src/tests/telegram.e2e.ts",
     "test:push": "tsx src/tests/push.e2e.ts"
   },
   "dependencies": {

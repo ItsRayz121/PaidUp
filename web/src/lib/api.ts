@@ -148,6 +148,17 @@ export const loginWithTelegram = (payload: Record<string, unknown>) =>
     method: "POST", body: JSON.stringify(payload),
   });
 
+// Mini App login: the signed `initData` string Telegram gives its webview.
+export const loginWithTelegramMiniApp = (initData: string) =>
+  apiFetch<AuthOk>("/auth/telegram/miniapp", {
+    method: "POST", body: JSON.stringify({ initData }),
+  });
+
+// Whether Telegram login is on, and which bot to render the widget for —
+// served by the API so the bot username never lives in a web env var.
+export const fetchTelegramConfig = () =>
+  apiFetch<{ enabled: boolean; botUsername: string }>("/auth/telegram/config");
+
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 
 // ---- Earner ---------------------------------------------------------------
@@ -388,6 +399,9 @@ export type MiningState = {
     monetagZoneId: string;
     monetagDirectLink: string;
     monetagBannerZone: string;
+    // Rewarded video (a real "user finished watching" promise) — Monetag only
+    // offers it inside Telegram Mini Apps, so it is used only there.
+    monetagRewardedZone: string;
   };
   convertible: boolean;
   transfersEnabled: boolean;

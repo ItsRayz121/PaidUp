@@ -74,6 +74,46 @@ export function ensureBanner(zoneId: string): void {
   document.head.appendChild(el);
 }
 
+// REWARDED INTERSTITIAL — the real video ad with a completion signal. Monetag
+// only serves this format inside Telegram Mini Apps (their SDK checks), which
+// is the whole reason the Telegram build exists. The SDK exposes a global
+// `show_<zone>()` returning a promise that resolves when the user finishes.
+//
+// The promise is still only a CLIENT-side claim: the server's nonce + minimum
+// dwell + daily cap decide the boost, exactly as for the direct link. Host from
+// the tag Monetag generates; rotates like the others — update if it changes.
+const REWARDED_SRC = "https://libtl.com/sdk.js";
+const REWARDED_ID = "monetag-rewarded";
+
+export function ensureRewarded(zoneId: string): void {
+  if (typeof window === "undefined" || !zoneId) return;
+  if (document.getElementById(REWARDED_ID)) return;
+
+  const el = document.createElement("script");
+  el.id = REWARDED_ID;
+  el.src = REWARDED_SRC;
+  el.async = true;
+  el.dataset.zone = zoneId;
+  el.dataset.sdk = `show_${zoneId}`;
+  el.onerror = () => el.remove();
+  document.head.appendChild(el);
+}
+
+// Play the rewarded video; resolves when the SDK says the user finished.
+// False = SDK missing/blocked/no fill — callers fail open (the server dwell
+// timer still gates the boost, so nothing is lost but the nicer ad).
+export async function showRewarded(zoneId: string): Promise<boolean> {
+  if (typeof window === "undefined" || !zoneId) return false;
+  const fn = (window as unknown as Record<string, unknown>)[`show_${zoneId}`];
+  if (typeof fn !== "function") return false;
+  try {
+    await (fn as () => Promise<unknown>)();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Open a tab for the direct-link ad, dodging the pop-up blocker.
 //
 // Browsers only allow window.open inside a user gesture — an `await` between the

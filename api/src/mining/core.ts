@@ -133,6 +133,12 @@ export const MINING_DEFAULTS = {
   //     /mine screen only (never on money/login screens). Passive impressions,
   //     no boost, no reward — it just monetises time spent watching the dial.
   monetagBannerZone: "",    // in-page-push zone id; empty => no banner
+  //   - monetagRewardedZone: the REWARDED INTERSTITIAL — the real video with a
+  //     "user finished watching" promise. Monetag only serves it inside
+  //     Telegram Mini Apps, so the web client uses it only there; in a normal
+  //     browser the boost button keeps using the direct link. The server-side
+  //     teeth (nonce + minimum dwell + daily cap) are identical for both.
+  monetagRewardedZone: "",  // rewarded zone id (Telegram only); empty => direct link everywhere
 
   // -- The ad GATE on starting a session (founder decision, 2026-07-13).
   //

@@ -208,13 +208,31 @@ The app currently serves from `paid-up-one.vercel.app`. To move it to **rozipay.
 
 ---
 
-## ⚪ 6. Telegram login (optional cheaper-than-email fallback)
+## 🟢 6. Telegram — login DONE, Mini App built (2026-07-18)
 
-Only if email hurts signup. Off until configured.
-1. Create a bot via **@BotFather**, get its token.
-2. BotFather `/setdomain` → your web origin.
-3. Railway `TELEGRAM_BOT_TOKEN=<token>`; Vercel `NEXT_PUBLIC_TELEGRAM_BOT=<username>`
-   and redeploy with build cache off.
+The founder created the bot and its token is set on Railway
+(`TELEGRAM_BOT_TOKEN`). The old Vercel `NEXT_PUBLIC_TELEGRAM_BOT` step is
+**gone**: the web app now asks the API which bot to use
+(`GET /auth/telegram/config`, backed by getMe), so there is nothing to
+configure on Vercel and no cache-off redeploy.
+
+**The site is also a Telegram Mini App now** — same codebase; inside Telegram
+it signs the user in automatically from the webview's signed `initData`
+(`POST /auth/telegram/miniapp`), hides the install prompt, and can play
+Monetag's REAL rewarded video (the Telegram-only format) for the mining boost.
+Referrals ride `?startapp=<code>` inside the signed payload.
+
+**Founder steps left (all in Telegram, needs VPN on this network):**
+1. BotFather → `/setdomain` → `rozipay.xyz` (turns on the login-widget button).
+2. BotFather → `/newapp` (choose the bot) → Web App URL `https://rozipay.xyz`
+   → pick a short name. Share link becomes `t.me/<bot>/<shortname>`; referral
+   links are `t.me/<bot>/<shortname>?startapp=<REFCODE>`.
+3. BotFather → `/setmenubutton` → same URL, so the bot's menu button opens the
+   app.
+4. (For real video ads) Monetag dashboard → create a **Rewarded Interstitial**
+   zone for the Telegram Mini App → paste its id into `/staff → Mining →
+   monetagRewardedZone`. In a normal browser the boost button keeps using the
+   direct link; inside Telegram it plays the video.
 
 ---
 

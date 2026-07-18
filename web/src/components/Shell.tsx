@@ -4,7 +4,9 @@ import { usePathname } from "next/navigation";
 import { BottomNav } from "./BottomNav";
 import { TopBar } from "./TopBar";
 import { InstallPrompt } from "./InstallPrompt";
+import { TelegramBoot } from "./TelegramBoot";
 import { I18nProvider } from "@/lib/i18n";
+import { useInsideTelegram } from "@/lib/telegram";
 
 // Earner app = phone-framed (max 480) with bottom tabs.
 // Staff panel = full-width, dense, no tab bar (internal tool — DESIGN_BRIEF).
@@ -13,9 +15,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const isStaff = path.startsWith("/staff");
   const isAuth = path === "/login";
+  // Inside the Telegram Mini App there is nothing to install — Telegram IS the
+  // container.
+  const inTelegram = useInsideTelegram();
   // Don't cover the sign-in form, and don't interrupt someone mid-survey (the
   // network's iframe owns that screen — a sheet over it can cost them the reward).
-  const canPromptInstall = !isAuth && !path.startsWith("/surveys");
+  const canPromptInstall = !isAuth && !path.startsWith("/surveys") && !inTelegram;
   // /offline renders with no network by definition — a bar that tries to fetch a
   // balance there would only ever show a dash.
   const chrome = !isAuth && path !== "/offline";
@@ -30,6 +35,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <I18nProvider>
       <div className="app-frame flex flex-col">
+        <TelegramBoot />
         {chrome && <TopBar />}
         <main className="flex-1">{children}</main>
         {canPromptInstall && <InstallPrompt />}

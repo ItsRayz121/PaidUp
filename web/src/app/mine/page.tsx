@@ -13,7 +13,8 @@ import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
 import { formatRozi } from "@/lib/format";
-import { ensureVignette, ensureBanner, openAdTab } from "@/lib/ads";
+import { ensureVignette, ensureBanner, ensureRewarded, showRewarded, openAdTab } from "@/lib/ads";
+import { useInsideTelegram } from "@/lib/telegram";
 
 // Countdown to a session's expiry, in words. Ticks locally so we are not
 // polling the API once a second just to move a clock.
@@ -112,11 +113,37 @@ export default function MinePage() {
     }
   }
 
+  // Inside the Telegram Mini App, with a rewarded zone configured, the boost
+  // button plays a REAL video (Monetag's rewarded SDK — Telegram-only format)
+  // instead of opening the direct-link tab. Same server rules: nonce first,
+  // dwell timer, daily cap; the SDK's promise is a nicer ad, not extra trust.
+  const inTelegram = useInsideTelegram();
+  const rewardedZone = inTelegram ? (s?.ads.monetagRewardedZone ?? "") : "";
+  useEffect(() => {
+    if (s?.ads.enabled && rewardedZone) ensureRewarded(rewardedZone);
+  }, [s?.ads.enabled, rewardedZone]);
+
+  function onWatchAdRewarded() {
+    setBusy(true);
+    setNotice(null);
+    issueAd()
+      .then(({ nonce, minSeconds }) => {
+        setAdClaim({ nonce, readyAt: Date.now() + (minSeconds + 2) * 1000 });
+        setNotice(t("mine.ad.open"));
+        // Fire-and-forget: if the SDK is blocked or has no fill, the claim
+        // still stands — the server dwell timer is the gate, not the promise.
+        void showRewarded(rewardedZone);
+      })
+      .catch((e) => setNotice((e as Error).message))
+      .finally(() => setBusy(false));
+  }
+
   // The "watch an ad, mine faster" button — a Monetag direct link in a new tab.
   // The server issued the nonce BEFORE the tab opened and times the watch from
   // that moment, enforces the daily cap, and consumes the nonce exactly once;
   // the claim button below merely comes back to collect.
   function onWatchAd() {
+    if (rewardedZone) return onWatchAdRewarded();
     const url = s?.ads.monetagDirectLink;
     if (!url) return;
     // The tab must open synchronously inside this tap — window.open after an
@@ -273,7 +300,7 @@ export default function MinePage() {
             </Card>
           </Link>
 
-          {s.ads.enabled && s.ads.monetagDirectLink !== "" && (
+          {s.ads.enabled && (s.ads.monetagDirectLink !== "" || rewardedZone !== "") && (
             <Card className="flex items-center gap-3 p-4">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
                 <VideoIcon size={22} />

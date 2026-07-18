@@ -228,6 +228,7 @@ export async function miningRoutes(app: FastifyInstance) {
         monetagZoneId: s.monetagZoneId,
         monetagDirectLink: s.monetagDirectLink,
         monetagBannerZone: s.monetagBannerZone,
+        monetagRewardedZone: s.monetagRewardedZone,
       },
       // Told plainly, and repeated in the UI. Pretending otherwise is the
       // fastest way to burn the brand.

@@ -68,6 +68,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
       ["monetagZoneId", "Monetag vignette zone id"],
       ["monetagDirectLink", "Monetag direct link URL"],
       ["monetagBannerZone", "Monetag banner zone id (In-Page Push)"],
+      ["monetagRewardedZone", "Monetag rewarded video zone id (Telegram Mini App only)"],
     ],
   },
   {

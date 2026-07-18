@@ -393,14 +393,121 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "This login expired. Please try again." });
     }
 
-    const telegramId = data.id;
-    let user = await sql.get<UserRow>("SELECT * FROM users WHERE telegram_id = ?", telegramId);
+    const user = await findOrCreateTelegramUser(data.id, data.username, ref);
+    if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
+
+    await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
+    return { token: signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Telegram MINI APP login (2026-07-18). Inside Telegram the app receives a
+  // signed `initData` querystring instead of the Login Widget payload. Its HMAC
+  // scheme differs from the widget's on purpose (Telegram's spec): the key is
+  // HMAC-SHA256("WebAppData", bot_token), not SHA256(bot_token). A referral
+  // rides in `start_param` (t.me/<bot>/<app>?startapp=<code>) — INSIDE the
+  // signed set, so an invite code can't be tampered with after signing.
+  app.post("/auth/telegram/miniapp", limited(30, "1 minute"), async (req, reply) => {
+    if (!config.telegramBotToken) {
+      return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
+    }
+    const body = (typeof req.body === "object" && req.body ? req.body : {}) as { initData?: unknown };
+    const initData = typeof body.initData === "string" ? body.initData : "";
+    if (!initData || initData.length > 8192) {
+      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
+    }
+
+    const params = new URLSearchParams(initData);
+    const hash = params.get("hash") ?? "";
+    params.delete("hash");
+    // Sorted by KEY (not by whole "k=v" string — '=' would misorder keys that
+    // prefix each other), joined by newlines, exactly per Telegram's spec.
+    const checkString = [...params.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n");
+    const secret = createHmac("sha256", "WebAppData").update(config.telegramBotToken).digest();
+    const expected = createHmac("sha256", secret).update(checkString).digest();
+    const got = Buffer.from(hash, "hex");
+    if (!hash || got.length !== expected.length || !timingSafeEqual(got, expected)) {
+      return reply.code(401).send({ error: "Telegram login failed. Please try again." });
+    }
+    // initData is minted fresh every time Telegram opens the app, so a tight
+    // replay window costs honest users nothing.
+    const ageSec = Date.now() / 1000 - Number(params.get("auth_date"));
+    if (!Number.isFinite(ageSec) || ageSec > 3600 || ageSec < -300) {
+      return reply.code(401).send({ error: "This login expired. Please try again." });
+    }
+
+    let tgUser: { id?: number | string; username?: string } = {};
+    try {
+      tgUser = JSON.parse(params.get("user") ?? "{}");
+    } catch { /* fall through to the id check below */ }
+    if (!tgUser.id) {
+      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
+    }
+
+    const user = await findOrCreateTelegramUser(
+      String(tgUser.id),
+      tgUser.username ?? "",
+      params.get("start_param") ?? undefined,
+    );
+    if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
+
+    await ensureAdminRole(user.id, user.email);
+    await recordDevice(user.id, deviceOf(req), req.ip);
+    return { token: signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Which Telegram bot to render the login widget for — served by the API so
+  // the bot username never has to be hand-copied into a web env var. Cached
+  // after the first successful getMe; on failure it retries next call.
+  app.get("/auth/telegram/config", async () => {
+    const enabled = Boolean(config.telegramBotToken);
+    if (enabled && !cachedBotUsername) {
+      try {
+        const r = await fetch(
+          `https://api.telegram.org/bot${config.telegramBotToken}/getMe`,
+          { signal: AbortSignal.timeout(5000) },
+        );
+        const j = (await r.json()) as { ok?: boolean; result?: { username?: string } };
+        if (j.ok && j.result?.username) cachedBotUsername = j.result.username;
+      } catch { /* transient — leave empty, the widget just stays hidden */ }
+    }
+    return { enabled, botUsername: cachedBotUsername };
+  });
+
+  // Who am I (used by the app after it has a token)
+  app.get("/auth/me", async (req, reply) => {
+    try {
+      const userId = getUserId(req);
+      const user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+      if (!user) return reply.code(404).send({ error: "User not found" });
+      return { user: await publicUser(user) };
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+  });
+}
+
+let cachedBotUsername = "";
+
+// Find-or-create shared by the Login Widget and Mini App routes — the two
+// differ only in how the signature is checked, never in what an account is.
+async function findOrCreateTelegramUser(
+  telegramId: string,
+  username: string,
+  ref: string | undefined,
+): Promise<UserRow | undefined> {
+  let user = await sql.get<UserRow>("SELECT * FROM users WHERE telegram_id = ?", telegramId);
+  {
     if (!user) {
       const id = newId();
       // No email from Telegram: store a stable synthetic address so the NOT NULL
       // + UNIQUE email column holds. It is never sent mail; auth is Telegram-only.
       const email = `tg${telegramId}@telegram.local`;
-      const referralCode = await uniqueReferralCode(data.username || `tg${telegramId}`);
+      const referralCode = await uniqueReferralCode(username || `tg${telegramId}`);
       let referredBy: string | null = null;
       if (ref) {
         const inviter = await sql.get<{ id: string }>(
@@ -423,23 +530,6 @@ export async function authRoutes(app: FastifyInstance) {
       });
       user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", id);
     }
-    if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
-
-    await ensureAdminRole(user.id, user.email);
-    await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
-  });
-
-  // Who am I (used by the app after it has a token)
-  app.get("/auth/me", async (req, reply) => {
-    try {
-      const userId = getUserId(req);
-      const user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
-      if (!user) return reply.code(404).send({ error: "User not found" });
-      return { user: await publicUser(user) };
-    } catch (e) {
-      const err = e as { statusCode?: number; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
-    }
-  });
+  }
+  return user;
 }

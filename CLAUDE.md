@@ -291,6 +291,25 @@ These override convenience or speed at every step:
   Number()-coerced every setting except `adProvider`, silently NaN-ing
   `emissionModel`/`piHalvingUsers` edits. See `docs/LAUNCH_CHECKLIST.md` § 3c.
 
+- **TELEGRAM MINI APP (2026-07-18)**: the site runs as a Telegram Mini App —
+  same codebase, no fork. Bot token is set on Railway (login fallback is LIVE).
+  `POST /auth/telegram/miniapp` verifies the webview's signed `initData`
+  (HMAC key = HMAC-SHA256("WebAppData", bot token) — a *different* scheme than
+  the Login Widget's SHA256(token), per Telegram's spec) + 1h freshness;
+  referral rides `start_param` INSIDE the signed set. `GET /auth/telegram/config`
+  serves the bot username (getMe, cached) so `NEXT_PUBLIC_TELEGRAM_BOT` is dead —
+  the login widget configures itself from the API. Web: `lib/telegram.ts`
+  (`useInsideTelegram` via useSyncExternalStore), `TelegramBoot` auto-login,
+  install prompt suppressed in Telegram. **Rewarded video**: new setting
+  `monetagRewardedZone` — Monetag's real video-with-completion-promise format is
+  Telegram-Mini-App-only; inside Telegram the boost button plays it (server
+  nonce/dwell/cap unchanged), in a browser it falls back to the direct link.
+  ⚠️ api.telegram.org is BLOCKED from the founder's network (no VPN) — BotFather
+  steps need VPN; server-side getMe from Railway works fine. 14-check e2e
+  (`npm run test:telegram`): tamper/wrong-bot/replay/start_param-referral.
+  Founder steps left: BotFather /setdomain + /newapp + /setmenubutton, and a
+  Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6).
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
