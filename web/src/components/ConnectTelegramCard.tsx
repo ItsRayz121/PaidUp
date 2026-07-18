@@ -26,6 +26,10 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
   const inTelegram = useInsideTelegram();
   const [linked, setLinked] = useState(Boolean(user.hasTelegram));
   const [enabled, setEnabled] = useState(false);
+  // On the website the button is Telegram's widget, whose script host is
+  // blocked on many local networks. The whole card stays hidden until that
+  // script really loaded — never a card with a hole where the button goes.
+  const [widgetReady, setWidgetReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,7 +81,7 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
   if (!inTelegram && !enabled) return null;
 
   return (
-    <Card className="p-4">
+    <Card className={`p-4 ${inTelegram || widgetReady ? "" : "hidden"}`}>
       <div className="flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
           <TelegramIcon size={22} />
@@ -98,7 +102,7 @@ export function ConnectTelegramCard({ user }: { user: SessionUser }) {
             {t("profile.telegramConnect")}
           </Button>
         ) : (
-          <TelegramWidget onAuth={fromWidget} />
+          <TelegramWidget onAuth={fromWidget} onReady={() => setWidgetReady(true)} />
         )}
       </div>
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
