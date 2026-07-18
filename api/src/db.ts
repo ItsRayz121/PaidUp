@@ -503,6 +503,10 @@ const MIGRATIONS = `
     ON fraud_flags(flag_type, device_id) WHERE resolved_by IS NULL;
   -- ip_reuse detection (fraud.ts): DISTINCT user_id per IP, on every login.
   CREATE INDEX IF NOT EXISTS idx_user_devices_ip ON user_devices(ip);
+  -- One Telegram, one account — enforced in auth.ts, but the database is the
+  -- last line: two concurrent link/login requests must not both win the id.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id
+    ON users(telegram_id) WHERE telegram_id IS NOT NULL;
   -- The user's own withdrawal history, and the staff status queues.
   CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawal_requests(user_id);
   CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawal_requests(status);

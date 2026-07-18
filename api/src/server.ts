@@ -16,6 +16,7 @@ import { pushRoutes } from "./routes/push.ts";
 import { pushEnabled } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
+import { configureTelegramMenuButton } from "./telegram.ts";
 import { initDb, sql, usingRealPostgres } from "./db.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
@@ -173,6 +174,9 @@ setInterval(tickSettlement, SETTLE_INTERVAL_MS).unref();
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   void tickSettlement();
+  // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
+  // being slow or down must never delay or fail OUR boot.
+  void configureTelegramMenuButton();
   if (isProdSecretsMissing) {
     app.log.warn("Using DEV secrets. Set JWT_SECRET and OTP_PEPPER in .env before real use.");
   }

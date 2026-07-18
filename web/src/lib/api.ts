@@ -16,6 +16,9 @@ const USER_KEY = "rozipay_user";
 export type SessionUser = {
   id: string; email: string; country: string;
   referralCode: string; status: string; role: "agent" | "manager" | "admin" | null;
+  // Whether a Telegram account is connected (presence only, never the id).
+  // Optional: sessions stored before this field existed simply lack it.
+  hasTelegram?: boolean;
 };
 
 export function getToken(): string | null {
@@ -158,6 +161,13 @@ export const loginWithTelegramMiniApp = (initData: string) =>
 // served by the API so the bot username never lives in a web env var.
 export const fetchTelegramConfig = () =>
   apiFetch<{ enabled: boolean; botUsername: string }>("/auth/telegram/config");
+
+// Connect Telegram to the signed-in account. Pass the Mini App's initData when
+// inside Telegram, or the Login Widget's signed payload on the website.
+export const linkTelegram = (payload: { initData?: string; widget?: Record<string, unknown> }) =>
+  apiFetch<{ ok: true; user: SessionUser }>("/auth/telegram/link", {
+    method: "POST", body: JSON.stringify(payload),
+  });
 
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 

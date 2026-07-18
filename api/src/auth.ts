@@ -142,6 +142,7 @@ async function uniqueReferralCode(email: string): Promise<string> {
 type UserRow = {
   id: string; email: string; country: string; referral_code: string;
   referred_by: string | null; status: string; created_at: string;
+  telegram_id: string | null;
 };
 
 async function roleOf(userId: string): Promise<string | null> {
@@ -164,6 +165,8 @@ async function publicUser(u: UserRow) {
     id: u.id, email: u.email, country: u.country,
     referralCode: u.referral_code, status: u.status,
     role: await roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
+    // Presence only, never the id itself — the UI just needs "connected or not".
+    hasTelegram: Boolean(u.telegram_id),
   };
 }
 
@@ -363,37 +366,10 @@ export async function authRoutes(app: FastifyInstance) {
     if (!config.telegramBotToken) {
       return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
     }
-    // Work from the RAW body so the signature is checked over exactly the fields
-    // Telegram sent. `ref` is OUR referral param, not part of Telegram's signed
-    // set, so it is pulled out before building the check string.
-    const body = (typeof req.body === "object" && req.body ? req.body : {}) as Record<string, unknown>;
-    const data: Record<string, string> = {};
-    for (const [k, v] of Object.entries(body)) {
-      if (v !== undefined && v !== null) data[k] = String(v);
-    }
-    const hash = data.hash;
-    const ref = data.ref;
-    delete data.hash;
-    delete data.ref;
-    if (!hash || !data.id || !data.auth_date) {
-      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
-    }
+    const v = verifyWidgetPayload(req.body);
+    if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
-    const checkString = Object.keys(data).sort().map((k) => `${k}=${data[k]}`).join("\n");
-    const secret = createHash("sha256").update(config.telegramBotToken).digest();
-    const expected = createHmac("sha256", secret).update(checkString).digest();
-    const got = Buffer.from(hash, "hex");
-    if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
-      return reply.code(401).send({ error: "Telegram login failed. Please try again." });
-    }
-    // Freshness: reject a captured payload older than a day (Telegram's guidance)
-    // or dated in the future beyond a little clock skew — defends against replay.
-    const ageSec = Date.now() / 1000 - Number(data.auth_date);
-    if (!Number.isFinite(ageSec) || ageSec > 86_400 || ageSec < -300) {
-      return reply.code(401).send({ error: "This login expired. Please try again." });
-    }
-
-    const user = await findOrCreateTelegramUser(data.id, data.username, ref);
+    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam);
     if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
     await ensureAdminRole(user.id, user.email);
@@ -411,47 +387,10 @@ export async function authRoutes(app: FastifyInstance) {
     if (!config.telegramBotToken) {
       return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
     }
-    const body = (typeof req.body === "object" && req.body ? req.body : {}) as { initData?: unknown };
-    const initData = typeof body.initData === "string" ? body.initData : "";
-    if (!initData || initData.length > 8192) {
-      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
-    }
+    const v = verifyMiniAppInitData(req.body);
+    if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
-    const params = new URLSearchParams(initData);
-    const hash = params.get("hash") ?? "";
-    params.delete("hash");
-    // Sorted by KEY (not by whole "k=v" string — '=' would misorder keys that
-    // prefix each other), joined by newlines, exactly per Telegram's spec.
-    const checkString = [...params.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n");
-    const secret = createHmac("sha256", "WebAppData").update(config.telegramBotToken).digest();
-    const expected = createHmac("sha256", secret).update(checkString).digest();
-    const got = Buffer.from(hash, "hex");
-    if (!hash || got.length !== expected.length || !timingSafeEqual(got, expected)) {
-      return reply.code(401).send({ error: "Telegram login failed. Please try again." });
-    }
-    // initData is minted fresh every time Telegram opens the app, so a tight
-    // replay window costs honest users nothing.
-    const ageSec = Date.now() / 1000 - Number(params.get("auth_date"));
-    if (!Number.isFinite(ageSec) || ageSec > 3600 || ageSec < -300) {
-      return reply.code(401).send({ error: "This login expired. Please try again." });
-    }
-
-    let tgUser: { id?: number | string; username?: string } = {};
-    try {
-      tgUser = JSON.parse(params.get("user") ?? "{}");
-    } catch { /* fall through to the id check below */ }
-    if (!tgUser.id) {
-      return reply.code(400).send({ error: "Telegram login failed. Please try again." });
-    }
-
-    const user = await findOrCreateTelegramUser(
-      String(tgUser.id),
-      tgUser.username ?? "",
-      params.get("start_param") ?? undefined,
-    );
+    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam);
     if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
     await ensureAdminRole(user.id, user.email);
@@ -477,6 +416,62 @@ export async function authRoutes(app: FastifyInstance) {
     return { enabled, botUsername: cachedBotUsername };
   });
 
+  // Connect Telegram to an EXISTING signed-in account (founder, 2026-07-18):
+  // one person, one account, two doors. The body carries either the Mini App's
+  // initData or the Login Widget's signed payload — both re-verified exactly as
+  // at login; being signed in is never proof of owning a Telegram account.
+  app.post("/auth/telegram/link", limited(30, "1 minute"), async (req, reply) => {
+    if (!config.telegramBotToken) {
+      return reply.code(503).send({ error: "Telegram is not set up yet." });
+    }
+    let userId: string;
+    try {
+      userId = getUserId(req);
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+    const me = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+    if (!me) return reply.code(404).send({ error: "User not found" });
+    // Idempotent: already connected is a success, not an error.
+    if (me.telegram_id) return { ok: true, user: await publicUser(me) };
+
+    const body = (typeof req.body === "object" && req.body ? req.body : {}) as
+      { initData?: unknown; widget?: unknown };
+    const v = body.initData !== undefined
+      ? verifyMiniAppInitData(body)
+      : verifyWidgetPayload(body.widget);
+    if (!v.ok) return reply.code(v.code).send({ error: v.error });
+
+    const owner = await sql.get<UserRow>(
+      "SELECT * FROM users WHERE telegram_id = ?", v.telegramId,
+    );
+    if (owner && owner.id !== me.id) {
+      // Opening the Mini App before linking auto-creates a Telegram-only shell
+      // account. An EMPTY shell may be absorbed — unlink it so the real account
+      // wins. Any activity at all (points, ROZI, a withdrawal) and we refuse
+      // rather than guess which account the person meant.
+      const isShell = owner.email.endsWith("@telegram.local");
+      const [led, rozi, wd] = await Promise.all([
+        sql.get("SELECT 1 AS x FROM ledger_entries WHERE user_id = ? LIMIT 1", owner.id),
+        sql.get("SELECT 1 AS x FROM rozi_ledger WHERE user_id = ? LIMIT 1", owner.id),
+        sql.get("SELECT 1 AS x FROM withdrawal_requests WHERE user_id = ? LIMIT 1", owner.id),
+      ]);
+      if (!isShell || led || rozi || wd) {
+        return reply.code(409).send({ error: "This Telegram is already connected to another account." });
+      }
+      await sql.tx(async (t) => {
+        await t.run("UPDATE users SET telegram_id = NULL WHERE id = ?", owner.id);
+        await t.run("UPDATE users SET telegram_id = ? WHERE id = ?", v.telegramId, me.id);
+      });
+    } else if (!owner) {
+      await sql.run("UPDATE users SET telegram_id = ? WHERE id = ?", v.telegramId, me.id);
+    }
+    const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+    if (!fresh) return reply.code(500).send({ error: "Could not connect. Please try again." });
+    return { ok: true, user: await publicUser(fresh) };
+  });
+
   // Who am I (used by the app after it has a token)
   app.get("/auth/me", async (req, reply) => {
     try {
@@ -492,6 +487,87 @@ export async function authRoutes(app: FastifyInstance) {
 }
 
 let cachedBotUsername = "";
+
+// The two Telegram verification schemes. Both end in the same shape so login
+// and account-linking can share them. NOTE they are deliberately different
+// per Telegram's spec — a payload signed for one can never validate as the
+// other:
+//   Login Widget:  HMAC key = SHA256(bot_token)
+//   Mini App:      HMAC key = HMAC-SHA256("WebAppData", bot_token)
+type TgVerified =
+  | { ok: true; telegramId: string; username: string; startParam?: string }
+  | { ok: false; code: number; error: string };
+
+const TG_FAIL = { ok: false as const, code: 401, error: "Telegram login failed. Please try again." };
+const TG_BAD = { ok: false as const, code: 400, error: "Telegram login failed. Please try again." };
+const TG_STALE = { ok: false as const, code: 401, error: "This login expired. Please try again." };
+
+// The Login Widget's signed payload (an object of fields). `ref` is OUR
+// referral param, not part of Telegram's signed set, so it is pulled out
+// before building the check string.
+function verifyWidgetPayload(body: unknown): TgVerified {
+  const raw = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
+  const data: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v !== undefined && v !== null) data[k] = String(v);
+  }
+  const hash = data.hash;
+  const ref = data.ref;
+  delete data.hash;
+  delete data.ref;
+  if (!hash || !data.id || !data.auth_date) return TG_BAD;
+
+  const checkString = Object.keys(data).sort().map((k) => `${k}=${data[k]}`).join("\n");
+  const secret = createHash("sha256").update(config.telegramBotToken).digest();
+  const expected = createHmac("sha256", secret).update(checkString).digest();
+  const got = Buffer.from(hash, "hex");
+  if (got.length !== expected.length || !timingSafeEqual(got, expected)) return TG_FAIL;
+  // Freshness: reject a captured payload older than a day (Telegram's guidance)
+  // or dated in the future beyond a little clock skew — defends against replay.
+  const ageSec = Date.now() / 1000 - Number(data.auth_date);
+  if (!Number.isFinite(ageSec) || ageSec > 86_400 || ageSec < -300) return TG_STALE;
+
+  return { ok: true, telegramId: data.id, username: data.username || "", startParam: ref };
+}
+
+// The Mini App's initData (a signed querystring). The referral code rides in
+// start_param INSIDE the signed set, so it cannot be tampered with.
+function verifyMiniAppInitData(body: unknown): TgVerified {
+  const b = (typeof body === "object" && body ? body : {}) as { initData?: unknown };
+  const initData = typeof b.initData === "string" ? b.initData : "";
+  if (!initData || initData.length > 8192) return TG_BAD;
+
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash") ?? "";
+  params.delete("hash");
+  // Sorted by KEY (not by whole "k=v" string — '=' would misorder keys that
+  // prefix each other), joined by newlines, exactly per Telegram's spec.
+  const checkString = [...params.entries()]
+    .sort(([a], [b2]) => (a < b2 ? -1 : a > b2 ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(config.telegramBotToken).digest();
+  const expected = createHmac("sha256", secret).update(checkString).digest();
+  const got = Buffer.from(hash, "hex");
+  if (!hash || got.length !== expected.length || !timingSafeEqual(got, expected)) return TG_FAIL;
+  // initData is minted fresh every time Telegram opens the app, so a tight
+  // replay window costs honest users nothing.
+  const ageSec = Date.now() / 1000 - Number(params.get("auth_date"));
+  if (!Number.isFinite(ageSec) || ageSec > 3600 || ageSec < -300) return TG_STALE;
+
+  let tgUser: { id?: number | string; username?: string } = {};
+  try {
+    tgUser = JSON.parse(params.get("user") ?? "{}");
+  } catch { /* fall through to the id check below */ }
+  if (!tgUser.id) return TG_BAD;
+
+  return {
+    ok: true,
+    telegramId: String(tgUser.id),
+    username: tgUser.username ?? "",
+    startParam: params.get("start_param") ?? undefined,
+  };
+}
 
 // Find-or-create shared by the Login Widget and Mini App routes — the two
 // differ only in how the signature is checked, never in what an account is.

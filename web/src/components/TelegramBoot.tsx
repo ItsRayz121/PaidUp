@@ -6,19 +6,18 @@
 // open; a failure is a quiet no-op and the normal login screen still works.
 import { useEffect } from "react";
 import { getToken, setSession, loginWithTelegramMiniApp } from "@/lib/api";
-import { tgWebApp } from "@/lib/telegram";
+import { telegramInitData, telegramReady } from "@/lib/telegram";
 
 export function TelegramBoot() {
   useEffect(() => {
-    const wa = tgWebApp();
-    if (!wa) return;
+    const initData = telegramInitData();
+    if (!initData) return;
     // Tell Telegram we're alive and want the full-height webview.
-    wa.ready?.();
-    wa.expand?.();
+    telegramReady();
     if (getToken()) return; // already signed in on this device
 
     let cancelled = false;
-    loginWithTelegramMiniApp(wa.initData)
+    loginWithTelegramMiniApp(initData)
       .then((res) => {
         if (cancelled) return;
         setSession(res.token, res.user);

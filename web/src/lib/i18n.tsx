@@ -58,6 +58,11 @@ const copy: Record<string, string> = {
   "profile.help": "Help & support",
   "profile.helpHint": "Ask us anything. We reply here.",
   "profile.notifications": "Notifications",
+  "profile.telegram": "Telegram",
+  "profile.telegramHint": "Use the same account here and on Telegram.",
+  "profile.telegramConnect": "Connect Telegram",
+  "profile.telegramConnected": "Telegram connected",
+  "profile.telegramConnectedHint": "Open RoziPay in Telegram and you stay on this account.",
   // tasks
   "tasks.title": "Ways to earn",
   "tasks.subtitle": "Finish a task and get points.",
@@ -101,6 +106,11 @@ const copy: Record<string, string> = {
   "refer.trustNote": "Your friends only trust apps that pay. Get your money first, then share.",
   "refer.inviteMessage":
     "I use RoziPay to earn real money. Join with my code {code} and we both get points. {link}",
+  "refer.telegramTitle": "Invite on Telegram",
+  "refer.telegramHint": "Friends open RoziPay inside Telegram. Your code fills in by itself.",
+  // No {link} here — Telegram's share screen attaches the link on its own.
+  "refer.telegramShareText":
+    "I use RoziPay to earn real money. Join with my code {code} and we both get points.",
   // help
   "help.title": "Help & support",
   "help.subtitle": "Tell us the problem. A real person will reply.",

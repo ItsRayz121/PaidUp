@@ -3,17 +3,18 @@
 import { useState } from "react";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
-import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon } from "@/components/icons";
+import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon, TelegramIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchReferrals } from "@/lib/api";
+import { fetchReferrals, fetchTelegramConfig } from "@/lib/api";
 import { formatPoints } from "@/lib/format";
 
 export default function ReferPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const ref = useApi(fetchReferrals, []);
-  const [copied, setCopied] = useState(false);
+  const tg = useApi(fetchTelegramConfig, []);
+  const [copied, setCopied] = useState<"web" | "tg" | null>(null);
 
   if (!ready || ref.loading) return <div className="p-4 pt-6"><Loading /></div>;
   if (ref.error) return <div className="p-4 pt-6"><ErrorState message={ref.error} onRetry={ref.reload} /></div>;
@@ -23,14 +24,24 @@ export default function ReferPage() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const link = `${origin}/login?ref=${code}`;
   const message = t("refer.inviteMessage", { code, link });
+  // The Telegram-native invite: opens RoziPay INSIDE Telegram with the code
+  // riding in start_param (signed by Telegram — it can't be tampered with).
+  // Both links are shown; friends pick whichever app they live in.
+  const bot = tg.data?.botUsername ?? "";
+  const tgLink = bot ? `https://t.me/${bot}?startapp=${code}` : "";
 
-  async function copy() {
-    try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-    catch { setCopied(false); }
+  async function copy(which: "web" | "tg", value: string) {
+    try { await navigator.clipboard.writeText(value); setCopied(which); setTimeout(() => setCopied(null), 2000); }
+    catch { setCopied(null); }
   }
   async function share() {
     if (navigator.share) { try { await navigator.share({ title: "Join RoziPay", text: message, url: link }); } catch {} }
-    else { copy(); }
+    else { copy("web", link); }
+  }
+  function shareTelegram() {
+    // t.me/share opens Telegram's own "send to a chat" picker with the invite.
+    const url = `https://t.me/share/url?url=${encodeURIComponent(tgLink)}&text=${encodeURIComponent(t("refer.telegramShareText", { code }))}`;
+    window.open(url, "_blank", "noopener");
   }
 
   const steps = [
@@ -56,12 +67,36 @@ export default function ReferPage() {
           <p className="num mt-1 text-4xl font-bold tracking-wider">{code}</p>
         </div>
         <div className="grid grid-cols-2 gap-2.5 p-4">
-          <Button variant="ghost" size="md" onClick={copy}>
-            {copied ? <><CheckIcon size={18} /> {t("refer.copied")}</> : <><CopyIcon size={18} /> {t("refer.copyLink")}</>}
+          <Button variant="ghost" size="md" onClick={() => copy("web", link)}>
+            {copied === "web" ? <><CheckIcon size={18} /> {t("refer.copied")}</> : <><CopyIcon size={18} /> {t("refer.copyLink")}</>}
           </Button>
           <Button variant="primary" size="md" onClick={share}><ShareIcon size={18} /> {t("refer.share")}</Button>
         </div>
       </Card>
+
+      {/* The second door: invite straight into Telegram. Hidden until the bot
+          is configured server-side — never a dead button. */}
+      {tgLink !== "" && (
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+              <TelegramIcon size={22} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-brand-ink">{t("refer.telegramTitle")}</p>
+              <p className="text-sm text-muted">{t("refer.telegramHint")}</p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            <Button variant="ghost" size="md" onClick={() => copy("tg", tgLink)}>
+              {copied === "tg" ? <><CheckIcon size={18} /> {t("refer.copied")}</> : <><CopyIcon size={18} /> {t("refer.copyLink")}</>}
+            </Button>
+            <Button variant="primary" size="md" onClick={shareTelegram}>
+              <TelegramIcon size={18} /> {t("refer.share")}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-2.5">
         <Stat label={t("refer.friendsJoined")} value={String(ref.data?.joined ?? 0)} />

@@ -1,14 +1,15 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui";
 import { ShieldIcon, CheckIcon, ArrowRightIcon } from "@/components/icons";
 import { LogoLockup } from "@/components/Logo";
+import { TelegramWidget } from "@/components/TelegramWidget";
 import { useI18n } from "@/lib/i18n";
 import {
   register, verifyEmail, login, forgotPassword, resetPassword, loginWithTelegram,
-  fetchTelegramConfig, setSession, getToken, ApiError, type SessionUser,
+  setSession, getToken, ApiError, type SessionUser,
 } from "@/lib/api";
 
 type Mode = "login" | "register" | "verify" | "forgot" | "reset";
@@ -16,44 +17,20 @@ type Mode = "login" | "register" | "verify" | "forgot" | "reset";
 const inputClass =
   "w-full rounded-xl border border-line bg-card p-3.5 text-lg text-brand-ink outline-none placeholder:text-muted/60";
 
-// Mounts Telegram's Login Widget. Which bot (and whether the button shows at
-// all) comes from the API — GET /auth/telegram/config — so turning Telegram
-// login on is a backend env change, with no web redeploy. The widget calls the
-// global set here with the signed user payload, which we forward to the
-// backend for server-side verification.
+// The shared Telegram widget (components/TelegramWidget) wrapped with this
+// screen's "or" divider — shown only when the widget really renders.
 function TelegramLoginButton({ onAuth }: { onAuth: (u: Record<string, unknown>) => void }) {
   const { t } = useI18n();
-  const box = useRef<HTMLDivElement>(null);
-  const [bot, setBot] = useState("");
-  useEffect(() => {
-    let gone = false;
-    fetchTelegramConfig()
-      .then((c) => { if (!gone && c.enabled && c.botUsername) setBot(c.botUsername); })
-      .catch(() => { /* API unreachable — the button just stays hidden */ });
-    return () => { gone = true; };
-  }, []);
-  useEffect(() => {
-    const el = box.current;
-    if (!bot || !el) return;
-    (window as unknown as { onTelegramAuth?: (u: Record<string, unknown>) => void }).onTelegramAuth = onAuth;
-    const s = document.createElement("script");
-    s.src = "https://telegram.org/js/telegram-widget.js?22";
-    s.async = true;
-    s.setAttribute("data-telegram-login", bot);
-    s.setAttribute("data-size", "large");
-    s.setAttribute("data-radius", "12");
-    s.setAttribute("data-request-access", "write");
-    s.setAttribute("data-onauth", "onTelegramAuth(user)");
-    el.appendChild(s);
-    return () => { el.innerHTML = ""; };
-  }, [bot, onAuth]);
-  if (!bot) return null;
   return (
     <div className="mt-6">
-      <div className="mb-4 flex items-center gap-3 text-xs text-muted">
-        <span className="h-px flex-1 bg-line" /> {t("login.or")} <span className="h-px flex-1 bg-line" />
-      </div>
-      <div ref={box} className="flex justify-center" />
+      <TelegramWidget
+        onAuth={onAuth}
+        before={
+          <div className="mb-4 flex items-center gap-3 text-xs text-muted">
+            <span className="h-px flex-1 bg-line" /> {t("login.or")} <span className="h-px flex-1 bg-line" />
+          </div>
+        }
+      />
     </div>
   );
 }

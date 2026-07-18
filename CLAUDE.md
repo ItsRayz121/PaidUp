@@ -305,10 +305,20 @@ These override convenience or speed at every step:
   Telegram-Mini-App-only; inside Telegram the boost button plays it (server
   nonce/dwell/cap unchanged), in a browser it falls back to the direct link.
   ⚠️ api.telegram.org is BLOCKED from the founder's network (no VPN) — BotFather
-  steps need VPN; server-side getMe from Railway works fine. 14-check e2e
-  (`npm run test:telegram`): tamper/wrong-bot/replay/start_param-referral.
-  Founder steps left: BotFather /setdomain + /newapp + /setmenubutton, and a
-  Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6).
+  steps need VPN; server-side calls from Railway work fine. **Second pass
+  (same day):** (a) **no telegram-web-app.js anywhere** — the script host is
+  blocked locally and a blocked beforeInteractive script stalls the page, so
+  `lib/telegram.ts` reads initData from the URL fragment (#tgWebAppData) +
+  sessionStorage and speaks the webview's native postEvent bridge directly;
+  (b) the API **configures the bot's menu button itself at boot**
+  (`src/telegram.ts`, setChatMenuButton — automates what BotFather would);
+  (c) **account linking** `POST /auth/telegram/link` (Profile → Connect
+  Telegram): initData OR widget payload re-verified, `hasTelegram` on
+  publicUser, empty tg-only shells absorbed / active accounts 409;
+  (d) `/refer` shows BOTH invite links (site + `t.me/<bot>?startapp=<code>`).
+  28-check e2e (`npm run test:telegram`): tamper/wrong-bot/replay/cross-scheme/
+  linking/shell-takeover. Founder steps left: BotFather "Enable Mini App" +
+  /setdomain, and a Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6).
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its

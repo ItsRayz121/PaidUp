@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { ConnectTelegramCard } from "@/components/ConnectTelegramCard";
 import { Loading, LogoutButton } from "@/components/state";
 import {
   ProfileIcon,
@@ -68,6 +69,10 @@ export default function ProfilePage() {
           hint={t("profile.helpHint")}
         />
       </div>
+
+      {/* Connect Telegram — same account through both doors. Renders nothing
+          when Telegram is off and we're not inside it. */}
+      {user && <ConnectTelegramCard user={user} />}
 
       {/* Turn notifications on/off. The card renders nothing when push can't
           work on this phone — the heading lives inside it so they vanish

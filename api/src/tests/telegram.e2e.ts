@@ -10,8 +10,9 @@
 //
 //   npm run test:telegram
 import Fastify from "fastify";
-import { createHmac } from "node:crypto";
-import { initDb, sql, now } from "../db.ts";
+import { createHash, createHmac } from "node:crypto";
+import jwt from "jsonwebtoken";
+import { initDb, sql, now, newId } from "../db.ts";
 import { config } from "../config.ts";
 import { authRoutes } from "../auth.ts";
 
@@ -128,6 +129,112 @@ check("config reports telegram enabled", res.statusCode === 200 && body.enabled 
 // botUsername is best-effort (getMe over the network) — only its SHAPE is
 // pinned here so the test never depends on connectivity.
 check("config returns a string botUsername", typeof body.botUsername === "string");
+
+console.log("\n-- Login Widget route (regression guard for the helper refactor) --");
+
+// The widget's scheme: HMAC key = SHA256(bot_token) — different from the
+// Mini App's on purpose.
+function signWidgetPayload(fields: Record<string, string>, token = config.telegramBotToken) {
+  const checkString = Object.keys(fields).sort().map((k) => `${k}=${fields[k]}`).join("\n");
+  const secret = createHash("sha256").update(token).digest();
+  const hash = createHmac("sha256", secret).update(checkString).digest("hex");
+  return { ...fields, hash };
+}
+const postWidget = (payload: unknown) =>
+  app.inject({ method: "POST", url: "/auth/telegram", payload: payload as object });
+
+res = await postWidget(signWidgetPayload({ id: "666001", auth_date: freshDate(), username: "widget_user" }));
+check("a signed widget payload logs in", res.statusCode === 200 && Boolean(res.json().token));
+
+res = await postWidget(signWidgetPayload({ id: "666002", auth_date: freshDate() }, "7654321:WRONG"));
+check("a widget payload with a bad signature is rejected", res.statusCode === 401);
+
+// CROSS-SCHEME REPLAY: a valid Mini App initData replayed at the widget
+// endpoint (and vice versa) must die — the HMAC keys differ by design.
+// (Rejected as 400 — the shapes differ too — or 401 if reshaped; what is
+// pinned here is that it can NEVER be a 200.)
+const crossData = signInitData({ user: tgUser(666003), auth_date: freshDate() });
+res = await postWidget(Object.fromEntries(new URLSearchParams(crossData).entries()));
+check("a Mini App payload cannot log in at the widget endpoint",
+  res.statusCode === 400 || res.statusCode === 401);
+// Reshaped to LOOK like a widget payload (id hoisted out of the user JSON),
+// the Mini App signature still cannot validate under the widget's key.
+const crossParams = Object.fromEntries(new URLSearchParams(crossData).entries());
+res = await postWidget({ ...crossParams, id: "666003" });
+check("...even reshaped with an id field, the signature fails", res.statusCode === 401);
+
+console.log("\n-- linking Telegram to an email account --");
+
+const bearerFor = (id: string) => `Bearer ${jwt.sign({ sub: id }, config.jwtSecret, { expiresIn: "1h" })}`;
+const mkEmailUser = async (label: string) => {
+  const id = newId();
+  await sql.run(
+    `INSERT INTO users (id, email, email_verified, country, referral_code, status, created_at)
+     VALUES (?,?,1,'Pakistan',?,'active',?)`,
+    id, `${label}-${id}@t.test`, id.slice(0, 8).toUpperCase(), now(),
+  );
+  return id;
+};
+const link = (userId: string, payload: object) =>
+  app.inject({
+    method: "POST", url: "/auth/telegram/link",
+    headers: { authorization: bearerFor(userId) },
+    payload,
+  });
+
+// Telegram ids must be unique PER RUN — the e2e database persists between
+// runs, and a fixed id would (correctly) be refused as already-linked.
+const RUN = Math.floor(Date.now() / 1000) % 1_000_000_000;
+const tgId = (n: number) => RUN * 10 + n;
+
+// Happy path: an email account connects the Telegram it is opened in.
+const emailUser = await mkEmailUser("linker");
+res = await link(emailUser, { initData: signInitData({ user: tgUser(tgId(1)), auth_date: freshDate() }) });
+body = res.json();
+check("linking via Mini App initData succeeds", res.statusCode === 200 && body.user?.hasTelegram === true);
+const linkedRow = await sql.get<{ telegram_id: string }>("SELECT telegram_id FROM users WHERE id = ?", emailUser);
+check("the telegram id landed on the email account", linkedRow?.telegram_id === String(tgId(1)));
+
+// Idempotent: connecting again is a success, not an error.
+res = await link(emailUser, { initData: signInitData({ user: tgUser(tgId(1)), auth_date: freshDate() }) });
+check("linking twice is an idempotent success", res.statusCode === 200);
+
+// Linking via the widget payload (website flow).
+const widgetUser = await mkEmailUser("widget-linker");
+res = await link(widgetUser, { widget: signWidgetPayload({ id: String(tgId(2)), auth_date: freshDate() }) });
+check("linking via a signed widget payload succeeds", res.statusCode === 200 && res.json().user?.hasTelegram === true);
+
+// A forged link attempt (unsigned) must fail even though the caller is
+// signed in — being logged in is not proof of owning a Telegram account.
+const forger = await mkEmailUser("forger");
+res = await link(forger, { widget: { id: "888003", auth_date: freshDate(), hash: "00".repeat(32) } });
+check("an unsigned link attempt is rejected", res.statusCode === 401);
+
+// SHELL TAKEOVER: opening the Mini App before linking auto-creates a
+// Telegram-only shell. An EMPTY shell is absorbed when the real account links.
+res = await post(signInitData({ user: tgUser(tgId(4)), auth_date: freshDate() }));
+const shellId = res.json().user?.id as string;
+const realUser = await mkEmailUser("shell-absorber");
+res = await link(realUser, { initData: signInitData({ user: tgUser(tgId(4)), auth_date: freshDate() }) });
+check("an empty Telegram-only shell is absorbed by the real account", res.statusCode === 200);
+const shellAfter = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", shellId);
+const realAfter = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", realUser);
+check("the shell lost the telegram id, the real account holds it",
+  shellAfter?.telegram_id === null && realAfter?.telegram_id === String(tgId(4)));
+
+// ...but a Telegram account WITH activity is never silently taken.
+res = await post(signInitData({ user: tgUser(tgId(5)), auth_date: freshDate() }));
+const activeShellId = res.json().user?.id as string;
+await sql.run(
+  `INSERT INTO ledger_entries (id, user_id, amount, direction, source_type, note, created_at)
+   VALUES (?,?,?,?,?,?,?)`,
+  newId(), activeShellId, 100, "credit", "admin_adjustment", "e2e activity", now(),
+);
+const wouldBeThief = await mkEmailUser("thief");
+res = await link(wouldBeThief, { initData: signInitData({ user: tgUser(tgId(5)), auth_date: freshDate() }) });
+check("a Telegram account with points is NOT taken over (409)", res.statusCode === 409);
+const activeShellAfter = await sql.get<{ telegram_id: string | null }>("SELECT telegram_id FROM users WHERE id = ?", activeShellId);
+check("the active account keeps its telegram id", activeShellAfter?.telegram_id === String(tgId(5)));
 
 await app.close();
 console.log(`\n${pass} passed, ${fail} failed`);

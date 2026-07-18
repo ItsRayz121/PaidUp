@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Sora } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 import { Shell } from "@/components/Shell";
 import { SITE_URL } from "@/lib/site";
@@ -64,11 +63,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${inter.variable} ${sora.variable} antialiased`}>
-        {/* Telegram Mini App bridge. In a normal browser it defines an empty
-            Telegram.WebApp and does nothing else; inside Telegram's webview it
-            carries the signed initData that logs the user in (TelegramBoot).
-            beforeInteractive so it exists before any of our code checks it. */}
-        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+        {/* No telegram-web-app.js here, deliberately: telegram.org is blocked
+            on many Pakistani networks, and a blocked beforeInteractive script
+            stalls the page for everyone. lib/telegram.ts reads the Mini App's
+            initData straight from the URL fragment instead. */}
         <Shell>{children}</Shell>
       </body>
     </html>

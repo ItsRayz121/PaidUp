@@ -220,16 +220,30 @@ configure on Vercel and no cache-off redeploy.
 it signs the user in automatically from the webview's signed `initData`
 (`POST /auth/telegram/miniapp`), hides the install prompt, and can play
 Monetag's REAL rewarded video (the Telegram-only format) for the mining boost.
-Referrals ride `?startapp=<code>` inside the signed payload.
+Referrals ride `?startapp=<code>` inside the signed payload. **No Telegram
+script is loaded on the website** — telegram.org is blocked on many local
+networks, so the app reads `initData` straight from the URL fragment and a
+blocked network can never slow the site.
 
-**Founder steps left (all in Telegram, needs VPN on this network):**
-1. BotFather → `/setdomain` → `rozipay.xyz` (turns on the login-widget button).
-2. BotFather → `/newapp` (choose the bot) → Web App URL `https://rozipay.xyz`
-   → pick a short name. Share link becomes `t.me/<bot>/<shortname>`; referral
-   links are `t.me/<bot>/<shortname>?startapp=<REFCODE>`.
-3. BotFather → `/setmenubutton` → same URL, so the bot's menu button opens the
-   app.
-4. (For real video ads) Monetag dashboard → create a **Rewarded Interstitial**
+**Also done in code (2026-07-18, second pass):**
+- **Menu button configures ITSELF**: at boot the API calls Telegram's
+  `setChatMenuButton` (server-side — Railway reaches Telegram fine), pointing
+  the bot's menu button at the web app. No BotFather step, no VPN.
+- **Account linking**: Profile → "Connect Telegram" ties a Telegram to the
+  SAME email account (one tap inside Telegram; the Login Widget on the web).
+  An empty Telegram-only shell account is absorbed on link; any account with
+  activity is never silently taken (409).
+- **Both invite links on /refer**: the website link and
+  `t.me/<bot>?startapp=<code>`, with a native share-to-Telegram button. The
+  Telegram card appears automatically once the bot is live.
+
+**Founder steps left (inside Telegram — use the account that owns the bot):**
+1. BotFather → `/mybots` → the bot → **Configure Mini App → Enable** → Web App
+   URL `https://rozipay.xyz`. This is what makes `t.me/<bot>?startapp=<code>`
+   open the app directly (the refer screen's Telegram links).
+2. BotFather → `/setdomain` → `rozipay.xyz` (turns on the login-widget button
+   on the website + the Profile connect button outside Telegram).
+3. (For real video ads) Monetag dashboard → create a **Rewarded Interstitial**
    zone for the Telegram Mini App → paste its id into `/staff → Mining →
    monetagRewardedZone`. In a normal browser the boost button keeps using the
    direct link; inside Telegram it plays the video.
