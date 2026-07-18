@@ -55,7 +55,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   },
   {
     title: "Boosts",
-    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get two formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost) and the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost). Each empty value disables its own half.",
+    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get three formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost), the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost), and the BANNER zone id (an In-Page Push zone — small dismissible bar shown on the mining screen only; passive impressions, no boost). Each empty value disables its own part.",
     keys: [
       ["taskBoostPct", "Task boost (%)"],
       ["taskBoostHours", "Task boost lasts (hours)"],
@@ -67,6 +67,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
       ["adProvider", "Ad provider (monetag / adsterra)"],
       ["monetagZoneId", "Monetag vignette zone id"],
       ["monetagDirectLink", "Monetag direct link URL"],
+      ["monetagBannerZone", "Monetag banner zone id (In-Page Push)"],
     ],
   },
   {

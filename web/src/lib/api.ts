@@ -383,9 +383,11 @@ export type MiningState = {
     gateOnStart: boolean;
     provider: string;
     // Vignette zone (the ad on mining start) + direct-link URL (the
-    // watch-to-boost button). Either may be empty; each disables its own half.
+    // watch-to-boost button) + in-page-push zone (the banner on /mine).
+    // Any may be empty; each disables its own part.
     monetagZoneId: string;
     monetagDirectLink: string;
+    monetagBannerZone: string;
   };
   convertible: boolean;
   transfersEnabled: boolean;

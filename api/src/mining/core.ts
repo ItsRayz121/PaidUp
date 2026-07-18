@@ -128,6 +128,11 @@ export const MINING_DEFAULTS = {
   //     promise (both are client-side claims), same server-side teeth.
   monetagZoneId: "",        // vignette zone id; empty => no ad on mining start
   monetagDirectLink: "",    // direct-link URL; empty => no watch-to-boost button
+  //   - monetagBannerZone: an IN-PAGE PUSH zone — Monetag's banner format, a
+  //     small dismissible bar the script floats over the page. Shown on the
+  //     /mine screen only (never on money/login screens). Passive impressions,
+  //     no boost, no reward — it just monetises time spent watching the dial.
+  monetagBannerZone: "",    // in-page-push zone id; empty => no banner
 
   // -- The ad GATE on starting a session (founder decision, 2026-07-13).
   //

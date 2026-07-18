@@ -148,7 +148,7 @@ public dev key (it is in the git history) would only *look* safe.
 tag.** One important discovery from the real account: Monetag's **Rewarded
 Interstitial (the `show_zone()` SDK with a "user finished watching" promise) is
 Telegram-Mini-App-only** — a website account does not get it. The app therefore
-uses the two formats a website actually gets:
+uses the formats a website actually gets:
 
 - **Vignette zone** (`11331636`, created) — the full-screen ad around the
   "Start mining" tap. Passive, no completion signal, so it grants **no boost**;
@@ -156,19 +156,29 @@ uses the two formats a website actually gets:
 - **Direct Link zone** — powers the "watch an ad, mine faster" button: the ad
   opens in a new tab, the server's nonce + minimum-watch timer + daily cap decide
   the boost. Same server-side teeth as before; only the ad surface changed.
+- **In-Page Push zone (the "banner", 2026-07-18)** — a small dismissible bar
+  Monetag floats over the **/mine screen only** (never wallet/login/withdraw —
+  an ad there reads as part of the product). Passive impressions, no boost.
 
-Both remain **soft**: an ad blocker or empty fill never stops mining or breaks a
+All remain **soft**: an ad blocker or empty fill never stops mining or breaks a
 streak.
 
 **Remaining steps:**
 1. Create a **Direct Link** zone in the Monetag dashboard; copy its **URL**.
-2. In **/staff → Mining** set `adProvider = monetag`,
-   `monetagZoneId = 11331636`, `monetagDirectLink = <the URL>`, and
-   `adsEnabled = 1`. (Flag + provider are both needed; each empty Monetag value
-   disables its own half.)
-3. ⚠️ **Read Monetag's terms on incentivised/rewarded traffic first.** We are not
+2. Create an **In-Page Push** zone; copy its **zone id**. If the tag Monetag
+   generates uses a different script host than `n6wxm.com/tag.min.js`, tell
+   Claude the tag so the constant in `web/src/lib/ads.ts` can be matched.
+3. In **/staff → Mining** set `adProvider = monetag`,
+   `monetagZoneId = 11331636`, `monetagDirectLink = <the URL>`,
+   `monetagBannerZone = <the zone id>`, and `adsEnabled = 1`. (Flag + provider
+   are both needed; each empty Monetag value disables its own part.)
+4. ⚠️ **Read Monetag's terms on incentivised/rewarded traffic first.** We are not
    paying cash to watch an ad — we unlock mining, and ROZI has no fixed cash value
    by design — but confirm their policy before you rely on the revenue.
+5. When testing, turn **off** your VPN and DNS ad-blocking: Monetag serves by
+   the visitor's country, VPN/datacenter IPs often get zero fill or junk fill,
+   and your own DNS blocks Monetag hosts entirely (the code fails open, so you
+   see "nothing happened", not an error).
 
 ---
 

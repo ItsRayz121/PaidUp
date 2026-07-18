@@ -13,7 +13,7 @@ import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
 import { formatRozi } from "@/lib/format";
-import { ensureVignette, openAdTab } from "@/lib/ads";
+import { ensureVignette, ensureBanner, openAdTab } from "@/lib/ads";
 
 // Countdown to a session's expiry, in words. Ticks locally so we are not
 // polling the API once a second just to move a clock.
@@ -65,6 +65,15 @@ export default function MinePage() {
   useEffect(() => {
     if (s && !s.session.active && s.ads.gateOnStart && s.ads.monetagZoneId) {
       ensureVignette(s.ads.monetagZoneId);
+    }
+  }, [s]);
+
+  // The banner (in-page push) is not tied to the session — it monetises the
+  // whole time on this screen. Only here: this is the screen people idle on,
+  // and the one whose users chose an ad-supported feature.
+  useEffect(() => {
+    if (s && s.ads.enabled && s.ads.monetagBannerZone) {
+      ensureBanner(s.ads.monetagBannerZone);
     }
   }, [s]);
 

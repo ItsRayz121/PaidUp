@@ -284,8 +284,10 @@ These override convenience or speed at every step:
   passive, grants NO boost) and **direct link** (the watch-to-boost button: tab
   opens pre-`await` to dodge pop-up blockers, then the existing server nonce +
   15s dwell + daily cap decide the boost — server code unchanged). New setting
-  `monetagDirectLink` (admin-tunable); enable = `adProvider`+`adsEnabled`+the two
-  Monetag values in `/staff → Mining`. Also fixed: the mining admin panel
+  `monetagDirectLink` (admin-tunable); enable = `adProvider`+`adsEnabled`+the
+  Monetag values in `/staff → Mining`. **2026-07-18: third format added —
+  `monetagBannerZone` (In-Page Push, the "banner"), shown on `/mine` only,
+  passive, no boost; empty = off.** Also fixed: the mining admin panel
   Number()-coerced every setting except `adProvider`, silently NaN-ing
   `emissionModel`/`piHalvingUsers` edits. See `docs/LAUNCH_CHECKLIST.md` § 3c.
 

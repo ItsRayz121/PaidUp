@@ -48,6 +48,32 @@ export function ensureVignette(zoneId: string): void {
   document.head.appendChild(el);
 }
 
+// IN-PAGE PUSH — Monetag's "banner": a small dismissible bar their script
+// floats over the page. Same passive contract as the vignette: no watch signal,
+// no boost, just impressions. Loaded on /mine only — never on money or login
+// screens, where an ad would read as part of the product.
+//
+// Host taken from the tag Monetag generates for the zone; like the vignette
+// host it rotates, so if banners silently stop, regenerate the tag in the
+// dashboard and update this constant.
+const BANNER_SRC = "https://n6wxm.com/tag.min.js";
+const BANNER_ID = "monetag-banner";
+
+export function ensureBanner(zoneId: string): void {
+  if (typeof window === "undefined" || !zoneId) return;
+  if (document.getElementById(BANNER_ID)) return;
+
+  const el = document.createElement("script");
+  el.id = BANNER_ID;
+  el.src = BANNER_SRC;
+  el.async = true;
+  el.dataset.zone = zoneId;
+  el.dataset.cfasync = "false";
+  // Ad blocker: fine — the screen works the same without the banner.
+  el.onerror = () => el.remove();
+  document.head.appendChild(el);
+}
+
 // Open a tab for the direct-link ad, dodging the pop-up blocker.
 //
 // Browsers only allow window.open inside a user gesture — an `await` between the
