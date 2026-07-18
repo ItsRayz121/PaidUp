@@ -1,21 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { rigIcon, ChipIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchRigs, upgradeRig } from "@/lib/api";
+import { fetchRigs, fetchMiningState, upgradeRig } from "@/lib/api";
+import { ensureVignette } from "@/lib/ads";
 import { formatRozi } from "@/lib/format";
 
 export default function RigsPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const rigs = useApi(fetchRigs, []);
+  const mining = useApi(fetchMiningState, []);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Same vignette as the Start-mining tap (founder, 2026-07-18): once loaded it
+  // decorates taps on THIS screen too, so buying a rig can show an ad. Passive,
+  // Monetag's own frequency cap applies, and it grants nothing — a rig purchase
+  // is a ROZI spend, not real money, so an ad here can't read as a paywall.
+  useEffect(() => {
+    const ads = mining.data?.ads;
+    if (ads?.enabled && ads.monetagZoneId) ensureVignette(ads.monetagZoneId);
+  }, [mining.data]);
 
   async function onUpgrade(id: string) {
     setBusy(id);

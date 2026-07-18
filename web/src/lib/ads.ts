@@ -8,10 +8,10 @@
 //
 //   1. VIGNETTE (ensureVignette). A script that, once loaded, shows a full-screen
 //      ad around the user's next taps. Purely passive: there is no "the user
-//      watched it" signal, no promise, nothing to await. We load it on the /mine
-//      screen only, so the tap it decorates is "Start mining" — the founder's
-//      "an ad appears when you start mining". Because it cannot prove a watch,
-//      the gate ad grants NO boost; it is an impression, full stop.
+//      watched it" signal, no promise, nothing to await. We load it on /mine
+//      (the tap it decorates is "Start mining") and the rig shop (buying a rig
+//      — a ROZI spend, not real money). Because it cannot prove a watch, it
+//      grants NO boost; it is an impression, full stop.
 //
 //   2. DIRECT LINK (openAdTab). A plain URL that shows ads when visited. The
 //      boost button opens it in a new tab. Verification is the server's job and

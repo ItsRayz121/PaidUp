@@ -119,9 +119,9 @@ export const MINING_DEFAULTS = {
   // Monetag's rewarded SDK (a promise that resolves when the video ends) turned
   // out to be Telegram-Mini-App-only — a real website account gets two humbler
   // formats, so the client uses both (2026-07-17, real account, site 3411999):
-  //   - monetagZoneId: the VIGNETTE zone. Loaded on the /mine screen only; shows
-  //     a full-screen ad around the "Start mining" tap. Purely passive — it has
-  //     no "user finished" signal, so the gate ad grants NO boost.
+  //   - monetagZoneId: the VIGNETTE zone. Loaded on /mine and the rig shop;
+  //     shows a full-screen ad around the "Start mining" and buy-a-rig taps.
+  //     Purely passive — it has no "user finished" signal, so it grants NO boost.
   //   - monetagDirectLink: the DIRECT LINK zone's URL. The boost button opens it
   //     in a new tab; the server's existing nonce + minimum-dwell + daily cap
   //     decide whether the boost is granted. Same trust level as the old SDK
