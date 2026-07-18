@@ -248,15 +248,21 @@ blocked network can never slow the site.
   website. ⚠️ Needs the **Resend key** to actually send codes (same blocker
   as signup) — in dev the code prints to the API console.
 
-**Founder steps left (inside Telegram — use the account that owns the bot):**
-1. BotFather → `/mybots` → the bot → **Configure Mini App → Enable** → Web App
+**Monetag Telegram app is REGISTERED (founder, 2026-07-18):** app **3414088**
+(`@RoziPayOfficial_Bot`), **Rewarded Interstitial zone `11343471`**. The tag
+Monetag generated (`libtl.com/sdk.js`, `data-sdk="show_11343471"`) matches
+`web/src/lib/ads.ts` exactly — no code change was needed; the rewards come
+from OUR server (nonce + watch timer + daily cap), not Monetag's sample
+callback.
+
+**Founder steps left:**
+1. **/staff → Mining → `monetagRewardedZone` = `11343471`** (and when going
+   live overall: `adProvider = monetag`, `adsEnabled = 1`). Live immediately,
+   no deploy — inside Telegram the boost button then plays the real video.
+2. BotFather → `/mybots` → the bot → **Configure Mini App → Enable** → Web App
    URL `https://rozipay.xyz`. This single toggle is what makes every
    `t.me/<bot>?startapp=...` link (invites, login, account-binding) open the
    app directly.
-2. (For real video ads) Monetag dashboard → create a **Rewarded Interstitial**
-   zone for the Telegram Mini App → paste its id into `/staff → Mining →
-   monetagRewardedZone`. In a normal browser the boost button keeps using the
-   direct link; inside Telegram it plays the video.
 
 ---
 

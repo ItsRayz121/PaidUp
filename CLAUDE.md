@@ -331,9 +331,12 @@ These override convenience or speed at every step:
   website; `hasEmail` on publicUser (false = still on the synthetic
   @telegram.local address), Profile shows an "Add your email" card for those
   accounts and hides the synthetic address. 45-check e2e
-  (`npm run test:telegram`). Founder steps left: BotFather "Enable Mini App"
-  + a Monetag Rewarded zone (see LAUNCH_CHECKLIST § 6). NOTE: sending the
-  real code emails still needs the Resend key — same blocker as signup.
+  (`npm run test:telegram`). **Monetag Telegram app registered (2026-07-18):
+  app 3414088, Rewarded Interstitial zone `11343471` — tag matches ads.ts
+  as-built.** Founder steps left: paste `11343471` into /staff → Mining →
+  monetagRewardedZone, + BotFather "Enable Mini App" (see LAUNCH_CHECKLIST
+  § 6). NOTE: sending the real code emails still needs the Resend key — same
+  blocker as signup.
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
