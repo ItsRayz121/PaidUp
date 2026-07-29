@@ -108,10 +108,15 @@ Everything tunable with **no redeploy**. Every write audit-logged.
 - [x] **M7.2 Limits** — daily cap, min account age, both accounts unflagged,
       burn fee, atomic debit+credit in one transaction
 - [x] **M7.3 `rozi_transfer_ring` fraud rule**
-- [ ] **M7.4 Earner-facing transfer UI** — the API (`POST /mining/transfer`) and the
-      `rozi_transfers` record exist and are tested, but there is **no screen** for
-      it yet. Transfers ship OFF (`transfersEnabled=0`), so nothing is reachable
-      without a UI anyway; build the screen when you switch them on.
+- [x] **M7.4 Earner-facing transfer UI** (2026-07-27) — `/mine/send`, linked from
+      `/mine` only when transfers are switched on. Each of the four ways the
+      server can refuse (off, no KYC, account too new, over cap) renders as a
+      card with a way forward, resolved from `/mining/state` BEFORE the form —
+      the alternative is a user filling in a transfer they were never allowed to
+      make. Still ships OFF (`transfersEnabled=0`).
+- [x] **M7.5 KYC gate on sending** (2026-07-27, founder) — new setting
+      `transferRequireKyc` (default **1**), same `kyc_status='approved'` check
+      withdrawals use. **Sending** is gated; **receiving** deliberately is not.
 - [x] ❌ **NOT building**: order book, price matching, escrow, money leg. See
       `MINING_SPEC.md` § 7.
 

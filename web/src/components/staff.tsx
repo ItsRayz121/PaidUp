@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket,
-  fetchNetworks, updateNetwork, resolveFraud, fetchSettings, updateSettings,
+  fetchNetworks, updateNetwork, updateAllNetworkReferrals, resolveFraud, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
@@ -295,6 +295,7 @@ export function NetworkPanel() {
             </table>
           </div>
         )}
+      {!nets.loading && !nets.error && <BulkReferralRates onSaved={nets.reload} />}
     </section>
     </>
   );
@@ -343,6 +344,70 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
         </div>
       </td>
     </tr>
+  );
+}
+
+// Set referral rewards on every network in one go.
+//
+// The per-row inputs above are still the right tool for tuning ONE deal. This is
+// for the other job — "make inviting pay more" — which the per-row editor does
+// badly: the invite screens advertise the MINIMUM across active networks, so
+// bumping four rows and missing the fifth changes nothing users can see, and
+// nothing tells you that. Blank means "leave this one alone".
+function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
+  const [l1, setL1] = useState("");
+  const [l2, setL2] = useState("");
+  const [first, setFirst] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
+  const patch = {
+    referralBonusPct: num(l1),
+    referralBonusPctL2: num(l2),
+    referralFirstTaskBonus: num(first),
+  };
+  const anything = Object.values(patch).some((v) => v !== undefined);
+
+  async function save() {
+    // Every network at once, including disabled ones. Worth a confirm: it is the
+    // one control here that rewrites rows the operator is not looking at.
+    if (!window.confirm("Set these referral rewards on EVERY network? Blank fields are left unchanged.")) return;
+    setBusy(true);
+    try {
+      const res = await updateAllNetworkReferrals(patch);
+      window.alert(`Updated ${res.updated} networks.`);
+      setL1(""); setL2(""); setFirst("");
+      onSaved();
+    } catch (e) {
+      // The API refuses L1+L2 above the margin — that message is the useful one.
+      window.alert((e as Error).message);
+    } finally { setBusy(false); }
+  }
+
+  const inp = "num w-20 rounded border border-line bg-card p-1 text-sm outline-none";
+  return (
+    <div className="mt-3 rounded-lg border border-line p-3">
+      <p className="text-sm font-semibold text-brand-ink">Set referral rewards on all networks</p>
+      <p className="mb-2 text-xs text-muted">
+        Users are shown the LOWEST rate across active networks, so raising one network alone changes
+        nothing they can see. Referral pay comes out of our margin — L1 + L2 above the margin is refused.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-muted">L1 %<br />
+          <input type="number" min={0} max={100} value={l1} onChange={(e) => setL1(e.target.value)} className={inp} placeholder="—" />
+        </label>
+        <label className="text-xs text-muted">L2 %<br />
+          <input type="number" min={0} max={100} value={l2} onChange={(e) => setL2(e.target.value)} className={inp} placeholder="—" />
+        </label>
+        <label className="text-xs text-muted">1st-task bonus<br />
+          <input type="number" min={0} max={1000000} value={first} onChange={(e) => setFirst(e.target.value)} className={inp} placeholder="—" />
+        </label>
+        <button disabled={busy || !anything} onClick={save}
+          className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+          Apply to all
+        </button>
+      </div>
+    </div>
   );
 }
 

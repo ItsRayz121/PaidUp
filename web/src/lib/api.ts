@@ -202,8 +202,23 @@ export const submitTaskProof = (taskId: string, proof: string) =>
   apiFetch<{ ok: boolean; status?: string; error?: string }>(`/tasks/${taskId}/proof`, {
     method: "POST", body: JSON.stringify({ proof }),
   });
-export const fetchReferrals = () =>
-  apiFetch<{ code: string; joined: number; earnedPoints: number }>("/referrals/me");
+// `rewards` is what a friend is WORTH, served by the API rather than written into
+// the copy deck, because every one of those numbers is Admin-tunable. An invite
+// screen that prints a stale 15% is an invite screen that lies.
+export type Referrals = {
+  code: string;
+  joined: number;   // friends you invited
+  joined2: number;  // friends THEY invited
+  earnedPoints: number;
+  rewards: {
+    l1Pct: number;          // % of a friend's task points, paid to you
+    l2Pct: number;          // % of a friend-of-a-friend's task points
+    firstTaskBonus: number; // one-off points when a friend finishes their 1st task
+    miningL1Pct: number;    // % of a mining friend's speed added to yours
+    miningL2Pct: number;
+  };
+};
+export const fetchReferrals = () => apiFetch<Referrals>("/referrals/me");
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
 export const createWithdrawal = (amountPoints: number, chain: string, address: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
@@ -349,6 +364,16 @@ export const updateNetwork = (
   },
 ) => apiFetch<{ ok: true }>(`/staff/networks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 
+// Set referral rewards on EVERY network at once. Raising them one network at a
+// time does not raise what users are shown: the invite screens advertise the
+// MINIMUM across active networks, so one forgotten row pins the advertised rate
+// to the old number with nothing to indicate it.
+export const updateAllNetworkReferrals = (patch: {
+  referralBonusPct?: number; referralBonusPctL2?: number;
+  referralFirstTaskBonus?: number; referralBonusDays?: number;
+}) => apiFetch<{ ok: true; updated: number }>(
+  "/staff/networks/referrals/all", { method: "PATCH", body: JSON.stringify(patch) });
+
 // ---- Admin: our own custom tasks -----------------------------------------
 export type CustomTask = {
   id: string; title: string; points: number; type: string;
@@ -436,10 +461,36 @@ export type MiningState = {
     monetagRewardedZone: string;
   };
   convertible: boolean;
+  // The shop has something in stock. Drives whether /mine links to it at all.
+  storeOpen: boolean;
   transfersEnabled: boolean;
+  // Why the user can or cannot send, answered by the server so the send screen
+  // can say so before they type. The route re-checks every one of these — this
+  // is for the copy, never for the decision.
+  transfer: {
+    enabled: boolean;
+    canSend: boolean;
+    requireKyc: boolean;
+    kycStatus: string;
+    accountDays: number;
+    minAccountDays: number;
+    dailyCap: number;
+    sentTodayMicro: number;
+    feePct: number;
+  };
   deviceBlocked: boolean;
 };
 export const fetchMiningState = () => apiFetch<MiningState>("/mining/state");
+
+// Send ROZI to another RoziPay user, by referral code or email.
+//
+// A TRANSFER, not a trade: no price, no matching, no money leg. Adding any of
+// those would make us an exchange (MINING_SPEC.md § 7) — so this signature takes
+// a recipient and an amount, and must never grow a `price`.
+export const sendRozi = (to: string, amount: number) =>
+  apiFetch<{
+    ok: true; id: string; feeMicro: number; receivedMicro: number; roziMicro: number;
+  }>("/mining/transfer", { method: "POST", body: JSON.stringify({ to, amount }) });
 
 // `adNonce` is OPTIONAL, and that is the whole design of the ad gate. If the user
 // watched the video, we hand back the nonce and they get the speed boost. If
@@ -507,13 +558,96 @@ export const fetchBoosters = () => apiFetch<{ points: number; boosters: Booster[
 export const buyBooster = (id: string) =>
   apiFetch<{ ok: true; points: number }>(`/mining/boosters/${id}/buy`, { method: "POST" });
 
-// Wallet-to-wallet ROZI. NOT a trade: no price, no order book, no money leg.
+// (Wallet-to-wallet ROZI lives in `sendRozi` above — this file used to carry a
+// second, unused copy of it under a different name, whose return type had also
+// drifted from what the route sends back.)
+
+// ---- ROZI -> Points conversion (MINING_SPEC.md § 6) ------------------------
 //
-// `amount` goes out in WHOLE ROZI (what the user typed, decimals allowed — the
-// server converts). Everything coming back is micro.
-export const transferRozi = (to: string, amount: number) =>
-  apiFetch<{ ok: true; feeMicro: number; receivedMicro: number; roziMicro: number }>(
-    "/mining/transfer", { method: "POST", body: JSON.stringify({ to, amount }) });
+// The value bridge, and the ONLY path between the two ledgers. A window holds a
+// pot of Points fixed before it opened; everyone who burns ROZI into it shares
+// that pot pro-rata. THE RATE FLOATS — there is no fixed ROZI->Points rate
+// anywhere in this app, and no type here should ever grow one.
+//
+// `allowanceMicro` is the second bound: how much more ROZI THIS account may ever
+// convert, being a percentage of what it has mined over its whole life. The
+// server re-checks it under a lock on every burn; these fields are for the copy.
+export type ConversionState = {
+  open: boolean;
+  enabled: boolean;
+  roziMicro: number;
+  maxPctOfMined: number;
+  allowanceMicro: number;
+  minedMicro: number;
+  convertedMicro: number;
+  // Present only while a window is open.
+  windowId?: string;
+  potPoints?: number;
+  closesAt?: string;
+  totalBurnedMicro?: number;
+  myBurnMicro?: number;
+  myPointsIfClosedNow?: number;
+};
+// `fetchMyConversion`, not `fetchConversion` — the admin panel already owns that
+// name for /staff/mining/conversion, which is a different thing (every window
+// ever opened, plus the suggested pot). Same word, opposite side of the desk.
+export const fetchMyConversion = () => apiFetch<ConversionState>("/mining/conversion");
+export const burnRozi = (rozi: number) =>
+  apiFetch<{ ok: true; burnedMicro: number; roziMicro: number }>(
+    "/mining/conversion/burn", { method: "POST", body: JSON.stringify({ rozi }) });
+
+// ---- ROZI store -----------------------------------------------------------
+//
+// Spend ROZI on something real, at a price WE set and can move. Note what is
+// NOT here and must never be added: a sell price, a buy-back rate, or any field
+// that would turn this into an offer to purchase ROZI back. It is a shop, and a
+// shop's exposure is bounded by its stock (MINING_SPEC.md § 6).
+export type StoreItem = {
+  id: string; title: string; description: string | null;
+  costMicro: number; inputLabel: string | null; inStock: boolean;
+};
+export type Redemption = {
+  id: string; itemId: string; title: string; costMicro: number;
+  status: "pending" | "fulfilled" | "rejected";
+  target: string | null; staffNote: string | null; at: string;
+};
+export const fetchStore = () =>
+  apiFetch<{ roziMicro: number; items: StoreItem[]; redemptions: Redemption[] }>("/mining/store");
+export const redeemStoreItem = (id: string, target?: string) =>
+  apiFetch<{ ok: true; id: string; spentMicro: number; roziMicro: number }>(
+    `/mining/store/${id}/redeem`, { method: "POST", body: JSON.stringify({ target }) });
+
+// ---- Admin: ROZI store ----------------------------------------------------
+export type StoreItemAdmin = {
+  id: string; title: string; description: string | null; costRozi: number;
+  inputLabel: string | null; stock: number; status: "active" | "hidden"; sort: number;
+};
+export type RedemptionAdmin = {
+  id: string; userId: string; email: string; title: string; costRozi: number;
+  target: string | null; status: string; staffNote: string | null;
+  at: string; decidedAt: string | null;
+};
+export const fetchStoreAdmin = () =>
+  apiFetch<{ items: StoreItemAdmin[] }>("/staff/mining/store");
+export const createStoreItem = (body: {
+  title: string; description?: string; costRozi: number;
+  inputLabel?: string; stock: number; status?: "active" | "hidden"; sort?: number;
+}) => apiFetch<{ ok: true; id: string }>("/staff/mining/store", {
+  method: "POST", body: JSON.stringify(body),
+});
+export const updateStoreItem = (id: string, patch: Partial<{
+  title: string; description: string; costRozi: number;
+  inputLabel: string; stock: number; status: "active" | "hidden"; sort: number;
+}>) => apiFetch<{ ok: true }>(`/staff/mining/store/${id}`, {
+  method: "PATCH", body: JSON.stringify(patch),
+});
+export const fetchRedemptions = (status?: string) =>
+  apiFetch<{ redemptions: RedemptionAdmin[] }>(
+    `/staff/mining/redemptions${status ? `?status=${status}` : ""}`);
+export const decideRedemption = (id: string, action: "fulfil" | "reject", note?: string) =>
+  apiFetch<{ ok: true }>(`/staff/mining/redemptions/${id}`, {
+    method: "POST", body: JSON.stringify({ action, note }),
+  });
 
 // ---- Admin: mining economy (docs/MINING_SPEC.md § 10) --------------------
 // Every number in the ROZI economy is tunable at runtime, with no redeploy.

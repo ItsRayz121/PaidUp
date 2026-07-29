@@ -13,7 +13,7 @@ import test from "node:test";
 // what happened, and it is why MINING_DEFAULTS lives in core.ts.
 import {
   emissionMicroAt, cappedEmissionMicro, computeHashrate, payoutMicroFor,
-  rigUpgradeCost, rigPower, rigIsDeflationary, conversionPayout,
+  rigUpgradeCost, rigPower, rigIsDeflationary, conversionPayout, conversionAllowanceMicro,
   epochOf, epochEndMs, splitByEpoch, MINING_GENESIS_MS,
   parseMilestones, piBaseRateFor, piPayoutMicroFor, capScaleFactor,
   ROZI_SCALE, toMicro, fromMicro,
@@ -237,6 +237,71 @@ test("CONVERSION: the rate floats — more burners means a smaller share each", 
 test("CONVERSION: burning nothing pays nothing", () => {
   assert.equal(conversionPayout(0, 1000, 200_000), 0);
   assert.equal(conversionPayout(100, 0, 200_000), 0);
+});
+
+// ---- Per-user conversion ceiling (founder, 2026-07-29) ---------------------
+// "Only a percentage of mined ROZI is withdrawable." The pot bounds what the
+// BUSINESS pays; this bounds what any ONE ACCOUNT can ever extract.
+
+const allowance = (mined: number, burned: number, pct: number) =>
+  fromMicro(conversionAllowanceMicro(toMicro(mined), toMicro(burned), pct));
+
+test("CEILING: a fresh miner may convert the configured share of what they mined", () => {
+  assert.equal(allowance(1000, 0, 30), 300);
+  assert.equal(allowance(1000, 0, 50), 500);
+});
+
+test("CEILING: converting spends the allowance, and it does not come back", () => {
+  assert.equal(allowance(1000, 100, 30), 200);
+  assert.equal(allowance(1000, 300, 30), 0);
+});
+
+// THE test. A ceiling read off the current BALANCE is drained in steps: burn 30%
+// of 1000, hold 700, burn 30% of 700, hold 490... until the whole balance is
+// gone and the "30% limit" has limited nothing. A lifetime denominator cannot be
+// split this way, and this pins that.
+test("CEILING: splitting a burn into many small ones cannot exceed the cap", () => {
+  const minedMicro = toMicro(1000);
+  let burnedMicro = 0;
+  // Burn as much as allowed, twenty times over. An account that could split-farm
+  // would walk away with far more than 300.
+  for (let i = 0; i < 20; i++) {
+    burnedMicro += conversionAllowanceMicro(minedMicro, burnedMicro, 30);
+  }
+  assert.equal(fromMicro(burnedMicro), 300);
+});
+
+// The anti-farm property, stated as a test so it survives a refactor: the
+// denominator is MINING, so ROZI received from fifty mule accounts adds nothing
+// to what the receiving wallet may convert.
+test("CEILING: ROZI received by transfer does not raise the allowance", () => {
+  // A mule wallet that mined 10 and was sent 10,000 still has a 10-ROZI base.
+  assert.equal(allowance(10, 0, 30), 3);
+});
+
+test("CEILING: 100% means no ceiling, 0% means nothing converts", () => {
+  assert.equal(allowance(1000, 0, 100), 1000);
+  assert.equal(allowance(1000, 400, 100), 600);
+  assert.equal(allowance(1000, 0, 0), 0);
+});
+
+test("CEILING: a percentage over 100 is clamped, never a bonus", () => {
+  assert.equal(allowance(1000, 0, 250), 1000);
+});
+
+test("CEILING: never negative, even if an Admin lowers the cap after conversions", () => {
+  // Someone converted 300 under a 30% cap; the Admin then drops it to 10%.
+  // Their allowance is zero, not minus 200 — a negative would flip the sign of
+  // the comparison at the call site and let them convert without limit.
+  assert.equal(allowance(1000, 300, 10), 0);
+  assert.ok(conversionAllowanceMicro(toMicro(1000), toMicro(300), 10) >= 0);
+});
+
+test("CEILING: the floor rounds in the treasury's favour", () => {
+  // 1 micro-ROZI mined at 30% is 0.3 micro — which must round DOWN to nothing,
+  // never up to a whole micro we did not owe.
+  assert.equal(conversionAllowanceMicro(1, 0, 30), 0);
+  assert.equal(conversionAllowanceMicro(10, 0, 33), 3);
 });
 
 // ---- PI MODEL (founder decision, 2026-07-13) -------------------------------

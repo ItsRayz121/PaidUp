@@ -9,7 +9,8 @@ import { useApi } from "@/lib/hooks";
 import {
   fetchMiningSettings, updateMiningSettings, fetchMiningStats, settleMining,
   fetchAdminRigs, updateAdminRig, fetchConversion, openConversionWindow,
-  settleConversionWindow, type MiningStats,
+  settleConversionWindow, fetchStoreAdmin, createStoreItem, updateStoreItem,
+  fetchRedemptions, decideRedemption, type MiningStats,
 } from "@/lib/api";
 import { formatPoints } from "@/lib/format";
 
@@ -95,6 +96,10 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
     keys: [
       ["conversionEnabled", "Conversion on (1) / off (0)"],
       ["conversionSharePct", "Suggested pot = this % of margin"],
+      // The per-user ceiling. The pot caps what the BUSINESS pays out in total;
+      // this caps what any ONE account can ever extract, measured against what
+      // that account mined over its whole life. 100 = no ceiling.
+      ["conversionMaxPctOfMined", "Max % of mined ROZI one user can convert"],
       ["adminAdjustMaxRozi", "Max ROZI per manual adjustment"],
     ],
   },
@@ -150,6 +155,8 @@ export function MiningPanel() {
       {stats.data && <StatsHeader s={stats.data} onSettle={onSettle} />}
 
       <ConversionPanel />
+
+      <StorePanel />
 
       <RigPanel />
 
@@ -472,6 +479,179 @@ function ConversionPanel() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- ROZI store: catalogue + the fulfilment queue --------------------------
+//
+// This is a SINK, and the panel is written to keep it one. What an Admin sets is
+// a PRICE IN ROZI for a fixed number of items — never a rate at which we buy
+// ROZI back. Exposure is bounded by stock, which is why stock is a required
+// field and not an optional nicety.
+//
+// A redemption is a human job like a withdrawal: the ROZI was taken when the
+// user asked, so the only outcomes are "done" or "give it back". Reject refunds
+// the exact amount snapshotted on the row and returns the item to stock.
+function StorePanel() {
+  const items = useApi(fetchStoreAdmin, []);
+  const [queueFilter, setQueueFilter] = useState<string>("pending");
+  const queue = useApi(() => fetchRedemptions(queueFilter), [queueFilter]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ title: "", costRozi: "", stock: "", inputLabel: "", description: "" });
+
+  async function add() {
+    try {
+      await createStoreItem({
+        title: draft.title.trim(),
+        description: draft.description.trim() || undefined,
+        costRozi: Number(draft.costRozi),
+        inputLabel: draft.inputLabel.trim() || undefined,
+        stock: Number(draft.stock),
+      });
+      setDraft({ title: "", costRozi: "", stock: "", inputLabel: "", description: "" });
+      setMsg("Added.");
+      items.reload();
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  async function patch(id: string, p: Parameters<typeof updateStoreItem>[1]) {
+    try { await updateStoreItem(id, p); items.reload(); }
+    catch (e) { setMsg((e as Error).message); }
+  }
+
+  async function decide(id: string, action: "fulfil" | "reject") {
+    const note = window.prompt(
+      action === "reject"
+        ? "Why? The user sees this, and their ROZI goes back."
+        : "Any note for the record? (optional)",
+    );
+    if (action === "reject" && note === null) return; // cancelled
+    try {
+      await decideRedemption(id, action, note ?? undefined);
+      queue.reload();
+      items.reload();
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  const inp = "rounded border border-line bg-card p-1 text-sm outline-none";
+  const ready = draft.title.trim() !== "" && Number(draft.costRozi) > 0 && draft.stock !== "";
+
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <h3 className="font-bold text-brand-ink">ROZI store</h3>
+      <p className="mt-1 text-xs text-muted">
+        A ROZI sink: users spend mined ROZI on real goods at a price you set and can raise. This is
+        deliberately not a buy-back rate — exposure is capped by <strong>stock</strong>, so the most this
+        can ever cost is stock × your unit cost. Rejecting a redemption refunds the exact ROZI taken
+        and returns the item to stock.
+      </p>
+      {msg && <p className="mt-2 text-xs text-brand">{msg}</p>}
+
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[760px] text-xs [&_td]:p-1.5 [&_th]:p-1.5 [&_th]:text-left">
+          <thead className="text-[10px] uppercase text-muted">
+            <tr><th>Item</th><th>Cost (ROZI)</th><th>Stock</th><th>Asks user for</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {(items.data?.items ?? []).map((i) => (
+              <tr key={i.id} className="border-t border-line">
+                <td className="font-medium text-brand-ink">{i.title}
+                  {i.description && <div className="text-[10px] text-muted">{i.description}</div>}
+                </td>
+                <td>
+                  <input type="number" min={1} defaultValue={i.costRozi} className={`${inp} num w-24`}
+                    onBlur={(e) => {
+                      const v = Number(e.target.value);
+                      if (v > 0 && v !== i.costRozi) patch(i.id, { costRozi: v });
+                    }} />
+                </td>
+                <td>
+                  <input type="number" min={0} defaultValue={i.stock} className={`${inp} num w-20`}
+                    onBlur={(e) => {
+                      const v = Number(e.target.value);
+                      if (v >= 0 && v !== i.stock) patch(i.id, { stock: v });
+                    }} />
+                </td>
+                <td className="text-muted">{i.inputLabel ?? "—"}</td>
+                <td>
+                  <button
+                    onClick={() => patch(i.id, { status: i.status === "active" ? "hidden" : "active" })}
+                    className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
+                      i.status === "active" ? "bg-success-tint text-success" : "bg-danger-tint text-danger"
+                    }`}>
+                    {i.status}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
+        <input placeholder="Item name" value={draft.title}
+          onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${inp} w-40`} />
+        <input placeholder="Description" value={draft.description}
+          onChange={(e) => setDraft({ ...draft, description: e.target.value })} className={`${inp} w-44`} />
+        <input type="number" placeholder="Cost ROZI" value={draft.costRozi}
+          onChange={(e) => setDraft({ ...draft, costRozi: e.target.value })} className={`${inp} num w-24`} />
+        <input type="number" placeholder="Stock" value={draft.stock}
+          onChange={(e) => setDraft({ ...draft, stock: e.target.value })} className={`${inp} num w-20`} />
+        <input placeholder="Ask user for… (e.g. Phone number)" value={draft.inputLabel}
+          onChange={(e) => setDraft({ ...draft, inputLabel: e.target.value })} className={`${inp} w-52`} />
+        <button onClick={add} disabled={!ready}
+          className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+          Add item
+        </button>
+      </div>
+
+      <div className="mt-4 border-t border-line pt-3">
+        <div className="mb-2 flex items-center gap-2">
+          <h4 className="font-semibold text-brand-ink">Orders to fulfil</h4>
+          <select value={queueFilter} onChange={(e) => setQueueFilter(e.target.value)}
+            className={`${inp} text-xs`}>
+            <option value="pending">Pending</option>
+            <option value="fulfilled">Fulfilled</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+        {queue.loading ? <p className="text-xs text-muted">Loading…</p>
+          : (queue.data?.redemptions ?? []).length === 0
+            ? <p className="text-xs text-muted">Nothing here.</p>
+            : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-xs [&_td]:p-1.5 [&_th]:p-1.5 [&_th]:text-left">
+                  <thead className="text-[10px] uppercase text-muted">
+                    <tr><th>When</th><th>User</th><th>Item</th><th>ROZI</th><th>Send to</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {(queue.data?.redemptions ?? []).map((r) => (
+                      <tr key={r.id} className="border-t border-line">
+                        <td className="text-muted">{new Date(r.at).toLocaleString()}</td>
+                        <td className="text-brand-ink">{r.email}</td>
+                        <td>{r.title}</td>
+                        <td className="num">{n(r.costRozi)}</td>
+                        <td className="font-mono text-brand-ink">{r.target ?? "—"}</td>
+                        <td>
+                          {r.status === "pending" ? (
+                            <div className="flex gap-1.5">
+                              <button onClick={() => decide(r.id, "fulfil")}
+                                className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white">Done</button>
+                              <button onClick={() => decide(r.id, "reject")}
+                                className="rounded bg-danger px-2 py-0.5 text-[10px] font-semibold text-white">Refund</button>
+                            </div>
+                          ) : (
+                            <span className="text-muted">{r.status}{r.staffNote ? ` — ${r.staffNote}` : ""}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+      </div>
     </div>
   );
 }

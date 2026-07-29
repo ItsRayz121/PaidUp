@@ -445,4 +445,138 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     });
     return { ok: true };
   }));
+
+  // ---- ROZI store: the catalogue -------------------------------------------
+  // Admin owns this list at runtime. Prices are in WHOLE ROZI (this panel's unit
+  // — see the note at the top of the file) and `stock` is the hard ceiling on
+  // what the whole feature can ever cost the business.
+  app.get("/staff/mining/store", staffGuard(["admin", "manager"], async () => {
+    const items = await sql.all<Record<string, unknown>>(
+      "SELECT * FROM rozi_store_items ORDER BY sort, cost_rozi");
+    return {
+      items: items.map((i) => ({
+        id: i.id, title: i.title, description: i.description,
+        costRozi: Number(i.cost_rozi), inputLabel: i.input_label,
+        stock: i.stock, status: i.status, sort: i.sort,
+      })),
+    };
+  }));
+
+  const itemSchema = z.object({
+    title: z.string().trim().min(1).max(80),
+    description: z.string().trim().max(300).optional(),
+    costRozi: z.number().int().positive().max(1_000_000_000),
+    inputLabel: z.string().trim().max(60).optional(),
+    stock: z.number().int().min(0).max(1_000_000),
+    status: z.enum(["active", "hidden"]).optional(),
+    sort: z.number().int().min(0).max(9999).optional(),
+  });
+
+  app.post("/staff/mining/store", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const b = itemSchema.parse(req.body);
+    const id = newId();
+    await sql.run(
+      `INSERT INTO rozi_store_items (id, title, description, cost_rozi, input_label, stock, status, sort, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      id, b.title, b.description ?? null, b.costRozi, b.inputLabel ?? null,
+      b.stock, b.status ?? "active", b.sort ?? 0, now(),
+    );
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "store_item_create",
+      detail: `${b.title} — ${b.costRozi} ROZI, stock ${b.stock}`,
+    });
+    return { ok: true, id };
+  }));
+
+  app.patch("/staff/mining/store/:id", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = itemSchema.partial().parse(req.body);
+    const map: [string, unknown][] = [
+      ["title", b.title], ["description", b.description], ["cost_rozi", b.costRozi],
+      ["input_label", b.inputLabel], ["stock", b.stock], ["status", b.status], ["sort", b.sort],
+    ];
+    const cols: string[] = [];
+    const vals: unknown[] = [];
+    for (const [col, v] of map) if (v !== undefined) { cols.push(`${col} = ?`); vals.push(v); }
+    if (!cols.length) throw { statusCode: 400, message: "Nothing to change." };
+
+    const res = await sql.run(`UPDATE rozi_store_items SET ${cols.join(", ")} WHERE id = ?`, ...vals, id);
+    if (!res.rowCount) throw { statusCode: 404, message: "No such item." };
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "store_item_update",
+      detail: `${id}: ${JSON.stringify(b)}`,
+    });
+    return { ok: true };
+  }));
+
+  // ---- ROZI store: the fulfilment queue ------------------------------------
+  // A redemption is a human job, like a withdrawal. The ROZI was already taken
+  // when the user asked, so the only two outcomes here are "done" and "give it
+  // back" — there is no third state where we keep the ROZI and deliver nothing.
+  app.get("/staff/mining/redemptions", staffGuard(["admin", "manager", "agent"], async (_ctx, req) => {
+    const q = z.object({ status: z.enum(["pending", "fulfilled", "rejected"]).optional() })
+      .parse(req.query ?? {});
+    // Built conditionally rather than with a "(? IS NULL OR status = ?)" trick:
+    // Postgres cannot infer the type of a bare parameter on its own in `$1 IS
+    // NULL` and errors out. The filter value is from a zod enum, never raw input.
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT r.*, i.title, u.email
+       FROM rozi_redemptions r
+       JOIN rozi_store_items i ON i.id = r.item_id
+       JOIN users u ON u.id = r.user_id
+       ${q.status ? "WHERE r.status = ?" : ""}
+       ORDER BY CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+       LIMIT 200`,
+      ...(q.status ? [q.status] : []),
+    );
+    return {
+      redemptions: rows.map((r) => ({
+        id: r.id, userId: r.user_id, email: r.email, title: r.title,
+        costRozi: fromMicro(Number(r.cost_micro)), target: r.target,
+        status: r.status, staffNote: r.staff_note, at: r.created_at, decidedAt: r.decided_at,
+      })),
+    };
+  }));
+
+  app.post("/staff/mining/redemptions/:id", staffGuard(["admin", "manager"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = z.object({
+      action: z.enum(["fulfil", "reject"]),
+      note: z.string().trim().max(500).optional(),
+    }).parse(req.body);
+
+    return sql.tx(async (t) => {
+      // The status flip is CONDITIONAL on it still being pending, and the row
+      // count is the only authority. Two staff members opening the same queue and
+      // both clicking Reject would otherwise refund the same ROZI twice.
+      const r = await t.get<{ user_id: string; cost_micro: string; item_id: string }>(
+        "SELECT user_id, cost_micro, item_id FROM rozi_redemptions WHERE id = ?", id);
+      if (!r) throw { statusCode: 404, message: "No such redemption." };
+
+      const done = await t.run(
+        `UPDATE rozi_redemptions SET status = ?, staff_note = ?, decided_by = ?, decided_at = ?
+         WHERE id = ? AND status = 'pending'`,
+        b.action === "fulfil" ? "fulfilled" : "rejected", b.note ?? null, userId, now(), id,
+      );
+      if (!done.rowCount) throw { statusCode: 400, message: "This one has already been decided." };
+
+      if (b.action === "reject") {
+        // Give back exactly what was taken — the snapshot on the row, never a
+        // recomputed price. An admin who raised the price meanwhile must not
+        // change what this user gets back.
+        await postRozi({
+          userId: r.user_id, micro: Number(r.cost_micro), direction: "credit",
+          sourceType: "store_redemption", sourceRefId: id, note: "Order refunded",
+        }, t);
+        // And put the item back on the shelf.
+        await t.run("UPDATE rozi_store_items SET stock = stock + 1 WHERE id = ?", r.item_id);
+      }
+
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: `store_redemption_${b.action}`,
+        targetUserId: r.user_id, detail: `${id}${b.note ? ` — ${b.note}` : ""}`,
+      }, t);
+      return { ok: true };
+    });
+  }));
 }

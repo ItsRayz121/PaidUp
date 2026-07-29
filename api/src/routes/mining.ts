@@ -16,7 +16,9 @@ import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
 } from "../mining/engine.ts";
-import { rigUpgradeCost, rigPower, conversionPayout, toMicro } from "../mining/core.ts";
+import {
+  rigUpgradeCost, rigPower, conversionPayout, conversionAllowanceMicro, toMicro, fromMicro,
+} from "../mining/core.ts";
 
 // Every ROZI amount crossing this API is MICRO-ROZI, and every field carrying one
 // is named `...Micro`. The web formats it for display (web/src/lib/format.ts).
@@ -183,7 +185,7 @@ export async function miningRoutes(app: FastifyInstance) {
     const s = await loadMiningSettings();
     const state = await sessionState(userId);
     const { breakdown } = await hashrateOf(userId, s);
-    const [roziMicro, streak, boosts, adsToday] = await Promise.all([
+    const [roziMicro, streak, boosts, adsToday, me, sentToday, store] = await Promise.all([
       roziBalanceMicroOf(userId),
       sql.get<{ current_days: number; best_days: number }>(
         "SELECT current_days, best_days FROM mining_streaks WHERE user_id = ?", userId),
@@ -194,7 +196,21 @@ export async function miningRoutes(app: FastifyInstance) {
         `SELECT COUNT(*) AS n FROM ad_impressions
          WHERE user_id = ? AND status = 'rewarded' AND rewarded_at > ?`,
         userId, new Date(Date.now() - 86_400_000).toISOString()),
+      // For the send screen: every reason a transfer could be refused, answered
+      // here so the UI can say so BEFORE the user types an amount. Finding out
+      // you are not allowed to send only after filling the form is the worst
+      // version of this screen.
+      sql.get<{ created_at: string; kyc_status: string }>(
+        "SELECT created_at, kyc_status FROM users WHERE id = ?", userId),
+      sql.get<{ t: string }>(
+        "SELECT COALESCE(SUM(amount), 0) AS t FROM rozi_transfers WHERE from_user_id = ? AND created_at > ?",
+        userId, new Date(Date.now() - 86_400_000).toISOString()),
+      sql.get<{ n: string }>(
+        "SELECT COUNT(*) AS n FROM rozi_store_items WHERE status = 'active' AND stock > 0"),
     ]);
+
+    const accountDays = Math.floor((Date.now() - Date.parse(me!.created_at)) / 86_400_000);
+    const storeCount = Number(store?.n ?? 0);
 
     return {
       roziMicro,
@@ -233,7 +249,28 @@ export async function miningRoutes(app: FastifyInstance) {
       // Told plainly, and repeated in the UI. Pretending otherwise is the
       // fastest way to burn the brand.
       convertible: Boolean(s.conversionEnabled),
+      // Whether the shop has anything to sell. The /mine link is hidden when it
+      // does not — the rule everywhere on that screen is that a link never leads
+      // to an empty room, because links that sometimes do get ignored.
+      storeOpen: storeCount > 0,
       transfersEnabled: Boolean(s.transfersEnabled),
+      // Everything the send screen needs to explain itself up front. `canSend`
+      // is the server's answer, not the client's guess — the route re-checks all
+      // of this anyway, so this block is for the copy, never for the decision.
+      transfer: {
+        enabled: Boolean(s.transfersEnabled),
+        canSend:
+          Boolean(s.transfersEnabled) &&
+          accountDays >= s.transferMinAccountDays &&
+          (!s.transferRequireKyc || me!.kyc_status === "approved"),
+        requireKyc: Boolean(s.transferRequireKyc),
+        kycStatus: me!.kyc_status ?? "none",
+        accountDays,
+        minAccountDays: s.transferMinAccountDays,
+        dailyCap: s.transferDailyCap,
+        sentTodayMicro: Number(sentToday?.t ?? 0),
+        feePct: s.transferFeePct,
+      },
       // A second account on a phone that already mined today accrues nothing.
       deviceBlocked: state.deviceBlocked,
     };
@@ -366,6 +403,107 @@ export async function miningRoutes(app: FastifyInstance) {
     });
   }));
 
+  // ---- ROZI store (a ROZI sink, and the honest answer to "what is it worth?") -
+  //
+  // Spend ROZI on something real — mobile top-up, a data bundle — at a price WE
+  // set. This is deliberately NOT a fixed ROZI->USD rate, and the difference is
+  // the whole design:
+  //
+  //   • A buy-back rate is a standing offer to purchase an asset we mint for
+  //     free. The liability grows with our own success and is unbounded
+  //     (MINING_SPEC.md § 6).
+  //   • A shop is a fixed number of items at a price we can raise tomorrow.
+  //     Exposure is bounded by `stock`, and if ROZI inflates the price moves.
+  //
+  // Fulfilment is by a human, exactly like a withdrawal. The ROZI is debited when
+  // the request is made — not when staff get to it — so it cannot be spent twice
+  // while pending, and it is credited back in full if the request is rejected.
+  app.get("/mining/store", guard(async (userId) => {
+    const items = await sql.all<{
+      id: string; title: string; description: string | null;
+      cost_rozi: string; input_label: string | null; stock: number;
+    }>(
+      `SELECT id, title, description, cost_rozi, input_label, stock
+       FROM rozi_store_items WHERE status = 'active' ORDER BY sort, cost_rozi`,
+    );
+    const mine = await sql.all<{
+      id: string; item_id: string; cost_micro: string; status: string;
+      target: string | null; staff_note: string | null; created_at: string; title: string;
+    }>(
+      `SELECT r.id, r.item_id, r.cost_micro, r.status, r.target, r.staff_note,
+              r.created_at, i.title
+       FROM rozi_redemptions r JOIN rozi_store_items i ON i.id = r.item_id
+       WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 20`,
+      userId,
+    );
+    return {
+      roziMicro: await roziBalanceMicroOf(userId),
+      items: items.map((i) => ({
+        id: i.id, title: i.title, description: i.description,
+        costMicro: toMicro(Number(i.cost_rozi)), inputLabel: i.input_label,
+        // The exact stock count is ours, not the user's — "out of stock" is all
+        // they need, and a live count is a queue nobody should be racing.
+        inStock: i.stock > 0,
+      })),
+      redemptions: mine.map((r) => ({
+        id: r.id, itemId: r.item_id, title: r.title, costMicro: Number(r.cost_micro),
+        status: r.status, target: r.target, staffNote: r.staff_note, at: r.created_at,
+      })),
+    };
+  }));
+
+  app.post("/mining/store/:id/redeem", guard(async (userId, req) => {
+    const itemId = (req.params as { id: string }).id;
+    const body = z.object({
+      // A phone number, usually. Bounded and stored verbatim; it is shown to
+      // staff and never interpolated into a query or a shell.
+      target: z.string().trim().min(1).max(120).optional(),
+    }).parse(req.body ?? {});
+
+    return sql.tx(async (t) => {
+      // Guardrail #8. This reads a balance and then debits it, so it takes the
+      // lock first — without it two concurrent redeems both see enough ROZI and
+      // both go through, and the second one is a free item.
+      await lockUser(t, userId);
+
+      // Stock is decremented CONDITIONALLY, and the row count is the only
+      // authority — same shape as the ad-nonce fix in MINING_PLAN M9.5. Reading
+      // stock and then writing it would let two users take the last item.
+      const item = await t.get<{
+        id: string; title: string; cost_rozi: string; input_label: string | null;
+      }>(
+        "SELECT id, title, cost_rozi, input_label FROM rozi_store_items WHERE id = ? AND status = 'active'",
+        itemId,
+      );
+      if (!item) throw { statusCode: 404, message: "That item is not available." };
+      if (item.input_label && !body.target) {
+        throw { statusCode: 400, message: `Please enter your ${item.input_label.toLowerCase()}.` };
+      }
+
+      const costMicro = toMicro(Number(item.cost_rozi));
+      const balMicro = await roziBalanceMicroOf(userId, t);
+      if (balMicro < costMicro) {
+        throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
+      }
+
+      const taken = await t.run(
+        "UPDATE rozi_store_items SET stock = stock - 1 WHERE id = ? AND stock > 0", itemId);
+      if (!taken.rowCount) throw { statusCode: 400, message: "This one has just run out." };
+
+      await postRozi({
+        userId, micro: costMicro, direction: "debit", sourceType: "store_redemption",
+        sourceRefId: itemId, note: item.title,
+      }, t);
+      const id = newId();
+      await t.run(
+        `INSERT INTO rozi_redemptions (id, user_id, item_id, cost_micro, target, status, created_at)
+         VALUES (?,?,?,?,?, 'pending', ?)`,
+        id, userId, itemId, costMicro, body.target ?? null, now(),
+      );
+      return { ok: true, id, spentMicro: costMicro, roziMicro: balMicro - costMicro };
+    });
+  }));
+
   // ---- Boosters (a POINTS sink) --------------------------------------------
   // One of the quietly valuable mechanics in the product: it converts cash-
   // currency liability into a token-currency promise, i.e. it reduces withdrawal
@@ -464,11 +602,22 @@ export async function miningRoutes(app: FastifyInstance) {
       throw { statusCode: 400, message: `You can send at most ${s.transferDailyCap} ROZI per day.` };
     }
 
-    const me = await sql.get<{ created_at: string }>(
-      "SELECT created_at FROM users WHERE id = ?", userId);
+    const me = await sql.get<{ created_at: string; kyc_status: string }>(
+      "SELECT created_at, kyc_status FROM users WHERE id = ?", userId);
     const ageDays = (Date.now() - Date.parse(me!.created_at)) / 86_400_000;
     if (ageDays < s.transferMinAccountDays) {
       throw { statusCode: 403, message: `New accounts can send ROZI after ${s.transferMinAccountDays} days.` };
+    }
+    // Same gate withdrawals use, and for the same reason: this is the point where
+    // value leaves one identity for another. Only SENDING is gated — see the note
+    // on transferRequireKyc in mining/core.ts for why receiving is not.
+    if (s.transferRequireKyc && me!.kyc_status !== "approved") {
+      throw {
+        statusCode: 403,
+        message: me!.kyc_status === "pending"
+          ? "We are still checking your ID. You can send ROZI once it is approved."
+          : "Verify your ID before you send ROZI.",
+      };
     }
 
     const target = await sql.get<{ id: string; status: string }>(
@@ -545,10 +694,20 @@ export async function miningRoutes(app: FastifyInstance) {
       id: string; pot_points: number; closes_at: string; total_burned: string;
     }>("SELECT id, pot_points, closes_at, total_burned FROM conversion_windows WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1");
 
+    // The allowance is reported even when no window is open, because it is the
+    // answer to "how much of my ROZI will I ever be able to turn into money?" —
+    // a question the mining screen should answer between windows, not only
+    // during one.
+    const cap = await conversionAllowanceOf(userId, s.conversionMaxPctOfMined);
+
     if (!s.conversionEnabled || !w) {
       return {
         open: false, enabled: Boolean(s.conversionEnabled),
         roziMicro: await roziBalanceMicroOf(userId),
+        maxPctOfMined: s.conversionMaxPctOfMined,
+        allowanceMicro: cap.allowanceMicro,
+        minedMicro: cap.minedMicro,
+        convertedMicro: cap.burnedMicro,
       };
     }
 
@@ -574,6 +733,13 @@ export async function miningRoutes(app: FastifyInstance) {
       // convert, and the UI says so in plain English.
       myPointsIfClosedNow: conversionPayout(myBurnMicro, totalBurnMicro, w.pot_points),
       roziMicro: await roziBalanceMicroOf(userId),
+      // The per-user ceiling. The burn route re-checks all of this under a lock —
+      // these fields exist so the screen can show the limit before someone types
+      // an amount, never so the client can decide whether the limit applies.
+      maxPctOfMined: s.conversionMaxPctOfMined,
+      allowanceMicro: cap.allowanceMicro,
+      minedMicro: cap.minedMicro,
+      convertedMicro: cap.burnedMicro,
     };
   }));
 
@@ -607,6 +773,22 @@ export async function miningRoutes(app: FastifyInstance) {
         throw { statusCode: 400, message: "You do not have that much ROZI." };
       }
 
+      // The per-user lifetime ceiling, read INSIDE the lock alongside the balance
+      // — for the same reason the balance is. Two concurrent burns that each read
+      // the same "already converted" total would both pass this check and the
+      // account would convert past its cap, which is money.
+      const { allowanceMicro } = await conversionAllowanceOf(
+        userId, s.conversionMaxPctOfMined, t,
+      );
+      if (burnMicro > allowanceMicro) {
+        throw {
+          statusCode: 400,
+          message: allowanceMicro <= 0
+            ? "You have converted all the ROZI you can for now. Mine more to unlock more."
+            : `You can convert ${fromMicro(allowanceMicro)} more ROZI right now.`,
+        };
+      }
+
       await postRozi({
         userId, micro: burnMicro, direction: "debit", sourceType: "conversion_burn",
         sourceRefId: w.id, note: "Converted to points",
@@ -624,6 +806,36 @@ export async function miningRoutes(app: FastifyInstance) {
       };
     });
   }));
+}
+
+// LIFETIME conversion allowance for one account, in micro-ROZI (§ 6).
+//
+// Two aggregate reads over the ROZI ledger — mining credits in, conversion burns
+// out — fed to the pure ceiling function. Takes `t` so the burn path can read it
+// INSIDE the locked transaction; without that, two concurrent burns both read
+// the same "already burned" total, both pass the ceiling check, and the account
+// converts past its cap. That is the same bug class as the double-spend the
+// advisory lock exists for, so it is answered the same way.
+async function conversionAllowanceOf(
+  userId: string, maxPct: number, t: Pick<TxApi, "get"> = sql,
+): Promise<{ allowanceMicro: number; minedMicro: number; burnedMicro: number }> {
+  const mined = await t.get<{ s: string }>(
+    `SELECT COALESCE(SUM(amount), 0) AS s FROM rozi_ledger
+     WHERE user_id = ? AND direction = 'credit' AND source_type = 'mining'`,
+    userId,
+  );
+  const burned = await t.get<{ s: string }>(
+    `SELECT COALESCE(SUM(ABS(amount)), 0) AS s FROM rozi_ledger
+     WHERE user_id = ? AND direction = 'debit' AND source_type = 'conversion_burn'`,
+    userId,
+  );
+  const minedMicro = Number(mined?.s ?? 0);
+  const burnedMicro = Number(burned?.s ?? 0);
+  return {
+    allowanceMicro: conversionAllowanceMicro(minedMicro, burnedMicro, maxPct),
+    minedMicro,
+    burnedMicro,
+  };
 }
 
 // Settle a closed conversion window: split its fixed pot of Points pro-rata

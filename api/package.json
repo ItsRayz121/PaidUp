@@ -16,7 +16,10 @@
     "test:mining:e2e": "tsx src/tests/mining.e2e.ts",
     "test:kyc": "tsx src/tests/kyc.e2e.ts",
     "test:telegram": "tsx src/tests/telegram.e2e.ts",
-    "test:push": "tsx src/tests/push.e2e.ts"
+    "test:push": "tsx src/tests/push.e2e.ts",
+    "test:referrals": "tsx src/tests/referrals.e2e.ts",
+    "test:conversion": "tsx src/tests/conversion.e2e.ts",
+    "test:store": "tsx src/tests/store.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

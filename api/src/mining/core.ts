@@ -176,12 +176,40 @@ export const MINING_DEFAULTS = {
   transferDailyCap: 50_000,
   transferMinAccountDays: 7,
   transferFeePct: 2,        // burned, not collected
+  // Sending requires an approved ID check (founder, 2026-07-27). Moving value
+  // between accounts is the step a farm needs to consolidate what it mined, and
+  // it is the step a real regulator asks about first — so it gets the same gate
+  // withdrawals already have. RECEIVING is deliberately NOT gated: a new user
+  // being sent ROZI by a friend has done nothing wrong and blocking it would
+  // make the app look broken to the person doing the sending.
+  transferRequireKyc: 1,
 
   // -- Conversion (§ 6). OFF at launch: users mine for 2-3 months with nothing
   //    convertible and nothing tradeable. This is the founder's decision and it
   //    is what makes the whole design safe.
   conversionEnabled: 0,
   conversionSharePct: 10,   // suggested pot = this % of the period's real margin
+
+  // -- Per-user conversion ceiling (founder, 2026-07-29). A user may convert at
+  //    most this % of the ROZI they have EVER MINED, counted across all windows
+  //    for the life of the account. 100 = no ceiling.
+  //
+  //    This is the founder's "only a percentage of mined ROZI is withdrawable",
+  //    and it is a SECOND, independent bound on top of the pot. The pot already
+  //    caps what the business pays in total; this caps what any one account can
+  //    ever extract, which is the different question — a single farm that mined
+  //    hard for three months could otherwise take most of one window's pot even
+  //    though the business never overpaid in aggregate.
+  //
+  //    THE DENOMINATOR IS MINING CREDITS ONLY, and that is load-bearing:
+  //      • Not the current balance — "30% of what you hold" is drained in steps
+  //        (burn 30, now hold 70, burn 21, …) until nothing is left. A lifetime
+  //        denominator cannot be split-farmed.
+  //      • Not ROZI RECEIVED BY TRANSFER. This is the anti-farm property: fifty
+  //        mule accounts can still send their ROZI to one wallet, but that wallet
+  //        cannot convert a single micro of it, because its own allowance is tied
+  //        to what IT mined. Consolidation stops paying.
+  conversionMaxPctOfMined: 30,
 
   // -- Admin guardrail: ceiling on one hand-made ROZI adjustment.
   adminAdjustMaxRozi: 1_000_000,
@@ -428,4 +456,28 @@ export function capScaleFactor(wanted: number, room: number): number {
 export function conversionPayout(burn: number, totalBurn: number, potPoints: number): number {
   if (totalBurn <= 0 || burn <= 0) return 0;
   return Math.floor((potPoints * burn) / totalBurn);
+}
+
+// How much more ROZI this account is allowed to convert, ever (§ 6, the per-user
+// ceiling). Both arguments are LIFETIME totals in micro-ROZI:
+//
+//   minedMicro  — every mining credit the account has received
+//   burnedMicro — every conversion burn it has already made
+//
+// Returns micro-ROZI, never negative. A ceiling of 100 means "no ceiling" and
+// returns everything mined that has not already been converted.
+//
+// Deliberately NOT a function of the current balance. See conversionMaxPctOfMined
+// above for why the denominator is lifetime mining and nothing else — that choice
+// is what stops both split-farming and consolidate-then-convert, and it is easy
+// to "simplify" away by reaching for the balance that is already in scope at the
+// call site.
+export function conversionAllowanceMicro(
+  minedMicro: number, burnedMicro: number, maxPct: number,
+): number {
+  if (maxPct <= 0) return 0;
+  const pct = Math.min(100, maxPct);
+  // floor, so the ceiling always rounds in the treasury's favour.
+  const ceiling = Math.floor((minedMicro * pct) / 100);
+  return Math.max(0, ceiling - burnedMicro);
 }

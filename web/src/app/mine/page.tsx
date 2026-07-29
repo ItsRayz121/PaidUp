@@ -5,38 +5,21 @@ import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import {
-  MineIcon, FlameIcon, BoltIcon, LockIcon, InfoIcon, ArrowRightIcon, VideoIcon,
+  MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon, ShareIcon,
 } from "@/components/icons";
-import { useRequireAuth, useApi } from "@/lib/hooks";
+import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchMiningState, startMining, issueAd, completeAd, type MiningState,
 } from "@/lib/api";
 import { formatRozi } from "@/lib/format";
-import { ensureVignette, ensureBanner, ensureRewarded, showRewarded, openAdTab } from "@/lib/ads";
+import {
+  ensureVignette, ensureBanner, ensureRewarded, showRewarded, openAdTab, showGateAd,
+} from "@/lib/ads";
 import { useInsideTelegram } from "@/lib/telegram";
 
-// Countdown to a session's expiry, in words. Ticks locally so we are not
-// polling the API once a second just to move a clock.
-function useCountdown(until: string | null | undefined): string | null {
-  const [, force] = useState(0);
-  useEffect(() => {
-    if (!until) return;
-    const id = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [until]);
-
-  if (!until) return null;
-  // A countdown exists to read the clock: the interval above re-renders us once
-  // a second precisely so this render-time Date.now() is fresh.
-  // eslint-disable-next-line react-hooks/purity
-  const ms = Date.parse(until) - Date.now();
-  if (ms <= 0) return null;
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
-}
+// The session countdown moved to lib/hooks.ts — the home screen leads with
+// mining now and shows the same clock.
 
 export default function MinePage() {
   const { ready } = useRequireAuth();
@@ -89,14 +72,24 @@ export default function MinePage() {
   // eslint-disable-next-line react-hooks/purity
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
-  // Start mining. The vignette (if it loaded — ad blockers are a normal Tuesday
-  // here) shows an ad around this tap; nothing is awaited and nothing can fail
-  // closed. An ad network having a bad night must never stop mining or cost a
-  // streak someone earned.
+  // Start mining. An ad fires first when the gate is on: the rewarded video
+  // inside Telegram, the direct link on the website — the same formats the
+  // boost button uses, because relying on the vignette alone meant this tap
+  // usually showed no ad at all (see showGateAd in lib/ads.ts).
+  //
+  // The gate ad grants NO boost, and the session starts whether it played, was
+  // blocked, or never filled. An ad network having a bad night must never stop
+  // mining or cost a streak someone earned.
   async function onStart() {
     setBusy(true);
     setNotice(null);
+    // Called before the first `await` on purpose: its direct-link branch opens a
+    // tab, and a tab opened after an await is a tab the pop-up blocker kills.
+    const gateAd = s && s.ads.gateOnStart
+      ? showGateAd(rewardedZone, s.ads.monetagDirectLink)
+      : null;
     try {
+      if (gateAd) await gateAd;
       const res = await startMining();
       if (res.boost) {
         setNotice(
@@ -195,6 +188,12 @@ export default function MinePage() {
   }
 
   const adsLeft = Math.max(0, s.ads.dailyCap - s.ads.watchedToday);
+  // The gate is only real if something can actually render: the active ad needs
+  // a rewarded zone (Telegram) or a direct link, and the passive vignette needs
+  // its own zone. All three empty => promising "an ad may show" would be noise.
+  const gateAdLive =
+    s.ads.gateOnStart &&
+    (rewardedZone !== "" || s.ads.monetagDirectLink !== "" || s.ads.monetagZoneId !== "");
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -205,11 +204,14 @@ export default function MinePage() {
         </div>
       </header>
 
-      {/* GUARDRAIL: ROZI is not cash. Say it first, say it plainly, every time.
-          Letting the UI imply a USDT value would be the fastest way to burn the
-          brand — and it would not even be true. */}
-      <p className="flex gap-2 rounded-xl border border-line bg-pending-tint/40 p-3 text-sm text-brand-ink">
-        <LockIcon size={18} className="mt-0.5 shrink-0 text-pending" />
+      {/* GUARDRAIL, unchanged: this banner must still say ROZI cannot be cashed
+          out, plainly, every time — letting the UI imply a USDT value would be
+          the fastest way to burn the brand, and it would not even be true.
+          What changed (2026-07-27) is only the framing: warning colours and a
+          padlock made the app's headline feature look like a problem. The limit
+          is still in the copy; it just no longer leads. */}
+      <p className="flex gap-2 rounded-xl border border-brand/30 bg-brand-tint/60 p-3 text-sm text-brand-ink">
+        <StarIcon size={18} className="mt-0.5 shrink-0 text-brand" />
         <span>
           <strong className="font-bold">{t("mine.notcash.title")}</strong>{" "}
           {t("mine.notcash.body")}
@@ -260,8 +262,10 @@ export default function MinePage() {
                 {t("mine.start").replace("{hours}", String(s.session.sessionHours))}
               </Button>
               {/* Tell them an ad may come first, so it is not a surprise. Only
-                  when the gate is actually live (flag + provider + a zone id). */}
-              {s.ads.gateOnStart && s.ads.monetagZoneId !== "" && !busy && (
+                  when the gate can actually show something: the flag and the
+                  provider are already folded into gateOnStart by the API, but
+                  all three zones being empty means nothing would appear. */}
+              {gateAdLive && !busy && (
                 <p className="mt-2 text-xs text-muted">
                   {t("mine.gate.body").replace("{hours}", String(s.session.sessionHours))}
                 </p>
@@ -356,6 +360,59 @@ export default function MinePage() {
           </Link>
         </div>
       </div>
+
+      {/* Turning ROZI into points, same rule as sending: the link appears only
+          once conversion is switched on, so it never leads to a "not open yet"
+          page. `convertible` is the server's own conversionEnabled flag. */}
+      {s.convertible && (
+        <Link href="/mine/convert" className="block">
+          <Card className="flex items-center gap-3 border-accent/40 bg-accent-tint p-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
+              <StarIcon size={22} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-brand-ink">{t("mine.convert.title")}</p>
+              <p className="text-sm text-accent-ink">{t("mine.convert.body")}</p>
+            </div>
+            <ArrowRightIcon size={22} className="text-brand" />
+          </Card>
+        </Link>
+      )}
+
+      {/* Spending ROZI on real things — shown only when the shop actually has
+          stock, same rule as the two links around it. */}
+      {s.storeOpen && (
+        <Link href="/mine/store" className="block">
+          <Card className="flex items-center gap-3 p-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+              <MineIcon size={22} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-brand-ink">{t("mine.store.title")}</p>
+              <p className="text-sm text-muted">{t("mine.store.body")}</p>
+            </div>
+            <ArrowRightIcon size={22} className="text-brand" />
+          </Card>
+        </Link>
+      )}
+
+      {/* Sending only appears once the admin has switched transfers on. Showing a
+          dead entry point for a feature that answers "not open yet" would teach
+          users to ignore this screen's links. */}
+      {s.transfer.enabled && (
+        <Link href="/mine/send" className="block">
+          <Card className="flex items-center gap-3 p-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
+              <ShareIcon size={22} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-brand-ink">{t("mine.send.title")}</p>
+              <p className="text-sm text-muted">{t("mine.send.body")}</p>
+            </div>
+            <ArrowRightIcon size={22} className="text-brand" />
+          </Card>
+        </Link>
+      )}
 
       {/* ---- Where your hashrate comes from ---- */}
       <div>

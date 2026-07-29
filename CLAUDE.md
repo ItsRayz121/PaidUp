@@ -234,6 +234,86 @@ These override convenience or speed at every step:
     test. **Read `MINING_PLAN.md` M9.5 before touching the accrual or settlement
     paths** — several of those bugs are the kind you reintroduce by "simplifying".
 
+- **ROZI LEADS, POINTS FOLLOW + the invite offer is now stated (2026-07-29)**:
+  two founder decisions, one change.
+  - **Screen order.** The home screen and `/wallet` now put the **ROZI card
+    first** and the points card second. Mining is why someone opens the app on a
+    day CPX has no survey for Pakistani traffic — which is most of the day — and
+    a home screen leading with a points balance that had not moved since
+    yesterday taught people there was nothing here today. **The guardrail did not
+    move**: the two currencies stay in separate cards, each labelled for what it
+    is, `wallet.rozi.notcash` still says outright that ROZI cannot be cashed out,
+    and the **only "Get my money" button lives on the points card**. Ordering
+    says what the app is *about*; copy and buttons say what each currency can
+    *do* — those must never trade places.
+  - **What a friend is worth is now visible.** The app paid two levels of
+    referral points **+** a first-task bonus **+** referral mining speed, and
+    none of it was stated anywhere a user could read it — people do not share a
+    link for a reward nobody told them about. `GET /referrals/me` now also
+    serves `joined2` (friends of friends) and a `rewards` block; the new
+    `components/InviteRewards.tsx` renders it on home (only for users with zero
+    invites), `/refer` and `/wallet`.
+  - ⚠️ **Every advertised rate comes from the API, never from the copy deck.**
+    The percentages are Admin-tunable per network, so a literal "15%" in
+    `i18n.tsx` becomes a lie the first time an Admin edits a row — and the stale
+    number is the one users already repeated to their friends on WhatsApp. The
+    advertised rate is the **MIN across ACTIVE networks**: a floor we always
+    meet on every offer, and a disabled network can never drag it down.
+  - The strongest line on the card is the true one: **"Your share comes from our
+    cut, not theirs"** — referral points come out of margin, never the invitee's
+    balance (`api/src/credit.ts`), which is the objection every user in our
+    markets has already met.
+  - Verified: `npm run test:referrals` (14 checks — two-level counting stops at
+    two, min-across-active-networks, disabled network excluded), api + web
+    typecheck, eslint, web production build.
+
+- **ROZI GETS REAL USES — conversion ceiling + spending store (2026-07-29).**
+  The founder proposed a **fixed ROZI→USD rate** with referral-earned ROZI fully
+  withdrawable. That was **not built**, and the reason is written down so it is
+  not re-litigated: mining's only revenue is ad impressions, and at the current
+  `piBaseRate` an engaged miner produces ~30 ROZI/day. Even at $0.001/ROZI with
+  only 20% withdrawable, funding it needs ~20 ad impressions per user per day
+  against the 3–5 `/mine` actually shows. **The rate cheap enough to fund is too
+  small to motivate; the rate big enough to motivate is unfundable.** Making
+  *referral-minted* ROZI cashable is worse still — invites generate no revenue,
+  so it is a pure mint, and every fraud signal we have is flag-only by design.
+  Three funded alternatives were built instead:
+  - **Per-user conversion ceiling** (`conversionMaxPctOfMined`, default **30**,
+    100 = off). A user may convert at most that % of the ROZI they have **ever
+    mined**, cumulative for the life of the account. The pot caps what the
+    *business* pays; this caps what any *one account* can extract.
+    ⚠️ **The denominator is lifetime MINING CREDITS, and that is load-bearing.**
+    Not the current balance — "30% of what you hold" is drained in steps
+    (burn 30, hold 70, burn 21…) until the cap has capped nothing. Not ROZI
+    received by transfer — that is the anti-farm property: fifty mules can send
+    ROZI to one wallet, and that wallet still cannot convert a micro of it.
+    Both bypasses have regression tests; do not "simplify" this to the balance
+    that is already in scope at the call site.
+  - **The Conversion Window is now reachable by users** — `/mine/convert` was
+    the missing half (backend + admin panel already existed). The screen states
+    the floating rate *twice, before the input*: a user who works that out after
+    converting will believe they were cheated.
+  - **ROZI store** (`/mine/store`, `rozi_store_items` + `rozi_redemptions`):
+    spend ROZI on real goods (mobile top-up, data bundles) at a price we set and
+    can raise. **A shop, not an exchange** — we sell items, we never offer to buy
+    ROZI back, so exposure is bounded by `stock` instead of being an unfunded
+    liability. ROZI is debited at **order** time (so it can't be double-spent
+    while pending); staff fulfil or reject, and a rejection refunds the
+    **snapshot on the row**, never a recomputed price, and returns the item to
+    stock. New ROZI ledger source type `store_redemption` (debit out, credit
+    back).
+  - **Bulk referral rates** — `PATCH /staff/networks/referrals/all`. Raising
+    referral pay one network at a time does *not* raise what users see, because
+    the invite screens advertise the **minimum across active networks**; one
+    forgotten row silently pins the advertised rate. The endpoint **refuses
+    L1+L2 above the margin** (at a 60/40 split, >40% loses money on every task).
+  - Verified: 40 unit + 50 mining e2e + 25 conversion + 29 store/bulk-referral +
+    14 referrals + 15 admin + 25 kyc + 9 push + 45 telegram + 5 proxy, all green;
+    api + web typecheck, eslint, web production build, security review (no
+    findings). The `LOCKED_PATHS` tripwire in `mining.e2e.ts` caught the store's
+    new debit path — **if you add a spending path, add `lockUser()` and add it to
+    that list.**
+
 - **ENGLISH ONLY — Urdu dropped (founder, 2026-07-12).** The `ur` dictionary,
   `LangToggle`, RTL and the locale preference are **deleted**. Earners read simple
   English, and the phone translates for anyone who wants it.

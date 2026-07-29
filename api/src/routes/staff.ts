@@ -259,6 +259,65 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true };
   }));
 
+  // Set the referral rewards on EVERY network at once.
+  //
+  // This exists because raising referral pay one network at a time does not
+  // actually raise it: the invite screens advertise the MINIMUM across active
+  // networks (see /referrals/me — we never promise a rate some offer does not
+  // pay), so a founder who bumps CPX to 25% and forgets surveyx has changed
+  // nothing a user can see, and has no way to tell. One control, all rows.
+  //
+  // Deliberately NOT touching commission_split_pct. That is the margin, it is
+  // negotiated per network, and a bulk write is exactly how you would flatten
+  // three different deals into one wrong number by accident.
+  app.patch("/staff/networks/referrals/all", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
+    const parsed = z.object({
+      referralBonusPct: z.number().int().min(0).max(100).optional(),
+      referralBonusPctL2: z.number().int().min(0).max(100).optional(),
+      referralFirstTaskBonus: z.number().int().min(0).max(1_000_000).optional(),
+      referralBonusDays: z.number().int().min(0).max(3650).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter valid referral numbers." });
+
+    const cols: string[] = [];
+    const vals: unknown[] = [];
+    const d = parsed.data;
+    if (d.referralBonusPct !== undefined) { cols.push("referral_bonus_pct = ?"); vals.push(d.referralBonusPct); }
+    if (d.referralBonusPctL2 !== undefined) { cols.push("referral_bonus_pct_l2 = ?"); vals.push(d.referralBonusPctL2); }
+    if (d.referralFirstTaskBonus !== undefined) { cols.push("referral_first_task_bonus = ?"); vals.push(d.referralFirstTaskBonus); }
+    if (d.referralBonusDays !== undefined) { cols.push("referral_bonus_days = ?"); vals.push(d.referralBonusDays); }
+    if (!cols.length) return reply.code(400).send({ error: "Nothing to change." });
+
+    // L1 + L2 together come out of our margin on every credited task. At a 60/40
+    // split we keep 40 points per 100 credited, so paying out more than that
+    // means every referred task LOSES money — silently, on every completion,
+    // until someone reads a P&L. Refuse it here rather than discover it there.
+    // Read the rows first: a request that sets only L2 still has to be checked
+    // against whatever L1 each row already holds.
+    const rows = await sql.all<{ id: string; l1: number; l2: number; split: number }>(
+      `SELECT id, referral_bonus_pct AS l1, referral_bonus_pct_l2 AS l2,
+              commission_split_pct AS split FROM networks`,
+    );
+    for (const r of rows) {
+      const l1 = d.referralBonusPct ?? r.l1;
+      const l2 = d.referralBonusPctL2 ?? r.l2;
+      const margin = 100 - r.split;
+      if (l1 + l2 > margin) {
+        return reply.code(400).send({
+          error: `${l1}% + ${l2}% is more than the ${margin}% margin on "${r.id}". Referral pay comes out of our cut, so this would lose money on every task.`,
+        });
+      }
+    }
+
+    cols.push("updated_at = ?"); vals.push(now());
+    const res = await sql.run(`UPDATE networks SET ${cols.join(", ")}`, ...vals);
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "networks_referrals_bulk",
+      detail: `${res.rowCount} networks: ${JSON.stringify(d)}`,
+    });
+    return { ok: true, updated: res.rowCount };
+  }));
+
   // ---- Admin: global settings (withdrawal fee + treasury wallet) ----------
   // The treasury wallet is the HOT WALLET: the founder funds it with USDT, and
   // every manual payout is sent FROM it. One address per chain, stored in

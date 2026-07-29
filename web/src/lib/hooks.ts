@@ -51,3 +51,29 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
 
   return { data, error, loading, reload: run };
 }
+
+// Time left until an ISO timestamp, in words, ticking once a second. Null once
+// it has passed — callers use that as "the session is over" and refetch.
+//
+// Lives here rather than in /mine because the home screen leads with mining now
+// and needs the same clock; two copies of a countdown drift the moment one of
+// them is edited.
+export function useCountdown(until: string | null | undefined): string | null {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!until) return;
+    const id = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [until]);
+
+  if (!until) return null;
+  // A countdown exists to read the clock: the interval above re-renders us once
+  // a second precisely so this render-time Date.now() is fresh.
+  // eslint-disable-next-line react-hooks/purity
+  const ms = Date.parse(until) - Date.now();
+  if (ms <= 0) return null;
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+}

@@ -85,6 +85,13 @@ const copy: Record<string, string> = {
     "Surveys are open now — tap “Answer surveys” above to earn today. New task types are added soon.",
   "tasks.seeAll": "See all",
   // home
+  //
+  // ORDER OF THE HOME SCREEN (founder, 2026-07-29): ROZI leads, points follow.
+  // Mining is the reason someone opens this app on a day with no surveys, so it
+  // is the first thing they see; points are the money and stay one tap away.
+  // The copy has to carry that order without ever implying ROZI is cash — the
+  // two cards are labelled for what they are, and neither borrows the other's
+  // words.
   "home.hello": "Hello,",
   "home.wePayCash": "We pay real cash",
   "home.aboutValue": "That is {value}",
@@ -92,6 +99,15 @@ const copy: Record<string, string> = {
   "home.quickTaskTitle": "Do a quick task now",
   "home.friendsJoined": "{n} friends joined",
   "home.earnedFromThem": "You earned {points} points from them.",
+  "home.rozi.label": "Your ROZI",
+  "home.rozi.tagline":
+    "Mine ROZI free, every day. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
+  "home.rozi.start": "Start mining",
+  "home.rozi.running": "Mining now — {time} left",
+  "home.rozi.speed": "Your speed",
+  "home.cash.label": "Your points",
+  "home.cash.hint": "Points are your cash. Take them out in USDT.",
+  "home.taskBoost": "Every task you finish also makes your mining faster.",
   // wallet
   "wallet.subtitle": "Your points and your money history.",
   "wallet.aboutValue": "Worth {value}",
@@ -101,14 +117,50 @@ const copy: Record<string, string> = {
   "wallet.noHistoryBody": "Finish a task to see your first points here.",
   "wallet.needHelp": "Need help with a payment?",
   "wallet.contactSupport": "Contact support",
+  "wallet.invite.title": "Earn without doing tasks",
+  // ---- Invite rewards -------------------------------------------------------
+  // Shared by the home screen, /refer and /wallet (components/InviteRewards.tsx).
+  //
+  // Every number in here is a {placeholder} filled from /referrals/me, NEVER
+  // typed into the string. The percentages are Admin-tunable per network, so a
+  // hard-coded "15%" would become a lie the first time someone edits a row — and
+  // the one promise this app cannot afford to break is the one people repeated to
+  // their friends.
+  //
+  // "Level 1 / level 2" is banned here, along with "downline" and "commission":
+  // this is the screen where jargon costs the most. Say "your friends" and
+  // "their friends", which is what the thing actually is.
+  "invite.title": "Every friend pays you twice",
+  "invite.subtitle": "Once when they earn. Again when their friends earn.",
+  "invite.l1.title": "Your friends earn, you get {pct}%",
+  "invite.l1.body": "Every task they finish, forever. You do nothing.",
+  "invite.l2.title": "Their friends earn, you get {pct}%",
+  "invite.l2.body": "When your friends invite people, you get paid from them too.",
+  "invite.first.title": "{n} points for every friend",
+  "invite.first.body": "Paid the moment they finish their first task.",
+  "invite.mining.title": "Your mining gets faster",
+  "invite.mining.body":
+    "Every friend who mines adds {pct}% of their speed to yours. Their friends add {pct2}%.",
+  // The trust line, and the most valuable sentence on the screen. It is TRUE —
+  // referral points come out of our margin, never the invitee's balance (see
+  // api/src/credit.ts) — and it is the answer to the objection every user in our
+  // markets has met before: "is my friend paying for this?"
+  "invite.free.title": "Your friend loses nothing",
+  "invite.free.body": "Your share comes from our cut, not theirs. They keep every point they earn.",
+  "invite.cta": "Invite friends",
+  "invite.seeRewards": "See what a friend is worth",
+
   // refer
   "refer.title": "Invite friends",
-  "refer.subtitle": "Share your code. Earn together.",
+  "refer.subtitle": "Your friends earn. You get paid. Nobody loses anything.",
+  "refer.hero.headline": "Get {pct}% of everything your friends earn",
+  "refer.hero.sub": "For as long as they keep earning.",
   "refer.yourCode": "Your code",
   "refer.copyLink": "Copy link",
   "refer.copied": "Copied",
   "refer.share": "Share",
   "refer.friendsJoined": "Friends joined",
+  "refer.friends2Joined": "Their friends",
   "refer.pointsEarned": "Points earned",
   "refer.howItWorks": "How it works",
   "refer.step1": "Share your code with friends.",
@@ -117,12 +169,12 @@ const copy: Record<string, string> = {
   "refer.step4": "You also mine faster while they mine.",
   "refer.trustNote": "Your friends only trust apps that pay. Get your money first, then share.",
   "refer.inviteMessage":
-    "I use RoziPay to earn real money. Join with my code {code} and we both get points. {link}",
+    "I earn real money on RoziPay, and I mine free ROZI every day. Join with my code {code} and we both get points. {link}",
   "refer.telegramTitle": "Invite on Telegram",
   "refer.telegramHint": "Friends open RoziPay inside Telegram. Your code fills in by itself.",
   // No {link} here — Telegram's share screen attaches the link on its own.
   "refer.telegramShareText":
-    "I use RoziPay to earn real money. Join with my code {code} and we both get points.",
+    "I earn real money on RoziPay, and I mine free ROZI every day. Join with my code {code} and we both get points.",
   // help
   "help.title": "Help & support",
   "help.subtitle": "Tell us the problem. A real person will reply.",
@@ -253,12 +305,25 @@ const copy: Record<string, string> = {
   // ROZI is the MINED currency: a separate ledger, not backed by revenue, and
   // NOT withdrawable. Every string here has to be honest about that. Implying
   // a cash value would be the fastest way to burn the brand.
+  //
+  // TONE (founder, 2026-07-27): ROZI is the HEADLINE of this product, not a
+  // footnote we apologise for. The old copy led with "ROZI is not money yet" —
+  // true, but it read as a disclaimer and taught users the main feature was the
+  // unimportant one. It now leads with being early, and the limit follows.
+  //
+  // What we may promise here is bounded by MINING_SPEC.md § 7, and the line is
+  // narrow enough to be worth restating: SENDING ROZI to another user is a real
+  // roadmap item, and so is TURNING IT INTO MONEY through a Conversion Window.
+  // SELLING it — us matching buyers and sellers, or touching the money leg —
+  // is the one thing we decided we will never build, because it would make us
+  // an unlicensed exchange under PVARA. So no string here says "sell", and none
+  // ever should, however much better it would convert.
   "nav.mine": "Mine",
   "mine.title": "Mine ROZI",
   "mine.subtitle": "Earn ROZI every day, even when there are no tasks.",
-  "mine.notcash.title": "ROZI is not money yet.",
+  "mine.notcash.title": "You are early. Mine ROZI now.",
   "mine.notcash.body":
-    "You cannot turn ROZI into cash. You are mining it early. Your points are a different thing — points are your real money.",
+    "Soon you will be able to send ROZI to friends, and turn it into money. You cannot cash it out yet. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
   "mine.balance": "Your ROZI",
   "mine.hashrate": "Your mining speed",
   "mine.today": "You will get today",
@@ -314,9 +379,110 @@ const copy: Record<string, string> = {
   "rigs.bought": "Done. Your machine is now level {level}.",
   "rigs.treadmill":
     "Every level costs more than the last, and gives a little less speed for the price. Buy the cheap machines first.",
+  // ---- Send ROZI (wallet to wallet) ----
+  // A TRANSFER, not a sale. No string here may suggest a price, a buyer, or that
+  // we will find someone to trade with — that is the MINING_SPEC.md § 7 line, and
+  // the copy is where it gets crossed first. "Send", never "sell".
+  "send.title": "Send ROZI",
+  "send.subtitle": "Send ROZI to anyone on RoziPay.",
+  "send.balance": "You have",
+  "send.to.label": "Who are you sending to?",
+  "send.to.placeholder": "Their invite code or email",
+  "send.amount.label": "How much?",
+  "send.fee": "Small fee: {fee} ROZI ({pct}%)",
+  "send.receives": "They get {n} ROZI",
+  "send.cta": "Send",
+  "send.sending": "Sending…",
+  "send.done": "Sent. {n} ROZI is now with them.",
+  "send.left": "You can send {n} more ROZI today.",
+  "send.notEnough": "You do not have that much ROZI.",
+  "send.off.title": "Sending is not open yet",
+  "send.off.body": "You can mine ROZI now. Sending it to other people opens soon.",
+  "send.kyc.title": "Verify your ID first",
+  "send.kyc.body": "We check who you are before you send ROZI to someone else. It takes a few minutes.",
+  "send.kyc.pending": "We are checking your ID now. You can send ROZI once it is approved.",
+  "send.kyc.cta": "Verify my ID",
+  "send.age.title": "Your account is too new",
+  "send.age.body": "You can send ROZI when your account is {days} days old. Keep mining until then.",
+  "mine.send.title": "Send ROZI to a friend",
+  "mine.send.body": "Send some of your ROZI to anyone on RoziPay.",
+
+  // ---- Turn ROZI into points (the Conversion Window) ------------------------
+  // THE HARDEST COPY IN THE APP, and the place a careless word costs the most.
+  //
+  // There is NO fixed rate, by design (MINING_SPEC.md § 6). A pot of points is
+  // fixed before the window opens, everyone who puts ROZI in shares that pot, so
+  // your share SHRINKS as more people join. That is not a catch to bury — it is
+  // the mechanism, and a user who discovers it after the fact will believe we
+  // cheated them. So it is said twice, in the plainest words available, before
+  // anyone types a number.
+  //
+  // Banned here: "rate", "worth", "price", "value", "exchange", and any sentence
+  // of the form "1 ROZI = ...". If a future ticket asks for a live rate on this
+  // screen, that is the ticket to push back on.
+  "convert.title": "Turn ROZI into points",
+  "convert.subtitle": "Points are your real money. You can take them out in USDT.",
+  "convert.pot": "This week's pot",
+  "convert.potNote":
+    "Everyone who puts ROZI in shares this pot. The more people join, the smaller each share.",
+  "convert.closesIn": "Closes in {time}",
+  "convert.yourRozi": "Your ROZI",
+  "convert.amount.label": "How much ROZI do you want to put in?",
+  "convert.youPutIn": "You put in",
+  "convert.ifClosedNow": "Your share if it closed right now",
+  "convert.ifClosedNote":
+    "This number moves. It goes down when other people join, and up when they do not.",
+  "convert.cta": "Put my ROZI in",
+  "convert.working": "Working…",
+  "convert.done": "Done. Your points arrive when the pot closes.",
+  // The per-user ceiling, said as a positive ("this much is unlocked") rather
+  // than as a punishment. It is a real limit and it is not hidden — but a user
+  // who mines more unlocks more, and that is the sentence that should stick.
+  "convert.limit.title": "You can turn {n} ROZI into points",
+  "convert.limit.body":
+    "You unlock {pct}% of everything you mine. Mine more and this goes up.",
+  "convert.limit.none":
+    "You have used all of it for now. Keep mining — every ROZI you mine unlocks more.",
+  "convert.limit.used": "Used so far: {n} ROZI",
+  "convert.tooMuch": "You can only put in {n} ROZI right now.",
+  "convert.notEnough": "You do not have that much ROZI.",
+  "convert.closed.title": "No pot is open right now",
+  "convert.closed.body":
+    "We open one every so often. Keep mining — your ROZI is safe and waiting.",
+  "convert.off.title": "This opens later",
+  "convert.off.body":
+    "Turning ROZI into points is not open yet. Mine now — what you mine is yours, and it will be waiting.",
+  "mine.convert.title": "Turn ROZI into points",
+  "mine.convert.body": "Put your ROZI into this week's pot and get real points.",
+
+  // ---- Spend ROZI (the store) ----------------------------------------------
+  // ROZI buys real things at a price WE set. That is a shop, not an exchange,
+  // and the copy has to stay on the shop side of that line: we sell items, we do
+  // not buy ROZI. So there is no string here of the form "your ROZI is worth X",
+  // and none that quotes a rate. "Costs 500 ROZI" is a price; "500 ROZI = Rs 100"
+  // is a promise we would have to keep forever.
+  "store.title": "Spend your ROZI",
+  "store.subtitle": "Use the ROZI you mined on real things.",
+  "store.yourRozi": "You have",
+  "store.cost": "{n} ROZI",
+  "store.get": "Get this",
+  "store.outOfStock": "All gone for now",
+  "store.notEnough": "Keep mining",
+  "store.empty.title": "Nothing in the shop yet",
+  "store.empty.body": "We are adding things you can buy with ROZI. Keep mining — yours is safe.",
+  "store.input.hint": "Where should we send it?",
+  "store.confirm": "Use {n} ROZI for {title}?",
+  "store.ordered": "Done. We are sending it now.",
+  "store.orders": "Your orders",
+  "store.status.pending": "On the way",
+  "store.status.fulfilled": "Sent",
+  "store.status.rejected": "Not done — your ROZI came back",
+  "mine.store.title": "Spend your ROZI",
+  "mine.store.body": "Mobile top-up and more, paid for with ROZI.",
+
   "wallet.rozi.label": "Your mined ROZI",
   "wallet.rozi.notcash":
-    "ROZI is not money yet. You cannot withdraw it. Only your points above can be paid out.",
+    "You are mining ROZI early. Soon you will be able to send it to friends and turn it into money. You cannot cash it out yet — only your points above can be paid out today.",
 
   // ---- Verify your ID -------------------------------------------------------
   // The word "KYC" appears nowhere a user can see it. It is jargon, and half our

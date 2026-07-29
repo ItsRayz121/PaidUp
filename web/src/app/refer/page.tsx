@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Card, Button } from "@/components/ui";
+import { InviteRewards } from "@/components/InviteRewards";
 import { Loading, ErrorState } from "@/components/state";
 import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon, TelegramIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
@@ -20,6 +21,7 @@ export default function ReferPage() {
   if (ref.error) return <div className="p-4 pt-6"><ErrorState message={ref.error} onRetry={ref.reload} /></div>;
 
   const code = ref.data?.code ?? "";
+  const rewards = ref.data?.rewards;
   // Invite link points back at the app's own origin with ?ref=CODE.
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const link = `${origin}/login?ref=${code}`;
@@ -61,6 +63,19 @@ export default function ReferPage() {
         <p className="text-sm text-muted">{t("refer.subtitle")}</p>
       </header>
 
+      {/* The headline number, before anything else. This screen's whole job is to
+          get a link sent, and nobody sends a link for a reward they have to
+          scroll to find. The percentage comes from the API — see
+          components/InviteRewards.tsx for why it is never typed into the copy. */}
+      {rewards && (
+        <Card className="border-accent/40 bg-accent-tint p-4 text-center">
+          <p className="text-lg font-extrabold leading-tight text-brand-ink">
+            {t("refer.hero.headline", { pct: String(rewards.l1Pct) })}
+          </p>
+          <p className="mt-1 text-sm text-accent-ink">{t("refer.hero.sub")}</p>
+        </Card>
+      )}
+
       <Card className="overflow-hidden">
         <div className="bg-brand p-5 text-center text-white">
           <p className="text-sm text-white/80">{t("refer.yourCode")}</p>
@@ -98,10 +113,18 @@ export default function ReferPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 gap-2.5">
+      {/* Three stats, not two. "Their friends" is shown even at zero, because a
+          number nobody knows exists is a reward nobody chases — the second level
+          has been paying since launch with no counter anywhere. */}
+      <div className="grid grid-cols-3 gap-2.5">
         <Stat label={t("refer.friendsJoined")} value={String(ref.data?.joined ?? 0)} />
+        <Stat label={t("refer.friends2Joined")} value={String(ref.data?.joined2 ?? 0)} />
         <Stat label={t("refer.pointsEarned")} value={formatPoints(ref.data?.earnedPoints ?? 0)} accent />
       </div>
+
+      {/* The full offer: both levels, the first-task bonus and the mining speed,
+          in one place. No CTA — the share buttons are already above it. */}
+      {rewards && <InviteRewards rewards={rewards} />}
 
       <Button href="/leaderboard" variant="ghost">🏆 {t("leaderboard.seeLeaderboard")}</Button>
 
@@ -127,8 +150,10 @@ export default function ReferPage() {
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
+    // Three across on a 360px phone: the value has to shrink rather than push
+    // the card wider, so it is text-xl and allowed to break.
     <Card className="p-3 text-center">
-      <p className={`num text-2xl font-bold ${accent ? "text-accent-ink" : "text-brand-ink"}`}>{value}</p>
+      <p className={`num break-all text-xl font-bold ${accent ? "text-accent-ink" : "text-brand-ink"}`}>{value}</p>
       <p className="text-xs text-muted">{label}</p>
     </Card>
   );

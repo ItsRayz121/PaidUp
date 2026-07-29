@@ -114,6 +114,49 @@ export async function showRewarded(zoneId: string): Promise<boolean> {
   }
 }
 
+// THE START-MINING GATE AD.
+//
+// For a long time "an ad appears when you start mining" was served only by the
+// vignette above — a script we load and then hope decides to show something.
+// It is passive and frequency-capped by Monetag, so in practice most Start taps
+// showed no ad at all, while the boost button showed one every time. The
+// difference was never the zone or the account: the boost button *calls* an ad,
+// and this path did not. Now it does, using the same two formats.
+//
+// It pays NOTHING. No nonce, no dwell timer, no daily cap — those exist to
+// price a reward, and there is no reward here. This is an impression on the way
+// into a session, which is also why it is safe to fire it on a client's say-so.
+//
+// FAILS OPEN in every branch, and the caller must start the session whatever
+// this does. An ad network having a bad night can never cost someone a streak.
+const GATE_AD_TIMEOUT_MS = 20_000;
+
+export async function showGateAd(rewardedZone: string, directLink: string): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  // Inside Telegram: the real rewarded video. Raced against a timeout so a
+  // wedged SDK cannot leave the Start button spinning forever — the session
+  // must never be held hostage by an ad that will not resolve.
+  if (rewardedZone) {
+    await Promise.race([
+      showRewarded(rewardedZone),
+      new Promise((resolve) => setTimeout(resolve, GATE_AD_TIMEOUT_MS)),
+    ]);
+    return;
+  }
+
+  // On the website there is no rewarded format, so the active equivalent is the
+  // direct link in a new tab. Note there is no `await` above this line on this
+  // branch: it still runs inside the caller's click handler, which is the only
+  // reason the pop-up blocker lets it through. Blocked, or no link configured =>
+  // nothing happens, silently. The copy says an ad "may" show, so a quiet miss
+  // is not a lie and does not need an error.
+  if (directLink) {
+    const tab = openAdTab();
+    tab?.navigate(directLink);
+  }
+}
+
 // Open a tab for the direct-link ad, dodging the pop-up blocker.
 //
 // Browsers only allow window.open inside a user gesture — an `await` between the

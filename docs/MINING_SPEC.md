@@ -344,6 +344,55 @@ it is the exact mechanism by which these products go insolvent.
 
 ---
 
+### 6.1 The per-user ceiling (founder, 2026-07-29)
+
+The pot bounds what the **business** pays out in a window. It does not bound what
+any **one account** can extract: a farm that mined hard for three months could
+take most of a pot without the business ever overpaying in aggregate. So there is
+a second, independent bound.
+
+`conversionMaxPctOfMined` (default **30**, `100` = off): an account may convert at
+most that percentage of the ROZI it has **ever mined**, counted cumulatively for
+the life of the account.
+
+The denominator is **lifetime mining credits**, and the two things it is *not* are
+the whole design:
+
+| Not this | Why |
+|---|---|
+| The **current balance** | "30% of what you hold" is drained in steps — burn 30 of 100, hold 70, burn 21, hold 49 — until the limit has limited nothing. |
+| **ROZI received by transfer** | This is the anti-farm property. Fifty mule accounts can still send their ROZI to one wallet; that wallet cannot convert a micro of it, because its allowance is tied to what *it* mined. Consolidation stops paying. |
+
+Both bypasses have regression tests (`mining.test.ts` CEILING, `conversion.e2e.ts`).
+
+### 6.2 What we did NOT build, and why
+
+A **fixed ROZI→USD rate**, with referral-earned ROZI fully withdrawable, was
+proposed and rejected on arithmetic rather than principle:
+
+```
+ad revenue needed per user per day
+  = ROZI mined per day × withdrawable % × USD per ROZI
+```
+
+At `piBaseRate` 10/day an engaged miner (×3 multipliers) produces ~30 ROZI/day.
+At **$0.001/ROZI** and only **20%** withdrawable that is $0.006/user/day — about
+**20 ad impressions per user per day** at a ~$0.30 CPM, against the 3–5 that
+`/mine` actually shows. And $0.001/ROZI means 100 days of mining for $3, which is
+worse than the surveys already pay. **The rate cheap enough to fund is too small
+to motivate; the rate big enough to motivate is unfundable.**
+
+Making *referral-minted* ROZI cashable is strictly worse: invites produce no
+revenue, so it is a pure mint, and the device-reuse / referral-ring / shared-IP
+signals are all deliberately flag-only (never blocking) — wiring cash to the
+invite output turns every one of them into an open leak.
+
+Inviting **already** pays real withdrawable money, funded from margin: L1/L2 % of
+a friend's task points plus the first-task bonus, all in Points, all
+Admin-tunable (`PATCH /staff/networks/referrals/all`).
+
+---
+
 ## 7. Trading — what we will and will not build
 
 | | |
@@ -361,6 +410,14 @@ The refusal is not squeamishness, so it's worth writing down once:
 
 The `rozi_ledger` is designed so that a licensed order book **could** be added
 later behind an admin flag, without a migration. Nothing is lost by waiting.
+
+**Spending ROZI (built 2026-07-29):** the ROZI **store** — real goods (mobile
+top-up, data bundles) priced in ROZI, fulfilled by staff. This is on the safe
+side of the line above and it is worth being precise about why: **we sell items
+at a price we set and can raise; we never offer to buy ROZI back.** Exposure is
+bounded by `stock`, not by how much ROZI exists, and if ROZI inflates the price
+moves. A buy-back rate has neither property. Redemption debits ROZI at order
+time; a staff rejection refunds the exact snapshot on the row and restocks.
 
 **Listing (§ future):** if ROZI is ever listed, it happens on an external DEX
 where we are neither the venue nor the counterparty, funded from the 10%

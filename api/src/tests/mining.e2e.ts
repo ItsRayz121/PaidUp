@@ -391,7 +391,12 @@ if (usingRealPostgres) {
   // If you add a new spending path, add lockUser() to it and add it to this list.
   // A mismatch here means either the lock is missing or this list is stale; both
   // are worth stopping for.
-  const LOCKED_PATHS = ["rig upgrade", "booster buy", "ROZI transfer", "conversion burn", "ad redeem"];
+  const LOCKED_PATHS = [
+    "rig upgrade", "booster buy", "ROZI transfer", "conversion burn", "ad redeem",
+    // The store debits ROZI at ORDER time, so two concurrent redeems would
+    // otherwise both read the same balance and both go through.
+    "store redeem",
+  ];
   const locks = (await import("node:fs")).readFileSync(
     new URL("../routes/mining.ts", import.meta.url), "utf8",
   ).match(/lockUser\(t, userId\)/g)?.length ?? 0;

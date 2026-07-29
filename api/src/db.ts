@@ -815,6 +815,67 @@ const MINING_SCHEMA = `
     SELECT MAX(k.reviewed_at) FROM kyc_submissions k
     WHERE k.user_id = users.id AND k.status = 'approved'
   ) WHERE kyc_status = 'approved' AND kyc_approved_at IS NULL;
+
+  -- ---------------------------------------------------------------------------
+  -- ROZI STORE (founder, 2026-07-29). Spend ROZI on real things — mobile top-up,
+  -- a data bundle — at a price WE set and can move.
+  --
+  -- This is a SINK, and the distinction from a fixed ROZI->USD rate is the whole
+  -- point. We are not promising to buy ROZI back at any rate; we are selling a
+  -- fixed number of items at a price we control, funded from margin we have
+  -- already banked. If ROZI ever inflates, the price goes up and nothing breaks.
+  -- A fixed buy-back rate is an unfunded liability that grows with our success
+  -- (MINING_SPEC.md § 6); this cannot grow past stock, which is the difference.
+  CREATE TABLE IF NOT EXISTS rozi_store_items (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    description TEXT,
+    -- WHOLE ROZI, like the rig catalogue: this is a human-facing admin number and
+    -- is converted to micro at the moment it meets the ledger.
+    cost_rozi   BIGINT NOT NULL,
+    -- What the user must tell us to receive it (a phone number, usually). NULL
+    -- means nothing is needed.
+    input_label TEXT,
+    -- HARD CEILING on our exposure. Every redemption decrements it, so the most
+    -- this table can ever cost the business is SUM(stock * what it costs us).
+    -- An admin who wants unlimited exposure has to type a big number and see it.
+    stock       INTEGER NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','hidden')),
+    sort        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+  );
+
+  -- A redemption is a REQUEST, fulfilled by a human, exactly like a withdrawal.
+  -- The ROZI is debited when the request is made (so it cannot be double-spent
+  -- while pending) and CREDITED BACK if staff reject it.
+  CREATE TABLE IF NOT EXISTS rozi_redemptions (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    item_id      TEXT NOT NULL REFERENCES rozi_store_items(id),
+    -- Price SNAPSHOT in micro-ROZI. An admin raising the price must never change
+    -- what an in-flight request already charged, and a refund must return exactly
+    -- what was taken — same reasoning as withdrawal_requests.fee_points.
+    cost_micro   BIGINT NOT NULL,
+    -- Where it goes. User-supplied, shown to staff, never interpolated anywhere.
+    target       TEXT,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending','fulfilled','rejected')),
+    staff_note   TEXT,
+    decided_by   TEXT REFERENCES users(id),
+    decided_at   TEXT,
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_redemptions_user ON rozi_redemptions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_redemptions_status ON rozi_redemptions(status);
+
+  -- The ROZI ledger gains one source type for the store. Debit on redeem, credit
+  -- on refund — same row type both ways, direction tells them apart, which is how
+  -- transfers already work.
+  ALTER TABLE rozi_ledger DROP CONSTRAINT IF EXISTS rozi_ledger_source_type_check;
+  ALTER TABLE rozi_ledger ADD CONSTRAINT rozi_ledger_source_type_check
+    CHECK (source_type IN ('mining','rig_purchase','transfer_in','transfer_out',
+                           'transfer_fee','conversion_burn','admin_adjustment',
+                           'bonus','store_redemption'));
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
@@ -1021,7 +1082,9 @@ export async function balanceOf(
 
 export type RoziSource =
   | "mining" | "rig_purchase" | "transfer_in" | "transfer_out"
-  | "transfer_fee" | "conversion_burn" | "admin_adjustment" | "bonus";
+  | "transfer_fee" | "conversion_burn" | "admin_adjustment" | "bonus"
+  // Store: debit when a redemption is requested, credit back if staff reject it.
+  | "store_redemption";
 
 // Amounts are MICRO-ROZI (millionths). The parameter is named `micro`, not
 // `rozi`, on purpose: it is the one thing that makes a unit mistake a compile

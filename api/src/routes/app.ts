@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
+import { loadMiningSettings } from "../mining/settings.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -138,17 +139,64 @@ export async function appRoutes(app: FastifyInstance) {
   }));
 
   // Referral earnings kept SEPARATE from task earnings (user story).
+  //
+  // This also serves the REWARD RATES themselves, because the invite screens have
+  // to state what a friend is worth before anyone will send a link. Those numbers
+  // are Admin-tunable per network (and, for mining speed, in the mining settings),
+  // so hard-coding "15%" into the frontend copy would mean the app quietly lies
+  // the first time an Admin edits a row. Everything the invite screens print
+  // comes from here.
   app.get("/referrals/me", guard(async (userId) => {
     const user = (await sql.get<UserRow>("SELECT referral_code FROM users WHERE id = ?", userId))!;
     // ::int — Postgres returns COUNT()/SUM() of integers as bigint, i.e. a string.
     const joined = await sql.get<{ n: number }>(
       "SELECT COUNT(*)::int AS n FROM referrals WHERE referrer_user_id = ?", userId,
     );
+    // Friends of friends. The second level is paid by credit.ts, so it was always
+    // being earned — it just had no number anywhere a user could see it.
+    const joined2 = await sql.get<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM referrals r2
+       JOIN referrals r1 ON r1.referred_user_id = r2.referrer_user_id
+       WHERE r1.referrer_user_id = ?`,
+      userId,
+    );
     const earned = await sql.get<{ s: number }>(
       "SELECT COALESCE(SUM(amount),0)::int AS s FROM ledger_entries WHERE user_id = ? AND source_type = 'referral_bonus'",
       userId,
     );
-    return { code: user.referral_code, joined: joined?.n ?? 0, earnedPoints: earned?.s ?? 0 };
+
+    // Rates are per-network and an Admin can set them differently on each row, so
+    // there is no single true "the" rate. We advertise the MINIMUM across the
+    // active networks: a floor we always meet on every offer. Taking the max (or
+    // an average) would print a number some networks do not pay, which is the one
+    // failure mode that matters here — an invite promise we break on the user's
+    // first survey is worse than a modest one we always keep.
+    const rates = await sql.get<{
+      l1: number | null; l2: number | null; first: number | null;
+    }>(
+      `SELECT MIN(referral_bonus_pct)::int AS l1,
+              MIN(referral_bonus_pct_l2)::int AS l2,
+              MIN(referral_first_task_bonus)::int AS first
+       FROM networks WHERE status = 'active'`,
+    );
+    const m = await loadMiningSettings();
+
+    return {
+      code: user.referral_code,
+      joined: joined?.n ?? 0,
+      joined2: joined2?.n ?? 0,
+      earnedPoints: earned?.s ?? 0,
+      rewards: {
+        // Fallbacks are the config defaults, used only before any network row
+        // exists (fresh database) — never to paper over a disabled network.
+        l1Pct: rates?.l1 ?? Math.round(config.referralCommissionPct * 100),
+        l2Pct: rates?.l2 ?? Math.round(config.referralCommissionL2Pct * 100),
+        firstTaskBonus: rates?.first ?? config.referralFirstTaskBonusPoints,
+        // Mining speed inherited from invitees who are actively mining (§ 4.5).
+        miningL1Pct: m.referralL1Pct,
+        miningL2Pct: m.referralL2Pct,
+      },
+    };
   }));
 
   // ---- CPX Research survey wall -------------------------------------------

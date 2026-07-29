@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { Card, Button, StatusBadge, SectionTitle } from "@/components/ui";
 import { StatusLegend } from "@/components/TaskFlow";
+import { InviteRewards } from "@/components/InviteRewards";
 import { Loading, ErrorState, EmptyState, LogoutButton } from "@/components/state";
-import { StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, LockIcon, ArrowRightIcon } from "@/components/icons";
+import { StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, BoltIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchLedger, fetchMiningState, type LedgerEntry } from "@/lib/api";
+import { fetchBalance, fetchLedger, fetchMiningState, fetchReferrals, type LedgerEntry } from "@/lib/api";
 import { formatPoints, formatMoney, formatRozi, timeAgo } from "@/lib/format";
 
 export default function WalletPage() {
@@ -16,6 +17,7 @@ export default function WalletPage() {
   const bal = useApi(fetchBalance, []);
   const led = useApi(fetchLedger, []);
   const mining = useApi(fetchMiningState, []);
+  const ref = useApi(fetchReferrals, []);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -33,6 +35,36 @@ export default function WalletPage() {
         </div>
         <LogoutButton />
       </header>
+
+      {/* ---- ROZI first (founder, 2026-07-29): it is the product's headline
+          asset, so it is not buried under the payout card any more.
+          THE GUARDRAIL IS UNCHANGED AND IS WHAT MAKES THIS SAFE: the two
+          balances sit in separate cards, each labelled for what it is, and the
+          only "Get my money" button on this screen lives on the POINTS card.
+          Ordering says what the app is about; the copy and the buttons say what
+          each currency can do, and those must never trade places. */}
+      {mining.data && (
+        <Link href="/mine" className="block">
+          <Card className="overflow-hidden">
+            <div className="bg-brand p-5 text-white">
+              <p className="flex items-center gap-1.5 text-sm text-white/80">
+                <MineIcon size={16} /> {t("wallet.rozi.label")}
+              </p>
+              <p className="num mt-1 text-4xl font-extrabold">
+                {formatRozi(mining.data.roziMicro)}{" "}
+                <span className="text-xl font-bold text-white/70">ROZI</span>
+              </p>
+            </div>
+            <p className="flex gap-2 p-3.5 text-xs text-muted">
+              {/* Not StarIcon: this screen already spends that one on points
+                  and earnings, and reusing it here would blur the two currencies
+                  in exactly the place the copy is working hardest to separate. */}
+              <BoltIcon size={14} className="mt-0.5 shrink-0 text-brand" />
+              {t("wallet.rozi.notcash")}
+            </p>
+          </Card>
+        </Link>
+      )}
 
       {bal.loading ? <Loading lines={1} /> : bal.error ? (
         <ErrorState message={bal.error} onRetry={bal.reload} />
@@ -67,33 +99,16 @@ export default function WalletPage() {
           shows the live status badge). The withdraw screen still walls off
           unverified users, so the check itself is not weakened. */}
 
-      {/* ROZI is a SEPARATE currency on a SEPARATE ledger. It is deliberately in
-          its own card, visually secondary to Points, and it states outright that
-          it is not withdrawable. Points are the money; ROZI is a bet on the
-          future. Blurring those two would be the most damaging thing this screen
-          could do. */}
-      {mining.data && (
-        <Link href="/mine" className="block">
-          <Card className="border-brand/20 bg-brand-tint/40 p-4">
-            <div className="flex items-center gap-3">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand text-white">
-                <MineIcon size={22} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-muted">{t("wallet.rozi.label")}</p>
-                <p className="num text-2xl font-bold text-brand-ink">
-                  {formatRozi(mining.data.roziMicro)}{" "}
-                  <span className="text-base text-brand">ROZI</span>
-                </p>
-              </div>
-              <ArrowRightIcon size={22} className="text-brand" />
-            </div>
-            <p className="mt-3 flex gap-2 rounded-lg bg-card/80 p-2.5 text-xs text-muted">
-              <LockIcon size={14} className="mt-0.5 shrink-0 text-pending" />
-              {t("wallet.rozi.notcash")}
-            </p>
-          </Card>
-        </Link>
+      {/* The money screen is where people decide the app is worth telling a
+          friend about — they are looking at a balance and working out how to
+          make it bigger. Doing tasks is one answer; being paid a share of what
+          four friends earn is the better one, and until now this screen never
+          mentioned it. */}
+      {ref.data && (
+        <section>
+          <SectionTitle>{t("wallet.invite.title")}</SectionTitle>
+          <InviteRewards rewards={ref.data.rewards} showCta />
+        </section>
       )}
 
       <section>
