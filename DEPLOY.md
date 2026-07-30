@@ -225,8 +225,9 @@ loser of the race is a no-op. There is no lock to configure.
 | Setting | Default | Turn on when |
 |---|---|---|
 | `conversionEnabled` | `0` (off) | The lock period ends. This is the ONLY path from ROZI to real Points — see § 6 of the spec before touching it. |
-| `transfersEnabled` | `0` (off) | You want wallet-to-wallet ROZI sends. |
+| `transfersEnabled` | `0` (off) | You want wallet-to-wallet ROZI sends. Both screens (`/mine/send`, `/mine/receive`) are built and waiting on this one flag. |
 | `adsEnabled` | `0` (off) | You have a Monetag account and have set `adProvider = monetag`, `monetagZoneId` (vignette zone — the ad on mining start) and `monetagDirectLink` (direct-link URL — the watch-to-boost button) in `/staff → Mining`. No code change needed. See `docs/LAUNCH_CHECKLIST.md` § 3c. |
+| `usdtTopupEnabled` + `usdtTreasuryAddress` | `0` / empty | You want users to buy mining machines with real USDT. **BOTH are required** — the feature stays dark until an address is set, because a top-up screen with nowhere to send money takes people's money nowhere. See the section below. |
 | Boosters (Points-priced) | none seeded | You have decided on prices. Create them in `/staff`. |
 
 ⚠️ **Opening a Conversion Window commits real, cash-redeemable Points.** The panel
@@ -238,6 +239,45 @@ all of it. Do not commit a pot larger than money the business actually made.
 Postgres session and therefore cannot isolate concurrent transactions, so the
 double-spend race in `npm run test:mining:e2e` is skipped there. To exercise it
 for real, point `DATABASE_URL` at a real Postgres and re-run.
+
+### USDT top-up credit (ships OFF — read this before switching it on)
+
+Lets a user pay real USDT for mining machines. **No environment variables and no
+wallet keys**: it is deliberately manual, in the same posture as payouts.
+
+**What it is:** the user sends USDT to ONE address you publish, pastes the
+transaction hash into `/mine/topup`, and a staff member checks it on the chain
+and confirms. Confirmation is the only thing that posts credit.
+
+**What it is NOT, and this is the whole safety argument:** the balance is
+**spend-only**. It buys rigs. It cannot be withdrawn, sent, or converted, and
+there is no route in the codebase that does any of those — `npm run test:usdt`
+asserts their absence, and the ledger's CHECK constraint refuses a `withdrawal`
+row at the database level. **If someone asks for a withdrawal path, that is a
+licensing conversation (PVARA), not a feature request.**
+
+To switch it on, in `/staff → Mining`:
+
+| Setting | Notes |
+|---|---|
+| `usdtTreasuryChain` | **`bep20` only** — anything else is refused on save. The deposit screen tells every user to send on BNB Smart Chain (BEP20), so the treasury address must be on that chain or those deposits are lost. (Withdrawals still offer all three chains.) |
+| `usdtTreasuryAddress` | **Validated on save** — a typo here is a stream of deposits into an address nobody controls. |
+| `usdtTopupEnabled` | `1` |
+| `usdtMinTopup` / `usdtMaxTopup` | Defaults 1 / 500 USDT. The max is a ceiling on what one mistaken confirmation can cost. |
+
+Then set a USDT price on the machines you want purchasable, in `/staff → Mining
+→ Rigs` (`baseCostUsdt`). **None have one by default, on purpose.**
+
+⚠️ **Setting a USDT price publishes an implied ROZI exchange rate.** If a machine
+costs 100 ROZI *or* $10, every user can divide, and "$0.10 per ROZI" is the number
+they will repeat to their friends — for a token we say has no price and cannot be
+cashed out. Price the USDT option **well above** what the ROZI price implies: real
+money buys convenience, never a discount.
+
+**Reviewing deposits:** `/staff` → the top-up queue. Open the block explorer,
+confirm the transaction exists, landed at YOUR treasury address, and for how
+much — then type **the amount you saw**, not the amount the user claimed. That
+distinction is the entire point of the review step.
 
 ## Local development (free, no accounts needed)
 ```

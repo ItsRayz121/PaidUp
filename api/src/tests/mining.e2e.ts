@@ -13,7 +13,9 @@ import {
 } from "../db.ts";
 import { setMiningSetting, loadMiningSettings } from "../mining/settings.ts";
 import { settleEpoch, hashrateOf, grantBoost, accrueAllSessions } from "../mining/engine.ts";
-import { epochOf, rigUpgradeCost, toMicro, fromMicro } from "../mining/core.ts";
+import {
+  epochOf, rigUpgradeCost, toMicro, fromMicro, MINING_DEFAULTS,
+} from "../mining/core.ts";
 import { settleConversionWindow } from "../routes/mining.ts";
 
 let pass = 0, fail = 0;
@@ -392,6 +394,10 @@ if (usingRealPostgres) {
   // A mismatch here means either the lock is missing or this list is stale; both
   // are worth stopping for.
   const LOCKED_PATHS = [
+    // The rig upgrade now spends EITHER mined ROZI or topped-up USDT, and the
+    // single lock covers both: it is keyed on the user, not on the currency, so
+    // two requests from one account still serialize even when they are spending
+    // different balances. One lock, one path, still one entry here.
     "rig upgrade", "booster buy", "ROZI transfer", "conversion burn", "ad redeem",
     // The store debits ROZI at ORDER time, so two concurrent redeems would
     // otherwise both read the same balance and both go through.
@@ -531,13 +537,15 @@ check("PI: everyone is scaled by the SAME factor — no one is paid in full whil
 check("PI: the scaled payouts add up to the room that was left, not more",
   ginaRozi + hankRozi <= 400, `paid=${ginaRozi + hankRozi}`);
 
-// Put the economy back the way we found it, so a re-run starts clean. piBaseRate
-// resets to the real default (10), not the 1000 this block set.
-await setMiningSetting("supplyCap", 650_000_000);
-await setMiningSetting("piBaseRate", 10);
+// Put the economy back the way we found it, so a re-run starts clean. Both reset
+// to the REAL defaults rather than to literals — this block sets a piBaseRate of
+// 1000 and a hand-squeezed cap, and hard-coding the restore is how a retune of
+// the launch economy silently stops being exercised by everything below.
+await setMiningSetting("supplyCap", MINING_DEFAULTS.supplyCap);
+await setMiningSetting("piBaseRate", MINING_DEFAULTS.piBaseRate);
 await setMiningSetting("emissionModel", "pi");
 
-console.log("\n-- THE LAUNCH CONFIG: rate 10/day, an 8h session, through real settlement --");
+console.log(`\n-- THE LAUNCH CONFIG: rate ${MINING_DEFAULTS.piBaseRate}/day, an 8h session, through real settlement --`);
 
 // The regression that the whole micro-ROZI migration exists for, proved end to end
 // rather than in the pure maths: at the founder's actual launch numbers, a user who
@@ -558,29 +566,35 @@ await addShares(nadia, EIGHT_HOURS, LAUNCH_EPOCH);
 await settleEpoch(LAUNCH_EPOCH);
 const nadiaRozi = await roziOf(nadia);
 
-check("LAUNCH: one 8h session at rate 10 pays a real amount, not zero",
+const launchRate = launchS.piBaseRate;
+check(`LAUNCH: one 8h session at rate ${launchRate} pays a real amount, not zero`,
   nadiaRozi > 0, `got ${nadiaRozi}`);
 check("LAUNCH: and it is exactly a third of the daily rate (8h of 24h)",
-  Math.abs(nadiaRozi - 10 / 3) < 0.00001, `got ${nadiaRozi}, expected ~3.333333`);
+  Math.abs(nadiaRozi - launchRate / 3) < 0.00001,
+  `got ${nadiaRozi}, expected ~${launchRate / 3}`);
 
-// The same session, at the rate AFTER all five halvings (0.3125/day). This is the
-// number that used to be zero, and it is the one that matters at scale.
+// The same session, at the rate AFTER all five halvings. This is the number that
+// used to be zero, and it is the one that matters at scale. At the 21M-supply
+// launch rate that final rate is 0.015625/day and an 8h session is worth
+// 0.005208 ROZI — five thousand micro, which the ledger holds exactly and the
+// old whole-ROZI ledger would have rounded away to nothing.
 const HALVED_EPOCH = epochOf() - 7;
 await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", HALVED_EPOCH);
 await sql.run("DELETE FROM mining_shares WHERE epoch = ?", HALVED_EPOCH);
 
+const fullyHalved = launchRate / 32; // five halvings
 const omar = await mkUser("omar");
 await addShares(omar, EIGHT_HOURS, HALVED_EPOCH);
-await setMiningSetting("piBaseRate", 0.3125); // 10 halved five times
+await setMiningSetting("piBaseRate", fullyHalved);
 await settleEpoch(HALVED_EPOCH);
 const omarRozi = await roziOf(omar);
 
 check("LAUNCH: an 8h session at the FULLY-HALVED rate still pays, not zero",
   omarRozi > 0, `got ${omarRozi}`);
-check("LAUNCH: the fully-halved 8h session pays ~0.104166 ROZI",
-  Math.abs(omarRozi - 0.3125 / 3) < 0.00001, `got ${omarRozi}`);
+check(`LAUNCH: the fully-halved 8h session pays ~${(fullyHalved / 3).toFixed(6)} ROZI`,
+  Math.abs(omarRozi - fullyHalved / 3) < 0.00001, `got ${omarRozi}`);
 
-await setMiningSetting("piBaseRate", 10);
+await setMiningSetting("piBaseRate", MINING_DEFAULTS.piBaseRate);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

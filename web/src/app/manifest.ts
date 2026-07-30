@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "RoziPay — earn and get real money",
     short_name: "RoziPay",
-    description: "Do simple tasks, earn points, and get real cash in your wallet.",
+    description: "Do simple tasks, earn USDT, and mine free ROZI every day.",
     start_url: "/",
     scope: "/",
     display: "standalone",

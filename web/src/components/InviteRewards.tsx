@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui";
 import { GiftIcon, StarIcon, MineIcon, ShieldIcon, ArrowRightIcon } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
-import { formatPoints } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import type { Referrals } from "@/lib/api";
 
 // "What is a friend actually worth?" — answered in one card, in one place.
@@ -44,7 +44,7 @@ export function InviteRewards({
     },
     {
       Icon: StarIcon,
-      title: t("invite.first.title", { n: formatPoints(rewards.firstTaskBonus) }),
+      title: t("invite.first.title", { n: formatMoney(rewards.firstTaskBonus) }),
       body: t("invite.first.body"),
     },
     // Mining is not a footnote to the referral offer — a friend who mines raises

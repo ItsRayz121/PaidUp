@@ -3,7 +3,7 @@ import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
-import { validateAddress, type ChainId } from "../chains.ts";
+import { validateAddress, chainIsOffered, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
@@ -78,6 +78,17 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       }
     }
 
+    // The chain must be one we currently OFFER, not merely one we can parse.
+    // chainById still resolves Base and Aptos so historical rows keep their
+    // labels (see chains.ts), which means a stale client could otherwise still
+    // open a request on a chain we no longer pay out on — and it would validate
+    // cleanly, hold the user's money, and sit in the queue unpayable.
+    if (!chainIsOffered(chain)) {
+      return reply.code(400).send({
+        error: "We pay out in USDT on BNB Smart Chain (BEP20). Please use a BEP20 address.",
+      });
+    }
+
     // Validate the destination address for the chosen chain BEFORE holding funds
     // — a payout to a malformed address is unrecoverable.
     const addrCheck = validateAddress(chain as ChainId, addressRaw);
@@ -147,6 +158,14 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     const parsed = addressSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick a network and enter a wallet address." });
     const { chain, address: addressRaw } = parsed.data;
+    // Same gate as the request path. Saving an address on a chain we no longer
+    // pay out on would let the withdraw screen pre-fill an address that is then
+    // refused at the moment the user tries to use it.
+    if (!chainIsOffered(chain)) {
+      return reply.code(400).send({
+        error: "We pay out in USDT on BNB Smart Chain (BEP20). Please use a BEP20 address.",
+      });
+    }
     const check = validateAddress(chain as ChainId, addressRaw);
     if (!check.ok) return reply.code(400).send({ error: check.error });
     const address = addressRaw.trim();

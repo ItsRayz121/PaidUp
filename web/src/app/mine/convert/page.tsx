@@ -8,7 +8,7 @@ import { ArrowRightIcon, CheckIcon, ClockIcon, StarIcon, MineIcon, InfoIcon } fr
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchMyConversion, burnRozi } from "@/lib/api";
-import { formatPoints, formatRozi, roziFromMicro, ROZI_SCALE } from "@/lib/format";
+import { formatMoney, formatRozi, roziFromMicro, ROZI_SCALE } from "@/lib/format";
 
 // Turn ROZI into points — the ONLY path between the two ledgers (§ 6).
 //
@@ -126,7 +126,7 @@ export default function ConvertPage() {
           <p className="text-sm text-white/80">{t("convert.pot")}</p>
           <p className="num mt-1 flex items-center justify-center gap-2 text-4xl font-extrabold">
             <StarIcon size={28} className="text-accent" />
-            {formatPoints(c.potPoints ?? 0)}
+            {formatMoney(c.potPoints ?? 0)}
           </p>
           {closesIn && (
             <p className="mt-2 num text-sm text-white/85">
@@ -163,7 +163,7 @@ export default function ConvertPage() {
           <div className="mt-2 flex items-center justify-between">
             <span className="text-sm text-muted">{t("convert.ifClosedNow")}</span>
             <span className="num font-bold text-accent-ink">
-              ~{formatPoints(c.myPointsIfClosedNow ?? 0)}
+              ~{formatMoney(c.myPointsIfClosedNow ?? 0)}
             </span>
           </div>
           <p className="mt-2 text-xs text-muted">{t("convert.ifClosedNote")}</p>

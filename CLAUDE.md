@@ -99,7 +99,8 @@ These override convenience or speed at every step:
 
 - **Phase 3 (cont.)**: earnings/referral/withdrawal upgrade done + verified (2026-07-11):
   - **Withdrawal networks** narrowed to **USDT BEP20, Base, Aptos** (Polygon dropped;
-    TRC20/Tron is a quick future add — one validator).
+    TRC20/Tron is a quick future add — one validator). ⚠️ **Narrowed again to
+    BEP20 ONLY on 2026-07-29 — see the "ONE CHAIN IN, ONE CHAIN OUT" entry below.**
   - **Saved payout address** — set once per chain, reused (`payout_addresses` table
     + `/withdrawals/addresses` GET/PUT; auto-saved on withdrawal). Withdraw screen
     pre-fills it and is reachable **below the threshold** so users set it up early.
@@ -201,11 +202,12 @@ These override convenience or speed at every step:
       arithmetic that read as a broken promise. Under `"pi"` a halving is a clean
       50% cut, and **a ×2 multiplier exactly offsets one halving** — which is what
       makes streaks and referrals worth keeping.
-    - ⚠️ **Keep the effective rate above ~10.** Payouts floor to whole ROZI, so
-      once `piBaseRate` has been halved into single digits, anyone who mined only
-      *part* of a day rounds to **zero**. This is the one way the model quietly
-      stops paying people. The admin panel raises `rateTooLow` when it happens;
-      there is a unit test pinning the behaviour.
+    - ⚠️ ~~**Keep the effective rate above ~10.**~~ **OBSOLETE.** True only while
+      the ledger held whole ROZI. It holds millionths now, which is what made the
+      2026-07-29 cut to **0.5/day** safe. `rateTooLow` was re-aimed at < 0.001/day.
+    - ⚠️ **Rig prices are a function of `piBaseRate`.** Retune one, retune the
+      other, or the first rig becomes unaffordable and the whole ROZI sink
+      silently stops existing. See `SEED_RIGS` in `api/src/db.ts`.
   - **Hashrate is earned, never tapped**: streak (up to ×2), **credited task ⇒ +50%
     for 48h** (the line that makes mining *feed* the offerwall instead of competing
     with it), watched ad ⇒ +100% for 4h, rigs bought with ROZI (cost growth 1.6 >
@@ -313,6 +315,124 @@ These override convenience or speed at every step:
     findings). The `LOCKED_PATHS` tripwire in `mining.e2e.ts` caught the store's
     new debit path — **if you add a spending path, add `lockUser()` and add it to
     that list.**
+
+- **ONE TOKEN, ONE CURRENCY, A 21M SUPPLY, AND A PUBLIC ROAD MAP (2026-07-29).**
+  Five founder decisions in one pass. All verified: 41 unit + 50 mining e2e +
+  28 profile + 41 usdt + 25 conversion + 29 store + 14 referrals + 15 admin +
+  25 kyc + 9 push + 45 telegram + 5 proxy = **327 checks green**; api + web
+  typecheck, eslint, web production build all clean.
+  - **Supply cut 650M → 21M, rate cut 10/day → 0.5/day.** These are ONE decision
+    and the unit test `THE SUPPLY CAP AND THE MINING RATE ARE ONE DECISION` says
+    so. Rig prices were rescaled ÷20 to match (`SEED_RIGS` +
+    `migrateRigCosts21m`, a one-time guarded migration for existing rows), along
+    with `baseEmission` (3M → 100k), `transferDailyCap` (50k → 1k) and
+    `adminAdjustMaxRozi` (1M → 25k). **The cap can never go down again** — see
+    `MINING_SPEC.md` § 2. And on the record, because it will be asked again: **a
+    smaller cap does not make the token worth more.** It buys a unit price that
+    reads like a real asset and a smaller daily mint. Nothing else.
+  - **The word "points" is gone from the earner app.** Money shows as **USDT**
+    everywhere (`formatMoney`), the withdraw screen takes USDT as input and
+    converts at the API edge (`usdtToPoints`), and `formatUsdt` now uses **three
+    decimals under $1** — a 5-point task is $0.005, and at two decimals that
+    renders as "0.00 USDT", i.e. telling someone their work was worth nothing.
+    ⚠️ **The ledger is still points and the API still speaks points.** That is
+    where the integer arithmetic lives. The staff panel deliberately still shows
+    points: it is where the ledger is reconciled.
+  - **Profile settings** (`/profile/settings`): display name (free to change),
+    **@handle** (unique case-insensitively, **one change per 30 days**), and a
+    picture. The cooldown is a **security control, not a preference** — a
+    freely-swappable handle lets someone take a name, collect the transfers meant
+    for its owner, drop it, and repeat. The handle is a send target
+    (`POST /mining/transfer` accepts `@handle` / code / email), and `/mine/receive`
+    is the other half. Avatars are **magic-byte sniffed** (an avatar renders back
+    into a page, so a "JPEG" that is really `<svg onload=…>` is stored XSS) and
+    live in their own table — `auth.ts` does `SELECT *` on every request and a
+    40KB blob on that row would be paid for on all of them.
+  - **Public road map** at `/mine/roadmap`, with the founder's exact months.
+    Two rules the page keeps: **no price, ever** (a road map that mentions what
+    ROZI might be worth stops being a plan and becomes an offer), and what
+    already works is listed FIRST — a page of only future dates reads as a wish
+    list. ⚠️ **The September "ID check" milestone is already live today**; the
+    founder asked for those dates and got them, but that row may want rewording.
+  - **USDT top-up credit** — real money in, to buy mining machines with
+    (`/mine/topup`, `usdt_ledger`, `usdt_topups`). Built to the founder's
+    explicit "ROZI **or** real USDT" after a recommendation against it. **Every
+    narrowing is what makes it safe, and none of them are optional:**
+    1. **SPEND-ONLY.** It buys rigs and nothing else — no withdrawal, no
+       transfer, no conversion. The `usdt.e2e.ts` suite asserts the **absence**
+       of those routes and the ledger's CHECK constraint refuses a `withdrawal`
+       row at the database level. The moment this balance can leave the app we
+       are holding customer funds, which is the licensed activity (PVARA) this
+       product refuses everywhere else. **Do not add an exit.**
+    2. **Deposits are manual and staff-confirmed.** User sends to one published
+       treasury address and pastes the tx hash; a human checks the chain. No hot
+       wallet, no chain listener, no private key in this system. The **reviewer's**
+       amount is credited, never the user's claim — otherwise send $1, claim $500.
+    3. One transaction = one claim, ever, across all users (unique index on
+       `(chain, tx_hash)`); confirmation is an atomic `UPDATE … WHERE pending`.
+    4. **Ships OFF** (`usdtTopupEnabled` + `usdtTreasuryAddress`), and **no rig
+       has a USDT price by default** — ⚠️ setting one publishes an **implied ROZI
+       exchange rate** (100 ROZI or $10 ⇒ $0.10/ROZI) for a token we say has no
+       price. Price the USDT option well above what the ROZI price implies.
+  - Still the founder's call, not built: **transfers remain OFF**
+    (`transfersEnabled = 0`). The send/receive screens are finished and it is one
+    toggle in `/staff → Mining`, but turning it on contradicts the documented
+    2–3 month lock period, so it was left alone.
+
+- ⚠️ **A HANDLE MUST NEVER SHADOW AN INVITE CODE (security fix, 2026-07-29).**
+  Caught by `security-review` on the @handle work, and it was theft-by-squatting.
+  Invite codes are generated as uppercase letters + two digits (`AHMED42`,
+  `uniqueReferralCode` in `auth.ts`) — which lower-cases to `ahmed42`, a
+  perfectly legal @handle. **Both are accepted as "send ROZI to" targets**, and
+  `/mine/receive` tells users to share their invite code so people can pay them.
+  The recipient lookup was one `WHERE username = ? OR referral_code = ? OR
+  email = ?` with no ordering, so both rows matched and `sql.get` returned
+  whichever the planner picked. An attacker took the lowercase form of a
+  victim's *published* code as their handle and collected the transfers — and
+  the victim could not fix it, because codes are generated, not chosen.
+  **Two independent defences now, and both have regression tests:**
+  1. `routes/profile.ts` refuses a handle matching any existing `referral_code`.
+     The unique index cannot catch this — it compares usernames to usernames, so
+     the two namespaces have to be checked against each other explicitly.
+  2. `routes/mining.ts` resolves the recipient in **explicit priority order**,
+     invite code FIRST, because a system-generated identifier must always beat a
+     user-chosen one. Do not "simplify" this back into a single `OR`.
+
+- **ONE CHAIN IN, ONE CHAIN OUT — USDT on BEP20 only (founder, 2026-07-29).**
+  Both the deposit and the payout side are now BEP20, for two *different*
+  reasons that should not be collapsed into one:
+  - **Deposits: a SAFETY reason.** The top-up screen's copy names the network
+    literally — "BNB Smart Chain (BEP20)" — so `usdtTreasuryChain` is validated
+    to `bep20` and the admin panel **refuses** Base or Aptos. A treasury moved
+    to another chain would leave that copy pointing every user at the wrong
+    network, and those deposits are unrecoverable.
+    ⚠️ **The deposit copy separates the TOKEN from the NETWORK, and must keep
+    doing so.** The old line interpolated the chain label and read *"Send only
+    USDT on BEP20 · BNB Chain"* — in which the most eye-catching word is **BNB**,
+    a real token in the same wallet. People send BNB, it arrives, it is not
+    USDT, and there is no way to give it back. So the screen now shows "Coin to
+    send: USDT" and "Network: BNB Smart Chain (BEP20)" as two labelled rows, and
+    **BNB appears exactly once — in the list of coins NOT to send.** Do not put
+    a `{chain}` placeholder back into a sentence about what to send.
+  - **Payouts: an OPERATIONAL reason.** One chain to hold USDT on, one gas token
+    to keep funded, one explorer, one answer when a user asks support "which
+    network?".
+  - ⚠️ **`chains.ts` (both copies) now has TWO lists and the split is
+    load-bearing.** `KNOWN_CHAINS` is everything we can validate and label;
+    `CHAINS` is what is currently *offered*. Base and Aptos stay in
+    `KNOWN_CHAINS` because deleting them would blank the network on every
+    historical withdrawal row and break `payout.ts` recognising its own past
+    work. `chainById()` spans the known set on purpose; the new
+    **`chainIsOffered()`** is what gates new requests, and it guards both
+    `POST /withdrawals` and `PUT /withdrawals/addresses` (a saved address on a
+    dead chain would pre-fill a form that then refuses itself). Restoring a
+    chain = moving one line back into the filter, on both sides.
+  - The withdraw screen renders a single offered chain as a **statement, not a
+    picker** — a radio group with one option reads as "there are others, find
+    them". The picker returns by itself when `CHAINS.length > 1`.
+  - Verified: `npm run test:usdt` is now **52 checks**, including that Base and
+    Aptos still label, that only BEP20 is offered, and that a *valid* Base
+    address is refused anyway — the address is fine, the chain is not on offer.
 
 - **ENGLISH ONLY — Urdu dropped (founder, 2026-07-12).** The `ur` dictionary,
   `LangToggle`, RTL and the locale preference are **deleted**. Earners read simple

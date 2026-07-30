@@ -68,15 +68,29 @@ over-issue**.
 
 ### 3.1 Supply
 
-Total supply: **1,000,000,000 ROZI** (fixed, hard cap).
+Total supply: **32,300,000 ROZI** (fixed, hard cap).
+
+⚠️ **Cut from 1,000,000,000 on 2026-07-29 (founder), before launch.** The mining
+allocation went 650,000,000 → **21,000,000** and `piBaseRate` went 10/day →
+**0.5/day** in the same decision — see § 3.2.1, they only make sense together.
+
+The honest caveat, recorded so nobody re-argues it: **a smaller cap does not make
+the token worth more.** 650M at $0.001 and 21M at $0.031 are the same company at
+the same value. What the small cap buys is (a) a unit price that reads as a real
+asset rather than a farm coin, and (b) it forces the per-day mint down, which is
+the thing actually worth having.
+
+**This number can never go down again.** Cutting a supply cap after people have
+mined against it retroactively devalues what they hold, and it is the fastest way
+to lose a community. It was safe to cut once, before launch. Treat it as frozen.
 
 | Allocation | % | ROZI | Notes |
 |---|---|---|---|
-| **Community mining** | **65%** | 650,000,000 | Emitted per § 3.2. Never minted any other way. |
-| Liquidity | 10% | 100,000,000 | Only if a listing ever happens (§ 7). Locked until then. |
-| Team / founder | 10% | 100,000,000 | **6-month cliff, then 24-month linear vest.** Not mintable early. |
-| Ecosystem & partnerships | 10% | 100,000,000 | Contests, community rewards, network deals. Admin-gated, audit-logged. |
-| Reserve | 5% | 50,000,000 | Emergencies, exchange requirements. |
+| **Community mining** | **65%** | 21,000,000 | Emitted per § 3.2. Never minted any other way. |
+| Liquidity | 10% | 3,230,000 | Only if a listing ever happens (§ 7). Locked until then. |
+| Team / founder | 10% | 3,230,000 | **6-month cliff, then 24-month linear vest.** Not mintable early. |
+| Ecosystem & partnerships | 10% | 3,230,000 | Contests, community rewards, network deals. Admin-gated, audit-logged. |
+| Reserve | 5% | 1,615,000 | Emergencies, exchange requirements. |
 
 65% to the community is deliberately high (founder: *"give maximum to
 community"*). It is also the honest number: the community is the only reason the
@@ -126,11 +140,24 @@ for more than the cap has left. When it does, every payout is scaled by the same
 factor (`capScaleFactor`) — never paid out in row order until the pool runs dry
 mid-list, which would hand the whole remainder to whoever happened to sort first.
 
-⚠️ **Keep the effective rate above ~10.** Payouts floor to whole ROZI. Once
-`piBaseRate` has been halved down into single digits, a user who mined only *part*
-of a day rounds down to **zero** and earns nothing at all. This is the one way the
-model quietly stops paying people. The admin panel flags it (`rateTooLow`), and a
-unit test pins the behaviour so it is never a surprise.
+⚠️ ~~**Keep the effective rate above ~10.**~~ **OBSOLETE — do not act on this.**
+It was true when the ledger held **whole ROZI**: a partial day at a single-digit
+rate floored to zero and the app paid nothing for real work. The ledger now holds
+**millionths** (`ROZI_SCALE`, § 3.2), which is precisely what made the 2026-07-29
+cut to `piBaseRate` **0.5/day** safe — an 8-hour session still pays 0.166666, and
+0.005208 even after all five halvings.
+
+The alarm was kept but **re-aimed**: `rateTooLow` now fires below **0.001/day**,
+where even a full day of baseline mining would round away to nothing. A unit test
+pins both the launch rate and the fully-halved rate so neither can regress
+silently.
+
+⚠️ **Rig prices are a function of `piBaseRate` and must be retuned with it.**
+They have been rescaled twice for this reason (÷10, then ÷20). The invariant is
+that the first rig costs ~5 days of baseline mining. Change the rate without
+changing the catalogue and nobody can afford the first rung, so nothing is ever
+burned and the entire ROZI sink silently stops existing. See `SEED_RIGS` and
+`migrateRigCosts21m` in `api/src/db.ts`.
 
 Plain-English version for the app: **"Mine at your own speed. More people mining
 does not take your ROZI away. As the app grows, the rate halves — so mine early."**
@@ -139,15 +166,16 @@ does not take your ROZI away. As the app grows, the rate halves — so mine earl
 
 The original Bitcoin-style model, kept as the safe place to fall back to.
 
-- **Epoch 0 emission (E₀)** = **3,000,000 ROZI**.
+- **Epoch 0 emission (E₀)** = **100,000 ROZI**.
 - **Halving** every **100 epochs** (~3.3 months).
 - Emission at epoch *e*: `E(e) = E₀ / 2^floor(e / 100)`
 - Your payout = your share of that day's total **hashrate-seconds**.
 
 The sum of that series converges to `E₀ × halving_period × 2` =
-`3,000,000 × 100 × 2` = **600,000,000**, leaving ~50M of the mining allocation as
+`100,000 × 100 × 2` = **20,000,000**, leaving 1M of the mining allocation as
 headroom for the referral/bonus overhead in § 4.6 without ever breaching the
-650M cap.
+21M cap. (A unit test pins this: if either number is retuned without the other,
+it goes red rather than silently over-issuing.)
 
 Its one genuine advantage: because the pot is a fixed constant, **over-issuing is
 *arithmetically* impossible** — not merely prevented by a check. That is why it
@@ -289,7 +317,7 @@ At UTC midnight (plus grace), a settlement job runs for the epoch that just clos
 
 1. Sum every user's accrued `hashrate_seconds` for the epoch.
 2. `total_shares = Σ user_shares`. If zero, the epoch emits nothing.
-3. `emission = E(e)`, clamped so cumulative emission never exceeds the 650M cap.
+3. `emission = E(e)`, clamped so cumulative emission never exceeds the 21M cap.
 4. Each user is credited `emission × user_shares / total_shares` ROZI, as an
    append-only `rozi_ledger` row (`source_type='mining'`, `source_ref_id=epoch`).
 5. The epoch row is marked settled. **Idempotent**: a unique index on epoch
@@ -375,7 +403,9 @@ ad revenue needed per user per day
   = ROZI mined per day × withdrawable % × USD per ROZI
 ```
 
-At `piBaseRate` 10/day an engaged miner (×3 multipliers) produces ~30 ROZI/day.
+At the old `piBaseRate` of 10/day an engaged miner (×3 multipliers) produced ~30
+ROZI/day. (The rate is now 0.5/day and the cap 21M, so the absolute numbers are
+20× smaller — the *ratio* that kills the idea is unchanged, which is the point.)
 At **$0.001/ROZI** and only **20%** withdrawable that is $0.006/user/day — about
 **20 ad impressions per user per day** at a ~$0.30 CPM, against the 3–5 that
 `/mine` actually shows. And $0.001/ROZI means 100 days of mining for $3, which is

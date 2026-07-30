@@ -13,7 +13,7 @@
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
 import { fetchBalance } from "@/lib/api";
-import { formatPoints } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { LogoMark } from "./Logo";
 import { useI18n } from "@/lib/i18n";
 
@@ -37,11 +37,10 @@ export function TopBar() {
           className="flex items-center gap-1.5 rounded-full bg-brand-tint px-3 py-1.5"
           aria-label={t("topbar.balanceLabel")}
         >
+          {/* formatMoney already ends in "USDT", so the unit label beside it
+              would read "0.42 USDT USDT". The number carries its own unit now. */}
           <span className="num text-sm font-bold leading-none text-brand">
-            {balance.data ? formatPoints(balance.data.points) : "—"}
-          </span>
-          <span className="text-[11px] font-medium leading-none text-brand/70">
-            {t("topbar.points")}
+            {balance.data ? formatMoney(balance.data.points) : "—"}
           </span>
         </Link>
       </div>

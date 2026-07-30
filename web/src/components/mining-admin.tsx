@@ -10,9 +10,13 @@ import {
   fetchMiningSettings, updateMiningSettings, fetchMiningStats, settleMining,
   fetchAdminRigs, updateAdminRig, fetchConversion, openConversionWindow,
   settleConversionWindow, fetchStoreAdmin, createStoreItem, updateStoreItem,
-  fetchRedemptions, decideRedemption, type MiningStats,
+  fetchRedemptions, decideRedemption,
+  fetchAdminTopups, confirmTopup, rejectTopup, type MiningStats,
 } from "@/lib/api";
-import { formatPoints } from "@/lib/format";
+// The staff panel deliberately still shows POINTS, not USDT. This is where the
+// ledger is reconciled, and hiding the underlying unit from the people checking
+// the numbers would make them harder to check, not easier.
+import { formatPoints, timeAgo } from "@/lib/format";
 
 const n = (v: number) => v.toLocaleString();
 
@@ -159,6 +163,8 @@ export function MiningPanel() {
       <StorePanel />
 
       <RigPanel />
+
+      <TopupPanel />
 
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -669,6 +675,18 @@ function RigPanel() {
     }
   }
 
+  // Set (or clear) the USDT price on one rig. Blank/0 means ROZI only.
+  async function setUsdt(id: string, raw: string) {
+    const v = raw.trim();
+    try {
+      await updateAdminRig(id, { baseCostUsdt: v === "" ? null : Number(v) });
+      rigs.reload();
+      setMsg(null);
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+
   if (rigs.loading || !rigs.data) return null;
 
   return (
@@ -678,14 +696,22 @@ function RigPanel() {
         Cost growth must always exceed power growth, or each level gets cheaper per H/s and hashrate runs
         away. The API refuses to save a rig that inverts that.
       </p>
+      {/* The trap, stated where the field is. An admin setting this number is
+          publishing a ROZI valuation whether they mean to or not. */}
+      <p className="mt-1.5 rounded bg-pending-tint p-1.5 text-[11px] text-pending">
+        <strong>USDT price:</strong> blank = ROZI only, which is the default for every rig.
+        Setting one publishes an <strong>implied ROZI rate</strong> — a rig at 100 ROZI or $10 tells
+        every user that ROZI is $0.10, for a token we say has no price. Price the USDT option well
+        ABOVE what the ROZI price implies: real money buys convenience, not a discount.
+      </p>
       {msg && <p className="mt-2 text-xs text-danger">{msg}</p>}
 
       <div className="mt-2 overflow-x-auto">
-        <table className="w-full min-w-[560px] text-xs">
+        <table className="w-full min-w-[640px] text-xs">
           <thead className="text-left uppercase text-muted">
             <tr>
               <th className="py-1">Rig</th><th>Base cost</th><th>Cost ×</th>
-              <th>Base power</th><th>Power ×</th><th>Max lvl</th><th></th>
+              <th>Base power</th><th>Power ×</th><th>Max lvl</th><th>USDT</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -697,6 +723,19 @@ function RigPanel() {
                 <td className="font-mono">{n(r.base_power)}</td>
                 <td className="font-mono">{(r.power_growth / 100).toFixed(2)}</td>
                 <td className="font-mono">{r.max_level}</td>
+                <td>
+                  <input
+                    type="number" min={0} step={0.5}
+                    defaultValue={r.base_cost_usdt ?? ""}
+                    placeholder="—"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      const cur = r.base_cost_usdt === null ? "" : String(r.base_cost_usdt);
+                      if (next !== cur) setUsdt(r.id, next);
+                    }}
+                    className="w-20 rounded border border-line bg-card px-1.5 py-0.5 font-mono"
+                  />
+                </td>
                 <td>
                   <button onClick={() => toggle(r.id, r.status)}
                     className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
@@ -710,6 +749,107 @@ function RigPanel() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// The USDT deposit review queue.
+//
+// A user has told us they sent money. NOBODY IS CREDITED UNTIL A HUMAN CONFIRMS,
+// and the amount that gets credited is the one typed HERE — what the reviewer
+// read off the chain — never the amount the user claimed. That distinction is
+// the entire reason this screen exists: without it a user sends $1, claims $500,
+// and the review step is a rubber stamp on a number nobody checked.
+function TopupPanel() {
+  const topups = useApi(() => fetchAdminTopups("pending"), []);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function confirm(id: string, claimed: number) {
+    const raw = window.prompt(
+      "How much USDT did you actually SEE on the chain?\n\n" +
+      `The user claimed ${claimed}. Type what the block explorer shows — that is ` +
+      "what will be credited.",
+      String(claimed),
+    );
+    if (raw === null) return;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0) { setMsg("That is not an amount."); return; }
+    setBusy(id);
+    try {
+      await confirmTopup(id, amount);
+      setMsg(`Credited ${amount} USDT.`);
+      topups.reload();
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
+  }
+
+  async function reject(id: string) {
+    const reason = window.prompt("Why is this being rejected? The user will see this.");
+    if (!reason) return;
+    setBusy(id);
+    try {
+      await rejectTopup(id, reason);
+      topups.reload();
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
+  }
+
+  if (topups.loading || !topups.data) return null;
+  const { treasuryAddress, treasuryChain, topups: rows } = topups.data;
+
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <h3 className="font-bold text-brand-ink">USDT deposits waiting to be checked</h3>
+      {treasuryAddress ? (
+        <p className="mt-1 text-xs text-muted">
+          Deposits should land at{" "}
+          <span className="font-mono text-brand-ink">{treasuryAddress}</span> on{" "}
+          <strong>{treasuryChain}</strong>. Open the block explorer, confirm the transaction
+          exists AND landed at that address, then type the amount you saw.
+        </p>
+      ) : (
+        <p className="mt-1 rounded bg-pending-tint p-1.5 text-xs text-pending">
+          No treasury address is set, so top-ups are off. Set{" "}
+          <span className="font-mono">usdtTreasuryChain</span> and{" "}
+          <span className="font-mono">usdtTreasuryAddress</span> above first.
+        </p>
+      )}
+      {msg && <p className="mt-2 text-xs text-brand-ink">{msg}</p>}
+
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">Nothing waiting.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-xs">
+            <thead className="text-left uppercase text-muted">
+              <tr><th className="py-1">User</th><th>Claimed</th><th>Transaction</th><th>When</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line align-top">
+                  <td className="py-1.5">
+                    <div className="font-semibold text-brand-ink">{r.username ? `@${r.username}` : r.email}</div>
+                  </td>
+                  <td className="font-mono">{r.amount} USDT</td>
+                  <td className="max-w-[220px] break-all font-mono text-[10px]">{r.tx_hash}</td>
+                  <td className="text-muted">{timeAgo(r.created_at)}</td>
+                  <td className="whitespace-nowrap">
+                    <button disabled={busy === r.id} onClick={() => confirm(r.id, r.amount)}
+                      className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
+                      Confirm
+                    </button>
+                    <button disabled={busy === r.id} onClick={() => reject(r.id)}
+                      className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
+                      Reject
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

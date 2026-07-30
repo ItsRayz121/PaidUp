@@ -532,6 +532,106 @@ const MIGRATIONS = `
   -- referrals/me (SUM of referral_bonus per user) and the leaderboard.
   CREATE INDEX IF NOT EXISTS idx_ledger_user_source
     ON ledger_entries(user_id, source_type);
+
+  -- ---- PROFILE: name, handle, picture (founder, 2026-07-29) ----------------
+  --
+  -- display_name is cosmetic and free to change. username is the PUBLIC HANDLE
+  -- people send ROZI to, which makes it a different kind of thing entirely:
+  --
+  --   • It is rate-limited to one change every 30 days (username_changed_at).
+  --     A handle that can be swapped at will is a scam vector — take a name,
+  --     collect a few transfers meant for its old owner, drop it, repeat. The
+  --     cooldown is the whole reason the column exists.
+  --   • It is UNIQUE, case-insensitively. "Ahmed" and "ahmed" must not be two
+  --     different people on a screen where the difference is one transfer going
+  --     to the wrong account, so the index is on LOWER(username).
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS username_changed_at TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+    ON users(LOWER(username)) WHERE username IS NOT NULL;
+
+  -- The picture lives in its OWN table, not a column on users, and that is
+  -- load-bearing rather than tidy-minded: auth.ts reads the user row with
+  -- SELECT * on every single authenticated request, so a ~40KB image on that
+  -- row would be dragged across the wire on every call the app makes.
+  CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id    TEXT PRIMARY KEY REFERENCES users(id),
+    image      TEXT NOT NULL,   -- data: URL, JPEG, downscaled in the browser
+    updated_at TEXT NOT NULL
+  );
+
+  -- ---- USDT TOP-UP CREDIT (founder, 2026-07-29) ---------------------------
+  --
+  -- The founder asked to let people pay real USDT for mining machines. This is
+  -- the narrowest shape that answers that, and every narrowing is deliberate:
+  --
+  --   1. IT IS SPEND-ONLY. Top-up credit buys rigs and nothing else. It can
+  --      NEVER be withdrawn, transferred, or converted back. The moment a user
+  --      can take it out again we are holding customer money on their behalf,
+  --      which is the licensed activity (PVARA) this product has refused to do
+  --      everywhere else — see MINING_SPEC.md § 7. Spend-only makes it prepaid
+  --      credit for a service instead. THERE IS NO WITHDRAWAL PATH IN THIS
+  --      CODE AND ONE MUST NOT BE ADDED without a licence conversation first.
+  --   2. DEPOSITS ARE MANUAL AND STAFF-CONFIRMED. The user sends USDT to our
+  --      published treasury address and submits the transaction hash; a human
+  --      checks it on-chain and confirms. No hot wallet, no derived per-user
+  --      addresses, no chain listener, no private key anywhere in this system.
+  --      Same posture as the payout side, which has run manually since launch.
+  --   3. IT SHIPS OFF (usdtTopupEnabled = 0) and stays off until the founder
+  --      sets a treasury address.
+  --
+  -- Amounts are micro-USDT (1 USDT = 1,000,000) in a BIGINT, for the same
+  -- reason ROZI is: a float ledger is how money systems lose cents.
+  CREATE TABLE IF NOT EXISTS usdt_ledger (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    -- Signed, exactly like the other two ledgers: a debit is a negative row, so
+    -- the balance is always a plain SUM and no row is ever updated. Never
+    -- "amount > 0" — that would reject every debit this table exists to record.
+    amount      BIGINT NOT NULL CHECK (amount <> 0),
+    direction   TEXT NOT NULL CHECK (direction IN ('credit','debit')),
+    source_type TEXT NOT NULL
+                  CHECK (source_type IN ('topup','rig_purchase','admin_adjustment')),
+    source_ref_id TEXT,
+    note        TEXT,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_usdt_ledger_user ON usdt_ledger(user_id, created_at);
+
+  -- One claimed deposit. Credit is posted ONLY when a staff member confirms.
+  CREATE TABLE IF NOT EXISTS usdt_topups (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    chain         TEXT NOT NULL,
+    tx_hash       TEXT NOT NULL,
+    amount        BIGINT NOT NULL CHECK (amount > 0),  -- micro-USDT, as claimed
+    status        TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','confirmed','rejected')),
+    reject_reason TEXT,
+    reviewed_by   TEXT REFERENCES users(id),
+    reviewed_at   TEXT,
+    created_at    TEXT NOT NULL
+  );
+  -- ONE CLAIM PER TRANSACTION, EVER, ACROSS ALL USERS. Without this, the same
+  -- real deposit can be pasted by ten accounts and confirmed ten times by a
+  -- tired reviewer who recognises the hash but not that they have seen it
+  -- before. This index is the actual defence; the human is the second one.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_topups_tx
+    ON usdt_topups(LOWER(chain), LOWER(tx_hash));
+  CREATE INDEX IF NOT EXISTS idx_usdt_topups_status ON usdt_topups(status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_usdt_topups_user ON usdt_topups(user_id, created_at);
+
+  -- What a rig costs in real money. NULL means "cannot be bought with USDT",
+  -- and that is the shipped default for every rig on purpose.
+  --
+  -- ⚠️ SETTING THIS PRICE PUBLISHES AN IMPLIED ROZI EXCHANGE RATE. If a rig
+  -- costs 100 ROZI or $10, every user can divide, and $0.10 per ROZI is the
+  -- number they will repeat to their friends — for a token we say has no price
+  -- and cannot be cashed out. Price the USDT option WELL ABOVE what the ROZI
+  -- price implies (real money buys convenience, not a discount), or leave it
+  -- NULL. This is a founder decision each time, which is why nothing is seeded.
+  ALTER TABLE rigs ADD COLUMN IF NOT EXISTS base_cost_usdt BIGINT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -881,17 +981,22 @@ const MINING_SCHEMA = `
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
 // owns this list at runtime, so a re-deploy must never stomp their edits.
 // Costs are in WHOLE ROZI (the ledger is in micro; the conversion happens at the
-// moment of the debit). Rescaled 10x down when piBaseRate dropped 100 -> 10, so
-// the tree paces exactly as designed: the first rig is ~5 days of baseline
-// mining, not 50. If the rate is retuned again, these have to move with it or
-// the whole sink silently becomes unreachable.
+// moment of the debit).
+//
+// ⚠️ RIG PRICES ARE A FUNCTION OF piBaseRate AND MUST MOVE WITH IT. They have
+// been rescaled twice for exactly this reason: 10x down when the rate dropped
+// 100 -> 10, and 20x down again when it dropped 10 -> 0.5 (2026-07-29, with the
+// 21M cap). The invariant being held is that the FIRST rig costs about five days
+// of baseline mining. Retune the rate without retuning these and the entire ROZI
+// sink silently becomes unreachable — nobody can afford the first rung, so
+// nothing is ever burned. See migrateRigCosts21m below for existing rows.
 const SEED_RIGS: [string, string, string, number, number, number][] = [
   // id, name, icon, base_cost, base_power, sort
-  ["old_phone", "Old Phone", "phone", 50, 5, 1],
-  ["laptop", "Laptop", "laptop", 300, 25, 2],
-  ["rig", "Mining Rig", "chip", 2_000, 150, 3],
-  ["server", "Server Rack", "server", 12_000, 800, 4],
-  ["datacentre", "Data Centre", "building", 75_000, 5_000, 5],
+  ["old_phone", "Old Phone", "phone", 3, 5, 1],
+  ["laptop", "Laptop", "laptop", 15, 25, 2],
+  ["rig", "Mining Rig", "chip", 100, 150, 3],
+  ["server", "Server Rack", "server", 600, 800, 4],
+  ["datacentre", "Data Centre", "building", 3_750, 5_000, 5],
 ];
 
 // ONE-TIME: rescale every ROZI amount from whole ROZI to micro-ROZI (x1e6).
@@ -938,11 +1043,43 @@ async function migrateRoziToMicro(): Promise<void> {
   console.log("MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.");
 }
 
+// ONE-TIME: bring existing rig prices down with the 21M supply cut (2026-07-29).
+//
+// The seed above only ever INSERTs, so a database that already has the rig rows
+// would have kept prices priced against a 10/day mining rate while the rate
+// became 0.5/day — a 20x mismatch that makes the cheapest rig 100 days of
+// baseline mining instead of 5, and quietly kills the sink.
+//
+// Divides by 20 with a floor of 1 (base_cost is BIGINT, so it cannot hold the
+// 2.5 that "Old Phone" wants; 3 is what the seed uses and what an untouched row
+// lands on). Gated on a marker written in the SAME transaction, for the same
+// reason migrateRoziToMicro is: running it twice would make every rig free.
+async function migrateRigCosts21m(): Promise<void> {
+  const done = await sql.get<{ value: string }>(
+    "SELECT value FROM app_settings WHERE key = 'rig_costs_21m'");
+  if (done) return;
+
+  await sql.tx(async (t) => {
+    await t.run("SELECT pg_advisory_xact_lock(hashtext('rig-costs-21m'))");
+    const already = await t.get<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'rig_costs_21m'");
+    if (already) return;
+
+    await t.run("UPDATE rigs SET base_cost = GREATEST(1, ROUND(base_cost / 20.0))");
+    await t.run(
+      "INSERT INTO app_settings (key, value, updated_at) VALUES ('rig_costs_21m','1',?)",
+      now(),
+    );
+  });
+  console.log("MINING: rescaled rig prices for the 21M supply (/20). This runs once.");
+}
+
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
   await driver.exec(MINING_SCHEMA);
   await migrateRoziToMicro();
+  await migrateRigCosts21m();
   for (const [id, name, icon, baseCost, basePower, sort] of SEED_RIGS) {
     await sql.run(
       `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, created_at)
@@ -1127,6 +1264,53 @@ export async function roziBalanceMicroOf(
 ): Promise<number> {
   const row = await t.get<{ bal: string | number }>(
     "SELECT COALESCE(SUM(amount), 0) AS bal FROM rozi_ledger WHERE user_id = ?",
+    userId,
+  );
+  return Number(row?.bal ?? 0);
+}
+
+// ---- USDT top-up credit ---------------------------------------------------
+// A THIRD append-only ledger, same shape as the two above for the same reason.
+//
+// This one is SPEND-ONLY: credit enters by a staff-confirmed deposit and leaves
+// only by buying a rig. There is no withdrawal, no transfer and no conversion,
+// and that absence is the whole safety argument (see usdt_ledger in the schema).
+// If you are here to add a way for this balance to leave the app, stop.
+export const USDT_SCALE = 1_000_000;
+export const usdtToMicro = (usdt: number) => Math.round(usdt * USDT_SCALE);
+export const usdtFromMicro = (micro: number) => micro / USDT_SCALE;
+
+export type UsdtSource = "topup" | "rig_purchase" | "admin_adjustment";
+
+export async function postUsdt(
+  params: {
+    userId: string;
+    micro: number; // positive magnitude, in MICRO-USDT
+    direction: "credit" | "debit";
+    sourceType: UsdtSource;
+    sourceRefId?: string;
+    note?: string;
+  },
+  t: Pick<TxApi, "run"> = sql,
+): Promise<string> {
+  const magnitude = Math.abs(Math.trunc(params.micro));
+  const amount = params.direction === "credit" ? magnitude : -magnitude;
+  const id = newId();
+  await t.run(
+    `INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, source_ref_id, note, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    id, params.userId, amount, params.direction, params.sourceType,
+    params.sourceRefId ?? null, params.note ?? null, now(),
+  );
+  return id;
+}
+
+export async function usdtBalanceMicroOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: string | number }>(
+    "SELECT COALESCE(SUM(amount), 0) AS bal FROM usdt_ledger WHERE user_id = ?",
     userId,
   );
   return Number(row?.bal ?? 0);

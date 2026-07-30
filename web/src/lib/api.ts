@@ -22,7 +22,32 @@ export type SessionUser = {
   // False for Telegram-created accounts that haven't added a real email yet
   // (their stored address is a synthetic placeholder, never shown or mailed).
   hasEmail?: boolean;
+  // What the app calls this person, and their public handle. Both optional and
+  // both may be null: an account that never opens the settings screen has
+  // neither, and every screen falls back to the email prefix.
+  displayName?: string | null;
+  username?: string | null;
 };
+
+// ---- Profile settings -------------------------------------------------------
+
+export type ProfileState = {
+  displayName: string | null;
+  username: string | null;
+  // ISO date the handle unlocks again, or null when it can be changed now.
+  usernameLockedUntil: string | null;
+  cooldownDays: number;
+  hasAvatar: boolean;
+};
+export const fetchProfile = () => apiFetch<ProfileState>("/profile");
+export const updateProfile = (patch: { displayName?: string; username?: string }) =>
+  apiFetch<{ displayName: string | null; username: string | null; usernameLockedUntil: string | null }>(
+    "/profile", { method: "PATCH", body: JSON.stringify(patch) });
+export const fetchAvatar = () => apiFetch<{ image: string | null }>("/profile/avatar");
+export const uploadAvatar = (image: string) =>
+  apiFetch<{ ok: true }>("/profile/avatar", { method: "PUT", body: JSON.stringify({ image }) });
+export const removeAvatar = () =>
+  apiFetch<{ ok: true }>("/profile/avatar", { method: "DELETE" });
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -464,6 +489,9 @@ export type MiningState = {
   // The shop has something in stock. Drives whether /mine links to it at all.
   storeOpen: boolean;
   transfersEnabled: boolean;
+  // Top-ups are switched on AND a treasury address is set. One flag for both,
+  // so the link never leads to a screen with nowhere to send money.
+  usdtTopup: boolean;
   // Why the user can or cannot send, answered by the server so the send screen
   // can say so before they type. The route re-checks every one of these — this
   // is for the copy, never for the decision.
@@ -503,11 +531,42 @@ export const startMining = (adNonce?: string) =>
 export type Rig = {
   id: string; name: string; icon: string; level: number; maxLevel: number;
   power: number; nextPower: number | null; nextCostMicro: number | null;
+  // null => this machine is ROZI-only, which is the default for all of them.
+  nextCostUsdtMicro: number | null;
 };
-export const fetchRigs = () => apiFetch<{ roziMicro: number; rigs: Rig[] }>("/mining/rigs");
-export const upgradeRig = (id: string) =>
-  apiFetch<{ ok: true; level: number; spentMicro: number; roziMicro: number }>(
-    `/mining/rigs/${id}/upgrade`, { method: "POST" });
+export const fetchRigs = () => apiFetch<{
+  roziMicro: number; usdtMicro: number; usdtEnabled: boolean; rigs: Rig[];
+}>("/mining/rigs");
+export const upgradeRig = (id: string, pay: "rozi" | "usdt" = "rozi") =>
+  apiFetch<{
+    ok: true; level: number; paidWith: string;
+    spentMicro: number; spentUsdtMicro: number; roziMicro: number; usdtMicro: number;
+  }>(`/mining/rigs/${id}/upgrade`, { method: "POST", body: JSON.stringify({ pay }) });
+
+// ---- USDT top-up credit -----------------------------------------------------
+// Spend-only credit for buying mining machines. There is no withdrawal endpoint
+// here because there is no withdrawal endpoint at all — see the usdt_ledger
+// comment in api/src/db.ts.
+
+export type UsdtTopup = {
+  id: string; chain: string; txHash: string; amountMicro: number;
+  status: "pending" | "confirmed" | "rejected";
+  rejectReason: string | null; createdAt: string;
+};
+export type UsdtState = {
+  enabled: boolean;
+  balanceMicro: number;
+  treasuryAddress: string | null;
+  treasuryChain: string | null;
+  chainLabel: string;
+  minTopup: number;
+  maxTopup: number;
+  topups: UsdtTopup[];
+};
+export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");
+export const claimUsdtTopup = (txHash: string, amount: number) =>
+  apiFetch<{ ok: true; id: string; status: string }>(
+    "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });
 
 export type RoziEntry = {
   id: string; amountMicro: number; direction: "credit" | "debit";
@@ -688,10 +747,28 @@ export const settleMining = (epoch?: number) =>
 export type AdminRig = {
   id: string; name: string; icon: string; base_cost: number; cost_growth: number;
   base_power: number; power_growth: number; max_level: number; sort: number; status: string;
+  // Whole USDT, or null for "ROZI only" — which is every rig by default.
+  base_cost_usdt: number | null;
 };
 export const fetchAdminRigs = () => apiFetch<{ rigs: AdminRig[] }>("/staff/mining/rigs");
 export const updateAdminRig = (id: string, patch: Record<string, unknown>) =>
   apiFetch<{ ok: true }>(`/staff/mining/rigs/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- USDT top-up review queue (staff) ---------------------------------------
+export type AdminTopup = {
+  id: string; user_id: string; email: string; username: string | null;
+  chain: string; tx_hash: string; amount: number; status: string;
+  reject_reason: string | null; created_at: string;
+};
+export const fetchAdminTopups = (status = "pending") =>
+  apiFetch<{ treasuryAddress: string; treasuryChain: string; topups: AdminTopup[] }>(
+    `/staff/mining/topups?status=${status}`);
+export const confirmTopup = (id: string, amount: number) =>
+  apiFetch<{ ok: true; balanceMicro: number }>(
+    `/staff/mining/topups/${id}/confirm`, { method: "POST", body: JSON.stringify({ amount }) });
+export const rejectTopup = (id: string, reason: string) =>
+  apiFetch<{ ok: true }>(
+    `/staff/mining/topups/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
 
 export type ConversionWindow = {
   id: string; pot_points: number; opens_at: string; closes_at: string;

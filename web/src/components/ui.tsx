@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
+import { formatMoney } from "@/lib/format";
 
 // Matches the backend's ledger row status (see @/lib/api LedgerEntry).
 type LedgerStatus = "earned" | "paid" | "pending" | "rejected";
@@ -53,14 +54,15 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
   );
 }
 
-// ---- Points pill ----------------------------------------------------------
+// ---- Reward pill ----------------------------------------------------------
+// Takes POINTS (what the API sends) and shows USDT (what the user reads). The
+// prop keeps its name because that is genuinely what the number is; the
+// conversion happens here, at the last possible moment, exactly once.
 export function PointsPill({ points }: { points: number }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2.5 py-1 text-accent-ink font-semibold text-sm whitespace-nowrap">
       <StarIcon size={15} />
-      <span className="num">+{points}</span>
-      <span className="sr-only">points</span>
-      <span aria-hidden>pts</span>
+      <span className="num">+{formatMoney(points)}</span>
     </span>
   );
 }

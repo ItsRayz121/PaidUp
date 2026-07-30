@@ -13,6 +13,7 @@ import { staffTaskRoutes } from "./routes/staffTasks.ts";
 import { kycRoutes } from "./routes/kyc.ts";
 import { staffKycRoutes } from "./routes/staffKyc.ts";
 import { pushRoutes } from "./routes/push.ts";
+import { profileRoutes } from "./routes/profile.ts";
 import { pushEnabled } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
@@ -131,6 +132,7 @@ await app.register(staffTaskRoutes);
 await app.register(kycRoutes);
 await app.register(staffKycRoutes);
 await app.register(pushRoutes);
+await app.register(profileRoutes);
 
 // ---- Mining: accrual sweep + epoch settlement ------------------------------
 // Each tick does two things, IN ORDER:

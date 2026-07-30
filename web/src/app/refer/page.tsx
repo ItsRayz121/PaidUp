@@ -8,7 +8,7 @@ import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon, TelegramI
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchReferrals, fetchTelegramConfig } from "@/lib/api";
-import { formatPoints } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 
 export default function ReferPage() {
   const { ready } = useRequireAuth();
@@ -119,7 +119,7 @@ export default function ReferPage() {
       <div className="grid grid-cols-3 gap-2.5">
         <Stat label={t("refer.friendsJoined")} value={String(ref.data?.joined ?? 0)} />
         <Stat label={t("refer.friends2Joined")} value={String(ref.data?.joined2 ?? 0)} />
-        <Stat label={t("refer.pointsEarned")} value={formatPoints(ref.data?.earnedPoints ?? 0)} accent />
+        <Stat label={t("refer.pointsEarned")} value={formatMoney(ref.data?.earnedPoints ?? 0)} accent />
       </div>
 
       {/* The full offer: both levels, the first-task bonus and the mining speed,

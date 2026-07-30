@@ -6,6 +6,7 @@ import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon, ShareIcon,
+  ChartIcon, CopyIcon, WalletIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -358,6 +359,25 @@ export default function MinePage() {
               <ArrowRightIcon size={22} className="text-brand" />
             </Card>
           </Link>
+
+          {/* Buying machines with real money, only once an Admin has switched
+              top-ups on AND set a treasury address (the API folds both into
+              this one flag). Off by default — see the usdt_ledger note in
+              api/src/db.ts for what this feature is and is deliberately not. */}
+          {s.usdtTopup && (
+            <Link href="/mine/topup" className="block">
+              <Card className="flex items-center gap-3 p-4">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
+                  <WalletIcon size={22} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-brand-ink">{t("mine.topup.title")}</p>
+                  <p className="text-sm text-muted">{t("mine.topup.body")}</p>
+                </div>
+                <ArrowRightIcon size={22} className="text-brand" />
+              </Card>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -396,22 +416,40 @@ export default function MinePage() {
         </Link>
       )}
 
-      {/* Sending only appears once the admin has switched transfers on. Showing a
-          dead entry point for a feature that answers "not open yet" would teach
-          users to ignore this screen's links. */}
+      {/* Send AND receive, appearing together once the admin has switched
+          transfers on. Showing a dead entry point for a feature that answers
+          "not open yet" would teach users to ignore this screen's links —
+          which is why Receive is behind the same flag even though receiving
+          itself is never refused: a way to be paid, in an app where nobody can
+          pay, is a link to a room with nothing in it. */}
       {s.transfer.enabled && (
-        <Link href="/mine/send" className="block">
-          <Card className="flex items-center gap-3 p-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-              <ShareIcon size={22} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-brand-ink">{t("mine.send.title")}</p>
-              <p className="text-sm text-muted">{t("mine.send.body")}</p>
-            </div>
-            <ArrowRightIcon size={22} className="text-brand" />
-          </Card>
-        </Link>
+        <>
+          <Link href="/mine/send" className="block">
+            <Card className="flex items-center gap-3 p-4">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
+                <ShareIcon size={22} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-brand-ink">{t("mine.send.title")}</p>
+                <p className="text-sm text-muted">{t("mine.send.body")}</p>
+              </div>
+              <ArrowRightIcon size={22} className="text-brand" />
+            </Card>
+          </Link>
+
+          <Link href="/mine/receive" className="block">
+            <Card className="flex items-center gap-3 p-4">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+                <CopyIcon size={22} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-brand-ink">{t("mine.receive.title")}</p>
+                <p className="text-sm text-muted">{t("mine.receive.body")}</p>
+              </div>
+              <ArrowRightIcon size={22} className="text-brand" />
+            </Card>
+          </Link>
+        </>
       )}
 
       {/* ---- Where your hashrate comes from ---- */}
@@ -443,6 +481,23 @@ export default function MinePage() {
           {t("mine.breakdown.note")}
         </p>
       </div>
+
+      {/* The road map, last on the screen and always present. Unlike the links
+          above it there is no flag on this one: what we are building next is
+          true whether or not any feature is switched on, and someone deciding
+          whether ROZI is worth their time should never have to hunt for it. */}
+      <Link href="/mine/roadmap" className="block">
+        <Card className="flex items-center gap-3 p-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+            <ChartIcon size={22} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-bold text-brand-ink">{t("mine.roadmap.title")}</p>
+            <p className="text-sm text-muted">{t("mine.roadmap.body")}</p>
+          </div>
+          <ArrowRightIcon size={22} className="text-brand" />
+        </Card>
+      </Link>
     </div>
   );
 }

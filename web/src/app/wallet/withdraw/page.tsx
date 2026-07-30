@@ -9,7 +9,7 @@ import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon 
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal, ApiError } from "@/lib/api";
-import { formatPoints, formatMoney } from "@/lib/format";
+import { formatMoney, pointsToUsdt, usdtToPoints } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
 // Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
@@ -24,7 +24,11 @@ export default function WithdrawPage() {
 
   const [chain, setChain] = useState<ChainId>("bep20");
   const [address, setAddress] = useState("");
-  const [amount, setAmount] = useState(0);
+  // THE USER TYPES USDT; THE API TAKES POINTS. The input holds the raw string
+  // they typed (not a number) so that "2." and "0.05" are typeable — coercing on
+  // every keystroke makes a decimal point impossible to enter. It becomes points
+  // once, at `amt` below, which is the only value the API ever sees.
+  const [usdtInput, setUsdtInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [savingAddr, setSavingAddr] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
@@ -59,7 +63,11 @@ export default function WithdrawPage() {
   const min = bal.data?.minWithdrawPoints ?? 2000;
   const fee = bal.data?.withdrawalFeePoints ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
-  const amt = amount || min;
+  // Blank field means "the minimum", which is what the placeholder shows.
+  const typedUsdt = Number(usdtInput);
+  const amt = usdtInput.trim() !== "" && Number.isFinite(typedUsdt)
+    ? usdtToPoints(typedUsdt)
+    : min;
   const net = Math.max(0, amt - fee); // points actually converted to USDT
   const belowMin = amt < min;
   const overBalance = amt > balance;
@@ -126,27 +134,42 @@ export default function WithdrawPage() {
 
       <Card className="p-4">
         <p className="text-sm text-muted">{t("withdraw.youHave")}</p>
-        <p className="num text-2xl font-bold text-brand-ink">{t("common.pointsAmount", { n: formatPoints(balance) })}</p>
-        <p className="text-sm text-muted">{t("withdraw.aboutEquals", { value: formatMoney(balance) })}</p>
+        <p className="num text-2xl font-bold text-brand-ink">{formatMoney(balance)}</p>
+        <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
       </Card>
 
-      {/* Network picker */}
+      {/* Network picker — or, while we pay out on exactly one chain, a statement.
+          A row of radio buttons containing a single option is not a choice; it
+          reads as "there are others, find them", and every user who taps it
+          learns nothing. So one chain renders as a plain labelled fact, and the
+          picker comes back by itself the moment CHAINS has more than one entry
+          (see web/src/lib/chains.ts). */}
       <div>
         <p className="mb-2 px-1 font-semibold text-brand-ink">{t("withdraw.getPaidUsdt")}</p>
         <div className="grid grid-cols-2 gap-2.5">
-          {CHAINS.map((c) => {
-            const active = c.id === chain;
-            return (
-              <button key={c.id} onClick={() => selectChain(c.id)} aria-pressed={active}
-                className={`rounded-xl border p-3 text-left ${active ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
-                <span className="flex items-center justify-between">
-                  <span className="font-semibold text-brand-ink">{c.label}</span>
-                  {active && <CheckIcon size={18} className="text-brand" />}
-                </span>
-                <span className="text-xs text-muted">{c.note}</span>
-              </button>
-            );
-          })}
+          {CHAINS.length === 1 ? (
+            <div className="col-span-2 flex items-center justify-between rounded-xl border border-brand bg-brand-tint p-3">
+              <span>
+                <span className="block font-semibold text-brand-ink">{CHAINS[0].label}</span>
+                <span className="text-xs text-muted">{CHAINS[0].note}</span>
+              </span>
+              <CheckIcon size={18} className="shrink-0 text-brand" />
+            </div>
+          ) : (
+            CHAINS.map((c) => {
+              const active = c.id === chain;
+              return (
+                <button key={c.id} onClick={() => selectChain(c.id)} aria-pressed={active}
+                  className={`rounded-xl border p-3 text-left ${active ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
+                  <span className="flex items-center justify-between">
+                    <span className="font-semibold text-brand-ink">{c.label}</span>
+                    {active && <CheckIcon size={18} className="text-brand" />}
+                  </span>
+                  <span className="text-xs text-muted">{c.note}</span>
+                </button>
+              );
+            })
+          )}
           {/* Local money rails — not live yet. Named generically on purpose: we
               don't promise a specific provider before one is actually signed. */}
           <div className="col-span-2 flex items-center justify-between rounded-xl border border-dashed border-line bg-card/50 p-3">
@@ -192,28 +215,30 @@ export default function WithdrawPage() {
         <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">{t("withdraw.howManyPoints")}</label>
         <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
           <StarIcon size={20} className="text-accent" />
-          <input id="amt" type="number" inputMode="numeric" value={amount || ""}
-            min={min} max={balance} step={100} placeholder={String(min)}
-            onChange={(e) => setAmount(Number(e.target.value))}
+          <input id="amt" type="number" inputMode="decimal" value={usdtInput}
+            min={pointsToUsdt(min)} max={pointsToUsdt(balance)} step={0.5}
+            placeholder={String(pointsToUsdt(min))}
+            onChange={(e) => setUsdtInput(e.target.value)}
             className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
+          <span className="shrink-0 font-semibold text-muted">USDT</span>
         </div>
         {fee > 0 && !belowMin && (
           <div className="mt-2 rounded-lg border border-line bg-card p-2.5 text-sm">
             <div className="flex justify-between text-muted">
               <span>{t("withdraw.feeLabel")}</span>
-              <span className="num">− {t("common.pointsAmount", { n: formatPoints(fee) })}</span>
+              <span className="num">− {formatMoney(fee)}</span>
             </div>
             <div className="mt-1 flex justify-between font-semibold text-brand-ink">
               <span>{t("withdraw.youReceive")}</span>
-              <span className="num">{t("common.pointsAmount", { n: formatPoints(net) })}</span>
+              <span className="num">{formatMoney(net)}</span>
             </div>
           </div>
         )}
         <p className="mt-1.5 px-1 text-sm font-semibold text-brand-ink">
-          {t("withdraw.weSendWorth", { points: t("common.pointsAmount", { n: formatPoints(net) }) })}
+          {t("withdraw.weSendWorth", { points: formatMoney(net) })}
         </p>
-        <p className="px-1 text-xs text-muted">{t("withdraw.lowestPayout", { points: t("common.pointsAmount", { n: formatPoints(min) }) })}</p>
-        {belowMin && <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needAtLeast", { points: t("common.pointsAmount", { n: formatPoints(min) }) })}</p>}
+        <p className="px-1 text-xs text-muted">{t("withdraw.lowestPayout", { points: formatMoney(min) })}</p>
+        {belowMin && <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needAtLeast", { points: formatMoney(min) })}</p>}
         {overBalance && <p className="mt-2 rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("withdraw.notEnough")}</p>}
       </div>
 
@@ -235,7 +260,7 @@ function SentConfirmation({ amount, chainLabel, address }: { amount: number; cha
       <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-success text-white"><CheckIcon size={52} /></div>
       <h1 className="animate-rise mt-6 text-2xl font-bold text-brand-ink">{t("withdraw.gotRequest")}</h1>
       <p className="animate-rise mt-2 text-lg font-semibold text-brand-ink">
-        {t("withdraw.onTheWay", { points: t("common.pointsAmount", { n: formatPoints(amount) }) })}
+        {t("withdraw.onTheWay", { points: formatMoney(amount) })}
       </p>
       <div className="animate-rise mt-6 w-full max-w-sm space-y-2.5 text-left">
         <div className="rounded-xl bg-card border border-line p-3">

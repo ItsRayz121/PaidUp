@@ -10,7 +10,7 @@ export default function NotFound() {
     <div className="px-4 pt-10 pb-8">
       <EmptyState
         title="This page does not exist"
-        body="The link may be old or typed wrong. Your points are safe."
+        body="The link may be old or typed wrong. Your money is safe."
         action={<Button href="/" size="md" full={false}>Back to home</Button>}
       />
     </div>

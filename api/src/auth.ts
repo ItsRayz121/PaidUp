@@ -143,6 +143,7 @@ type UserRow = {
   id: string; email: string; country: string; referral_code: string;
   referred_by: string | null; status: string; created_at: string;
   telegram_id: string | null;
+  display_name: string | null; username: string | null;
 };
 
 async function roleOf(userId: string): Promise<string | null> {
@@ -170,6 +171,14 @@ async function publicUser(u: UserRow) {
     // False for Telegram-created accounts still on their synthetic
     // @telegram.local address — the cue to offer "add your email".
     hasEmail: !u.email.endsWith("@telegram.local"),
+    // What the app calls this person, and the handle others send ROZI to. Both
+    // null until they set them; every screen falls back to the email prefix, so
+    // an account that never opens the settings screen still looks fine.
+    // The PICTURE is deliberately absent here — /auth/me runs on every
+    // authenticated request and a ~40KB data URL on it would be paid for on all
+    // of them. It has its own endpoint (GET /profile/avatar).
+    displayName: u.display_name ?? null,
+    username: u.username ?? null,
   };
 }
 

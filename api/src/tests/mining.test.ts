@@ -83,42 +83,47 @@ test("epochEndMs is the exact start of the next day", () => {
 });
 
 test("emission halves every halvingEpochs", () => {
-  assert.equal(emissionRozi(0), 3_000_000);
-  assert.equal(emissionRozi(99), 3_000_000);
-  assert.equal(emissionRozi(100), 1_500_000);
-  assert.equal(emissionRozi(200), 750_000);
-  assert.equal(emissionRozi(300), 375_000);
+  const e0 = EMISSION.baseEmission;
+  assert.equal(emissionRozi(0), e0);
+  assert.equal(emissionRozi(99), e0);
+  assert.equal(emissionRozi(100), e0 / 2);
+  assert.equal(emissionRozi(200), e0 / 4);
+  assert.equal(emissionRozi(300), e0 / 8);
 });
 
 test("total emission over all time converges under the supply cap", () => {
   // Sum 10,000 epochs (~27 years). The geometric series converges to
-  // E0 * halving * 2 = 600M, comfortably under the 650M cap — and the headroom
-  // is what absorbs referral overhead without ever breaching the hard limit.
+  // E0 * halvingEpochs * 2 = 20M, comfortably under the 21M cap — and the
+  // headroom is what absorbs referral overhead without ever breaching the hard
+  // limit. Derived from the settings rather than hard-coded, so a future retune
+  // of either number is checked against the other instead of just failing here.
+  const converges = EMISSION.baseEmission * EMISSION.halvingEpochs * 2;
   let total = 0;
   for (let e = 0; e < 10_000; e++) total += emissionRozi(e);
-  assert.ok(total <= 600_000_000, `emitted ${total} > 600M`);
-  assert.ok(total > 599_000_000, `emitted ${total}, expected ~600M`);
-  assert.ok(total < EMISSION.supplyCap);
+  assert.ok(total <= converges, `emitted ${total} > ${converges}`);
+  assert.ok(total > converges * 0.99, `emitted ${total}, expected ~${converges}`);
+  assert.ok(total < EMISSION.supplyCap, `pool model would breach the ${EMISSION.supplyCap} cap`);
 });
 
 test("the supply cap is a hard ceiling even if an Admin fat-fingers the emission", () => {
   const reckless = { ...EMISSION, baseEmission: 999_999_999_999 };
-  // Already emitted 649M of the 650M cap: only 1M may be minted, whatever the
-  // settings say. This is the last line of defence and it must not depend on the
-  // Admin being careful.
-  assert.equal(cappedRozi(0, 649_000_000, reckless), 1_000_000);
-  assert.equal(cappedRozi(0, 650_000_000, reckless), 0);
-  assert.equal(cappedRozi(0, 999_000_000, reckless), 0); // never negative
+  const cap = EMISSION.supplyCap;
+  // Already emitted all but 1M of the cap: only that 1M may be minted, whatever
+  // the settings say. This is the last line of defence and it must not depend on
+  // the Admin being careful.
+  assert.equal(cappedRozi(0, cap - 1_000_000, reckless), 1_000_000);
+  assert.equal(cappedRozi(0, cap, reckless), 0);
+  assert.equal(cappedRozi(0, cap * 2, reckless), 0); // never negative
 });
 
 test("the supply cap holds in MICRO — the unit change did not widen the ceiling", () => {
-  // The cap is 650M ROZI = 6.5e14 micro. That is the number the ledger is
+  // The cap is 21M ROZI = 2.1e13 micro. That is the number the ledger is
   // actually checked against now, and it has to be exact: it sits well inside
   // 2^53 (9.007e15), so it is representable, but it would NOT be if the scale
   // were raised much further. This test is the tripwire on that headroom.
-  assert.equal(toMicro(EMISSION.supplyCap), 650_000_000_000_000);
+  assert.equal(toMicro(EMISSION.supplyCap), 21_000_000_000_000);
   assert.ok(Number.isSafeInteger(toMicro(EMISSION.supplyCap)));
-  assert.equal(cappedEmissionMicro(0, toMicro(650_000_000), EMISSION), 0);
+  assert.equal(cappedEmissionMicro(0, toMicro(EMISSION.supplyCap), EMISSION), 0);
 });
 
 test("a miner's payout is a SHARE of the pot, so the pot can never be exceeded", () => {
@@ -430,24 +435,51 @@ test("PI: THE OLD FAILURE MODE IS FIXED — a low rate still pays a partial day"
   assert.ok(piMicro(BASELINE_FULL_DAY / 3, 2) > 0);
   assert.equal(pi(BASELINE_FULL_DAY / 3, 2), 0.666666); // floored to the millionth
 
-  // The real launch numbers. Base rate 10/day, one 8-hour session out of a 24h
-  // reference day => a third of 10.
-  assert.equal(pi(BASELINE_FULL_DAY / 3, D.piBaseRate), 3.333333);
+  // The real launch numbers. Base rate 0.5/day, one 8-hour session out of a 24h
+  // reference day => a third of 0.5.
+  assert.equal(pi(BASELINE_FULL_DAY / 3, D.piBaseRate), 0.166666);
 
-  // And it survives all five halvings. 10 -> 5 -> 2.5 -> 1.25 -> 0.625 -> 0.3125.
+  // And it survives all five halvings:
+  // 0.5 -> 0.25 -> 0.125 -> 0.0625 -> 0.03125 -> 0.015625.
   // A single 8h session at the FINAL rate still pays a real, non-zero number.
+  // This is the assertion that makes the 21M supply safe to ship: the rate got
+  // 20x smaller, and the micro-ROZI ledger absorbed it without rounding anyone's
+  // work down to nothing.
   const finalRate = piBaseRateFor(
     9_999_999, D.piBaseRate, parseMilestones(D.piHalvingUsers));
-  assert.equal(finalRate, 0.3125);
+  assert.equal(finalRate, 0.015625);
   assert.ok(piMicro(BASELINE_FULL_DAY / 3, finalRate) > 0,
     "an 8h session at the fully-halved rate must still pay something");
-  assert.equal(pi(BASELINE_FULL_DAY / 3, finalRate), 0.104166);
+  assert.equal(pi(BASELINE_FULL_DAY / 3, finalRate), 0.005208);
 });
 
-test("PI: the launch rate of 10/day is what the founder asked for", () => {
-  // A baseline miner, mining a full reference day, earns exactly 10 ROZI.
-  assert.equal(D.piBaseRate, 10);
-  assert.equal(pi(BASELINE_FULL_DAY, D.piBaseRate), 10);
+test("PI: the launch rate of 0.5/day is what the founder asked for", () => {
+  // A baseline miner, mining a full reference day, earns exactly 0.5 ROZI
+  // (founder, 2026-07-29 — cut from 10 when the cap went 650M -> 21M).
+  assert.equal(D.piBaseRate, 0.5);
+  assert.equal(pi(BASELINE_FULL_DAY, D.piBaseRate), 0.5);
   // Scarcity is the product: this is a number a person can hold in their head.
   assert.ok(D.piBaseRate <= 10);
+});
+
+test("THE SUPPLY CAP AND THE MINING RATE ARE ONE DECISION, NOT TWO", () => {
+  // The tripwire on the retune. These two numbers were cut together on purpose
+  // (650M -> 21M, 10/day -> 0.5/day) and they only make sense together: the cap
+  // says how much can ever exist, the rate says how fast it leaves. Move one
+  // without the other and either the pool empties in months or nobody can mine
+  // anything worth holding.
+  assert.equal(D.supplyCap, 21_000_000);
+  assert.equal(D.piBaseRate, 0.5);
+
+  // The runway, stated as arithmetic rather than as a comment nobody re-runs.
+  // At 1M users the rate has halved three times (10k/50k/250k passed, 1M is the
+  // fourth), so an engaged miner at x3 multipliers on two thirds of a day earns
+  // 0.0625 * 3 * 0.667 = ~0.125/day. A million of them is ~125k/day.
+  const rateAt1M = piBaseRateFor(
+    999_999, D.piBaseRate, parseMilestones(D.piHalvingUsers));
+  const perEngagedMinerPerDay = rateAt1M * 3 * (2 / 3);
+  const dailyMint = perEngagedMinerPerDay * 1_000_000;
+  const daysOfSupply = D.supplyCap / dailyMint;
+  assert.ok(daysOfSupply > 120,
+    `a million miners would exhaust the supply in ${Math.round(daysOfSupply)} days`);
 });

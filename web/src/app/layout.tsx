@@ -12,7 +12,7 @@ const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap"
 // One title + one description, reused in the OG/Twitter tags below so a shared
 // link can never say something different from the page itself.
 const TITLE = "RoziPay — earn and get real money";
-const DESCRIPTION = "Do simple tasks, earn points, and get real cash in your mobile wallet.";
+const DESCRIPTION = "Do simple tasks, earn USDT, and mine free ROZI every day.";
 
 export const metadata: Metadata = {
   // Absolute base for the social-share URLs below (and anything else relative

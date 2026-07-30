@@ -68,12 +68,17 @@ export const MINING_DEFAULTS = {
   // -- "pi" model (§ 3.2). ROZI/day for a BASELINE miner: no multipliers, mining
   //    a full reference day. A miner with x2 multipliers earns twice this.
   //
-  //    10/day (founder decision, 2026-07-13). Deliberately a SMALL number: a token
-  //    people count in single digits feels scarce, and scarcity is the entire
-  //    product here. It survives all five halvings down to 0.3125/day because the
-  //    ledger holds millionths (see ROZI_SCALE above) — under the old whole-ROZI
-  //    ledger a rate this low would have paid partial days literally nothing.
-  piBaseRate: 10,
+  //    0.5/day (founder decision, 2026-07-29, cut from 10 alongside the supply cap
+  //    — see supplyCap below). Deliberately a SMALL number: a token people count
+  //    in single digits feels scarce, and scarcity is the entire product here. It
+  //    survives all five halvings down to 0.015625/day because the ledger holds
+  //    millionths (see ROZI_SCALE above) — under the old whole-ROZI ledger a rate
+  //    this low would have paid partial days literally nothing.
+  //
+  //    A typical engaged miner (streak + task boost + an ad) runs at x3 and mines
+  //    maybe two thirds of the reference day, so ~1 ROZI/day. That is the number
+  //    to sanity-check any retune against.
+  piBaseRate: 0.5,
 
   // Base rate HALVES each time the user base crosses one of these counts. This is
   // the throttle: growth is what drains the pool, so growth is what slows the tap.
@@ -86,11 +91,37 @@ export const MINING_DEFAULTS = {
   // loop, priced in. Mine a third of that, earn a third.
   piReferenceHours: 24,
 
-  // -- "pool" model (§ 3.2). 3M/day, halving every 100 days, converging to 600M
-  //    against a 650M cap — the headroom absorbs referral overhead.
-  baseEmission: 3_000_000,
+  // -- "pool" model (§ 3.2). 100k/day, halving every 100 days, converging to 20M
+  //    against the 21M cap — the headroom absorbs referral overhead.
+  //
+  //    This number only matters if an Admin switches emissionModel back to
+  //    "pool", but it MUST stay in proportion to supplyCap: at the old 3M/day it
+  //    would have spent 14% of a 21M supply on the first day alone.
+  baseEmission: 100_000,
   halvingEpochs: 100,
-  supplyCap: 650_000_000,
+
+  // -- THE HARD CEILING on ROZI ever mined (founder decision, 2026-07-29,
+  //    cut from 650,000,000).
+  //
+  //    21 million, Bitcoin's number, chosen so the supply reads as scarce at a
+  //    glance. The honest caveat, recorded here so nobody re-argues it later:
+  //    a smaller cap does NOT make the token worth more. 650M at $0.001 and 21M
+  //    at $0.031 are the same company at the same value. What the small cap buys
+  //    is (a) a unit price that looks like a real asset rather than a farm coin,
+  //    and (b) it forces the per-day mint down, which is the thing actually
+  //    worth having.
+  //
+  //    THIS NUMBER CAN NEVER GO DOWN AGAIN. Cutting a supply cap after people
+  //    have mined against it retroactively devalues what they hold and is the
+  //    fastest way to lose a community. It was safe to cut here only because it
+  //    happened before launch. Treat it as frozen.
+  //
+  //    Runway check at 0.5/day base, ~1 ROZI/day for an engaged miner:
+  //      10k users   -> ~5k/day    -> decades
+  //      250k users  -> ~31k/day   -> ~2 years   (2 halvings already applied)
+  //      1M users    -> ~62k/day   -> ~1 year    (3 halvings applied)
+  //    Each milestone halves the rate again, so the tail lengthens as it goes.
+  supplyCap: 21_000_000,
 
   // -- Sessions (§ 4.2). Mining STOPS when a session expires. That friction is
   //    the retention loop: ~3 app opens a day, each one an ad impression.
@@ -173,7 +204,11 @@ export const MINING_DEFAULTS = {
 
   // -- Transfers (§ 7). Wallet-to-wallet only. No order book, ever.
   transfersEnabled: 0,
-  transferDailyCap: 50_000,
+  // Scaled with the 21M cap (was 50,000, which is 0.24% of the whole supply in
+  // one day from one account — a cap that high is not a cap). At ~1 ROZI/day for
+  // an engaged miner this is still years of mining, so it binds on consolidation
+  // farms and on nobody else.
+  transferDailyCap: 1_000,
   transferMinAccountDays: 7,
   transferFeePct: 2,        // burned, not collected
   // Sending requires an approved ID check (founder, 2026-07-27). Moving value
@@ -211,8 +246,32 @@ export const MINING_DEFAULTS = {
   //        to what IT mined. Consolidation stops paying.
   conversionMaxPctOfMined: 30,
 
-  // -- Admin guardrail: ceiling on one hand-made ROZI adjustment.
-  adminAdjustMaxRozi: 1_000_000,
+  // -- USDT top-up credit (founder, 2026-07-29). Real money in, to buy mining
+  //    machines with. SPEND-ONLY — see the usdt_ledger comment in db.ts for why
+  //    that word is doing all the work, and why there is no withdrawal path.
+  //
+  //    Ships OFF, and stays off until BOTH the flag is 1 and a treasury address
+  //    is set: a top-up screen with no address to send to would take people's
+  //    money nowhere.
+  usdtTopupEnabled: 0,
+  usdtTreasuryAddress: "",   // the ONE address every deposit is sent to
+  // BEP20 ONLY, and the admin panel REFUSES anything else (see staffMining.ts).
+  // Not merely a default: the deposit screen names "BNB Smart Chain (BEP20)" in
+  // its copy so that the word BNB can appear only in the list of coins not to
+  // send, and a treasury on another chain would make that copy point every user
+  // at the wrong network. Withdrawals still offer all three chains — paying out
+  // to an address the user chose carries none of this risk.
+  usdtTreasuryChain: "bep20",
+  usdtMinTopup: 1,           // whole USDT; below this the network fee eats it
+  // A deposit is a claim until a human has looked at the chain. This is the
+  // ceiling on a single claim — not a limit on generosity, a limit on how much
+  // one mistaken confirmation can cost.
+  usdtMaxTopup: 500,
+
+  // -- Admin guardrail: ceiling on one hand-made ROZI adjustment. Scaled with the
+  //    21M cap — at the old 1,000,000 a single slip of the hand could mint 4.7%
+  //    of the entire supply.
+  adminAdjustMaxRozi: 25_000,
 };
 
 export type MiningSettings = typeof MINING_DEFAULTS;

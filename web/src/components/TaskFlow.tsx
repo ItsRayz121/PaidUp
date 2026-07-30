@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card, PointsPill, SponsoredTag, Button } from "./ui";
 import { offerIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon } from "./icons";
-import { formatPoints } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { submitTaskProof, type Task } from "@/lib/api";
 
 // Renders the task list + the two interactive steps that build trust:
@@ -241,7 +241,7 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
       <p className="animate-rise mt-6 text-lg font-bold text-white">Task started</p>
       <p className="animate-rise mt-2 flex items-center gap-2 text-white/90">
         <StarIcon size={20} className="text-accent" />
-        <span>You will get <span className="num font-bold">{formatPoints(task.points)}</span> points</span>
+        <span>You will get <span className="num font-bold">{formatMoney(task.points)}</span></span>
       </p>
 
       <div className="animate-rise mt-6 w-full max-w-xs space-y-2.5 text-left">

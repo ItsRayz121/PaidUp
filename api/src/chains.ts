@@ -3,20 +3,47 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
-// Launch set (founder decision 2026-07-11): USDT on BEP20, Base (both EVM,
-// shared 0x address format) and Aptos (non-EVM). Polygon was dropped. TRC20
-// (Tron) is a quick future add — it just needs a base58 "T…" validator here and
-// a CHAINS entry; the rest of the payout/withdraw flow is chain-agnostic.
+// TWO LISTS, AND THE DIFFERENCE MATTERS.
+//
+// KNOWN_CHAINS is every chain this code can understand — validate an address
+// for, label, settle a payout on. CHAINS is the shorter list we currently OFFER.
+//
+// They are separate because a chain can stop being offered while rows that used
+// it still exist. Deleting Base and Aptos outright would leave every historical
+// withdrawal on those chains with no label and no validator, so a staff member
+// opening an old request would see a blank network and payout.ts would refuse to
+// recognise its own past work. Narrowing the OFFERED list changes what new
+// requests can be made on, and touches nothing that already happened.
 export type ChainId = "bep20" | "base" | "aptos";
 
-export const CHAINS: { id: ChainId; label: string; kind: "evm" | "aptos"; note: string }[] = [
+type ChainMeta = { id: ChainId; label: string; kind: "evm" | "aptos"; note: string };
+
+// Everything we can still read, validate and label. Do not remove entries here
+// while any row in withdrawal_requests or payout_addresses references them.
+export const KNOWN_CHAINS: ChainMeta[] = [
   { id: "bep20", label: "BEP20 (BNB Chain)", kind: "evm", note: "USDT on BNB Smart Chain" },
   { id: "base", label: "Base", kind: "evm", note: "USDT on Base" },
   { id: "aptos", label: "Aptos", kind: "aptos", note: "USDT on Aptos" },
 ];
 
-export function chainById(id: string): (typeof CHAINS)[number] | undefined {
-  return CHAINS.find((c) => c.id === id);
+// What a user may pick TODAY. BEP20 only (founder, 2026-07-29): deposits are
+// BEP20-only for a safety reason (see usdtTreasuryChain in mining/core.ts), and
+// matching the payout side means one chain to hold USDT on, one gas token to
+// keep funded, one explorer to check, and one answer when a user asks support
+// "which network?". Base and Aptos come back by moving a line back into this
+// list — the validators and labels never left.
+export const CHAINS: ChainMeta[] = KNOWN_CHAINS.filter((c) => c.id === "bep20");
+
+// Lookup spans KNOWN_CHAINS, never CHAINS. A historical row on a chain we no
+// longer offer must still resolve to its label.
+export function chainById(id: string): ChainMeta | undefined {
+  return KNOWN_CHAINS.find((c) => c.id === id);
+}
+
+// Whether a chain may be used for a NEW withdrawal request. This is the check
+// that enforces the narrowing; chainById deliberately does not.
+export function chainIsOffered(id: string): boolean {
+  return CHAINS.some((c) => c.id === id);
 }
 
 // EIP-55 mixed-case checksum. Only meaningful when the address has mixed case;

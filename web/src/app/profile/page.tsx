@@ -9,45 +9,67 @@ import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ConnectTelegramCard } from "@/components/ConnectTelegramCard";
 import { ConnectEmailCard } from "@/components/ConnectEmailCard";
-import { Loading, LogoutButton } from "@/components/state";
+import { Loading } from "@/components/state";
 import {
   ProfileIcon,
   GiftIcon,
   ShieldIcon,
   StarIcon,
   HelpIcon,
+  SlidersIcon,
   ArrowRightIcon,
 } from "@/components/icons";
+import { useRouter } from "next/navigation";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchKyc, type KycState } from "@/lib/api";
+import { fetchKyc, fetchAvatar, clearSession, type KycState } from "@/lib/api";
 
 export default function ProfilePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
   const kyc = useApi(fetchKyc, []);
+  const avatar = useApi(fetchAvatar, []);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
-  const name = user?.email?.split("@")[0] ?? "";
+  // The name they chose wins; the email prefix is the fallback for every account
+  // that has never opened the settings screen.
+  const name = user?.displayName || user?.email?.split("@")[0] || "";
+  const picture = avatar.data?.image ?? null;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
       <header className="flex items-center gap-3">
-        <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand-tint text-brand">
-          <ProfileIcon size={28} />
+        <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-tint text-brand">
+          {picture ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={picture} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <ProfileIcon size={28} />
+          )}
         </span>
         <div className="min-w-0">
           <h1 className="truncate text-xl font-bold text-brand-ink">{name}</h1>
-          {/* A Telegram-created account's stored address is a synthetic
-              placeholder — showing it would only confuse. */}
+          {/* The handle if they have one, otherwise the address. A Telegram-created
+              account's stored address is a synthetic placeholder, so it is never
+              shown. */}
           <p className="truncate text-sm text-muted">
-            {user?.hasEmail === false ? t("profile.telegramAccount") : user?.email}
+            {user?.username
+              ? `@${user.username}`
+              : user?.hasEmail === false
+                ? t("profile.telegramAccount")
+                : user?.email}
           </p>
         </div>
       </header>
 
       <div className="space-y-2">
+        <Row
+          href="/profile/settings"
+          Icon={SlidersIcon}
+          label={t("profile.settings")}
+          hint={t("profile.settingsHint")}
+        />
         <Row
           href="/refer"
           Icon={GiftIcon}
@@ -86,10 +108,33 @@ export default function ProfilePage() {
           together, never leaving a bare "Notifications" title. */}
       <NotificationsCard heading={t("profile.notifications")} />
 
-      <div className="pt-2 text-center">
-        <LogoutButton />
-      </div>
+      {/* Sign out, as a row like everything else on this screen. It used to be a
+          small grey text link under the fold, which is where people stop looking
+          — and "how do I log out" is the support ticket that gets asked when a
+          phone is shared. */}
+      <SignOutRow />
     </div>
+  );
+}
+
+function SignOutRow() {
+  const { t } = useI18n();
+  const router = useRouter();
+  return (
+    <button
+      onClick={() => { clearSession(); router.replace("/login"); }}
+      className="block w-full text-left"
+    >
+      <Card className="flex items-center gap-3 p-4">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-danger-tint text-danger">
+          <ArrowRightIcon size={22} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-danger">{t("profile.signOut")}</p>
+          <p className="text-sm text-muted">{t("profile.signOutHint")}</p>
+        </div>
+      </Card>
+    </button>
   );
 }
 

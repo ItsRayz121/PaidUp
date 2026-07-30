@@ -7,12 +7,22 @@
 //     POINTS_PER_USDT on the server, change it here too, or the displayed value
 //     and the actual payout will disagree.
 //
-// USDT is the ONLY money figure we show (founder, 2026-07-12). We deliberately
-// do not print an approximate local-currency amount beside it: USDT is what the
-// user actually receives, and a rupee figure derived from a hard-coded rate goes
-// stale and reads as a promise we don't control.
+// ⚠️ POINTS ARE NOW AN INTERNAL UNIT ONLY (founder, 2026-07-29). The user-facing
+// app shows ONE currency for money — USDT — and the word "points" no longer
+// appears on any earner screen.
+//
+// The ledger is still in points and the API still speaks points, because that is
+// where the integer arithmetic lives and a floating-point money ledger is how
+// money systems lose cents. Points are converted to USDT at the very edge, here.
+// So: the API boundary talks points, everything a user reads says USDT, and
+// usdtToPoints() below is the one place the conversion runs the other way.
+//
+// The staff panel is deliberately EXEMPT and still shows points: it is where the
+// ledger is reconciled, and hiding the underlying unit from the people doing
+// that would make the numbers harder to check, not easier.
 export const POINTS_PER_USDT = 1000;
 
+// Only the staff panel should call this now. Earner screens use formatMoney.
 export function formatPoints(points: number): string {
   return new Intl.NumberFormat("en-PK").format(points);
 }
@@ -21,11 +31,25 @@ export function pointsToUsdt(points: number): number {
   return points / POINTS_PER_USDT;
 }
 
+// The other direction, for inputs where the user types USDT and the API wants
+// points. Rounded, because a fractional point cannot exist in the ledger.
+export function usdtToPoints(usdt: number): number {
+  return Math.round(usdt * POINTS_PER_USDT);
+}
+
 // Exact USDT value, e.g. "2.00 USDT".
+//
+// PRECISION IS ADAPTIVE, and it has to be: a single task can pay 5 points, which
+// is $0.005. At a fixed two decimals that renders as "0.01 USDT" (overstating
+// it) or "0.00 USDT" (telling someone their work was worth nothing). Small
+// amounts therefore get three decimals, which is what the numbers in this app
+// actually need. Anything from a dollar up reads as money normally does.
 export function formatUsdt(points: number): string {
+  const usdt = pointsToUsdt(points);
+  const decimals = Math.abs(usdt) > 0 && Math.abs(usdt) < 1 ? 3 : 2;
   return `${new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  }).format(pointsToUsdt(points))} USDT`;
+    minimumFractionDigits: 2, maximumFractionDigits: decimals,
+  }).format(usdt)} USDT`;
 }
 
 // Primary money string used across the app. USDT only — see the note above.
@@ -38,6 +62,28 @@ export function formatMoney(points: number): string {
 // smallest unit — so we display them rather than recomputing from points.
 export function formatUsdtAmount(usdt: string | number): string {
   return `${Number(usdt).toFixed(2)} USDT`;
+}
+
+// ---- USDT top-up credit ----------------------------------------------------
+//
+// A SEPARATE number from the money above. `formatMoney` converts POINTS earned
+// from tasks into the USDT we will pay out; this formats a balance that is
+// already USDT, topped up by the user to spend on mining machines.
+//
+// Do not add the two together anywhere. One is money we owe the user and can be
+// withdrawn; the other is prepaid credit that can only be spent inside the app
+// and can never be taken out (api/src/db.ts, usdt_ledger). A single combined
+// "your USDT" figure would promise that all of it is withdrawable.
+export const USDT_SCALE = 1_000_000;
+
+export function usdtFromMicro(micro: number): number {
+  return (micro ?? 0) / USDT_SCALE;
+}
+
+export function formatUsdtMicro(micro: number): string {
+  return `${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(usdtFromMicro(micro))} USDT`;
 }
 
 // ---- ROZI ------------------------------------------------------------------

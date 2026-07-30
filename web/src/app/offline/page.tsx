@@ -8,7 +8,7 @@ export default function OfflinePage() {
         📶
       </div>
       <h1 className="font-display text-xl font-bold text-brand-ink">You are offline</h1>
-      <p className="text-muted">Turn on your internet and try again. Your points are safe.</p>
+      <p className="text-muted">Turn on your internet and try again. Your money is safe.</p>
     </div>
   );
 }

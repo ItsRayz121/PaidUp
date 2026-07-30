@@ -8,8 +8,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
-  sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf, type TxApi,
+  sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf,
+  postUsdt, usdtBalanceMicroOf, usdtToMicro, type TxApi,
 } from "../db.ts";
+import { chainById } from "../chains.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
@@ -65,7 +67,22 @@ function lockUser(t: Pick<TxApi, "run">, userId: string) {
 type RigRow = {
   id: string; name: string; icon: string; base_cost: number; cost_growth: number;
   base_power: number; power_growth: number; max_level: number; status: string;
+  base_cost_usdt: string | number | null;
 };
+
+// What a rig costs in USDT at a given level, in MICRO-USDT, or null when this rig
+// cannot be bought with money at all (the shipped default for every rig).
+//
+// The USDT price curve reuses cost_growth, so a rig that doubles in ROZI per
+// level doubles in dollars too. It is deliberately NOT derived from the ROZI
+// price by any rate: that rate would be a published ROZI valuation, which is the
+// one thing this product does not have and must not invent (guardrail #7).
+function rigUsdtCostMicro(r: RigRow, level: number): number | null {
+  if (r.base_cost_usdt === null || r.base_cost_usdt === undefined) return null;
+  const base = Number(r.base_cost_usdt);
+  if (!(base > 0)) return null;
+  return Math.floor(base * Math.pow(r.cost_growth / 100, level));
+}
 const defOf = (r: RigRow) => ({
   baseCost: Number(r.base_cost), costGrowth: r.cost_growth,
   basePower: r.base_power, powerGrowth: r.power_growth, maxLevel: r.max_level,
@@ -254,6 +271,9 @@ export async function miningRoutes(app: FastifyInstance) {
       // to an empty room, because links that sometimes do get ignored.
       storeOpen: storeCount > 0,
       transfersEnabled: Boolean(s.transfersEnabled),
+      // Both conditions folded into one flag, so the client cannot show a
+      // top-up link that leads to a screen with no address to send money to.
+      usdtTopup: Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "",
       // Everything the send screen needs to explain itself up front. `canSend`
       // is the server's answer, not the client's guess — the route re-checks all
       // of this anyway, so this block is for the copy, never for the decision.
@@ -341,8 +361,13 @@ export async function miningRoutes(app: FastifyInstance) {
         "SELECT rig_id, level FROM user_rigs WHERE user_id = ?", userId))
         .map((r) => [r.rig_id, r.level]),
     );
+    const s = await loadMiningSettings();
     return {
       roziMicro: await roziBalanceMicroOf(userId),
+      // The second way to pay. Zero for everyone until a deposit is confirmed,
+      // and the whole USDT option stays hidden while top-ups are switched off.
+      usdtMicro: await usdtBalanceMicroOf(userId),
+      usdtEnabled: Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "",
       rigs: rigs.map((r) => {
         const level = owned.get(r.id) ?? 0;
         const def = defOf(r);
@@ -355,19 +380,38 @@ export async function miningRoutes(app: FastifyInstance) {
           // "50000000"), so the cost is converted here, at the API edge, to the
           // same micro unit as the balance it will be compared against.
           nextCostMicro: maxed ? null : toMicro(rigUpgradeCost(def, level)),
+          // null => this rig is ROZI-only. Most are, and that is the default.
+          nextCostUsdtMicro: maxed ? null : rigUsdtCostMicro(r, level),
         };
       }),
     };
   }));
 
+  // Buy or upgrade a rig, paying with MINED ROZI or with TOPPED-UP USDT
+  // (founder, 2026-07-29). One route, because everything except which ledger
+  // gets the debit is identical, and splitting it would be two places to forget
+  // the advisory lock.
   app.post("/mining/rigs/:id/upgrade", guard(async (userId, req) => {
     const rigId = (req.params as { id: string }).id;
+    const body = z.object({
+      pay: z.enum(["rozi", "usdt"]).optional(),
+    }).parse(req.body ?? {});
+    const payWith = body.pay ?? "rozi";
+
+    const s = await loadMiningSettings();
+    if (payWith === "usdt" && !s.usdtTopupEnabled) {
+      throw { statusCode: 400, message: "Paying with USDT is not switched on yet." };
+    }
 
     // Accrue BEFORE the hashrate changes, so the seconds already mined are paid
     // at the old rate and the new rig applies only from now on.
     await accrue(userId);
 
     return sql.tx(async (t) => {
+      // The lock covers BOTH ledgers, because it is keyed on the user and not on
+      // the currency. Two requests from one account — one spending ROZI, one
+      // spending USDT — must still serialize, or they both read level N and both
+      // write level N+1 for the price of one.
       await lockUser(t, userId);
 
       const rig = await t.get<RigRow>(
@@ -382,25 +426,132 @@ export async function miningRoutes(app: FastifyInstance) {
       // Catalogue price is whole ROZI; the ledger is micro. Convert once, here,
       // and compare like with like.
       const costMicro = toMicro(rigUpgradeCost(defOf(rig), level));
-      const balMicro = await roziBalanceMicroOf(userId, t);
-      if (balMicro < costMicro) {
-        throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
+      const usdtCostMicro = rigUsdtCostMicro(rig, level);
+
+      let usdtMicro = 0;
+      if (payWith === "usdt") {
+        if (usdtCostMicro === null) {
+          throw { statusCode: 400, message: "This machine can only be bought with ROZI." };
+        }
+        usdtMicro = await usdtBalanceMicroOf(userId, t);
+        if (usdtMicro < usdtCostMicro) {
+          throw { statusCode: 400, message: "You do not have enough USDT for this yet." };
+        }
+        await postUsdt({
+          userId, micro: usdtCostMicro, direction: "debit", sourceType: "rig_purchase",
+          sourceRefId: rigId, note: `${rig.name} level ${level + 1}`,
+        }, t);
       }
 
-      await postRozi({
-        userId, micro: costMicro, direction: "debit", sourceType: "rig_purchase",
-        sourceRefId: rigId, note: `${rig.name} level ${level + 1}`,
-      }, t);
+      const balMicro = await roziBalanceMicroOf(userId, t);
+      if (payWith === "rozi") {
+        if (balMicro < costMicro) {
+          throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
+        }
+        await postRozi({
+          userId, micro: costMicro, direction: "debit", sourceType: "rig_purchase",
+          sourceRefId: rigId, note: `${rig.name} level ${level + 1}`,
+        }, t);
+      }
+
       await t.run(
         `INSERT INTO user_rigs (user_id, rig_id, level, updated_at) VALUES (?,?,?,?)
          ON CONFLICT (user_id, rig_id) DO UPDATE SET level = EXCLUDED.level, updated_at = EXCLUDED.updated_at`,
         userId, rigId, level + 1, now(),
       );
       return {
-        ok: true, level: level + 1,
-        spentMicro: costMicro, roziMicro: balMicro - costMicro,
+        ok: true, level: level + 1, paidWith: payWith,
+        spentMicro: payWith === "rozi" ? costMicro : 0,
+        spentUsdtMicro: payWith === "usdt" ? usdtCostMicro : 0,
+        roziMicro: payWith === "rozi" ? balMicro - costMicro : balMicro,
+        usdtMicro: payWith === "usdt" ? usdtMicro - usdtCostMicro! : await usdtBalanceMicroOf(userId, t),
       };
     });
+  }));
+
+  // ---- USDT top-up credit ---------------------------------------------------
+  //
+  // READ THE usdt_ledger COMMENT IN db.ts BEFORE CHANGING ANYTHING HERE. The
+  // short version: this balance is SPEND-ONLY, deposits are confirmed by a human
+  // against the chain, and there is deliberately no route in this file (or any
+  // other) that lets the balance leave the app. That absence is what keeps us
+  // out of holding customer funds.
+  app.get("/usdt", guard(async (userId) => {
+    const s = await loadMiningSettings();
+    const enabled = Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "";
+    const rows = await sql.all<{
+      id: string; chain: string; tx_hash: string; amount: string;
+      status: string; reject_reason: string | null; created_at: string;
+    }>(
+      `SELECT id, chain, tx_hash, amount, status, reject_reason, created_at
+       FROM usdt_topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      userId,
+    );
+    return {
+      enabled,
+      balanceMicro: await usdtBalanceMicroOf(userId),
+      // Only sent when the feature is on — there is no reason for an address we
+      // are not currently accepting deposits at to be sitting in a JSON response.
+      treasuryAddress: enabled ? s.usdtTreasuryAddress : null,
+      treasuryChain: enabled ? s.usdtTreasuryChain : null,
+      chainLabel: chainById(s.usdtTreasuryChain)?.label ?? s.usdtTreasuryChain,
+      minTopup: s.usdtMinTopup,
+      maxTopup: s.usdtMaxTopup,
+      topups: rows.map((r) => ({
+        id: r.id, chain: r.chain, txHash: r.tx_hash, amountMicro: Number(r.amount),
+        status: r.status, rejectReason: r.reject_reason, createdAt: r.created_at,
+      })),
+    };
+  }));
+
+  // "I sent you USDT — here is the transaction." Records a CLAIM. Nothing is
+  // credited here; a staff member confirms it against the chain first.
+  app.post("/usdt/topups", guard(async (userId, req) => {
+    const body = z.object({
+      txHash: z.string().trim().min(6).max(200),
+      amount: z.number().positive(),   // whole USDT, as the user typed it
+    }).parse(req.body);
+
+    const s = await loadMiningSettings();
+    if (!s.usdtTopupEnabled || s.usdtTreasuryAddress === "") {
+      throw { statusCode: 400, message: "Adding USDT is not switched on yet." };
+    }
+    if (body.amount < s.usdtMinTopup) {
+      throw { statusCode: 400, message: `The smallest top-up is ${s.usdtMinTopup} USDT.` };
+    }
+    if (body.amount > s.usdtMaxTopup) {
+      throw { statusCode: 400, message: `The biggest top-up is ${s.usdtMaxTopup} USDT.` };
+    }
+
+    // The chain is OURS, not the user's choice: there is one treasury address
+    // and deposits arrive on the chain it lives on. Letting the client pick
+    // would only produce claims we cannot check.
+    const chain = s.usdtTreasuryChain;
+
+    // NORMALISE THE HASH BEFORE IT BECOMES THE UNIQUENESS KEY. The unique index
+    // is what makes one real deposit creditable exactly once, and it compares
+    // strings — so "0xABC" and "abc" are two different rows for one transaction.
+    // That is a live double-credit: claim the same deposit twice in both
+    // spellings, and a reviewer who pastes either into a block explorer sees a
+    // real transaction for the real amount both times, because explorers accept
+    // a hash with or without the prefix. Stripping "0x" and lower-casing closes
+    // it in the one place that decides.
+    const txHash = body.txHash.trim().toLowerCase().replace(/^0x/, "");
+    if (txHash === "") throw { statusCode: 400, message: "Paste the transaction ID." };
+
+    const id = newId();
+    try {
+      await sql.run(
+        `INSERT INTO usdt_topups (id, user_id, chain, tx_hash, amount, status, created_at)
+         VALUES (?,?,?,?,?, 'pending', ?)`,
+        id, userId, chain, txHash, usdtToMicro(body.amount), now(),
+      );
+    } catch {
+      // The unique index on (chain, tx_hash) is what makes one real deposit
+      // creditable exactly once, no matter how many accounts paste the hash.
+      throw { statusCode: 409, message: "That transaction has already been sent to us." };
+    }
+    return { ok: true, id, status: "pending" };
   }));
 
   // ---- ROZI store (a ROZI sink, and the honest answer to "what is it worth?") -
@@ -589,7 +740,7 @@ export async function miningRoutes(app: FastifyInstance) {
     // as a decimal (what the user typed); it becomes micro before it touches the
     // ledger, and .int() would reject the fractions the whole migration was for.
     const body = z.object({
-      to: z.string().min(1),          // referral code or email
+      to: z.string().min(1),          // @handle, referral code, or email
       amount: z.number().positive(),  // in whole ROZI, may be fractional
     }).parse(req.body);
     const amountMicro = toMicro(body.amount);
@@ -620,10 +771,40 @@ export async function miningRoutes(app: FastifyInstance) {
       };
     }
 
-    const target = await sql.get<{ id: string; status: string }>(
-      "SELECT id, status FROM users WHERE referral_code = ? OR LOWER(email) = LOWER(?)",
-      body.to, body.to,
-    );
+    // Three ways to name the person you are paying, in the order people actually
+    // reach for them: the @handle they told you, an invite code, or an email.
+    // The leading "@" is stripped because users type it — it is how a handle is
+    // written everywhere else, and refusing it would be a lookup failure that
+    // reads as "that person does not exist".
+    const to = body.to.trim().replace(/^@/, "");
+
+    // RESOLVED IN EXPLICIT PRIORITY ORDER, one namespace at a time. This used to
+    // be a single `WHERE username = ? OR referral_code = ? OR email = ?`, and
+    // that was a live theft vector:
+    //
+    // An invite code is up-to-6 uppercase letters plus two digits ("AHMED42"),
+    // which lower-cases to "ahmed42" — a perfectly legal @handle. The username
+    // index only checks other usernames, so an attacker could TAKE the lowercase
+    // form of a victim's invite code as their handle. Both rows then matched the
+    // OR, sql.get returned whichever one the planner felt like, and ROZI sent to
+    // a code the victim had published on /refer could land in the attacker's
+    // wallet. The victim could not even fix it: invite codes are generated, not
+    // chosen.
+    //
+    // So: the INVITE CODE wins, because it is system-generated and cannot be
+    // squatted. A user-chosen handle must never be able to shadow it. (The
+    // collision is also refused at the point the handle is set — see
+    // routes/profile.ts — but the order here is what makes any pre-existing
+    // collision harmless rather than a coin flip.)
+    const findBy = async (where: string, value: string) =>
+      sql.get<{ id: string; status: string }>(
+        `SELECT id, status FROM users WHERE ${where} LIMIT 1`, value);
+
+    const target =
+      await findBy("referral_code = ?", to)
+      ?? await findBy("LOWER(username) = LOWER(?)", to)
+      ?? await findBy("LOWER(email) = LOWER(?)", to);
+
     if (!target) throw { statusCode: 404, message: "We could not find that user." };
     if (target.id === userId) throw { statusCode: 400, message: "You cannot send ROZI to yourself." };
     if (target.status !== "active") throw { statusCode: 400, message: "That account cannot receive ROZI." };

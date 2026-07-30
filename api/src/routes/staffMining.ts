@@ -7,7 +7,11 @@
 // and commit real Points to a conversion pot, so this panel is a treasury key.
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, postRozi, logAudit } from "../db.ts";
+import {
+  sql, now, newId, postRozi, postUsdt, usdtBalanceMicroOf,
+  usdtFromMicro, usdtToMicro, logAudit,
+} from "../db.ts";
+import { chainById, validateAddress } from "../chains.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
@@ -82,6 +86,47 @@ export async function staffMiningRoutes(app: FastifyInstance) {
           error: "piHalvingUsers needs at least one positive number (e.g. \"10000,50000\"). " +
             "With no milestones the base rate never halves and growth drains the pool.",
         });
+      }
+      // The treasury address is where users are told to send real money. A typo
+      // here is not a bad setting, it is a stream of deposits into an address
+      // nobody controls — unrecoverable, and discovered only when the first user
+      // asks where their USDT went. So it gets the same validator the withdrawal
+      // side uses on user-supplied addresses. Empty is allowed: that is how the
+      // feature is switched off.
+      //
+      // DEPOSITS ARE BEP20-ONLY (founder, 2026-07-29), and it is enforced here
+      // rather than left as a default, because the two halves of this feature
+      // cannot disagree. The deposit screen's copy hard-codes "BNB Smart Chain
+      // (BEP20)" as the network to send on — deliberately, so that the word BNB
+      // appears only in the list of coins NOT to send. An Admin quietly moving
+      // the treasury to Base or Aptos would leave that copy telling every user
+      // to deposit on a network the address is not on, and those deposits are
+      // gone. One chain, named in one place, matching the address.
+      //
+      // Withdrawals are unaffected and still offer all three chains: paying
+      // money OUT to an address the user chose carries none of this risk.
+      if (k === "usdtTreasuryChain" && String(v) !== "bep20") {
+        return reply.code(400).send({
+          error: "Deposits are BEP20 only. The top-up screen tells every user to send " +
+            "on BNB Smart Chain (BEP20), so the treasury address must be on that chain. " +
+            "Change the deposit copy first if this must ever move.",
+        });
+      }
+      if (k === "usdtTreasuryAddress" && String(v).trim() !== "") {
+        // Validate against the chain being set IN THIS SAME REQUEST if there is
+        // one, falling back to the stored value. Reading only the stored chain
+        // would validate a new address against the OLD chain whenever the panel
+        // sends both keys and the address happens to come first in the object —
+        // and "address saved, wrong chain" is a stream of deposits nobody can
+        // recover.
+        const stored = await loadMiningSettings();
+        const chainId = String(body.usdtTreasuryChain ?? stored.usdtTreasuryChain);
+        const chain = chainById(chainId);
+        if (!chain) {
+          return reply.code(400).send({ error: "Set usdtTreasuryChain to a known chain first." });
+        }
+        const check = validateAddress(chain.id, String(v));
+        if (!check.ok) return reply.code(400).send({ error: check.error });
       }
       await setMiningSetting(k, v);
       applied.push(`${k}=${v}`);
@@ -216,7 +261,13 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // ---- Rigs (CRUD) ---------------------------------------------------------
   app.get("/staff/mining/rigs", staffGuard(["admin"], async () => ({
     rigs: (await sql.all<Record<string, unknown>>("SELECT * FROM rigs ORDER BY sort, base_cost"))
-      .map((r) => ({ ...r, base_cost: Number(r.base_cost) })),
+      .map((r) => ({
+        ...r,
+        base_cost: Number(r.base_cost),
+        // Whole USDT for the panel (an Admin types "10", not "10000000"), null
+        // when this rig cannot be bought with money at all.
+        base_cost_usdt: r.base_cost_usdt == null ? null : usdtFromMicro(Number(r.base_cost_usdt)),
+      })),
   })));
 
   const rigSchema = z.object({
@@ -229,7 +280,17 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     maxLevel: z.number().int().min(1).max(50),
     sort: z.number().int().default(0),
     status: z.enum(["active", "disabled"]).default("active"),
+    // Whole USDT. 0 or null means "ROZI only", which is the shipped default for
+    // every rig. See the base_cost_usdt comment in db.ts before setting one:
+    // publishing a USDT price for a machine that also has a ROZI price publishes
+    // an implied ROZI exchange rate, for a token we say has no price.
+    baseCostUsdt: z.number().min(0).max(100_000).nullable().optional(),
   });
+
+  // Whole USDT in, micro-USDT (or null) out, in one place so create and update
+  // cannot disagree about what 0 means.
+  const usdtPriceCol = (v: number | null | undefined) =>
+    v === undefined ? undefined : (v === null || v <= 0 ? null : usdtToMicro(v));
 
   const assertDeflationary = (costGrowth: number, powerGrowth: number) => {
     // The upgrade tree MUST be a treadmill: cost growth has to outrun power
@@ -250,10 +311,10 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     assertDeflationary(b.costGrowth, b.powerGrowth);
     const id = newId();
     await sql.run(
-      `INSERT INTO rigs (id, name, icon, base_cost, cost_growth, base_power, power_growth, max_level, sort, status, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO rigs (id, name, icon, base_cost, cost_growth, base_power, power_growth, max_level, sort, status, base_cost_usdt, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, b.name, b.icon, b.baseCost, b.costGrowth, b.basePower, b.powerGrowth,
-      b.maxLevel, b.sort, b.status, now(),
+      b.maxLevel, b.sort, b.status, usdtPriceCol(b.baseCostUsdt) ?? null, now(),
     );
     await logAudit({ actorUserId: userId, actorRole: role, action: "mining_rig_create", detail: `${b.name} (${id})` });
     return { ok: true, id };
@@ -274,7 +335,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     const cols: Record<string, unknown> = {
       name: b.name, icon: b.icon, base_cost: b.baseCost, cost_growth: b.costGrowth,
       base_power: b.basePower, power_growth: b.powerGrowth, max_level: b.maxLevel,
-      sort: b.sort, status: b.status,
+      sort: b.sort, status: b.status, base_cost_usdt: usdtPriceCol(b.baseCostUsdt),
     };
     const sets = Object.entries(cols).filter(([, v]) => v !== undefined);
     if (!sets.length) return { ok: true };
@@ -286,6 +347,84 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     await logAudit({
       actorUserId: userId, actorRole: role, action: "mining_rig_update",
       detail: `${id}: ${sets.map(([k, v]) => `${k}=${v}`).join(", ")}`,
+    });
+    return { ok: true };
+  }));
+
+  // ---- USDT top-up claims (review queue) -----------------------------------
+  //
+  // A user says "I sent you USDT, here is the transaction". A HUMAN opens the
+  // block explorer, checks that the transaction exists, that it landed at OUR
+  // treasury address, and that the amount matches — then confirms. Only that
+  // click posts credit.
+  //
+  // This is the manual posture on purpose: no hot wallet, no chain listener, no
+  // private key in this system. Same shape as the payout side, which has been
+  // manual since launch. The reviewer types the amount THEY saw on-chain, not
+  // the one the user claimed — see below, it is the whole point of the screen.
+  app.get("/staff/mining/topups", staffGuard(["manager", "admin"], async (_ctx, req) => {
+    const q = z.object({ status: z.enum(["pending", "confirmed", "rejected"]).default("pending") })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT t.*, u.email, u.username FROM usdt_topups t
+       JOIN users u ON u.id = t.user_id
+       WHERE t.status = ? ORDER BY t.created_at LIMIT 200`,
+      q.status,
+    );
+    const s = await loadMiningSettings();
+    return {
+      treasuryAddress: s.usdtTreasuryAddress,
+      treasuryChain: s.usdtTreasuryChain,
+      topups: rows.map((r) => ({ ...r, amount: usdtFromMicro(Number(r.amount)) })),
+    };
+  }));
+
+  app.post("/staff/mining/topups/:id/confirm", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    // THE AMOUNT IS THE REVIEWER'S, NOT THE USER'S. The claim carries what the
+    // user typed; this carries what the reviewer actually read off the chain.
+    // Crediting the claimed number would make the entire review theatre — a user
+    // could send $1 and claim $500, and the reviewer would be clicking "yes, a
+    // transaction exists" while the amount went unchecked.
+    const b = z.object({ amount: z.number().positive() }).parse(req.body);
+
+    return sql.tx(async (t) => {
+      // Claim the row FIRST, and only if it is still pending. Two admins on the
+      // queue at the same moment would otherwise both see 'pending', both post
+      // credit, and pay one deposit twice.
+      const claimed = await t.get<{ user_id: string; tx_hash: string }>(
+        `UPDATE usdt_topups SET status = 'confirmed', reviewed_by = ?, reviewed_at = ?
+         WHERE id = ? AND status = 'pending' RETURNING user_id, tx_hash`,
+        userId, now(), id,
+      );
+      if (!claimed) throw { statusCode: 409, message: "That top-up was already handled." };
+
+      await postUsdt({
+        userId: claimed.user_id, micro: usdtToMicro(b.amount), direction: "credit",
+        sourceType: "topup", sourceRefId: id, note: `Deposit ${claimed.tx_hash.slice(0, 16)}`,
+      }, t);
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "usdt_topup_confirm",
+        detail: `${id} -> ${claimed.user_id}: ${b.amount} USDT`,
+      }, t);
+      return { ok: true, balanceMicro: await usdtBalanceMicroOf(claimed.user_id, t) };
+    });
+  }));
+
+  app.post("/staff/mining/topups/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = z.object({ reason: z.string().min(3).max(300) }).parse(req.body);
+    const claimed = await sql.get<{ user_id: string }>(
+      `UPDATE usdt_topups SET status = 'rejected', reject_reason = ?, reviewed_by = ?, reviewed_at = ?
+       WHERE id = ? AND status = 'pending' RETURNING user_id`,
+      b.reason, userId, now(), id,
+    );
+    if (!claimed) throw { statusCode: 409, message: "That top-up was already handled." };
+    // No ledger row at all: nothing was ever credited, so there is nothing to
+    // reverse. A rejection is a claim we declined, not a refund we owe.
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "usdt_topup_reject",
+      detail: `${id}: ${b.reason}`,
     });
     return { ok: true };
   }));

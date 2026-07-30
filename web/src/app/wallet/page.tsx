@@ -9,7 +9,7 @@ import { StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, BoltIcon } from "@/
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchLedger, fetchMiningState, fetchReferrals, type LedgerEntry } from "@/lib/api";
-import { formatPoints, formatMoney, formatRozi, timeAgo } from "@/lib/format";
+import { formatMoney, formatRozi, timeAgo } from "@/lib/format";
 
 export default function WalletPage() {
   const { ready } = useRequireAuth();
@@ -73,9 +73,9 @@ export default function WalletPage() {
           <p className="text-sm text-muted">{t("common.yourPoints")}</p>
           <p className="mt-1 flex items-center gap-2">
             <StarIcon size={26} className="text-accent" />
-            <span className="num text-4xl font-bold text-brand-ink">{formatPoints(points)}</span>
+            <span className="num text-4xl font-bold text-brand-ink">{formatMoney(points)}</span>
           </p>
-          <p className="mt-1 font-semibold text-brand-ink">{t("wallet.aboutValue", { value: formatMoney(points) })}</p>
+          <p className="mt-1 text-sm text-muted">{t("wallet.aboutValue")}</p>
           <div className="mt-4">
             {canWithdraw ? (
               <Button href="/wallet/withdraw" variant="primary"><WalletIcon size={20} /> {t("common.getMyMoney")}</Button>
@@ -83,7 +83,7 @@ export default function WalletPage() {
               <>
                 <p className="flex gap-2 rounded-xl bg-pending-tint p-3 text-sm text-pending">
                   <InfoIcon size={18} className="mt-0.5 shrink-0" />
-                  {t("wallet.reachAt", { points: formatPoints(min) })}
+                  {t("wallet.reachAt", { points: formatMoney(min) })}
                 </p>
                 {/* Let users set + save their wallet address before they qualify. */}
                 <Link href="/wallet/withdraw" className="mt-3 block text-center text-sm font-semibold text-brand">
@@ -136,7 +136,7 @@ export default function WalletPage() {
                       </div>
                       <div className="text-right">
                         <p className={`num font-bold ${credit ? "text-success" : "text-brand-ink"}`}>
-                          {credit ? "+" : "−"}{formatPoints(Math.abs(e.points))}
+                          {credit ? "+" : "−"}{formatMoney(Math.abs(e.points))}
                         </p>
                         <div className="mt-1 flex justify-end"><StatusBadge status={e.status} /></div>
                       </div>

@@ -26,7 +26,7 @@ export default function AppError({
     <div className="mx-auto max-w-md p-8 pt-16 text-center">
       <h1 className="text-xl font-bold text-brand-ink">Something went wrong</h1>
       <p className="mt-2 text-sm text-muted">
-        Your points are safe. Please try again — if it keeps happening, tell us in Help.
+        Your money is safe. Please try again — if it keeps happening, tell us in Help.
       </p>
       <div className="mt-5 flex justify-center gap-2">
         <button

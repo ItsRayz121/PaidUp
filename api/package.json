@@ -19,7 +19,9 @@
     "test:push": "tsx src/tests/push.e2e.ts",
     "test:referrals": "tsx src/tests/referrals.e2e.ts",
     "test:conversion": "tsx src/tests/conversion.e2e.ts",
-    "test:store": "tsx src/tests/store.e2e.ts"
+    "test:store": "tsx src/tests/store.e2e.ts",
+    "test:profile": "tsx src/tests/profile.e2e.ts",
+    "test:usdt": "tsx src/tests/usdt.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

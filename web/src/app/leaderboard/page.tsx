@@ -7,7 +7,7 @@ import { StarIcon, GiftIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchLeaderboard, type LeaderRow } from "@/lib/api";
-import { formatPoints } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 
 type Board = "earners" | "referrers";
 
@@ -80,7 +80,7 @@ function Row({ r, board, t }: { r: LeaderRow; board: Board; t: (k: string, v?: R
         </div>
         <span className="flex items-center gap-1 font-bold text-brand-ink">
           {board === "referrers" ? <GiftIcon size={16} className="text-accent-ink" /> : <StarIcon size={16} className="text-accent" />}
-          <span className="num">{formatPoints(r.points)}</span>
+          <span className="num">{formatMoney(r.points)}</span>
         </span>
       </Card>
     </li>

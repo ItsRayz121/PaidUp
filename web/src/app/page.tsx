@@ -11,7 +11,7 @@ import {
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchReferrals, fetchTasks, fetchMiningState } from "@/lib/api";
-import { formatPoints, formatMoney, formatRozi } from "@/lib/format";
+import { formatMoney, formatRozi } from "@/lib/format";
 
 // THE ORDER OF THIS SCREEN IS THE PRODUCT DECISION (founder, 2026-07-29).
 //
@@ -102,13 +102,14 @@ export default function HomePage() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm text-muted">{t("home.cash.label")}</p>
+              {/* One number, in the currency they will actually be paid in.
+                  This used to be a points figure with the USDT value under it —
+                  two numbers for one balance, and the big one was the fake. */}
               <p className="mt-0.5 flex items-center gap-2">
                 <StarIcon size={24} className="shrink-0 text-accent" />
-                <span className="num text-3xl font-bold text-brand-ink">{formatPoints(points)}</span>
+                <span className="num text-3xl font-bold text-brand-ink">{formatMoney(points)}</span>
               </p>
-              <p className="mt-0.5 font-semibold text-brand-ink">
-                {t("home.aboutValue", { value: formatMoney(points) })}
-              </p>
+              <p className="mt-0.5 text-sm text-muted">{t("home.aboutValue")}</p>
             </div>
             <Link href="/wallet" className="mt-1 shrink-0 text-brand" aria-label="Go to wallet">
               <ArrowRightIcon size={22} />
@@ -122,7 +123,7 @@ export default function HomePage() {
             ) : (
               <>
                 <div className="mb-2 flex items-center justify-between text-sm">
-                  <span className="text-muted">{t("home.toPayout", { points: formatPoints(toGo) })}</span>
+                  <span className="text-muted">{t("home.toPayout", { points: formatMoney(toGo) })}</span>
                   <span className="font-semibold text-brand">{pct}%</span>
                 </div>
                 <div className="h-2.5 w-full overflow-hidden rounded-full bg-brand-tint" aria-hidden>
@@ -168,7 +169,7 @@ export default function HomePage() {
                 {t("home.friendsJoined", { n: String(ref.data?.joined ?? 0) })}
               </p>
               <p className="text-sm font-semibold text-accent-ink">
-                {t("home.earnedFromThem", { points: formatPoints(ref.data?.earnedPoints ?? 0) })}
+                {t("home.earnedFromThem", { points: formatMoney(ref.data?.earnedPoints ?? 0) })}
               </p>
             </div>
             <ArrowRightIcon size={22} className="text-brand" />
