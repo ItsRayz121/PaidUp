@@ -132,31 +132,38 @@ const copy: Record<string, string> = {
   "tasks.seeAll": "See all",
   // home
   //
-  // ORDER OF THE HOME SCREEN (founder, 2026-07-29): ROZI leads, money follows.
-  // Mining is the reason someone opens this app on a day with no surveys, so it
-  // is the first thing they see; the USDT balance is the money and stays one tap
-  // away. The copy has to carry that order without ever implying ROZI is cash —
-  // the two cards are labelled for what they are, and neither borrows the
-  // other's words. That guardrail got MORE important once the money card started
-  // saying "USDT": the two must never look like one balance in two places.
+  // ONE CURRENCY ON SCREEN (founder, 2026-07-30). The home screen shows a SINGLE
+  // balance, in ROZI: what you mined plus what you earned from tasks, added
+  // together at the fixed display ratio in lib/format.ts.
+  //
+  // This replaced two cards — a ROZI card and a "Your money · 1.60 USDT" card —
+  // which taught users the app had two kinds of money and left the smaller,
+  // slower-moving one looking like the real one. There are not enough tasks
+  // running yet for a USDT figure to move, and a money number that never moves
+  // is worse than no money number at all.
+  //
+  // WHAT THE COPY MUST STILL NEVER DO: promise that the balance can be cashed
+  // out today. It cannot. "Soon" is the strongest word allowed here, and it is
+  // the same word the mining screen and the road map use — three screens, one
+  // promise, so a user cannot find a version of it that says more.
   "home.hello": "Hello,",
-  "home.wePayCash": "We pay real cash",
-  "home.aboutValue": "Ready to take out",
-  "home.toPayout": "{points} more to your first payout",
+  "home.wePayCash": "Free to join",
   "home.quickTaskTitle": "Do a quick task now",
   "home.friendsJoined": "{n} friends joined",
-  "home.earnedFromThem": "You earned {points} from them.",
-  "home.rozi.label": "Your ROZI",
+  "home.earnedFromThem": "They are earning with you.",
+  "home.rozi.label": "Your RoziPay balance",
   "home.rozi.tagline":
     "Mine ROZI free, every day. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
   "home.rozi.start": "Start mining",
   "home.rozi.running": "Mining now — {time} left",
   "home.rozi.speed": "Your speed",
-  "home.cash.label": "Your money",
-  "home.cash.hint": "This is real money. Take it out any time you like.",
-  "home.taskBoost": "Every task you finish also makes your mining faster.",
+  // The split, shown small under the big number. One currency does not mean one
+  // source: a user who does a survey must be able to see that it landed, or the
+  // next survey does not get done.
+  "home.rozi.breakdown": "{mined} mined · {earned} from tasks and friends",
+  "home.taskBoost": "Every task you finish adds ROZI and makes your mining faster.",
   // wallet
-  "wallet.subtitle": "Your money and your payment history.",
+  "wallet.subtitle": "Your balance, and where your money will be sent.",
   "wallet.aboutValue": "Ready to take out",
   "wallet.reachAt": "You can get your money at {points}. Keep earning — you are close.",
   "wallet.history": "History",
@@ -177,14 +184,22 @@ const copy: Record<string, string> = {
   // "Level 1 / level 2" is banned here, along with "downline" and "commission":
   // this is the screen where jargon costs the most. Say "your friends" and
   // "their friends", which is what the thing actually is.
+  //
+  // ⚠️ NOT A PER-FRIEND BOUNTY, and the copy must never read like one (founder,
+  // 2026-07-30). The card used to headline "0.100 USDT for every friend", which
+  // says we hand out cash for a link — we do not, and a bounty is the exact
+  // shape every fake-signup farm is looking for. What we actually pay is a SHARE
+  // OF WHAT A FRIEND EARNS, at two levels, for as long as they keep earning.
+  // So the two share rows lead, and the starter bonus is last, named for what
+  // earns it: their first finished task, never their signup.
   "invite.title": "Every friend pays you twice",
-  "invite.subtitle": "Once when they earn. Again when their friends earn.",
+  "invite.subtitle": "A share of what they earn. And a share of what their friends earn.",
   "invite.l1.title": "Your friends earn, you get {pct}%",
   "invite.l1.body": "Every task they finish, forever. You do nothing.",
   "invite.l2.title": "Their friends earn, you get {pct}%",
   "invite.l2.body": "When your friends invite people, you get paid from them too.",
-  "invite.first.title": "{n} for every friend",
-  "invite.first.body": "Paid the moment they finish their first task.",
+  "invite.first.title": "{n} ROZI when a friend gets started",
+  "invite.first.body": "Paid when they finish their first task — not for joining.",
   "invite.mining.title": "Your mining gets faster",
   "invite.mining.body":
     "Every friend who mines adds {pct}% of their speed to yours. Their friends add {pct2}%.",
@@ -325,6 +340,33 @@ const copy: Record<string, string> = {
   "login.msg.forgotSent": "If that email has an account, we sent a code to it.",
   // wallet + withdraw additions
   "wallet.setupWallet": "Set up my withdrawal wallet",
+  // Founder, 2026-07-30: the wallet tab's job is the balance and the payout
+  // address, in that order. Cash-out is not open yet, so the useful thing a user
+  // can do here TODAY is tell us where to send the money — done once, waiting
+  // when it opens. Same ceiling word as everywhere else: "soon", never a date.
+  "wallet.setup.title": "Set up your withdrawal wallet",
+  "wallet.setup.body":
+    "Tell us the wallet address to send your money to. Do it once now, and you are ready the moment cash-out opens.",
+  "wallet.setup.done": "Your withdrawal wallet is saved. You can change it any time.",
+  "wallet.setup.cta": "Change my wallet address",
+  // ---- Send / receive + the token list (founder, 2026-07-30) ---------------
+  "wallet.send": "Send",
+  "wallet.receive": "Receive",
+  "wallet.sendOff": "Sending is not switched on yet.",
+  "wallet.tokens.title": "Your tokens",
+  "wallet.token.rozi.name": "RoziPay",
+  "wallet.token.rozi.sub": "Mined, and earned from tasks",
+  "wallet.token.usdt.name": "USDT",
+  "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",
+  // ⚠️ THE BNB ROW HAS NO BALANCE BEHIND IT AND MUST SAY SO. We hold no BNB for
+  // anyone: there is no per-user wallet, no chain listener, nothing that could
+  // ever make this number move (see docs/CUSTODY_SPEC.md). A silent "0.00"
+  // beside two real balances reads as a bug, or worse, as money that went
+  // missing — so the row names itself as not open yet. When per-user deposit
+  // wallets are built, this line is what gets deleted.
+  "wallet.token.bnb.name": "BNB",
+  "wallet.token.bnb.sub": "BNB Smart Chain · not open yet",
+  "wallet.token.soon": "Soon",
   "withdraw.saveAddress": "Save this address",
   "withdraw.addressSaved": "Address saved",
   "withdraw.feeLabel": "Withdrawal fee",
@@ -368,9 +410,19 @@ const copy: Record<string, string> = {
   "nav.mine": "Mine",
   "mine.title": "Mine ROZI",
   "mine.subtitle": "Earn ROZI every day, even when there are no tasks.",
+  // Founder, 2026-07-30: lead with "soon you can cash it out", not "you cannot
+  // cash it out yet". Same fact, forward-facing — the old line made the app's
+  // headline feature open with its limit.
+  //
+  // ⚠️ "Soon" IS THE CEILING. It must not become "you can cash out", a date, or
+  // a rate, on this screen or any other, until a real payout has cleared. The
+  // road map's no-price rule applies to this sentence too: cashing out is a step
+  // we are working on, never an amount we have promised. Home and the road map
+  // use the same word on purpose — one promise, three screens, no version of it
+  // anywhere that says more.
   "mine.notcash.title": "You are early. Mine ROZI now.",
   "mine.notcash.body":
-    "Soon you will be able to send ROZI to friends, and turn it into money. You cannot cash it out yet. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
+    "Soon you will be able to send ROZI to friends and cash it out. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
   "mine.balance": "Your ROZI",
   "mine.hashrate": "Your mining speed",
   "mine.today": "You will get today",
@@ -627,36 +679,39 @@ const copy: Record<string, string> = {
   //      future dates reads like a wish list. Leading with what already works is
   //      what makes the rest believable.
   //
-  // Dates are the founder's (2026-07-29): launch in the second week of August
-  // 2026, then +1, +2-3, +5-6 and +9-12 months.
+  // Dates are the founder's (revised 2026-07-30): Aug-Sep mining, Oct-Nov ID
+  // check, Dec open trading, Jan big exchange.
+  //
+  // ⚠️ "Cash out to USDT" WAS in the Live-now list and has been REMOVED (founder,
+  // 2026-07-30: "right now there is no USDT cash out"). The withdrawal code
+  // works, but the treasury is not funded, so nobody can actually be paid — and
+  // a claim on this page that a user cannot act on is the single most damaging
+  // thing it could contain. Cash-out goes back on this list when a real payout
+  // has cleared, and not before.
   "mine.roadmap.title": "Road map",
   "mine.roadmap.body": "See what is coming next for ROZI.",
   "roadmap.title": "The road ahead",
   "roadmap.subtitle": "Where RoziPay is going, and when.",
   "roadmap.live.title": "Working today",
   "roadmap.live.mining": "Mine ROZI every day",
-  "roadmap.live.tasks": "Answer surveys and get paid",
-  "roadmap.live.withdraw": "Cash out to USDT",
+  "roadmap.live.tasks": "Answer surveys and earn",
   "roadmap.live.rigs": "Buy machines to mine faster",
+  "roadmap.live.send": "Send ROZI to a friend",
   "roadmap.live.invite": "Invite friends and earn with them",
   "roadmap.next.title": "What is next",
-  "roadmap.step.launch.when": "August 2026",
-  "roadmap.step.launch.title": "We open to everyone",
+  "roadmap.step.launch.when": "August — September 2026",
+  "roadmap.step.launch.title": "Mining opens to everyone",
   "roadmap.step.launch.body":
-    "RoziPay opens in the second week of August. Mining, surveys and cash-out for everyone.",
-  "roadmap.step.kyc.when": "September 2026",
+    "RoziPay opens to everyone. Two months of mining, so the people who came first have the most ROZI.",
+  "roadmap.step.kyc.when": "October — November 2026",
   "roadmap.step.kyc.title": "ID check",
   "roadmap.step.kyc.body":
-    "Show us your ID once. It keeps fake accounts out and keeps your money safe.",
-  "roadmap.step.b2b.when": "October — November 2026",
-  "roadmap.step.b2b.title": "Business partners",
-  "roadmap.step.b2b.body":
-    "Shops and companies start taking ROZI, and paying us to reach you. More real things to spend it on.",
-  "roadmap.step.dex.when": "January — February 2027",
+    "Show us your ID once. It keeps fake accounts out, and it is what lets us pay real money out safely.",
+  "roadmap.step.dex.when": "December 2026",
   "roadmap.step.dex.title": "Open trading",
   "roadmap.step.dex.body":
     "ROZI goes on an open trading site, where anyone can swap it. This is the step we are building everything else toward.",
-  "roadmap.step.cex.when": "May — August 2027",
+  "roadmap.step.cex.when": "January 2027",
   "roadmap.step.cex.title": "Big exchange",
   "roadmap.step.cex.body":
     "We apply to list ROZI on a large, well-known exchange. Big exchanges decide for themselves, so this one is not ours alone to promise.",

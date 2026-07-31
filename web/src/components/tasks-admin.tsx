@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, fetchTaskPostback,
-  fetchTaskProofs, decideTaskProof,
+  fetchTaskProofs, decideTaskProof, TASK_ICON_CHOICES,
   type CustomTask, type CustomTaskInput,
 } from "@/lib/api";
 import { formatPoints, timeAgo } from "@/lib/format";
@@ -21,7 +21,7 @@ const API_BASE =
 
 const empty: CustomTaskInput = {
   title: "", points: 100, verifyMode: "proof",
-  instructions: "", proofLabel: "", actionUrl: "", minutes: 1, country: "Pakistan", status: "active",
+  instructions: "", proofLabel: "", actionUrl: "", icon: "", minutes: 1, country: "Pakistan", status: "active",
 };
 
 export function TasksPanel() {
@@ -46,7 +46,7 @@ export function TasksPanel() {
     setForm({
       title: t.title, points: t.points, verifyMode: t.verify_mode,
       instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
-      actionUrl: t.action_url ?? "", minutes: t.minutes, country: t.country,
+      actionUrl: t.action_url ?? "", icon: t.icon ?? "", minutes: t.minutes, country: t.country,
       status: t.status as "active" | "disabled",
     });
   }
@@ -129,6 +129,13 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
         <label><span className={L}>Link / button URL (optional)</span>
           <input className={I} placeholder="https://…" value={value.actionUrl}
             onChange={(e) => set("actionUrl", e.target.value)} /></label>
+        <label><span className={L}>Logo on the card</span>
+          <select className={I} value={value.icon ?? ""}
+            onChange={(e) => set("icon", e.target.value)}>
+            {TASK_ICON_CHOICES.map((c) => (
+              <option key={c} value={c}>{c === "" ? "Default (by task type)" : c}</option>
+            ))}
+          </select></label>
         {value.verifyMode === "proof" && (
           <label><span className={L}>Proof label (what to send)</span>
             <input className={I} placeholder="e.g. Your username" value={value.proofLabel}
@@ -188,6 +195,16 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
           </button>
         </div>
       </div>
+
+      {/* The three seeded social tasks ship switched off with no link, because a
+          guessed URL would send users to a 404 and then ask them to prove they
+          followed it. Say so here rather than letting an Admin flip one on and
+          wonder why the card has no button. */}
+      {t.verify_mode === "proof" && !t.action_url && (
+        <p className="mt-2 rounded-md bg-pending-tint p-2 text-[11px] text-pending">
+          No link yet — the task card will have no button. Add the URL, then set it active.
+        </p>
+      )}
 
       {t.verify_mode === "postback" && (
         <div className="mt-2 border-t border-line pt-2">

@@ -63,6 +63,7 @@ export async function appRoutes(app: FastifyInstance) {
           instructions: t.instructions ?? undefined,
           proofLabel: t.proof_label ?? undefined,
           actionUrl: t.action_url ?? undefined,
+          icon: t.icon ?? undefined,
           proofStatus: proof?.status ?? undefined,
           proofNote: proof?.review_note ?? undefined,
         };

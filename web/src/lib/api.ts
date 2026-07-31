@@ -128,6 +128,9 @@ export type Task = {
   instructions?: string;
   proofLabel?: string;
   actionUrl?: string;
+  // Which logo the card shows — a key into `taskIcon` (components/icons.tsx),
+  // never a URL. Absent => the icon for the task's type.
+  icon?: string;
   // The current user's standing on a 'proof' task, if they've submitted.
   proofStatus?: "pending" | "approved" | "rejected";
   proofNote?: string;
@@ -403,14 +406,19 @@ export const updateAllNetworkReferrals = (patch: {
 export type CustomTask = {
   id: string; title: string; points: number; type: string;
   verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
-  action_url: string | null; minutes: number; country: string; status: string;
+  action_url: string | null; icon: string | null; minutes: number; country: string; status: string;
   created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
 };
 export type CustomTaskInput = {
   title: string; points: number; verifyMode: "proof" | "postback";
-  instructions?: string; proofLabel?: string; actionUrl?: string;
+  instructions?: string; proofLabel?: string; actionUrl?: string; icon?: string;
   minutes?: number; country?: string; status?: "active" | "disabled";
 };
+// Must match TASK_ICONS in api/src/routes/staffTasks.ts — the API refuses
+// anything not on that list, so a value added here alone just fails to save.
+export const TASK_ICON_CHOICES = [
+  "", "whatsapp", "telegram", "twitter", "youtube", "facebook", "instagram", "star",
+] as const;
 export const fetchCustomTasks = () => apiFetch<{ tasks: CustomTask[] }>("/staff/tasks");
 export const createCustomTask = (input: CustomTaskInput) =>
   apiFetch<{ ok: boolean; id?: string }>("/staff/tasks", { method: "POST", body: JSON.stringify(input) });

@@ -203,7 +203,22 @@ export const MINING_DEFAULTS = {
   referralActiveHours: 24,  // an invitee must have mined this recently to count
 
   // -- Transfers (§ 7). Wallet-to-wallet only. No order book, ever.
-  transfersEnabled: 0,
+  //
+  // ON since 2026-07-30 (founder, asked for repeatedly): a user must be able to
+  // send ROZI to a friend's RoziPay account. Everything below is what makes that
+  // safe, and none of it was relaxed to turn the flag on:
+  //   • transferRequireKyc = 1  — sending is the step a farm needs to consolidate
+  //     what it mined, so it carries the same ID gate withdrawals do.
+  //   • transferMinAccountDays  — a fresh account cannot send at all.
+  //   • transferDailyCap        — binds on consolidation farms, on nobody else.
+  //   • 2% burned, not collected — we do not profit from people moving value.
+  // Receiving stays open to everyone: a new user being SENT ROZI has done nothing
+  // wrong, and blocking it makes the app look broken to the person sending.
+  //
+  // This is the one part of the 2-3 month lock that is now open. Conversion and
+  // the ROZI store stay shut (conversionEnabled = 0), so ROZI still cannot leave
+  // the system for money — it can only move between accounts inside it.
+  transfersEnabled: 1,
   // Scaled with the 21M cap (was 50,000, which is 0.24% of the whole supply in
   // one day from one account — a cap that high is not a cap). At ~1 ROZI/day for
   // an engaged miner this is still years of mining, so it binds on consolidation

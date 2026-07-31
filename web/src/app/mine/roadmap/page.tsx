@@ -22,7 +22,10 @@
 //      and the last step, a big exchange listing, is genuinely not ours alone to
 //      decide, so the page says so out loud.
 //
-// Dates are the founder's (2026-07-29). Every string lives in the copy deck.
+// Dates are the founder's (revised 2026-07-30). Every string lives in the copy
+// deck. NOTE: "Cash out to USDT" was removed from the live list in that same
+// pass — the code works but the treasury is not funded, so no user can act on
+// it. See the roadmap.live.* comment in lib/i18n.tsx.
 import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
 import {
@@ -32,13 +35,13 @@ import { useI18n } from "@/lib/i18n";
 
 // The steps, in order. `key` drives every string, so the copy deck stays the one
 // place any of this is worded.
-const STEPS = ["launch", "kyc", "b2b", "dex", "cex"] as const;
+const STEPS = ["launch", "kyc", "dex", "cex"] as const;
 
 const LIVE = [
   "roadmap.live.mining",
   "roadmap.live.tasks",
-  "roadmap.live.withdraw",
   "roadmap.live.rigs",
+  "roadmap.live.send",
   "roadmap.live.invite",
 ] as const;
 

@@ -6,26 +6,33 @@ import { TaskFlow } from "@/components/TaskFlow";
 import { InviteRewards } from "@/components/InviteRewards";
 import { Loading, ErrorState } from "@/components/state";
 import {
-  StarIcon, WalletIcon, ArrowRightIcon, GiftIcon, ShieldIcon, VideoIcon, MineIcon, BoltIcon,
+  ArrowRightIcon, GiftIcon, ShieldIcon, VideoIcon, MineIcon, BoltIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchReferrals, fetchTasks, fetchMiningState } from "@/lib/api";
-import { formatMoney, formatRozi } from "@/lib/format";
+import { formatRozi, pointsToRoziMicro, totalRoziMicro } from "@/lib/format";
 
-// THE ORDER OF THIS SCREEN IS THE PRODUCT DECISION (founder, 2026-07-29).
+// ONE CURRENCY (founder, 2026-07-30). This screen shows a SINGLE balance, in
+// ROZI: what the user mined, plus what they earned from tasks and friends,
+// added at the fixed display ratio in lib/format.ts.
 //
-// ROZI leads. Points follow. Everything else supports one of the two.
+// It replaced two cards. The second one said "Your money · 1.60 USDT" and had a
+// progress bar to a payout, and it was the weakest thing on the screen: there is
+// not enough survey fill for Pakistani traffic yet for that number to move, so
+// most users met a money figure that had been identical for days. Two balances,
+// one of them frozen, taught people the app was two apps and one of them was
+// broken.
 //
-// Mining is the reason someone opens RoziPay on a day when CPX has no survey to
-// give a Pakistani user — which, right now, is most of the day. A home screen
-// that led with a points balance that had not moved since yesterday was a home
-// screen that taught people there was nothing here today.
+// WHAT MOVED AND WHAT DID NOT. The USDT figure and the "Get my money" button are
+// gone FROM HERE, not from the app — they live on /wallet, which is now the one
+// screen that talks about being paid. The ledgers underneath are untouched and
+// still separate (guardrail #7): this is a display merge, and lib/format.ts
+// carries the note on what a fixed ratio costs us.
 //
-// What did NOT change, and must not: the two currencies stay visually and
-// verbally separate, and nothing on this screen implies ROZI can be cashed out.
-// Leading with ROZI is a statement about what the app is FOR, not a promise
-// about what ROZI is worth. The points card still owns every money word.
+// THE LINE THIS SCREEN MUST NOT CROSS: no copy here may say the balance can be
+// cashed out today. It cannot. "Soon" is the strongest word available, and the
+// mining screen and the road map use exactly that word too.
 export default function HomePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
@@ -40,12 +47,14 @@ export default function HomePage() {
 
   const name = user?.email?.split("@")[0] ?? "there";
   const points = bal.data?.points ?? 0;
-  const min = bal.data?.minWithdrawPoints ?? 2000;
-  const canWithdraw = points >= min;
-  const toGo = Math.max(0, min - points);
-  const pct = Math.min(100, Math.round((points / min) * 100));
   const m = mining.data;
   const isMining = Boolean(m?.session.active && countdown);
+  // The one number. Waits for BOTH calls: rendering the mined half alone would
+  // show a balance that jumps upward a moment later, which reads as a glitch on
+  // the first screen a user ever sees.
+  const ready2 = !mining.loading && !bal.loading;
+  const minedMicro = m?.roziMicro ?? 0;
+  const earnedMicro = pointsToRoziMicro(points);
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -59,16 +68,30 @@ export default function HomePage() {
         </span>
       </header>
 
-      {/* ---- ROZI: the headline ---- */}
-      {mining.loading ? <Loading lines={2} /> : m && (
+      {/* ---- The one balance ---- */}
+      {!ready2 ? <Loading lines={2} /> : bal.error ? (
+        <ErrorState message={bal.error} onRetry={bal.reload} />
+      ) : m && (
         <Card className="overflow-hidden">
           <Link href="/mine" className="block bg-brand p-5 text-white">
             <p className="flex items-center gap-1.5 text-sm text-white/80">
               <MineIcon size={16} /> {t("home.rozi.label")}
             </p>
             <p className="num mt-1 text-5xl font-extrabold">
-              {formatRozi(m.roziMicro)} <span className="text-2xl font-bold text-white/70">ROZI</span>
+              {formatRozi(totalRoziMicro(minedMicro, points))}{" "}
+              <span className="text-2xl font-bold text-white/70">ROZI</span>
             </p>
+            {/* The split, small. One currency does not mean one source: a user
+                who finishes a survey has to be able to see that it landed, or
+                the next survey does not get done. */}
+            {earnedMicro > 0 && (
+              <p className="num mt-1 text-xs text-white/70">
+                {t("home.rozi.breakdown", {
+                  mined: formatRozi(minedMicro),
+                  earned: formatRozi(earnedMicro),
+                })}
+              </p>
+            )}
             <p className="mt-2 text-sm text-white/85">{t("home.rozi.tagline")}</p>
           </Link>
           <div className="p-4">
@@ -94,48 +117,12 @@ export default function HomePage() {
         </Card>
       )}
 
-      {/* ---- Points: the money ---- */}
-      {bal.loading ? <Loading lines={1} /> : bal.error ? (
-        <ErrorState message={bal.error} onRetry={bal.reload} />
-      ) : (
-        <Card className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm text-muted">{t("home.cash.label")}</p>
-              {/* One number, in the currency they will actually be paid in.
-                  This used to be a points figure with the USDT value under it —
-                  two numbers for one balance, and the big one was the fake. */}
-              <p className="mt-0.5 flex items-center gap-2">
-                <StarIcon size={24} className="shrink-0 text-accent" />
-                <span className="num text-3xl font-bold text-brand-ink">{formatMoney(points)}</span>
-              </p>
-              <p className="mt-0.5 text-sm text-muted">{t("home.aboutValue")}</p>
-            </div>
-            <Link href="/wallet" className="mt-1 shrink-0 text-brand" aria-label="Go to wallet">
-              <ArrowRightIcon size={22} />
-            </Link>
-          </div>
-          <div className="mt-3">
-            {canWithdraw ? (
-              <Button href="/wallet/withdraw" variant="accent">
-                <WalletIcon size={20} /> {t("common.getMyMoney")}
-              </Button>
-            ) : (
-              <>
-                <div className="mb-2 flex items-center justify-between text-sm">
-                  <span className="text-muted">{t("home.toPayout", { points: formatMoney(toGo) })}</span>
-                  <span className="font-semibold text-brand">{pct}%</span>
-                </div>
-                <div className="h-2.5 w-full overflow-hidden rounded-full bg-brand-tint" aria-hidden>
-                  <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
-                </div>
-              </>
-            )}
-          </div>
-        </Card>
-      )}
+      {/* The "Your money · X USDT" card used to sit here, with a progress bar to
+          the payout threshold. Both moved to /wallet (founder, 2026-07-30) — see
+          the note at the top of this file. Do not restore a money figure to this
+          screen without restoring the reason it was removed. */}
 
-      {/* Next action. Tasks are how points AND mining speed both go up, so the
+      {/* Next action. Tasks are how the balance AND mining speed both go up, so the
           card says the second half — it is what makes the offerwall worth
           opening on a screen that now leads with mining. */}
       <Card className="flex items-center gap-3 p-4">
@@ -168,8 +155,11 @@ export default function HomePage() {
               <p className="font-semibold text-brand-ink">
                 {t("home.friendsJoined", { n: String(ref.data?.joined ?? 0) })}
               </p>
+              {/* Was "You earned {USDT} from them." Dropped with the money card:
+                  a USDT figure here would have been the last one left on a screen
+                  that no longer explains what USDT means in this app. */}
               <p className="text-sm font-semibold text-accent-ink">
-                {t("home.earnedFromThem", { points: formatMoney(ref.data?.earnedPoints ?? 0) })}
+                {t("home.earnedFromThem")}
               </p>
             </div>
             <ArrowRightIcon size={22} className="text-brand" />

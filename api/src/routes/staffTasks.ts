@@ -33,6 +33,16 @@ function staffGuard(
 
 const CUSTOM_NETWORK = "custom";
 
+// The logos a task card can show. A CLOSED LIST, not a free-text field and not a
+// URL: the icon name is looked up against a map of inline SVGs in the web app
+// (components/icons.tsx `taskIcon`), so an Admin can never point a task card at
+// an off-site image. Task cards sit next to balances, and a remote image there
+// is a third-party request on a money screen — a tracking pixel at best.
+//
+// Adding one = a line here and a matching entry in `taskIcon`. An unknown value
+// is refused at this boundary, so the two lists cannot drift apart silently.
+export const TASK_ICONS = ["whatsapp", "telegram", "twitter", "youtube", "facebook", "instagram", "star"] as const;
+
 const upsertSchema = z.object({
   title: z.string().min(3).max(120),
   points: z.number().int().positive().max(1_000_000),
@@ -43,6 +53,7 @@ const upsertSchema = z.object({
   minutes: z.number().int().min(0).max(600).default(1),
   country: z.string().max(60).default("Pakistan"),
   status: z.enum(["active", "disabled"]).default("active"),
+  icon: z.enum(TASK_ICONS).optional().or(z.literal("")),
 });
 
 export async function staffTaskRoutes(app: FastifyInstance) {
@@ -50,7 +61,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   app.get("/staff/tasks", staffGuard(["admin"], async () => {
     const tasks = await sql.all<Record<string, unknown>>(
       `SELECT t.id, t.title, t.points, t.type, t.verify_mode, t.instructions, t.proof_label,
-              t.action_url, t.minutes, t.country, t.status, t.created_at,
+              t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
               (t.postback_secret IS NOT NULL) AS has_secret,
               (SELECT COUNT(*) FROM task_completions c WHERE c.task_id = t.id AND c.status = 'credited') AS credited_count,
               (SELECT COUNT(*) FROM task_proofs p WHERE p.task_id = t.id AND p.status = 'pending') AS pending_proofs
@@ -71,12 +82,13 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     await sql.run(
       `INSERT INTO tasks
         (id, type, title, points, network, advertiser, minutes, requirement, country, status,
-         source, verify_mode, instructions, proof_label, action_url, postback_secret, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?)`,
+         source, verify_mode, instructions, proof_label, action_url, icon, postback_secret, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?)`,
       id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
       b.instructions ?? null, b.country, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
-      b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null, secret, now(),
+      b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null,
+      b.icon && b.icon.length > 0 ? b.icon : null, secret, now(),
     );
 
     await logAudit({
@@ -114,6 +126,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (b.instructions !== undefined) { set("instructions", b.instructions); set("requirement", b.instructions); }
     if (b.proofLabel !== undefined) set("proof_label", b.proofLabel);
     if (b.actionUrl !== undefined) set("action_url", b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null);
+    if (b.icon !== undefined) set("icon", b.icon && b.icon.length > 0 ? b.icon : null);
     set("verify_mode", nextMode);
     set("postback_secret", secret);
 

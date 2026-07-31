@@ -433,6 +433,12 @@ const MIGRATIONS = `
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS action_url TEXT;
   -- Per-task postback secret. Only ever leaves the server to an Admin in /staff.
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS postback_secret TEXT;
+  -- Which logo the task card shows, keyed the same way rigs are (a short name an
+  -- Admin picks from a list, not a URL). A name rather than an uploaded image on
+  -- purpose: task cards render inside the app, so an admin-supplied image URL
+  -- would be a third-party request on a money screen and a way to smuggle
+  -- tracking pixels into it. NULL falls back to the icon for the task's type.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS icon TEXT;
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_type_check
     CHECK (type IN ('install','survey','video','custom'));

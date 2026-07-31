@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
-import { formatMoney } from "@/lib/format";
+import { formatPointsAsRozi } from "@/lib/format";
 
 // Matches the backend's ledger row status (see @/lib/api LedgerEntry).
 type LedgerStatus = "earned" | "paid" | "pending" | "rejected";
@@ -55,14 +55,20 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 }
 
 // ---- Reward pill ----------------------------------------------------------
-// Takes POINTS (what the API sends) and shows USDT (what the user reads). The
-// prop keeps its name because that is genuinely what the number is; the
+// Takes POINTS (what the API sends) and shows ROZI (what the user reads). The
+// prop keeps its name because points is genuinely what the number is; the
 // conversion happens here, at the last possible moment, exactly once.
+//
+// It used to render USDT, and this pill is why that had to stop: a 5-point task
+// is $0.005, so the reward on a task card read "0.005 USDT" — the smallest,
+// least motivating number in the app, sitting on the exact element that has to
+// persuade someone to do the work. The same reward is 0.05 ROZI, in the one
+// currency the rest of the app now speaks.
 export function PointsPill({ points }: { points: number }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2.5 py-1 text-accent-ink font-semibold text-sm whitespace-nowrap">
       <StarIcon size={15} />
-      <span className="num">+{formatMoney(points)}</span>
+      <span className="num">+{formatPointsAsRozi(points)}</span>
     </span>
   );
 }

@@ -124,6 +124,61 @@ export const LockIcon = (p: IconProps) => (
 
 export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon, custom: StarIcon };
 
+// ---- Wallet actions -------------------------------------------------------
+// Arrow leaving the box / arrow landing in it. Deliberately mirror images of
+// each other so the pair reads as one idea at a glance on the wallet screen.
+export const SendIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
+);
+export const ReceiveIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
+);
+
+// ---- Social logos, for OUR OWN tasks --------------------------------------
+//
+// Drawn here as inline SVG rather than loaded from a CDN or an Admin-supplied
+// URL. Task cards render next to a balance, and a remote image on a money screen
+// is a third-party request we do not control — a tracking pixel at best, a
+// swapped image at worst. Everything the app shows, the app ships.
+//
+// One-colour stroke glyphs in the house style, not the brands' official marks:
+// the official logos are trademarked artwork with their own colour and clear-space
+// rules, and a recognisable shape in our own line weight sits better in the list
+// anyway. If a brand's guidelines ever require the real mark, that is a licensed
+// asset from Canva, not a shape in this file.
+export const WhatsAppIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+    <path d="M9.6 8.8a.9.9 0 0 1 1.1-.3l.9.4c.4.2.5.6.4 1l-.2.7c0 .3 0 .5.2.7l1.4 1.4c.2.2.4.3.7.2l.7-.2c.4-.1.8.1 1 .4l.4.9c.2.4 0 .8-.3 1.1-.9.7-2.2.6-3.6-.5a12 12 0 0 1-2.4-2.4c-1.1-1.4-1.2-2.7-.5-3.6Z" />
+  </svg>
+);
+// X's mark IS a crossed stroke, so the house line weight loses nothing here.
+export const TwitterIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M4 4.5 19.5 20M20 4 4.5 19.5" /></svg>
+);
+export const YouTubeIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="2.5" y="6" width="19" height="12" rx="3.5" /><path d="m10.5 9.5 4.5 2.5-4.5 2.5Z" /></svg>
+);
+export const FacebookIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M15 8h-1.5A2 2 0 0 0 11.5 10v11M9 13h5" /></svg>
+);
+export const InstagramIcon = (p: IconProps) => (
+  <svg {...base(p)}><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="3.8" /><path d="M17 7h.01" /></svg>
+);
+
+// Keyed by the `icon` column on the tasks table (Admin-picks from a closed list —
+// see TASK_ICONS in api/src/routes/staffTasks.ts, which refuses anything not in
+// this map). Falls back to the task type's icon when a task has none.
+export const taskIcon: Record<string, (p: IconProps) => React.ReactElement> = {
+  whatsapp: WhatsAppIcon,
+  telegram: TelegramIcon,
+  twitter: TwitterIcon,
+  youtube: YouTubeIcon,
+  facebook: FacebookIcon,
+  instagram: InstagramIcon,
+  star: StarIcon,
+};
+
 // Rig art, keyed by the `icon` column on the rigs table (Admin-editable). Falls
 // back to the chip so a rig with an unknown icon name still renders.
 export const rigIcon: Record<string, (p: IconProps) => React.ReactElement> = {

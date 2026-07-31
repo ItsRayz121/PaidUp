@@ -377,7 +377,116 @@ These override convenience or speed at every step:
   - Still the founder's call, not built: **transfers remain OFF**
     (`transfersEnabled = 0`). The send/receive screens are finished and it is one
     toggle in `/staff → Mining`, but turning it on contradicts the documented
-    2–3 month lock period, so it was left alone.
+    2–3 month lock period, so it was left alone. ⚠️ **SUPERSEDED 2026-07-30 —
+    transfers are now ON, see below.**
+
+- **ONE CURRENCY ON SCREEN, AND THE INVITE STOPS SOUNDING LIKE A BOUNTY
+  (founder, 2026-07-30).** Verified: 41 unit + 50 mining e2e + 31 profile +
+  52 usdt + 25 conversion + 29 store + 14 referrals + 15 admin + 25 kyc +
+  9 push + 45 telegram + 5 proxy = **341 checks green**; api + web typecheck,
+  eslint, web production build all clean.
+  - **The earner app shows ONE balance, in ROZI.** Home's second card ("Your
+    money · 1.60 USDT" + a progress bar to payout) is **gone**; the ROZI card
+    now shows mined ROZI **plus** task/referral earnings converted at
+    `POINTS_PER_ROZI = 100` (`web/src/lib/format.ts`), with the split as a small
+    line underneath. `/wallet` shows the same combined number, so the two
+    screens can never disagree.
+    ⚠️ **This is a DISPLAY merge and the two ledgers are untouched** — points
+    are still points, ROZI is still ROZI, nothing converts, and a withdrawal
+    still debits points in points. That separation is exactly what keeps the
+    ratio changeable: retuning it restates the screen and rewrites nobody's
+    history. Guardrail #7 stands.
+    ⚠️ **A FIXED RATIO PUBLISHES AN IMPLIED ROZI PRICE, and that is the accepted
+    cost, not an oversight.** Points have a public rate (1000 = 1 USDT), so
+    100 points = 1 ROZI states in public that 1 ROZI = $0.01 — a $210,000 implied
+    valuation against the 21M cap. The founder was told this before it was built
+    and chose it. It is why the road map's no-price rule matters *more* now, not
+    less: the app must not add a second, louder price claim on top.
+  - **`/wallet` leads with "Set up your withdrawal wallet"** — saving a payout
+    address is the one thing a user can actually finish there today, since
+    cash-out is not open. The money figure and "Get my money" are still on that
+    screen; they are just no longer the first thing a new user meets.
+  - **The invite card is no longer a per-head bounty.** It headlined
+    "0.100 USDT for every friend" — which says we pay cash for a link (we do
+    not) and is the exact shape a fake-signup farm looks for. The two SHARE rows
+    now lead, and the starter bonus is last, in ROZI, named for the friend's
+    **first finished task**, never their signup.
+  - **Road map re-dated** to the founder's months: Aug–Sep mining, Oct–Nov ID
+    check, Dec open trading, Jan big exchange. The `b2b` step was dropped.
+    ⚠️ **"Cash out to USDT" was REMOVED from the "Working today" list** — the
+    withdrawal code works, but the treasury is unfunded, so no user can act on
+    it. It goes back when a real payout has cleared, and not before.
+  - **"Soon you can cash it out"** replaces "you cannot cash it out yet" on
+    `/mine`. ⚠️ **"Soon" is the ceiling** — not a date, not a rate, on any
+    screen, until a payout has actually cleared. Home, `/mine` and the road map
+    deliberately use the same word so there is no version of the promise
+    anywhere that says more.
+  - **Three social tasks** (WhatsApp / Telegram / X) seeded in `seed.ts` with
+    per-task **logos** — new `tasks.icon` column, a **closed list**
+    (`TASK_ICONS` in `staffTasks.ts` ↔ `taskIcon` in `web/components/icons.tsx`),
+    never a URL: task cards sit next to a balance, and an Admin-supplied remote
+    image there is a third-party request on a money screen. Links are edited in
+    `/staff → Our own tasks`. They ship **disabled with no link** — a guessed URL
+    would send users to a 404 and then ask them to prove they followed it — and
+    the seed uses `ON CONFLICT DO NOTHING`, so re-running it to apply network
+    config never resets a link, reward or on/off switch the Admin has set.
+  - **ROZI transfers are ON** (`transfersEnabled = 1`). Asked for repeatedly;
+    the send/receive screens and `POST /mining/transfer` were already built and
+    tested. **Nothing was relaxed to turn it on**: ID check still required to
+    send, 7-day minimum account age, daily cap, 2% burned, receiving open to
+    all. Conversion and the store stay shut, so ROZI still cannot leave the
+    system for money — it can only move between accounts inside it.
+    ⚠️ The change is to the **default** in `mining/core.ts`. A stored
+    `mining.transfersEnabled` row wins over it, so an instance where an Admin
+    once set it to 0 stays off until they flip it in `/staff → Mining`.
+
+- **THE WALLET BECOMES A WALLET, AND USDT LEAVES THE EARNER APP (founder,
+  2026-07-30, same day, second pass).** Verified: 41 unit + 50 mining e2e +
+  31 profile + 52 usdt + 25 conversion + 29 store + 14 referrals + 15 admin +
+  25 kyc + 9 push + 45 telegram + 5 proxy = **341 checks green**; api + web
+  typecheck, eslint, web production build all clean.
+  - **`/wallet` now has Send and Receive**, plus a **token list**. The two
+    transfer screens already existed under `/mine`; surfacing them here changed
+    no transfer rule — `POST /mining/transfer` still enforces the ID check, the
+    7-day account age and the daily cap. Send renders **disabled with a reason**
+    when `transfersEnabled` is off rather than being hidden: a wallet missing
+    its Send button reads as a broken app.
+  - **The token list is ROZI / USDT / BNB.** ROZI is the combined balance; USDT
+    is the spend-only top-up credit.
+    ⚠️ **THE BNB ROW HAS NO BALANCE BEHIND IT, BY CONSTRUCTION.** We hold no BNB
+    for anyone — no per-user wallet, no chain listener, nothing that could make
+    that number move (`docs/CUSTODY_SPEC.md`). The founder asked for the row
+    knowing this. It therefore reads **"not open yet" / "Soon"**, never a bare
+    `0.00`, because a zero beside two real balances reads as a bug or as money
+    that went missing. **When per-user deposit wallets are built, that label is
+    what gets deleted** — do not quietly turn it into a live-looking zero first.
+  - **USDT is gone from every earner screen** (`formatMoney` → the new
+    `formatPointsAsRozi`): task reward pills, the task-start confirmation, the
+    TopBar, `/refer`, `/leaderboard`, and the wallet balance + history. The task
+    pill is the clearest reason why — a 5-point task rendered as **"0.005 USDT"**,
+    the smallest number in the app, on the exact element meant to persuade
+    someone to do the work. It is 0.05 ROZI now.
+    ⚠️ **THREE SCREENS KEEP USDT AND MUST**: `/wallet/withdraw` (what we
+    actually send, on a real chain), `/mine/topup` + `/mine/rigs` (credit bought
+    with real USDT), and `/mine/convert` (the conversion window's entire job is
+    stating a cash rate). The staff panel stays in raw points — it is where the
+    ledger is reconciled. `formatPointsAsRozi` carries this list in its comment.
+  - **The TopBar shows the SAME combined figure as home and `/wallet`**, which
+    cost it a second API call (`fetchMiningState`). Worth it: that bar is on
+    every screen, and a top bar reading 2.20 above a card reading 14.68 is a
+    user working out which number the app is lying with.
+
+- **PER-USER DEPOSIT/WITHDRAWAL WALLETS — SPECIFIED, NOT BUILT (2026-07-30).**
+  Founder asked for an HD-derived address per user on BEP20 + TRC20, deposit and
+  withdraw. Full spec, costs and build order: **`docs/CUSTODY_SPEC.md`**. The
+  short version, because it will be asked again: deriving addresses is free,
+  everything after that is not. Sweeping costs ~$0.15–0.25/deposit on BEP20 and
+  **~$2–3 on TRC20** unless TRX is staked; it needs an RPC provider, a chain
+  listener, a gas-funder wallet and a signer; and it makes us a **custodian**,
+  which is the licensed activity (PVARA) every other decision in this product
+  routes around. **`CUSTODY_SPEC.md` § 5 step 1** — address per user, read-only,
+  staff still confirm deposits — delivers most of what was described with none
+  of the custody risk, and is the thing to build if this is wanted soon.
 
 - ⚠️ **A HANDLE MUST NEVER SHADOW AN INVITE CODE (security fix, 2026-07-29).**
   Caught by `security-review` on the @handle work, and it was theft-by-squatting.

@@ -12,14 +12,20 @@
 // part in layout and no page needs padding to avoid being covered by it.
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
-import { fetchBalance } from "@/lib/api";
-import { formatMoney } from "@/lib/format";
+import { fetchBalance, fetchMiningState } from "@/lib/api";
+import { formatRozi, totalRoziMicro } from "@/lib/format";
 import { LogoMark } from "./Logo";
 import { useI18n } from "@/lib/i18n";
 
 export function TopBar() {
   const { t } = useI18n();
   const balance = useApi(fetchBalance, []);
+  // Mining state as well as the balance, because this bar shows the SAME
+  // combined figure as home and /wallet. It costs one extra request per page
+  // load, and that is the cheap side of the trade: a top bar that says 2.20
+  // while the card below it says 14.68 is a user working out which number the
+  // app is lying with. One balance means one balance everywhere it appears.
+  const mining = useApi(fetchMiningState, []);
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-card/95 backdrop-blur">
@@ -37,10 +43,13 @@ export function TopBar() {
           className="flex items-center gap-1.5 rounded-full bg-brand-tint px-3 py-1.5"
           aria-label={t("topbar.balanceLabel")}
         >
-          {/* formatMoney already ends in "USDT", so the unit label beside it
-              would read "0.42 USDT USDT". The number carries its own unit now. */}
+          {/* Waits for BOTH calls: showing the mined half first would let the
+              number visibly jump a moment later, which reads as a glitch on
+              every screen in the app rather than just one. */}
           <span className="num text-sm font-bold leading-none text-brand">
-            {balance.data ? formatMoney(balance.data.points) : "—"}
+            {balance.data && mining.data
+              ? `${formatRozi(totalRoziMicro(mining.data.roziMicro, balance.data.points))} ROZI`
+              : "—"}
           </span>
         </Link>
       </div>

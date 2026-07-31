@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui";
 import { GiftIcon, StarIcon, MineIcon, ShieldIcon, ArrowRightIcon } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
-import { formatMoney } from "@/lib/format";
+import { formatRozi, pointsToRoziMicro } from "@/lib/format";
 import type { Referrals } from "@/lib/api";
 
 // "What is a friend actually worth?" — answered in one card, in one place.
@@ -30,6 +30,14 @@ export function InviteRewards({
 }) {
   const { t } = useI18n();
 
+  // ORDER IS THE MESSAGE (founder, 2026-07-30). The two SHARE rows lead, because
+  // what this app actually pays for a friend is a cut of what that friend earns,
+  // at two levels, for as long as they keep earning. The one-off starter bonus
+  // is LAST and named for the first finished task, never for the signup.
+  //
+  // It used to lead, as "0.100 USDT for every friend" — a per-head bounty, which
+  // is not what we pay and is the exact shape a fake-signup farm goes looking
+  // for. If this list is ever reordered, that is the reason not to.
   const rows = [
     {
       Icon: StarIcon,
@@ -42,11 +50,6 @@ export function InviteRewards({
       title: t("invite.l2.title", { pct: String(rewards.l2Pct) }),
       body: t("invite.l2.body"),
     },
-    {
-      Icon: StarIcon,
-      title: t("invite.first.title", { n: formatMoney(rewards.firstTaskBonus) }),
-      body: t("invite.first.body"),
-    },
     // Mining is not a footnote to the referral offer — a friend who mines raises
     // your speed for as long as they keep mining, which is the half of the deal
     // that keeps paying on days the offerwall is empty.
@@ -57,6 +60,15 @@ export function InviteRewards({
         pct: String(rewards.miningL1Pct),
         pct2: String(rewards.miningL2Pct),
       }),
+    },
+    {
+      Icon: StarIcon,
+      // In ROZI, like every other number a user sees now — the API still sends
+      // the bonus in points, so it is converted here at the display ratio.
+      title: t("invite.first.title", {
+        n: formatRozi(pointsToRoziMicro(rewards.firstTaskBonus)),
+      }),
+      body: t("invite.first.body"),
     },
   ];
 

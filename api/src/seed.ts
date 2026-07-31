@@ -42,6 +42,28 @@ const tasks = [
   { id: "t7", type: "survey", title: "Quick survey about your daily commute", points: 150, network: "surveyx", advertiser: "SurveyX", minutes: 4, requirement: "Finish all questions to get your points." },
 ];
 
+// ---- Our own social tasks (founder, 2026-07-30) ----------------------------
+//
+// Three starter tasks so the Tasks tab is never empty: follow RoziPay on
+// WhatsApp, Telegram and X. They pay from margin, not from a network, which is
+// why they are small — they exist to make the tab worth opening on a day CPX has
+// no survey for Pakistani traffic, not to be a payout route.
+//
+// They are seeded DISABLED with no link, and that is deliberate. Guessing a URL
+// would ship three tasks that send users to a 404 and then ask them to prove
+// they followed something that isn't there. The Admin pastes the real link in
+// /staff -> Our own tasks and flips the task on; the panel flags any active
+// proof task that still has no link.
+//
+// ON CONFLICT DO NOTHING, NOT DO UPDATE: after the first seed these rows belong
+// to the Admin. Re-running the seed to apply network config must never reset a
+// link they pasted, a reward they retuned, or a task they switched off.
+const socialTasks = [
+  { id: "social-whatsapp", icon: "whatsapp", title: "Follow RoziPay on WhatsApp", proof_label: "Your WhatsApp name", instructions: "Open our WhatsApp channel and press Follow. Then send us the name you follow with, so we can check it." },
+  { id: "social-telegram", icon: "telegram", title: "Join the RoziPay Telegram channel", proof_label: "Your Telegram @username", instructions: "Open our Telegram channel and press Join. Then send us your Telegram @username, so we can check it." },
+  { id: "social-twitter", icon: "twitter", title: "Follow RoziPay on X (Twitter)", proof_label: "Your X @username", instructions: "Open our X page and press Follow. Then send us your X @username, so we can check it." },
+];
+
 await initDb();
 
 let nets = 0;
@@ -81,10 +103,27 @@ if (seedDemoTasks) {
     if (res.rowCount) added++;
   }
 }
+let social = 0;
+for (const s of socialTasks) {
+  const res = await sql.run(
+    `INSERT INTO tasks
+       (id, type, title, points, network, advertiser, minutes, requirement, country, status,
+        source, verify_mode, instructions, proof_label, action_url, icon, created_at)
+     VALUES (?, 'custom', ?, 50, 'custom', 'RoziPay', 2, NULL, 'ALL', 'disabled',
+             'custom', 'proof', ?, ?, NULL, ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+    s.id, s.title, s.instructions, s.proof_label, s.icon, now(),
+  );
+  if (res.rowCount) social++;
+}
+
 console.log(
   `Seed complete. ${nets} network(s) added; ` +
     (seedDemoTasks
       ? `${added} demo task(s) upserted.`
-      : "demo tasks skipped (set SEED_DEMO_TASKS=true to add them)."),
+      : "demo tasks skipped (set SEED_DEMO_TASKS=true to add them).") +
+    (social > 0
+      ? `\n${social} social task(s) added, switched OFF. Paste each link in /staff -> Our own tasks, then switch it on.`
+      : "\nSocial tasks already present (left alone — they are yours to edit now)."),
 );
 process.exit(0);

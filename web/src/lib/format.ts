@@ -118,6 +118,64 @@ export function formatRozi(micro: number): string {
   return s;
 }
 
+// ---- ONE CURRENCY ON SCREEN (founder, 2026-07-30) --------------------------
+//
+// The earner app shows a single balance, in ROZI. Task and referral earnings —
+// which the ledger holds as POINTS — are displayed as ROZI at the fixed ratio
+// below, and added to what the user mined.
+//
+// WHAT THIS IS: a display decision. The two ledgers underneath are UNCHANGED and
+// still separate (guardrail #7): points are still points, ROZI is still ROZI,
+// nothing converts, no balance is rewritten, and a withdrawal still debits the
+// points ledger in points. That separation is what makes the ratio safe to
+// change later — retuning POINTS_PER_ROZI restates what is on screen and touches
+// nobody's history. If the two ledgers were ever actually merged, this number
+// would become impossible to change without confiscating from somebody.
+//
+// ⚠️ WHAT THIS COSTS, stated once so it is not rediscovered as a surprise: a
+// fixed ratio between points and ROZI PUBLISHES AN IMPLIED ROZI PRICE. Points
+// have a public rate (1000 = 1 USDT), so 100 points = 1 ROZI says, arithmetically
+// and in public, that 1 ROZI = $0.01 — and against the 21M cap, that a $210,000
+// valuation. That is exactly the claim MINING_SPEC.md § 7 and the road map's
+// no-price rule exist to avoid making. It is the accepted, understood cost of
+// showing one currency; it is not an oversight, and it is why the ROZI road map
+// still must not print a price of its own on top of it.
+export const POINTS_PER_ROZI = 100;
+
+// Points -> micro-ROZI, so earnings can be added to a mined balance that is
+// already in micro. Rounded, not floored: this is a display figure, and flooring
+// it would shave a fraction off every balance on screen for no benefit.
+export function pointsToRoziMicro(points: number): number {
+  return Math.round(((points ?? 0) / POINTS_PER_ROZI) * ROZI_SCALE);
+}
+
+// The single number the earner app leads with: what they mined, plus what they
+// earned, in one currency.
+export function totalRoziMicro(roziMicro: number, points: number): number {
+  return (roziMicro ?? 0) + pointsToRoziMicro(points);
+}
+
+// A POINTS figure, printed as ROZI. This is the one to reach for on every earner
+// screen that shows an amount earned: a task reward, a referral total, a
+// leaderboard row.
+//
+// ⚠️ USE THIS, NOT formatMoney, ON ANYTHING AN EARNER READS (founder,
+// 2026-07-30: "hide the USDT amount everywhere"). Two currencies on screen was
+// the confusion this whole pass exists to remove, and a single stray "0.005
+// USDT" on a task card puts it straight back — it is the smallest number in the
+// app and it made a real task look worthless.
+//
+// THE THREE PLACES USDT LEGITIMATELY SURVIVES, because the number there IS
+// USDT and calling it anything else would be the lie:
+//   • /wallet/withdraw — what we will actually send, on a real chain.
+//   • /mine/topup and /mine/rigs — top-up credit the user paid real USDT for.
+//   • /mine/convert — the conversion window's whole job is stating a cash rate.
+// The staff panel is exempt too, and still shows raw points: it is where the
+// ledger gets reconciled.
+export function formatPointsAsRozi(points: number): string {
+  return `${formatRozi(pointsToRoziMicro(points))} ROZI`;
+}
+
 // "2 hours ago", "just now" — plain words, no timestamps in the user UI.
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();

@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { Card, PointsPill, SponsoredTag, Button } from "./ui";
-import { offerIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon } from "./icons";
-import { formatMoney } from "@/lib/format";
+import { offerIcon, taskIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon } from "./icons";
+import { formatPointsAsRozi } from "@/lib/format";
 import { submitTaskProof, type Task } from "@/lib/api";
 
 // Renders the task list + the two interactive steps that build trust:
@@ -23,7 +23,10 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
     <>
       <ul className="space-y-3">
         {tasks.map((task) => {
-          const Icon = offerIcon[task.type];
+          // An Admin-picked logo wins; otherwise fall back to the task type's
+          // icon. `taskIcon[...]` can still miss if the API ever learns a name
+          // the web app has not shipped yet, so the fallback is not optional.
+          const Icon = (task.icon && taskIcon[task.icon]) || offerIcon[task.type];
           return (
             <li key={task.id}>
               <Card className="p-3.5">
@@ -139,12 +142,12 @@ function ProofSheet({ task, onClose }: { task: Task; onClose: () => void }) {
 
         {already === "approved" ? (
           <p className="mt-4 rounded-xl bg-success-tint p-3 text-sm text-success">
-            You finished this task and your points were added. Thank you!
+            You finished this task and your ROZI was added. Thank you!
           </p>
         ) : sent ? (
           <div className="mt-4 rounded-xl bg-pending-tint p-3 text-sm text-pending">
             <p className="font-semibold">We got your proof.</p>
-            <p className="mt-1">Our team will check it and add your points. This can take a little time.</p>
+            <p className="mt-1">Our team will check it and add your ROZI. This can take a little time.</p>
           </div>
         ) : (
           <>
@@ -209,7 +212,7 @@ function DisclosureSheet({
         <p className="mt-4 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
           This is a sponsored offer. Your reward comes from{" "}
           <span className="font-semibold text-brand-ink">{task.advertiser}</span>{" "}
-          through {task.network}. You get your points after they confirm you finished.
+          through {task.network}. You get your ROZI after they confirm you finished.
         </p>
 
         <div className="mt-5 space-y-2.5">
@@ -241,7 +244,7 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
       <p className="animate-rise mt-6 text-lg font-bold text-white">Task started</p>
       <p className="animate-rise mt-2 flex items-center gap-2 text-white/90">
         <StarIcon size={20} className="text-accent" />
-        <span>You will get <span className="num font-bold">{formatMoney(task.points)}</span></span>
+        <span>You will get <span className="num font-bold">{formatPointsAsRozi(task.points)}</span></span>
       </p>
 
       <div className="animate-rise mt-6 w-full max-w-xs space-y-2.5 text-left">
@@ -251,7 +254,7 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
         </div>
         <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3 text-white/90">
           <ClockIcon size={18} className="shrink-0 text-accent" />
-          <span className="text-sm">We add your points after the partner confirms. This can take a little time.</span>
+          <span className="text-sm">We add your ROZI after the partner confirms. This can take a little time.</span>
         </div>
       </div>
 
