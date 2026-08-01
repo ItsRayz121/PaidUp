@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, Button, SectionTitle } from "@/components/ui";
+import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon, ShareIcon,
-  ChartIcon, CopyIcon, WalletIcon,
+  ChartIcon, CopyIcon, WalletIcon, GiftIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -362,110 +362,43 @@ export default function MinePage() {
             </Card>
           )}
 
-          <Link href="/mine/rigs" className="block">
-            <Card className="flex items-center gap-3 p-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-                <MineIcon size={22} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-bold text-brand-ink">{t("mine.boost.rigs.title")}</p>
-                <p className="text-sm text-muted">{t("mine.boost.rigs.body")}</p>
-              </div>
-              <ArrowRightIcon size={22} className="text-brand" />
-            </Card>
-          </Link>
-
-          {/* Buying machines with real money, only once an Admin has switched
-              top-ups on AND set a treasury address (the API folds both into
-              this one flag). Off by default — see the usdt_ledger note in
-              api/src/db.ts for what this feature is and is deliberately not. */}
-          {s.usdtTopup && (
-            <Link href="/mine/topup" className="block">
-              <Card className="flex items-center gap-3 p-4">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-                  <WalletIcon size={22} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-bold text-brand-ink">{t("mine.topup.title")}</p>
-                  <p className="text-sm text-muted">{t("mine.topup.body")}</p>
-                </div>
-                <ArrowRightIcon size={22} className="text-brand" />
-              </Card>
-            </Link>
-          )}
         </div>
       </div>
 
-      {/* Turning ROZI into points, same rule as sending: the link appears only
-          once conversion is switched on, so it never leads to a "not open yet"
-          page. `convertible` is the server's own conversionEnabled flag. */}
-      {s.convertible && (
-        <Link href="/mine/convert" className="block">
-          <Card className="flex items-center gap-3 border-accent/40 bg-accent-tint p-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-              <StarIcon size={22} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-brand-ink">{t("mine.convert.title")}</p>
-              <p className="text-sm text-accent-ink">{t("mine.convert.body")}</p>
-            </div>
-            <ArrowRightIcon size={22} className="text-brand" />
-          </Card>
-        </Link>
-      )}
+      {/* ---- Everything else on this screen, in one grid (founder, 2026-08-01)
+          THIS REPLACED SIX FULL-WIDTH LINK CARDS stacked vertically — rigs,
+          top-up, convert, store, send, receive — each ~76px of icon, title,
+          sentence and chevron. Together they were taller than the mining dial
+          people open this screen to look at, and every one of them was a
+          destination rather than an action.
 
-      {/* Spending ROZI on real things — shown only when the shop actually has
-          stock, same rule as the two links around it. */}
-      {s.storeOpen && (
-        <Link href="/mine/store" className="block">
-          <Card className="flex items-center gap-3 p-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-              <MineIcon size={22} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-brand-ink">{t("mine.store.title")}</p>
-              <p className="text-sm text-muted">{t("mine.store.body")}</p>
-            </div>
-            <ArrowRightIcon size={22} className="text-brand" />
-          </Card>
-        </Link>
-      )}
+          The flags are unchanged and still decide what appears: a tile that
+          leads to a "not open yet" page teaches users to ignore this grid. What
+          changed is only how much room the survivors take.
 
-      {/* Send AND receive, appearing together once the admin has switched
-          transfers on. Showing a dead entry point for a feature that answers
-          "not open yet" would teach users to ignore this screen's links —
-          which is why Receive is behind the same flag even though receiving
-          itself is never refused: a way to be paid, in an app where nobody can
-          pay, is a link to a room with nothing in it. */}
-      {s.transfer.enabled && (
-        <>
-          <Link href="/mine/send" className="block">
-            <Card className="flex items-center gap-3 p-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-                <ShareIcon size={22} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-bold text-brand-ink">{t("mine.send.title")}</p>
-                <p className="text-sm text-muted">{t("mine.send.body")}</p>
-              </div>
-              <ArrowRightIcon size={22} className="text-brand" />
-            </Card>
-          </Link>
-
-          <Link href="/mine/receive" className="block">
-            <Card className="flex items-center gap-3 p-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-                <CopyIcon size={22} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-bold text-brand-ink">{t("mine.receive.title")}</p>
-                <p className="text-sm text-muted">{t("mine.receive.body")}</p>
-              </div>
-              <ArrowRightIcon size={22} className="text-brand" />
-            </Card>
-          </Link>
-        </>
-      )}
+          ⚠️ SEND IS A TILE AND SENDING IS NOT. Tapping it opens the send screen,
+          where the amount, the recipient and a full-size button still stand
+          between a user and parting with ROZI. No tile in this grid moves money
+          by itself, and none ever should. */}
+      <div className="grid grid-cols-3 gap-2.5">
+        <Tile href="/mine/rigs" Icon={MineIcon} label={t("mine.boost.rigs.title")} />
+        {s.usdtTopup && (
+          <Tile href="/mine/topup" Icon={WalletIcon} label={t("mine.topup.title")} tone="accent" />
+        )}
+        {s.convertible && (
+          <Tile href="/mine/convert" Icon={StarIcon} label={t("mine.convert.title")} tone="accent" />
+        )}
+        {s.storeOpen && (
+          <Tile href="/mine/store" Icon={GiftIcon} label={t("mine.store.title")} />
+        )}
+        {s.transfer.enabled && (
+          <>
+            <Tile href="/mine/send" Icon={ShareIcon} label={t("wallet.send")} />
+            <Tile href="/mine/receive" Icon={CopyIcon} label={t("wallet.receive")} />
+          </>
+        )}
+        <Tile href="/mine/roadmap" Icon={ChartIcon} label={t("mine.roadmap.title")} />
+      </div>
 
       {/* ---- Where your hashrate comes from ---- */}
       <div>
@@ -497,22 +430,10 @@ export default function MinePage() {
         </p>
       </div>
 
-      {/* The road map, last on the screen and always present. Unlike the links
-          above it there is no flag on this one: what we are building next is
-          true whether or not any feature is switched on, and someone deciding
-          whether ROZI is worth their time should never have to hunt for it. */}
-      <Link href="/mine/roadmap" className="block">
-        <Card className="flex items-center gap-3 p-4">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-            <ChartIcon size={22} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-bold text-brand-ink">{t("mine.roadmap.title")}</p>
-            <p className="text-sm text-muted">{t("mine.roadmap.body")}</p>
-          </div>
-          <ArrowRightIcon size={22} className="text-brand" />
-        </Card>
-      </Link>
+      {/* The road map moved into the grid above. It keeps its unflagged,
+          always-present status there: what we are building next is true whether
+          or not any feature is switched on, and someone deciding whether ROZI is
+          worth their time should never have to hunt for it. */}
     </div>
   );
 }

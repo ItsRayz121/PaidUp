@@ -155,9 +155,11 @@ const copy: Record<string, string> = {
   // an operator can say and a fake cannot: we pay in a real currency, on a real
   // chain, and the token is capped.
   "home.wePayCash": "Real USDT payouts",
-  "home.quickTaskTitle": "Do a quick task now",
-  "home.friendsJoined": "{n} friends joined",
-  "home.earnedFromThem": "They are earning with you.",
+  // home.quickTaskTitle / friendsJoined / earnedFromThem / taskBoost / tagline
+  // are GONE (founder, 2026-08-01) with the three blocks they belonged to: a
+  // "do a quick task" card, a friends-joined card and the seven-row invite
+  // advert. All three told the user to go somewhere else, and together they were
+  // taller than the balance. One row of tiles does that job now.
   // ---- TWO NUMBERS, TWO LABELS, AND THE SPLIT IS PERMANENT ------------------
   //
   // ⚠️ READ THIS BEFORE RENAMING ANY BALANCE STRING IN THIS FILE.
@@ -184,8 +186,6 @@ const copy: Record<string, string> = {
   // If you ever shorten one of these back to "Your ROZI", you have reintroduced
   // it. The word that carries the meaning is "mined".
   "home.rozi.label": "Your RoziPay balance",
-  "home.rozi.tagline":
-    "Mine ROZI free, every day. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
   "home.rozi.start": "Start mining",
   "home.rozi.running": "Mining now — {time} left",
   "home.rozi.speed": "Your speed",
@@ -193,7 +193,6 @@ const copy: Record<string, string> = {
   // source: a user who does a survey must be able to see that it landed, or the
   // next survey does not get done.
   "home.rozi.breakdown": "{mined} mined · {earned} from tasks and friends",
-  "home.taskBoost": "Every task you finish adds ROZI and makes your mining faster.",
   // wallet
   "wallet.subtitle": "Your balance, and where your money will be sent.",
   // ⚠️ THE THRESHOLD IS ON THE EARNED HALF ONLY, and this string has to say so.
@@ -210,9 +209,12 @@ const copy: Record<string, string> = {
   "wallet.noHistoryBody": "Finish a task to see your first earnings here.",
   "wallet.needHelp": "Need help with a payment?",
   "wallet.contactSupport": "Contact support",
-  "wallet.invite.title": "Earn without doing tasks",
   // ---- Invite rewards -------------------------------------------------------
-  // Shared by the home screen, /refer and /wallet (components/InviteRewards.tsx).
+  // Rendered on /refer only (components/InviteRewards.tsx). It used to run on
+  // home and /wallet too; both dropped it (founder, 2026-08-01) because a sales
+  // pitch between a balance and its history is what made those screens feel
+  // like a feed rather than a wallet. It belongs where someone has chosen to
+  // read it.
   //
   // Every number in here is a {placeholder} filled from /referrals/me, NEVER
   // typed into the string. The percentages are Admin-tunable per network, so a
@@ -534,7 +536,6 @@ const copy: Record<string, string> = {
   "mine.ad.claim": "Claim my boost",
   "mine.ad.blocked": "Your phone blocked the ad window. Allow pop-ups for this app, then try again.",
   "mine.boost.rigs.title": "Buy a machine",
-  "mine.boost.rigs.body": "Spend ROZI to mine faster from now on.",
   "mine.breakdown.title": "What makes your speed",
   "mine.breakdown.base": "Everyone gets",
   "mine.breakdown.rigs": "Your machines",
@@ -589,10 +590,6 @@ const copy: Record<string, string> = {
   "send.kyc.cta": "Verify my ID",
   "send.age.title": "Your account is too new",
   "send.age.body": "You can send ROZI when your account is {days} days old. Keep mining until then.",
-  "mine.send.title": "Send ROZI to a friend",
-  "mine.send.body": "Send some of your ROZI to anyone on RoziPay.",
-  "mine.receive.title": "Receive ROZI",
-  "mine.receive.body": "Share your @handle so friends can send you ROZI.",
 
   // ---- Receive -------------------------------------------------------------
   // There is nothing to fill in here: receiving needs no permission, no ID check
@@ -667,7 +664,6 @@ const copy: Record<string, string> = {
   "convert.off.body":
     "Turning ROZI into money is not open yet. Mine now — what you mine is yours, and it will be waiting.",
   "mine.convert.title": "Turn ROZI into money",
-  "mine.convert.body": "Put your ROZI into this week's pot and get real money.",
 
   // ---- Spend ROZI (the store) ----------------------------------------------
   // ROZI buys real things at a price WE set. That is a shop, not an exchange,
@@ -693,7 +689,6 @@ const copy: Record<string, string> = {
   "store.status.fulfilled": "Sent",
   "store.status.rejected": "Not done — your ROZI came back",
   "mine.store.title": "Spend your ROZI",
-  "mine.store.body": "Mobile top-up and more, paid for with ROZI.",
 
   // ---- Add USDT (top-up credit) ---------------------------------------------
   // THE HARDEST PROMISE TO GET RIGHT ON THIS SCREEN is what the money can and
@@ -756,7 +751,6 @@ const copy: Record<string, string> = {
   "rigs.addUsdt": "Add USDT",
   "rigs.roziOnly": "This one is ROZI only.",
   "mine.topup.title": "Add USDT",
-  "mine.topup.body": "Buy mining machines with USDT instead of ROZI.",
 
   // ---- The road map ---------------------------------------------------------
   // What is coming, and when. Two rules hold this page together:
@@ -779,7 +773,6 @@ const copy: Record<string, string> = {
   // thing it could contain. Cash-out goes back on this list when a real payout
   // has cleared, and not before.
   "mine.roadmap.title": "Road map",
-  "mine.roadmap.body": "See what is coming next for ROZI.",
   "roadmap.title": "The road ahead",
   "roadmap.subtitle": "Where RoziPay is going, and when.",
   "roadmap.live.title": "Working today",

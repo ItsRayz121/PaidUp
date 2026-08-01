@@ -1,16 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Card, Button, SectionTitle } from "@/components/ui";
+import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { TaskFlow } from "@/components/TaskFlow";
-import { InviteRewards } from "@/components/InviteRewards";
 import { Loading, ErrorState } from "@/components/state";
 import {
-  ArrowRightIcon, GiftIcon, ShieldIcon, VideoIcon, MineIcon, BoltIcon,
+  ArrowRightIcon, GiftIcon, ShieldIcon, MineIcon, TasksIcon, WalletIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchReferrals, fetchTasks, fetchMiningState } from "@/lib/api";
+import { fetchBalance, fetchTasks, fetchMiningState } from "@/lib/api";
 import { formatRozi, pointsToRoziMicro, totalRoziMicro, HERO_DECIMALS } from "@/lib/format";
 
 // ONE CURRENCY (founder, 2026-07-30). This screen shows a SINGLE balance, in
@@ -37,7 +36,6 @@ export default function HomePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
   const bal = useApi(fetchBalance, []);
-  const ref = useApi(fetchReferrals, []);
   const tasks = useApi(fetchTasks, []);
   const mining = useApi(fetchMiningState, []);
 
@@ -113,7 +111,12 @@ export default function HomePage() {
                 })}
               </p>
             )}
-            <p className="mt-2 text-sm text-white/85">{t("home.rozi.tagline")}</p>
+            {/* The tagline paragraph that sat here is GONE (founder,
+                2026-08-01). Two dense lines about halving, inside the hero,
+                between the balance and the button — the one place on the app's
+                first screen where nothing should compete with the number. The
+                same sentence still runs on /mine, which is where someone who
+                wants to understand the rate actually goes. */}
           </Link>
           <div className="p-4">
             {isMining ? (
@@ -143,54 +146,22 @@ export default function HomePage() {
           the note at the top of this file. Do not restore a money figure to this
           screen without restoring the reason it was removed. */}
 
-      {/* Next action. Tasks are how the balance AND mining speed both go up, so the
-          card says the second half — it is what makes the offerwall worth
-          opening on a screen that now leads with mining. */}
-      <Card className="flex items-center gap-3 p-4">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent-tint text-accent-ink">
-          <VideoIcon size={22} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-brand-ink">{t("home.quickTaskTitle")}</p>
-          <p className="flex items-start gap-1 text-sm text-muted">
-            <BoltIcon size={14} className="mt-0.5 shrink-0 text-brand" />
-            {t("home.taskBoost")}
-          </p>
-        </div>
-        <Link href="/tasks" className="text-brand" aria-label="Go to tasks"><ArrowRightIcon size={22} /></Link>
-      </Card>
+      {/* ---- Where to go next, in one row (founder, 2026-08-01) ----
+          THIS REPLACED THREE FULL-WIDTH BLOCKS: a "Do a quick task now" card, a
+          "N friends joined" card, and — for every user who had not yet invited
+          anyone, i.e. almost all of them — the seven-row InviteRewards advert.
+          All three said the same thing, "go somewhere else", and together they
+          were taller than the balance card they sat under.
 
-      {/* ---- Invite ----
-          Two parts on purpose: the status line (what your friends have already
-          paid you) and, for anyone who has not invited yet, the offer itself.
-          Someone with zero friends has nothing to read in a status line — they
-          need to be told what a friend is worth, which is what the rewards card
-          does. */}
-      <section className="space-y-2.5">
-        <Link href="/refer" className="block">
-          <Card className="flex items-center gap-3 p-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-              <GiftIcon size={22} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-brand-ink">
-                {t("home.friendsJoined", { n: String(ref.data?.joined ?? 0) })}
-              </p>
-              {/* Was "You earned {USDT} from them." Dropped with the money card:
-                  a USDT figure here would have been the last one left on a screen
-                  that no longer explains what USDT means in this app. */}
-              <p className="text-sm font-semibold text-accent-ink">
-                {t("home.earnedFromThem")}
-              </p>
-            </div>
-            <ArrowRightIcon size={22} className="text-brand" />
-          </Card>
-        </Link>
-
-        {ref.data && ref.data.joined === 0 && (
-          <InviteRewards rewards={ref.data.rewards} showCta />
-        )}
-      </section>
+          The invite ENTRY POINT survives as a tile, because referrals are the
+          growth loop and deleting the door would be a different mistake. What
+          went is the sales pitch, which still runs in full on /refer, where a
+          user has actually chosen to read it. */}
+      <div className="grid grid-cols-3 gap-2.5">
+        <Tile href="/tasks" Icon={TasksIcon} label={t("nav.tasks")} tone="accent" />
+        <Tile href="/refer" Icon={GiftIcon} label={t("invite.cta")} />
+        <Tile href="/wallet" Icon={WalletIcon} label={t("nav.wallet")} />
+      </div>
 
       {/* Tasks */}
       <section>

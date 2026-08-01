@@ -101,6 +101,59 @@ export function SponsoredTag({ network }: { network: string }) {
   );
 }
 
+// ---- Tile — a compact entry point ----------------------------------------
+//
+// One icon, one word, in a third of a row. It replaces the full-width
+// "icon + title + sentence + chevron" card that this app had started using for
+// EVERY secondary link — /mine had six of them stacked vertically, each ~76px
+// tall, so the six links a user rarely taps occupied more of the screen than
+// the mining dial they came for.
+//
+// The rule that keeps it honest: a Tile is for a DESTINATION, never for an
+// action with a consequence. Anything that spends, sends or withdraws keeps a
+// full-size Button with words on it — a one-word tile is too easy to hit by
+// accident, and "Send" costing someone ROZI on a mis-tap is not a trade worth
+// making for tidiness.
+export function Tile({
+  href, Icon, label, tone = "brand", disabled = false, title,
+}: {
+  href: string;
+  Icon: (p: { size?: number; className?: string }) => ReactNode;
+  label: string;
+  tone?: "brand" | "accent";
+  disabled?: boolean;
+  title?: string;
+}) {
+  const inner = (
+    <>
+      <span
+        className={`grid h-11 w-11 place-items-center rounded-xl ${
+          tone === "accent" ? "bg-accent text-brand-ink" : "bg-brand-tint text-brand"
+        }`}
+      >
+        <Icon size={22} />
+      </span>
+      {/* leading-tight + two-line room: "Road map" and "Add USDT" must not
+          reflow the grid or be cut off on a 360px screen. */}
+      <span className="text-center text-xs font-semibold leading-tight text-brand-ink">
+        {label}
+      </span>
+    </>
+  );
+
+  const cls =
+    "flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-2xl border border-line bg-card p-2 transition active:brightness-95";
+
+  if (disabled) {
+    return (
+      <span className={`${cls} opacity-50`} title={title} aria-disabled>
+        {inner}
+      </span>
+    );
+  }
+  return <Link href={href} className={cls} title={title}>{inner}</Link>;
+}
+
 // ---- Section title --------------------------------------------------------
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
