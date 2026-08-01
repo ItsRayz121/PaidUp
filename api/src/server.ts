@@ -167,6 +167,11 @@ async function tickSettlement() {
   try {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     await sql.run("DELETE FROM email_codes WHERE created_at < ?", cutoff);
+    // Same reasoning for the wallet-connect challenges: they expire in ten
+    // minutes, so a day-old row can never be claimed again and only makes the
+    // table grow. Deleting a SPENT one is safe — replay is refused by the
+    // expiry too, not by the row's continued existence.
+    await sql.run("DELETE FROM wallet_link_nonces WHERE created_at < ?", cutoff);
   } catch (err) {
     app.log.error({ err }, "email_codes purge failed");
   }

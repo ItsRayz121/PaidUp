@@ -482,6 +482,40 @@ const MIGRATIONS = `
     PRIMARY KEY (user_id, chain)
   );
 
+  -- Set when the user PROVED they hold this address, by signing our challenge
+  -- with the wallet itself (src/wallet.ts). NULL means the address was typed or
+  -- pasted, which is all we ever had before and is still allowed — a smart-
+  -- contract wallet cannot personal_sign, and not every phone has a wallet app.
+  --
+  -- ⚠️ CHANGING THE ADDRESS MUST CLEAR THIS. See saveAddress() in
+  -- routes/withdrawals.ts: a proof is a proof about ONE address, and letting the
+  -- badge survive an edit would show "verified" over an address nobody verified
+  -- — worse than never showing it, because staff and users would both trust it.
+  ALTER TABLE payout_addresses ADD COLUMN IF NOT EXISTS verified_at TEXT;
+  ALTER TABLE payout_addresses ADD COLUMN IF NOT EXISTS verify_method TEXT;
+
+  -- One-time challenges for the wallet proof above. The row holds the exact
+  -- message we issued rather than the parts to rebuild it from: verification
+  -- then reads back the same bytes the wallet signed, instead of reconstructing
+  -- a string that must match it character for character forever.
+  --
+  -- Single-use is enforced by an atomic claim on used_at, not by deleting the
+  -- row — two taps arriving together must not both succeed.
+  CREATE TABLE IF NOT EXISTS wallet_link_nonces (
+    nonce      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    chain      TEXT NOT NULL,
+    -- The address the user CLAIMED when asking for the challenge, lowercased.
+    -- The signature must recover to exactly this, so a signature obtained for
+    -- one address can never be submitted for another.
+    address    TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_wallet_nonces_user ON wallet_link_nonces(user_id);
+
   -- Global key-value app settings (Admin-tunable), e.g. the withdrawal fee.
   CREATE TABLE IF NOT EXISTS app_settings (
     key        TEXT PRIMARY KEY,

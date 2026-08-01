@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { ConnectWallet } from "@/components/ConnectWallet";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -30,6 +31,12 @@ export default function WithdrawPage() {
   // once, at `amt` below, which is the only value the API ever sees.
   const [usdtInput, setUsdtInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Connecting the wallet is the default way to set a payout address; the text
+  // field is behind "Type it in instead". It is not a fallback for people who
+  // find connecting hard — it is the only path for a smart-contract wallet or an
+  // exchange address, neither of which can sign our challenge. See
+  // components/ConnectWallet.tsx.
+  const [typing, setTyping] = useState(false);
   const [savingAddr, setSavingAddr] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +197,21 @@ export default function WithdrawPage() {
         </div>
       </div>
 
-      {/* Wallet address */}
+      {/* ---- Where the money goes ----
+          Connect first, type second. The pasted-address box was the weakest
+          point on the whole money path: it accepts any well-formed address,
+          including the one a fake "support agent" sent the user on WhatsApp,
+          and we cannot get the money back afterwards. A connected wallet has
+          signed for itself, so that particular theft stops working. */}
+      {!typing ? (
+        <ConnectWallet
+          chain={chain}
+          savedAddress={savedAddresses[chain]}
+          verified={saved.data?.verified?.[chain]}
+          onConnected={(addr) => { setAddress(addr); setSavedMsg(false); saved.reload(); }}
+          onUseTyping={() => setTyping(true)}
+        />
+      ) : (
       <div>
         <label htmlFor="addr" className="mb-2 block px-1 font-semibold text-brand-ink">{t("withdraw.yourWalletAddress")}</label>
         <input id="addr" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}
@@ -219,7 +240,15 @@ export default function WithdrawPage() {
           <ShieldIcon size={14} className="mt-0.5 shrink-0" />
           {t("withdraw.sendRightNetwork", { label: chainMeta.label })}
         </p>
+        <button
+          type="button"
+          onClick={() => setTyping(false)}
+          className="mt-3 text-sm font-semibold text-brand underline-offset-2 hover:underline"
+        >
+          {t("connect.connectInstead")}
+        </button>
       </div>
+      )}
 
       {/* Amount */}
       <div>

@@ -254,13 +254,31 @@ export const createWithdrawal = (amountPoints: number, chain: string, address: s
   });
 
 // Saved payout addresses (set once per chain, reused). `addresses` is keyed by
-// chain id -> the saved wallet address.
+// chain id -> the saved wallet address. `verified` says, per chain, whether the
+// user PROVED they hold it by signing with the wallet rather than pasting it.
 export const fetchPayoutAddresses = () =>
-  apiFetch<{ addresses: Record<string, string> }>("/withdrawals/addresses");
+  apiFetch<{ addresses: Record<string, string>; verified?: Record<string, boolean> }>(
+    "/withdrawals/addresses");
 export const savePayoutAddress = (chain: string, address: string) =>
   apiFetch<{ ok: true; chain: string; address: string }>("/withdrawals/addresses", {
     method: "PUT", body: JSON.stringify({ chain, address }),
   });
+
+// ---- Connect a wallet instead of pasting an address ------------------------
+// Two steps. The server picks the words that get signed (so a signature from
+// anywhere else is worthless here), and works out the address from the
+// signature itself — the address below is only the user's claim about which
+// account their wallet handed over.
+export const requestWalletChallenge = (chain: string, address: string) =>
+  apiFetch<{ nonce: string; message: string; expiresAt: string }>(
+    "/withdrawals/addresses/challenge",
+    { method: "POST", body: JSON.stringify({ chain, address }) },
+  );
+export const verifyWalletSignature = (nonce: string, signature: string) =>
+  apiFetch<{ ok: true; chain: string; address: string; verified: true }>(
+    "/withdrawals/addresses/verify",
+    { method: "POST", body: JSON.stringify({ nonce, signature }) },
+  );
 
 // ---- Surveys (CPX Research) ----------------------------------------------
 // The backend signs the survey-wall URL for this user (the secure hash is

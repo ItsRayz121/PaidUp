@@ -488,6 +488,55 @@ These override convenience or speed at every step:
   staff still confirm deposits — delivers most of what was described with none
   of the custody risk, and is the thing to build if this is wanted soon.
 
+- **CONNECT WALLET — the payout address now proves it belongs to the user
+  (founder, 2026-08-01).** The "set up your withdrawal wallet" form is no longer
+  a text box you paste 42 characters into: the user taps **Connect my wallet**,
+  their wallet app hands over the address, signs a message we wrote, and the
+  server works out the address **from the signature**. Verified: `npm run
+  test:wallet` (44 checks) + all 12 other suites green (341 → **385**); api +
+  web typecheck, eslint, web production build, `security-review` (no findings).
+  - **THIS IS A THEFT FIX, NOT AUTOFILL, and that is why it was worth building.**
+    Every check we had on a payout address was a check on the *string* — 42
+    characters, valid hex, and an EIP-55 checksum that only exists when the
+    address happens to be mixed-case. None of it can tell a user's own wallet
+    apart from an address a fake "support agent" sent them on WhatsApp, which
+    is the most common way money is taken from users in our markets, and a
+    payout cannot be reversed. A signature proves the person asking to be paid
+    holds the key. That scam stops working.
+  - ⚠️ **NO PRIVATE KEY ENTERS THIS SYSTEM.** The user's wallet signs; we see a
+    public signature and recover a public address. This adds **zero custody** —
+    `docs/CUSTODY_SPEC.md` § 2c is untouched by it, and that is deliberate.
+  - ⚠️ **THE ADDRESS COMES FROM THE SIGNATURE, NEVER FROM THE REQUEST.** The
+    address in the challenge call is only the user's *claim*; what gets saved is
+    what `recoverSigner` returns. If the claim were trusted this whole feature
+    would be a longer way of pasting a string. There is a regression test that
+    claims one address and signs with another.
+  - ⚠️ **THE SERVER PICKS THE WORDS THAT GET SIGNED**, stores them
+    (`wallet_link_nonces.message`), and verifies against the stored copy. The
+    text names our host — from `config.webOrigins`, **never the `Host` header** —
+    so a signature harvested by a phishing page cannot be spent here.
+  - ⚠️ **HIGH-S SIGNATURES ARE REFUSED.** Every ECDSA signature has a second
+    valid encoding (`s → n−s`). Accepting both would make "one-time code" a lie:
+    the same approval submits twice in two forms. Do not "simplify" that check
+    out of `wallet.ts`.
+  - ⚠️ **A PROOF IS ABOUT ONE ADDRESS.** `verified_at` is written only by the
+    route that checked a signature; every other write to `payout_addresses`
+    clears it — *except* a re-save of the identical address, because the
+    auto-save after each withdrawal runs on every payout and must not throw the
+    badge away. Both branches are tested.
+  - **PASTING IS STILL ALLOWED and removing it would break real users**: a
+    smart-contract wallet cannot `personal_sign` at all, an exchange deposit
+    address has no signer the user controls, and plenty of phones have no wallet
+    app. Connecting is the default; "Type the address in instead" sits beside
+    it, and a typed address says so on screen rather than borrowing the tick.
+  - **Mobile Chrome gets deep links, not a dead button.** Most users here have
+    the wallet app installed but browse in Chrome, where nothing is injected —
+    so the card offers "Open in MetaMask" / "Open in Trust Wallet", which reopen
+    the page inside the wallet's own browser. Saying "you have no wallet" would
+    be wrong and would send them to install a second one.
+  - **No wallet SDK, no third-party script on a money screen.** The whole client
+    is two EIP-1193 `request` calls (`web/src/lib/wallet.ts`).
+
 - ⚠️ **A HANDLE MUST NEVER SHADOW AN INVITE CODE (security fix, 2026-07-29).**
   Caught by `security-review` on the @handle work, and it was theft-by-squatting.
   Invite codes are generated as uppercase letters + two digits (`AHMED42`,

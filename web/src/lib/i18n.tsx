@@ -399,7 +399,7 @@ const copy: Record<string, string> = {
   "login.msg.codeSent": "We sent a 6-number code to {email}.",
   "login.msg.forgotSent": "If that email has an account, we sent a code to it.",
   // wallet + withdraw additions
-  "wallet.setupWallet": "Set up my withdrawal wallet",
+  "wallet.setupWallet": "Connect my wallet",
   // Founder, 2026-07-30: the wallet tab's job is the balance and the payout
   // address, in that order. Cash-out is not open yet, so the useful thing a user
   // can do here TODAY is tell us where to send the money — done once, waiting
@@ -407,8 +407,14 @@ const copy: Record<string, string> = {
   "wallet.setup.title": "Set up your withdrawal wallet",
   "wallet.setup.body":
     "Tell us the wallet address to send your money to. Do it once now, and you are ready the moment cash-out opens.",
-  "wallet.setup.done": "Your withdrawal wallet is saved. You can change it any time.",
-  "wallet.setup.cta": "Change my wallet address",
+  // TWO SENTENCES FOR TWO STATES, and merging them would be a lie. A connected
+  // wallet has proved it belongs to this user; a typed one is only a string we
+  // were given. Saying "done" over both would tell the user a check happened
+  // that did not — on the screen that decides where real money is sent.
+  "wallet.setup.doneVerified": "Your wallet is connected and checked. You can change it any time.",
+  "wallet.setup.doneTyped": "Your wallet address is saved. Connect the wallet to be sure it is yours.",
+  "wallet.setup.cta": "Change my wallet",
+  "wallet.setup.ctaConnect": "Connect my wallet",
   // ---- Send / receive + the token list (founder, 2026-07-30) ---------------
   "wallet.send": "Send",
   "wallet.receive": "Receive",
@@ -441,6 +447,38 @@ const copy: Record<string, string> = {
   "withdraw.addressSaved": "Address saved",
   "withdraw.feeLabel": "Withdrawal fee",
   "withdraw.youReceive": "You receive",
+  // ---- Connect a wallet (2026-08-01) ---------------------------------------
+  // The words a user reads before handing over the address we will send real
+  // money to. Two rules held throughout:
+  //
+  //   1. NO CRYPTO JARGON. Not "sign", not "signature", not "gas", not
+  //      "verify ownership". The wallet app supplies those words on its own
+  //      screen; ours has to say what is about to happen in words someone who
+  //      has never used a wallet can follow.
+  //   2. SAY WHAT IT CANNOT DO. The single biggest reason a first-time user
+  //      refuses this prompt is the fear that connecting lets us take their
+  //      coins. Answering that before they ask is worth more than any
+  //      reassurance about security afterwards.
+  "connect.title": "Where should we send your money?",
+  "connect.body":
+    "Open your wallet app and pick the address. We save it, and your money goes there.",
+  "connect.cta": "Connect my wallet",
+  "connect.change": "Use a different wallet",
+  "connect.working": "Waiting for your wallet…",
+  "connect.safety":
+    "Connecting is free. We can only see your address — we can never take anything from your wallet.",
+  "connect.savedLabel": "Your {label} wallet",
+  "connect.isYours": "Checked — this wallet is yours",
+  "connect.typedIn": "You typed this one in. Connect the wallet to be sure it is yours.",
+  "connect.typeInstead": "Type the address in instead",
+  "connect.connectInstead": "Connect my wallet instead",
+  // Very common in our markets: the wallet app IS installed, but the user is in
+  // Chrome, where the page cannot see it. "You have no wallet" would be wrong
+  // and would send them off to install a second one.
+  "connect.noWallet":
+    "This browser cannot see your wallet. Open this page inside your wallet app instead.",
+  "connect.openMetamask": "Open in MetaMask",
+  "connect.openTrust": "Open in Trust Wallet",
   // leaderboard
   "leaderboard.title": "Leaderboard",
   "leaderboard.subtitle": "Top earners and top inviters.",

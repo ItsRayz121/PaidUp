@@ -60,6 +60,11 @@ export default function WalletPage() {
   // Any saved chain counts: only one chain is offered right now, and a user who
   // saved an address before a chain was retired has still done the task.
   const hasAddress = Object.keys(addrs.data?.addresses ?? {}).length > 0;
+  // Whether any saved address was PROVED by connecting the wallet rather than
+  // typed in. Two different sentences, because they are two different states:
+  // a typed address is saved but unproven, and saying "done" over it would be
+  // the app telling the user a check happened that did not.
+  const anyVerified = Object.values(addrs.data?.verified ?? {}).some(Boolean);
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -191,12 +196,19 @@ export default function WalletPage() {
         </p>
         {hasAddress ? (
           <>
-            <p className="mt-1 flex gap-2 text-sm text-success">
-              <CheckIcon size={18} className="mt-0.5 shrink-0" />
-              {t("wallet.setup.done")}
-            </p>
+            {anyVerified ? (
+              <p className="mt-1 flex gap-2 text-sm text-success">
+                <CheckIcon size={18} className="mt-0.5 shrink-0" />
+                {t("wallet.setup.doneVerified")}
+              </p>
+            ) : (
+              <p className="mt-1 flex gap-2 text-sm text-muted">
+                <InfoIcon size={18} className="mt-0.5 shrink-0" />
+                {t("wallet.setup.doneTyped")}
+              </p>
+            )}
             <Link href="/wallet/withdraw" className="mt-3 block text-sm font-semibold text-brand">
-              {t("wallet.setup.cta")} →
+              {anyVerified ? t("wallet.setup.cta") : t("wallet.setup.ctaConnect")} →
             </Link>
           </>
         ) : (

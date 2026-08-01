@@ -1,23 +1,59 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
-import { validateAddress, chainIsOffered, type ChainId } from "../chains.ts";
+import { validateAddress, chainIsOffered, chainById, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
+import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
-async function saveAddress(userId: string, chain: string, address: string): Promise<void> {
+//
+// ⚠️ A PROOF BELONGS TO ONE ADDRESS. `verified` is only ever true on the path
+// that actually checked a signature (POST /withdrawals/addresses/verify). Every
+// other write clears it — but ONLY when the address really changed, because this
+// function also runs on the auto-save after a withdrawal, and a user withdrawing
+// to the wallet they proved last week must not silently lose the badge for it.
+async function saveAddress(
+  userId: string, chain: string, address: string, verified = false,
+): Promise<void> {
   try {
+    const at = now();
     await sql.run(
-      `INSERT INTO payout_addresses (user_id, chain, address, updated_at) VALUES (?,?,?,?)
-       ON CONFLICT (user_id, chain) DO UPDATE SET address = EXCLUDED.address, updated_at = EXCLUDED.updated_at`,
-      userId, chain, address, now(),
+      `INSERT INTO payout_addresses (user_id, chain, address, verified_at, verify_method, updated_at)
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT (user_id, chain) DO UPDATE SET
+         address = EXCLUDED.address,
+         updated_at = EXCLUDED.updated_at,
+         verified_at = CASE
+           WHEN EXCLUDED.verified_at IS NOT NULL THEN EXCLUDED.verified_at
+           WHEN LOWER(payout_addresses.address) = LOWER(EXCLUDED.address) THEN payout_addresses.verified_at
+           ELSE NULL END,
+         verify_method = CASE
+           WHEN EXCLUDED.verified_at IS NOT NULL THEN EXCLUDED.verify_method
+           WHEN LOWER(payout_addresses.address) = LOWER(EXCLUDED.address) THEN payout_addresses.verify_method
+           ELSE NULL END`,
+      userId, chain, address, verified ? at : null, verified ? "signature" : null, at,
     );
   } catch {
     // Saving is a convenience; never let it break a withdrawal.
   }
 }
+
+// The name the user sees inside their wallet app when they are asked to sign.
+// Taken from OUR configured web origin, never from anything the request carried
+// — a host the client could influence would let a phishing page produce a
+// message that names us and a signature we would then accept.
+function siteHost(): string {
+  try {
+    return new URL(config.webOrigins[0]).host;
+  } catch {
+    return "rozipay.xyz";
+  }
+}
+
+const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 
 function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
@@ -146,12 +182,141 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   // Saved payout addresses — a user sets a USDT address per chain ONCE and the
   // withdraw screen pre-fills it every time after.
   app.get("/withdrawals/addresses", guard(async (userId) => {
-    const rows = await sql.all<{ chain: string; address: string }>(
-      "SELECT chain, address FROM payout_addresses WHERE user_id = ?", userId,
+    const rows = await sql.all<{ chain: string; address: string; verified_at: string | null }>(
+      "SELECT chain, address, verified_at FROM payout_addresses WHERE user_id = ?", userId,
     );
     const addresses: Record<string, string> = {};
-    for (const r of rows) addresses[r.chain] = r.address;
-    return { addresses };
+    // Whether the user proved they hold each address by signing with the wallet.
+    // A separate map rather than a field on `addresses`, so the shape every
+    // existing caller reads is unchanged.
+    const verified: Record<string, boolean> = {};
+    for (const r of rows) {
+      addresses[r.chain] = r.address;
+      verified[r.chain] = r.verified_at != null;
+    }
+    return { addresses, verified };
+  }));
+
+  // ---- Connect a wallet, instead of pasting an address ----------------------
+  //
+  // Two steps, because a signature is only worth anything if WE chose what was
+  // signed. Step one hands out a one-time message; step two takes the signature
+  // of that exact message back and works out which address produced it.
+  //
+  // The address is not trusted from the request at any point. It is RECOVERED
+  // from the signature, and the claim recorded in step one only has to match it.
+
+  const challengeSchema = z.object({
+    chain: z.enum(["bep20", "base", "aptos"]),
+    address: z.string().min(1).max(120),
+  });
+
+  app.post("/withdrawals/addresses/challenge", {
+    // Each call writes a row. The endpoint is authenticated, so this is not an
+    // open door — it is a cap on how fast one account can fill the table.
+    config: { rateLimit: { max: 30, timeWindow: "1 hour" } },
+  }, guard(async (userId, req, reply) => {
+    const parsed = challengeSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick a network and connect a wallet." });
+    const { chain, address: addressRaw } = parsed.data;
+
+    if (!chainIsOffered(chain)) {
+      return reply.code(400).send({
+        error: "We pay out in USDT on BNB Smart Chain (BEP20). Please use a BEP20 address.",
+      });
+    }
+    // Only an EVM chain can produce a signature we can check this way. Aptos
+    // uses Ed25519 with a different message format; if it is ever offered again
+    // it needs its own verifier, not this one quietly accepting nothing.
+    if (chainById(chain)?.kind !== "evm") {
+      return reply.code(400).send({ error: "This network cannot connect a wallet yet. Paste your address instead." });
+    }
+    const check = validateAddress(chain as ChainId, addressRaw);
+    if (!check.ok) return reply.code(400).send({ error: check.error });
+
+    const address = addressRaw.trim().toLowerCase();
+    const nonce = randomBytes(16).toString("hex");
+    const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
+    const message = buildWalletMessage({
+      host: siteHost(),
+      address,
+      chainLabel: chainById(chain)!.label,
+      nonce,
+      expiresAt,
+    });
+
+    await sql.run(
+      `INSERT INTO wallet_link_nonces (nonce, user_id, chain, address, message, expires_at, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+      nonce, userId, chain, address, message, expiresAt, now(),
+    );
+    return { nonce, message, expiresAt };
+  }));
+
+  const verifySchema = z.object({
+    nonce: z.string().min(1).max(64),
+    // 0x + 130 hex. Bounded here so a megabyte of "signature" never reaches the
+    // recovery code.
+    signature: z.string().min(1).max(200),
+  });
+
+  app.post("/withdrawals/addresses/verify", guard(async (userId, req, reply) => {
+    const parsed = verifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "That did not work. Please try connecting again." });
+    const { nonce, signature } = parsed.data;
+
+    const row = await sql.get<{
+      user_id: string; chain: string; address: string; message: string;
+      expires_at: string; used_at: string | null;
+    }>("SELECT user_id, chain, address, message, expires_at, used_at FROM wallet_link_nonces WHERE nonce = ?", nonce);
+
+    // One error for every way the challenge can be unusable — wrong owner,
+    // already spent, expired, never existed. Telling an attacker WHICH of those
+    // it was is telling them whether the code exists and whose it is.
+    if (!row || row.user_id !== userId || row.used_at || row.expires_at <= now()) {
+      return reply.code(400).send({ error: "That request has expired. Please connect your wallet again." });
+    }
+
+    // Re-check the chain, even though the challenge only exists because it
+    // passed this same check ten minutes ago. A chain retired inside that
+    // window would otherwise leave a saved address on a chain we no longer pay
+    // out on — which is the exact failure PUT /withdrawals/addresses guards
+    // against above, and the two paths must not disagree about it.
+    if (!chainIsOffered(row.chain)) {
+      return reply.code(400).send({
+        error: "We pay out in USDT on BNB Smart Chain (BEP20). Please use a BEP20 address.",
+      });
+    }
+
+    const signer = recoverSigner(row.message, signature);
+    if (!signer || signer !== row.address) {
+      // Deliberately does NOT burn the challenge. A wallet that signed with the
+      // wrong account (people have several) should let the user switch and try
+      // again inside the same 10 minutes, not send them back to the start.
+      return reply.code(400).send({ error: "That signature is from a different wallet. Please try again." });
+    }
+
+    // Claim the challenge BEFORE saving anything. `WHERE used_at IS NULL` is
+    // what makes it single-use: two taps arriving together both read the row as
+    // unused above, and exactly one of them updates a row here.
+    const claimed = await sql.get<{ nonce: string }>(
+      `UPDATE wallet_link_nonces SET used_at = ?
+       WHERE nonce = ? AND used_at IS NULL AND expires_at > ?
+       RETURNING nonce`,
+      now(), nonce, now(),
+    );
+    if (!claimed) {
+      return reply.code(400).send({ error: "That request has expired. Please connect your wallet again." });
+    }
+
+    // Store the EIP-55 mixed-case form: it is what the user's wallet app shows
+    // them, so the address on our screen and the address in their wallet are
+    // the same string, character for character.
+    const address = toChecksumAddress(signer);
+    await saveAddress(userId, row.chain, address, true);
+    await checkPayoutAddressReuse(userId, address);
+
+    return { ok: true, chain: row.chain, address, verified: true };
   }));
 
   app.put("/withdrawals/addresses", guard(async (userId, req, reply) => {
