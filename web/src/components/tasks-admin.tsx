@@ -21,7 +21,8 @@ const API_BASE =
 
 const empty: CustomTaskInput = {
   title: "", points: 100, verifyMode: "proof",
-  instructions: "", proofLabel: "", actionUrl: "", icon: "", minutes: 1, country: "Pakistan", status: "active",
+  instructions: "", proofLabel: "", proofRequired: true,
+  actionUrl: "", icon: "", minutes: 1, country: "Pakistan", status: "active",
 };
 
 export function TasksPanel() {
@@ -46,6 +47,7 @@ export function TasksPanel() {
     setForm({
       title: t.title, points: t.points, verifyMode: t.verify_mode,
       instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
+      proofRequired: t.proof_required !== 0,
       actionUrl: t.action_url ?? "", icon: t.icon ?? "", minutes: t.minutes, country: t.country,
       status: t.status as "active" | "disabled",
     });
@@ -126,7 +128,10 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
         <label className="sm:col-span-2"><span className={L}>Instructions (plain English)</span>
           <textarea className={I} rows={2} value={value.instructions}
             onChange={(e) => set("instructions", e.target.value)} /></label>
-        <label><span className={L}>Link / button URL (optional)</span>
+        {/* The URL behind the task card's button — the WhatsApp / Telegram / X
+            link a user is sent to. Full width: a link is long, and a half-width
+            box hides the end of it, which is exactly where a typo lives. */}
+        <label className="sm:col-span-2"><span className={L}>Link / button URL (optional)</span>
           <input className={I} placeholder="https://…" value={value.actionUrl}
             onChange={(e) => set("actionUrl", e.target.value)} /></label>
         <label><span className={L}>Logo on the card</span>
@@ -136,8 +141,32 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
               <option key={c} value={c}>{c === "" ? "Default (by task type)" : c}</option>
             ))}
           </select></label>
+        {/* ASKING FOR PROOF IS OPTIONAL (founder, 2026-08-01). "Send us your
+            username" is worth typing; "join our WhatsApp channel" is not, and
+            demanding a sentence there loses people at the last step.
+
+            ⚠️ OFF DOES NOT MEAN SELF-CREDIT. Both settings file a PENDING row in
+            the queue below and you still approve it before any points move. The
+            only difference is whether the user types anything. */}
         {value.verifyMode === "proof" && (
-          <label><span className={L}>Proof label (what to send)</span>
+          <label className="sm:col-span-2 flex items-start gap-2 rounded-md border border-line bg-card p-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={value.proofRequired !== false}
+              onChange={(e) => set("proofRequired", e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm font-semibold text-brand-ink">Ask the user for proof</span>
+              <span className="block text-[11px] text-muted">
+                On: they type evidence (username, screenshot description). Off: they just tap
+                &ldquo;I did it&rdquo;. Either way it comes to you for approval — nothing credits itself.
+              </span>
+            </span>
+          </label>
+        )}
+        {value.verifyMode === "proof" && value.proofRequired !== false && (
+          <label className="sm:col-span-2"><span className={L}>Proof label — what to ask them for (optional)</span>
             <input className={I} placeholder="e.g. Your username" value={value.proofLabel}
               onChange={(e) => set("proofLabel", e.target.value)} /></label>
         )}
@@ -181,7 +210,9 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
           <p className="font-semibold text-brand-ink">{t.title}</p>
           <p className="mt-0.5 text-xs text-muted">
             <span className="num font-semibold text-brand">{formatPoints(t.points)} pts</span> ·{" "}
-            {t.verify_mode === "proof" ? "staff approve proof" : "partner postback"} · {t.country} ·{" "}
+            {t.verify_mode === "proof"
+              ? t.proof_required === 0 ? "staff approve (no proof asked)" : "staff approve proof"
+              : "partner postback"} · {t.country} ·{" "}
             {t.credited_count} credited
             {t.pending_proofs > 0 && <span className="text-pending"> · {t.pending_proofs} proof(s) waiting</span>}
           </p>
@@ -204,6 +235,30 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
         <p className="mt-2 rounded-md bg-pending-tint p-2 text-[11px] text-pending">
           No link yet — the task card will have no button. Add the URL, then set it active.
         </p>
+      )}
+
+      {/* The link the task's button points at, readable and copyable WITHOUT
+          opening the edit form (founder, 2026-08-01). The Telegram/WhatsApp/X
+          links are the thing most often checked and pasted elsewhere, and until
+          now the only way to see one was to click Edit — which puts the card
+          into a state you then have to cancel out of.
+
+          Two separate controls on purpose: Copy hands it to the clipboard, Open
+          loads it. rel="noreferrer" because the URL is Admin-supplied and this
+          page is behind a staff session. */}
+      {t.action_url && (
+        <div className="mt-2 flex items-center gap-2 border-t border-line pt-2 text-[11px]">
+          <span className="w-20 shrink-0 uppercase text-muted">Link</span>
+          <button
+            onClick={() => navigator.clipboard?.writeText(t.action_url!)}
+            title="Click to copy"
+            className="min-w-0 flex-1 truncate rounded bg-brand-tint px-1.5 py-0.5 text-left font-mono text-brand"
+          >
+            {t.action_url}
+          </button>
+          <a href={t.action_url} target="_blank" rel="noreferrer noopener"
+            className="shrink-0 font-semibold text-brand">Open</a>
+        </div>
       )}
 
       {t.verify_mode === "postback" && (

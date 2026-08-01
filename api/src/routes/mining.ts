@@ -15,6 +15,7 @@ import { chainById, validateAddress, type ChainId } from "../chains.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
+import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -230,6 +231,11 @@ export async function miningRoutes(app: FastifyInstance) {
     const accountDays = Math.floor((Date.now() - Date.parse(me!.created_at)) / 86_400_000);
     const storeCount = Number(store?.n ?? 0);
 
+    // One read of the ID-check switch, shared by the two fields below. When it is
+    // off the check is waived, not merely hidden — see kycSatisfied() in kyc.ts.
+    const kycFeatureOn = await kycFeatureEnabled();
+    const kycOk = me!.kyc_status === "approved" || !kycFeatureOn;
+
     return {
       roziMicro,
       session: {
@@ -283,8 +289,11 @@ export async function miningRoutes(app: FastifyInstance) {
         canSend:
           Boolean(s.transfersEnabled) &&
           accountDays >= s.transferMinAccountDays &&
-          (!s.transferRequireKyc || me!.kyc_status === "approved"),
-        requireKyc: Boolean(s.transferRequireKyc),
+          (!s.transferRequireKyc || kycOk),
+        // False once an Admin switches the ID check off, so the send screen stops
+        // showing a "verify your ID" prompt pointing at a hidden tab. Same source
+        // of truth as the route, which is the only way the two can agree.
+        requireKyc: Boolean(s.transferRequireKyc) && kycFeatureOn,
         kycStatus: me!.kyc_status ?? "none",
         accountDays,
         minAccountDays: s.transferMinAccountDays,
@@ -610,10 +619,14 @@ export async function miningRoutes(app: FastifyInstance) {
     // to a real address and should know who is receiving it. A refund is also
     // the obvious laundering shape (deposit, then ask for it back somewhere
     // else), and the ID check is the only thing standing in front of that.
+    //
+    // Waived when an Admin has switched the ID check off entirely (kyc.ts): a
+    // hidden /kyc screen must never leave someone's own deposit permanently
+    // unreachable behind an instruction they cannot follow.
     if (config.kycRequiredForWithdrawal) {
       const u = await sql.get<{ kyc_status: string }>(
         "SELECT kyc_status FROM users WHERE id = ?", userId);
-      if (u?.kyc_status !== "approved") {
+      if (!(await kycSatisfied(u?.kyc_status))) {
         throw {
           statusCode: 403,
           message: u?.kyc_status === "pending"
@@ -876,7 +889,12 @@ export async function miningRoutes(app: FastifyInstance) {
     // Same gate withdrawals use, and for the same reason: this is the point where
     // value leaves one identity for another. Only SENDING is gated — see the note
     // on transferRequireKyc in mining/core.ts for why receiving is not.
-    if (s.transferRequireKyc && me!.kyc_status !== "approved") {
+    //
+    // ⚠️ AND WAIVED WHEN AN ADMIN HAS SWITCHED THE ID CHECK OFF (kyc.ts). This is
+    // the path that made the waive necessary: transfers are live today, so
+    // hiding /kyc while still demanding an approval it can no longer produce
+    // would have killed sending outright, silently, from an unrelated toggle.
+    if (s.transferRequireKyc && !(await kycSatisfied(me!.kyc_status))) {
       throw {
         statusCode: 403,
         message: me!.kyc_status === "pending"

@@ -62,6 +62,10 @@ export async function appRoutes(app: FastifyInstance) {
           verifyMode: t.verify_mode ?? undefined,
           instructions: t.instructions ?? undefined,
           proofLabel: t.proof_label ?? undefined,
+          // Does this task ask the user to type evidence, or just to confirm they
+          // did it? Either way a staff member still approves before anything is
+          // credited — see the proof_required note in db.ts.
+          proofRequired: t.proof_required !== 0,
           actionUrl: t.action_url ?? undefined,
           icon: t.icon ?? undefined,
           proofStatus: proof?.status ?? undefined,
@@ -76,10 +80,17 @@ export async function appRoutes(app: FastifyInstance) {
   // queue. A staff member approves it, and THAT credits the points.
   app.post("/tasks/:id/proof", guard(async (userId, req) => {
     const taskId = (req.params as { id: string }).id;
-    const { proof } = z.object({ proof: z.string().trim().min(1).max(2000) }).parse(req.body ?? {});
+    // Optional at the schema level, then required (or not) against the TASK
+    // below. It cannot be decided here: whether this task asks for evidence is a
+    // per-task Admin setting, and a fixed min(1) would refuse the tap-to-confirm
+    // tasks outright.
+    const { proof } = z.object({ proof: z.string().trim().max(2000).optional() })
+      .parse(req.body ?? {});
 
-    const task = await sql.get<{ id: string; source: string; verify_mode: string; status: string }>(
-      "SELECT id, source, verify_mode, status FROM tasks WHERE id = ?", taskId,
+    const task = await sql.get<{
+      id: string; source: string; verify_mode: string; status: string; proof_required: number;
+    }>(
+      "SELECT id, source, verify_mode, status, proof_required FROM tasks WHERE id = ?", taskId,
     );
     if (!task || task.source !== "custom" || task.status !== "active") {
       return { ok: false, error: "This task is not available." };
@@ -87,6 +98,16 @@ export async function appRoutes(app: FastifyInstance) {
     if (task.verify_mode !== "proof") {
       return { ok: false, error: "This task is checked automatically — you do not need to send proof." };
     }
+    // Asked for → must be there. Not asked for → a stored placeholder, so the
+    // reviewer's screen never shows an empty grey box that reads as a bug.
+    //
+    // ⚠️ THE ROW IS STILL 'pending' AND A HUMAN STILL APPROVES IT. Nothing about
+    // this branch credits anything; it only decides what text goes in the queue.
+    const text = (proof ?? "").trim();
+    if (task.proof_required !== 0 && text.length === 0) {
+      return { ok: false, error: "Please write your proof first." };
+    }
+    const proofText = text.length > 0 ? text : "The user says they finished this task.";
 
     // Already approved? Nothing to do — don't let them farm a second payout.
     const approved = await sql.get<{ id: string }>(
@@ -102,7 +123,7 @@ export async function appRoutes(app: FastifyInstance) {
     );
     await sql.run(
       "INSERT INTO task_proofs (id, task_id, user_id, proof_text, status, created_at) VALUES (?,?,?,?, 'pending', ?)",
-      newId(), taskId, userId, proof, now(),
+      newId(), taskId, userId, proofText, now(),
     );
     return { ok: true, status: "pending" };
   }));

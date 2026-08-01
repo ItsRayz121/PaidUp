@@ -10,7 +10,10 @@
 // audit log. "Who looked at my ID" is a question we must be able to answer.
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
-import { fetchKycQueue, decideKyc, API_BASE, getToken, type KycSubmission } from "@/lib/api";
+import {
+  fetchKycQueue, decideKyc, fetchSettings, updateSettings, API_BASE, getToken,
+  type KycSubmission,
+} from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 
 // The image endpoint is authenticated, so it cannot be a plain <img src>. We fetch
@@ -158,12 +161,69 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
   );
 }
 
+// ---- The master on/off switch (founder, 2026-08-01) ------------------------
+//
+// Turns the whole ID check on or off with no redeploy. OFF hides the tab in the
+// earner app ("Coming soon") and closes POST /kyc.
+//
+// ⚠️ AND IT WAIVES THE ID REQUIREMENT EVERYWHERE, which is why the warning below
+// is not decoration. Sending ROZI, withdrawing and refunding a deposit all
+// require an approved ID today; if this switch merely HID the only screen that
+// can produce that approval, those three features would become impossible while
+// still telling users to go and verify. So the rule is: the check is either
+// running, or it is not being asked for. Never "required but unobtainable".
+// See kycFeatureEnabled() in api/src/kyc.ts.
+function KycSwitch() {
+  const s = useApi(fetchSettings, []);
+  const [busy, setBusy] = useState(false);
+  const on = s.data?.kycEnabled !== false;
+
+  async function toggle() {
+    const next = !on;
+    if (!next && !window.confirm(
+      "Switch the ID check OFF?\n\n" +
+      "The tab will read \"Coming soon\" for users, and NO screen will ask for an " +
+      "ID any more — sending ROZI, withdrawing and deposit refunds will all stop " +
+      "requiring an approved ID until you switch it back on.",
+    )) return;
+    setBusy(true);
+    try { await updateSettings({ kycEnabled: next }); s.reload(); }
+    catch (e) { window.alert((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-card p-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-brand-ink">
+          ID check: {s.loading ? "…" : on ? "ON" : "OFF — shown to users as “Coming soon”"}
+        </p>
+        <p className="mt-0.5 text-xs text-muted">
+          {on
+            ? "Users can send documents, and an approved ID is required to send ROZI, withdraw, or get a deposit back."
+            : "The /kyc screen is closed and no feature asks for an ID. Nothing is blocked behind a tab users cannot open."}
+        </p>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={busy || s.loading}
+        className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 ${
+          on ? "bg-danger" : "bg-success"}`}
+      >
+        {on ? "Switch off" : "Switch on"}
+      </button>
+    </div>
+  );
+}
+
 export function KycPanel() {
   const [status, setStatus] = useState("pending");
   const queue = useApi(() => fetchKycQueue(status), [status]);
 
   return (
     <div>
+      <KycSwitch />
+
       <div className="mb-3 flex gap-1.5">
         {["pending", "approved", "rejected"].map((s) => (
           <button

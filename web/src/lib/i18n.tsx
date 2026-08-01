@@ -92,8 +92,23 @@ const copy: Record<string, string> = {
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.nothing": "Nothing to save yet.",
-  "profile.verifyId": "Verify your ID",
-  "profile.verifyIdHint": "Needed before we send you money.",
+  // "KYC" is jargon, and this file bans jargon everywhere else. It stays here by
+  // the founder's decision (2026-08-01): in Pakistan, India and Bangladesh the
+  // three letters are what every bank, wallet and exchange calls this step, so
+  // for these users it is the FAMILIAR word and "verify your ID" was the vague
+  // one. "Verify your KYC" pairs the known abbreviation with a plain verb, and
+  // the hint underneath says it in ordinary words for anyone who has not met it.
+  "profile.verifyId": "Verify your KYC",
+  "profile.verifyIdHint": "Send a photo of your face and your ID card.",
+  // Shown instead when an Admin has switched the ID check off. It must not
+  // promise a date — same ceiling word as the road map and /mine.
+  "profile.verifyIdOffHint": "Not open yet. You do not need to do anything.",
+  "profile.comingSoon": "Coming soon",
+  // Where your money gets sent. Moved here from /wallet (founder, 2026-08-01).
+  "profile.walletHint": "Tell us where to send your money.",
+  "profile.wallet.badge.none": "Not set",
+  "profile.wallet.badge.saved": "Saved",
+  "profile.wallet.badge.checked": "Checked",
   "profile.kycBadge.none": "Not done",
   "profile.kycBadge.pending": "Checking",
   "profile.kycBadge.approved": "Done",
@@ -194,19 +209,38 @@ const copy: Record<string, string> = {
   // next survey does not get done.
   "home.rozi.breakdown": "{mined} mined · {earned} from tasks and friends",
   // wallet
-  "wallet.subtitle": "Your balance, and where your money will be sent.",
-  // ⚠️ THE THRESHOLD IS ON THE EARNED HALF ONLY, and this string has to say so.
-  // The check behind it is `points >= min` — mined ROZI is not counted — so a
-  // user who saved exactly this much COMBINED would arrive at the withdraw
-  // screen under the minimum and file a support ticket they would be right about.
-  //
-  // "Keep earning — you are close" also used to be here, unconditionally: a user
-  // at zero was told they were close. Small, and a lie, on the money screen.
-  "wallet.reachAt":
-    "You need {points} earned from tasks and friends to get money. Mined ROZI does not count towards this.",
+  "wallet.subtitle": "Your balance, and everything that moved in and out.",
+  // ⚠️ "wallet.reachAt" WAS DELETED (founder, 2026-08-01), not moved. It read
+  // "You need {points} earned from tasks and friends to get money", and it ran
+  // under the balance for every user below the minimum — which is almost
+  // everyone, because there is little survey fill for Pakistani traffic yet. A
+  // permanent sentence about a door that is shut is not information, it is a
+  // discouragement on the money screen. The withdraw screen still states the
+  // minimum, where it is the thing actually being decided.
   "wallet.history": "History",
+  // HISTORY IS BOTH LEDGERS NOW. The line says where the numbers come from,
+  // because the previous list showed task money only while the balance above it
+  // was mostly mined — so the history appeared to contradict the balance.
+  "wallet.history.sub": "Everything that came in and went out of this account.",
   "wallet.noHistoryTitle": "No history yet",
-  "wallet.noHistoryBody": "Finish a task to see your first earnings here.",
+  "wallet.noHistoryBody": "Start mining or finish a task to see your first ROZI here.",
+  // ---- What each kind of ROZI transaction is called ------------------------
+  // ⚠️ ONE PLAIN SENTENCE PER SOURCE TYPE, and the list must cover every value
+  // in the rozi_ledger CHECK constraint (api/src/db.ts). A type with no entry
+  // here renders its own key — "wallet.tx.mining" — on the money screen.
+  //
+  // The internal note on the row is NOT used for most of these on purpose: those
+  // notes are written for staff reading the ledger, and some of them contain the
+  // word "points", which this app does not say to earners.
+  "wallet.tx.mining": "Mined",
+  "wallet.tx.rig_purchase": "Bought a mining machine",
+  "wallet.tx.transfer_in": "Received from a friend",
+  "wallet.tx.transfer_out": "Sent to a friend",
+  "wallet.tx.transfer_fee": "Sending fee",
+  "wallet.tx.conversion_burn": "Changed into money",
+  "wallet.tx.store_redemption": "Store order",
+  "wallet.tx.bonus": "Bonus",
+  "wallet.tx.admin_adjustment": "Changed by our team",
   "wallet.needHelp": "Need help with a payment?",
   "wallet.contactSupport": "Contact support",
   // ---- Invite rewards -------------------------------------------------------
@@ -400,10 +434,13 @@ const copy: Record<string, string> = {
   "login.msg.forgotSent": "If that email has an account, we sent a code to it.",
   // wallet + withdraw additions
   "wallet.setupWallet": "Connect my wallet",
-  // Founder, 2026-07-30: the wallet tab's job is the balance and the payout
-  // address, in that order. Cash-out is not open yet, so the useful thing a user
-  // can do here TODAY is tell us where to send the money — done once, waiting
-  // when it opens. Same ceiling word as everywhere else: "soon", never a date.
+  // ⚠️ THESE RENDER ON /profile NOW, NOT /wallet (founder, 2026-08-01). Saving a
+  // payout address is an account setting for a feature that is not open yet, and
+  // it was sitting above the balance on the screen named "wallet". It is not
+  // compulsory anywhere: /wallet/withdraw still collects the address, validates
+  // it, and offers Connect-my-wallet at payout time.
+  //
+  // Same ceiling word as everywhere else: "soon", never a date.
   "wallet.setup.title": "Set up your withdrawal wallet",
   "wallet.setup.body":
     "Tell us the wallet address to send your money to. Do it once now, and you are ready the moment cash-out opens.",
@@ -901,8 +938,14 @@ const copy: Record<string, string> = {
   // ---- Verify your ID -------------------------------------------------------
   // The word "KYC" appears nowhere a user can see it. It is jargon, and half our
   // users would not know it. "Verify your ID" says the same thing to everyone.
-  "kyc.title": "Verify your ID",
+  "kyc.title": "Verify your KYC",
   "kyc.subtitle": "We need to check you are a real person before we send you money.",
+  // Shown when an Admin has switched the ID check off. Reachable from a bookmark
+  // or an old link, so it has to answer for itself. ⚠️ No date, ever — "soon" is
+  // the ceiling on this promise, the same as /mine and the road map.
+  "kyc.off.title": "Coming soon",
+  "kyc.off.body": "We are not checking IDs yet. You do not need to send anything.",
+  "kyc.off.back": "Back to my profile",
   "kyc.why.title": "Why we ask",
   "kyc.why.body":
     "It stops one person making many accounts. It also keeps your money safe, and it is how we know where to send it.",

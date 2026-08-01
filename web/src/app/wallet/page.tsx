@@ -5,34 +5,42 @@ import { Card, Button, StatusBadge, SectionTitle } from "@/components/ui";
 import { StatusLegend } from "@/components/TaskFlow";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
-  StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, BoltIcon, CheckIcon,
+  StarIcon, WalletIcon, GiftIcon, MineIcon, BoltIcon, ChipIcon,
   SendIcon, ReceiveIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchBalance, fetchLedger, fetchMiningState, fetchPayoutAddresses, fetchUsdt,
-  type LedgerEntry,
+  fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
+  type LedgerEntry, type RoziEntry,
 } from "@/lib/api";
 import {
-  formatRozi, formatPointsAsRozi, usdtFromMicro, pointsToRoziMicro, totalRoziMicro, timeAgo,
+  formatRozi, usdtFromMicro, pointsToRoziMicro, totalRoziMicro, timeAgo,
 } from "@/lib/format";
 
 // The money screen, and now the ONLY one (founder, 2026-07-30). Home no longer
 // shows a USDT figure or a payout button, so everything about being paid lives
-// here: the balance, where the money will be sent, and the history.
+// here: the balance, what this account holds, and the history.
 //
-// The order is the founder's: balance, then "set up your withdrawal wallet".
-// Cash-out is not open yet, so saving an address is the one useful thing a user
-// can actually finish on this screen today — which is exactly why it leads over
-// a "Get my money" button most users cannot press.
+// ⚠️ THE "SET UP YOUR WITHDRAWAL WALLET" CARD IS GONE FROM THIS SCREEN (founder,
+// 2026-08-01) and now sits on /profile. It was never compulsory here: the
+// withdraw screen still collects the address, still validates it, and still
+// offers Connect-my-wallet, so no payout path lost a step. What it was doing was
+// putting a form for a feature that is not open yet above the balance on the
+// screen named "wallet" — an account setting wearing the clothes of the main
+// action. Settings live on Profile.
+//
+// ⚠️ THE THRESHOLD NOTICE IS GONE TOO. "You need N earned from tasks and friends
+// to get money" ran under the balance for every user below the minimum, i.e.
+// almost everyone, and it is a sentence about a door that is shut. The withdraw
+// screen still states the minimum, where it is the thing being decided.
 export default function WalletPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const bal = useApi(fetchBalance, []);
   const led = useApi(fetchLedger, []);
+  const rozi = useApi(fetchRoziHistory, []);
   const mining = useApi(fetchMiningState, []);
-  const addrs = useApi(fetchPayoutAddresses, []);
   // The spend-only top-up credit, for the USDT row of the token list. Its own
   // endpoint rather than a field on /mining/state, which is called on nearly
   // every screen — this balance is needed on exactly one.
@@ -49,22 +57,30 @@ export default function WalletPage() {
   const points = bal.data?.points ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 1000;
   const canWithdraw = points >= min;
-  // HISTORY IS MONEY THAT MOVED (founder, 2026-08-01), not a status board of
-  // task attempts. `rejected` rows are dropped: nothing moved, so a line saying
-  // "not added" beside a balance is noise that makes the app look broken.
+  // HISTORY IS EVERY TRANSACTION ON THIS ACCOUNT (founder, 2026-08-01), which
+  // means BOTH ledgers. It used to be the points ledger alone, so the screen
+  // showing a combined ROZI balance explained only the smaller half of it: a
+  // user who had mined for a week saw a history that never once said the word
+  // "mined", and the number above it was mostly mining. That reads as money
+  // arriving from nowhere, which is the one thing a wallet must never do.
   //
-  // ⚠️ `pending` ROWS STAY, DELIBERATELY. A withdrawal being checked is real
-  // money in flight, and a user who cannot see it will assume it vanished and
-  // open a ticket. "Clean history" must never mean hiding money we owe someone.
-  const entries = (led.data?.entries ?? []).filter((e: LedgerEntry) => e.status !== "rejected");
-  // Any saved chain counts: only one chain is offered right now, and a user who
-  // saved an address before a chain was retired has still done the task.
-  const hasAddress = Object.keys(addrs.data?.addresses ?? {}).length > 0;
-  // Whether any saved address was PROVED by connecting the wallet rather than
-  // typed in. Two different sentences, because they are two different states:
-  // a typed address is saved but unproven, and saying "done" over it would be
-  // the app telling the user a check happened that did not.
-  const anyVerified = Object.values(addrs.data?.verified ?? {}).some(Boolean);
+  // ⚠️ THIS IS A DISPLAY MERGE AND THE LEDGERS ARE UNTOUCHED (guardrail #7).
+  // Two API calls, two independent lists, interleaved by time in the browser.
+  // Nothing converts, nothing is written, and each row still knows which ledger
+  // it came from — see `unify` at the bottom of this file.
+  //
+  // `rejected` rows are dropped: nothing moved, so a line saying "not added"
+  // beside a balance is noise that makes the app look broken. ⚠️ `pending` ROWS
+  // STAY, DELIBERATELY. A withdrawal being checked is real money in flight, and
+  // a user who cannot see it will assume it vanished and open a ticket. "Clean
+  // history" must never mean hiding money we owe someone.
+  const entries = unify(led.data?.entries ?? [], rozi.data?.entries ?? [], t);
+  const historyLoading = led.loading || rozi.loading;
+  // ⚠️ ONE FAILING CALL MUST NOT BLANK THE OTHER'S ROWS. An error is shown only
+  // when BOTH halves failed; if mining history is down, the points rows still
+  // render, because a history that silently drops half of itself is worse than
+  // one that is briefly short.
+  const historyError = led.error && rozi.error ? led.error : null;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -185,64 +201,23 @@ export default function WalletPage() {
         </Card>
       </section>
 
-      {/* ---- Where the money goes (founder, 2026-07-30) ----
-          The primary action on this tab. Saving an address is something a user
-          can finish TODAY, unlike cashing out, and it means the payout is one
-          tap away the day it opens rather than a form to fill under pressure. */}
-      <Card className="p-4">
-        <p className="flex items-center gap-2 font-bold text-brand-ink">
-          <WalletIcon size={20} className="shrink-0 text-brand" />
-          {t("wallet.setup.title")}
-        </p>
-        {hasAddress ? (
-          <>
-            {anyVerified ? (
-              <p className="mt-1 flex gap-2 text-sm text-success">
-                <CheckIcon size={18} className="mt-0.5 shrink-0" />
-                {t("wallet.setup.doneVerified")}
-              </p>
-            ) : (
-              <p className="mt-1 flex gap-2 text-sm text-muted">
-                <InfoIcon size={18} className="mt-0.5 shrink-0" />
-                {t("wallet.setup.doneTyped")}
-              </p>
-            )}
-            <Link href="/wallet/withdraw" className="mt-3 block text-sm font-semibold text-brand">
-              {anyVerified ? t("wallet.setup.cta") : t("wallet.setup.ctaConnect")} →
-            </Link>
-          </>
-        ) : (
-          <>
-            <p className="mt-1 text-sm text-muted">{t("wallet.setup.body")}</p>
-            <div className="mt-3">
-              <Button href="/wallet/withdraw" variant="primary">
-                <WalletIcon size={20} /> {t("wallet.setupWallet")}
-              </Button>
-            </div>
-          </>
-        )}
-      </Card>
+      {/* The "Set up your withdrawal wallet" card used to sit here and now lives
+          on /profile — see the note at the top of this file. The withdraw screen
+          is unchanged and still collects, validates and can prove the address,
+          so nothing about being paid got harder.
 
-      {/* The standalone "Your money · X USDT" card that used to sit here is GONE
-          (founder, 2026-07-30: hide the USDT amount everywhere). Its two jobs
-          were split: the balance is in the token list above, in ROZI, and the
-          payout action is on the withdrawal card. The withdraw screen itself
-          still speaks USDT, because that is the currency we genuinely send.
-
-          What survives here is only the threshold notice — a user below the
-          minimum needs to know one exists, and it is now stated in ROZI. */}
+          The standalone "Your money · X USDT" card is GONE too (founder,
+          2026-07-30: hide the USDT amount everywhere). Its two jobs were split:
+          the balance is in the token list above, in ROZI, and the payout action
+          is the button below. The withdraw screen itself still speaks USDT,
+          because that is the currency we genuinely send. */}
       {bal.error ? (
         <ErrorState message={bal.error} onRetry={bal.reload} />
       ) : canWithdraw ? (
         <Button href="/wallet/withdraw" variant="primary">
           <WalletIcon size={20} /> {t("common.getMyMoney")}
         </Button>
-      ) : !bal.loading && (
-        <p className="flex gap-2 rounded-xl bg-pending-tint p-3 text-sm text-pending">
-          <InfoIcon size={18} className="mt-0.5 shrink-0" />
-          {t("wallet.reachAt", { points: formatPointsAsRozi(min) })}
-        </p>
-      )}
+      ) : null}
 
       {/* The verify-your-ID nudge used to sit here; it moved to Profile (which
           shows the live status badge). The withdraw screen still walls off
@@ -256,22 +231,23 @@ export default function WalletPage() {
 
       <section>
         <SectionTitle>{t("wallet.history")}</SectionTitle>
+        <p className="mb-2 px-1 text-xs text-muted">{t("wallet.history.sub")}</p>
         <Card className="p-2 mb-2"><div className="px-2 py-1"><StatusLegend /></div></Card>
 
-        {led.loading ? <Loading /> : led.error ? (
-          <ErrorState message={led.error} onRetry={led.reload} />
+        {historyLoading ? <Loading /> : historyError ? (
+          <ErrorState message={historyError} onRetry={() => { led.reload(); rozi.reload(); }} />
         ) : entries.length === 0 ? (
           <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
         ) : (
           <ul className="space-y-2.5">
-            {entries.map((e: LedgerEntry) => {
-              const credit = e.points >= 0;
+            {entries.map((e) => {
+              const credit = e.micro >= 0;
               return (
-                <li key={e.id}>
+                <li key={e.key}>
                   <Card className="p-3.5">
                     <div className="flex items-start gap-3">
                       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-                        {e.kind === "referral" ? <GiftIcon size={20} /> : e.kind === "withdrawal" ? <WalletIcon size={20} /> : <StarIcon size={20} />}
+                        <e.Icon size={20} />
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-brand-ink leading-snug">{e.label}</p>
@@ -279,9 +255,16 @@ export default function WalletPage() {
                       </div>
                       <div className="text-right">
                         <p className={`num font-bold ${credit ? "text-success" : "text-brand-ink"}`}>
-                          {credit ? "+" : "−"}{formatPointsAsRozi(Math.abs(e.points))}
+                          {credit ? "+" : "−"}{formatRozi(Math.abs(e.micro))} ROZI
                         </p>
-                        <div className="mt-1 flex justify-end"><StatusBadge status={e.status} /></div>
+                        {/* Only the points ledger carries a status. A ROZI row is
+                            already settled by the time it exists — there is no
+                            "waiting" state to be in — and stamping every mining
+                            payout "Added" would bury the one badge that matters,
+                            the pending withdrawal. */}
+                        {e.status && (
+                          <div className="mt-1 flex justify-end"><StatusBadge status={e.status} /></div>
+                        )}
                       </div>
                     </div>
                   </Card>
@@ -297,6 +280,69 @@ export default function WalletPage() {
       </p>
     </div>
   );
+}
+
+// ---- One history out of two ledgers ---------------------------------------
+//
+// Points rows and ROZI rows, interleaved newest-first and expressed in the same
+// unit so the column can be read straight down. Purely a view: no request is
+// made, nothing is written, and `status` survives only on the rows that have one.
+//
+// ⚠️ THE ROZI SIDE IS NOT LABELLED FROM `note`, EXCEPT WHERE THE NOTE NAMES A
+// THING THE USER PICKED (a machine, a store item, who they sent to). The notes
+// are written for staff reading the ledger and some of them say "points" — a
+// word this app deliberately does not use with earners. A source type we have
+// not given a sentence to falls back to a neutral one rather than leaking an
+// internal string onto the money screen.
+type Row = {
+  key: string;
+  label: string;
+  at: string;
+  micro: number; // signed micro-ROZI: positive in, negative out
+  status?: LedgerEntry["status"];
+  Icon: (p: { size?: number; className?: string }) => React.ReactElement;
+};
+
+function unify(
+  ledger: LedgerEntry[],
+  rozi: RoziEntry[],
+  t: (key: string, vars?: Record<string, string>) => string,
+): Row[] {
+  const roziIcon: Record<string, Row["Icon"]> = {
+    mining: MineIcon,
+    rig_purchase: ChipIcon,
+    transfer_in: ReceiveIcon,
+    transfer_out: SendIcon,
+    transfer_fee: BoltIcon,
+    conversion_burn: WalletIcon,
+    store_redemption: GiftIcon,
+    bonus: GiftIcon,
+    admin_adjustment: BoltIcon,
+  };
+  // Source types whose note names something the user chose, so the note is more
+  // useful than the generic sentence. Everything else uses the sentence.
+  const useNote = new Set(["rig_purchase", "store_redemption", "transfer_out"]);
+
+  const a: Row[] = ledger
+    .filter((e) => e.status !== "rejected")
+    .map((e) => ({
+      key: `p:${e.id}`,
+      label: e.label,
+      at: e.at,
+      micro: pointsToRoziMicro(e.points),
+      status: e.status,
+      Icon: e.kind === "referral" ? GiftIcon : e.kind === "withdrawal" ? WalletIcon : StarIcon,
+    }));
+
+  const b: Row[] = rozi.map((e) => ({
+    key: `r:${e.id}`,
+    label: (useNote.has(e.source_type) && e.note) || t(`wallet.tx.${e.source_type}`),
+    at: e.created_at,
+    micro: e.amountMicro,
+    Icon: roziIcon[e.source_type] ?? MineIcon,
+  }));
+
+  return [...a, ...b].sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
 }
 
 // One line of the token list: logo, name, what it is, and how much you hold.

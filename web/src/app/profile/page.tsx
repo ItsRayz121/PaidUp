@@ -17,18 +17,23 @@ import {
   StarIcon,
   HelpIcon,
   SlidersIcon,
+  WalletIcon,
   ArrowRightIcon,
 } from "@/components/icons";
 import { useRouter } from "next/navigation";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchKyc, fetchAvatar, clearSession, type KycState } from "@/lib/api";
+import { fetchKyc, fetchAvatar, fetchPayoutAddresses, clearSession, type KycState } from "@/lib/api";
 
 export default function ProfilePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
   const kyc = useApi(fetchKyc, []);
   const avatar = useApi(fetchAvatar, []);
+  // Where the money gets sent. This row moved here from /wallet (founder,
+  // 2026-08-01): it is an account setting for a feature that has not opened, and
+  // it was the first thing on the screen holding someone's balance.
+  const addrs = useApi(fetchPayoutAddresses, []);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -36,6 +41,19 @@ export default function ProfilePage() {
   // that has never opened the settings screen.
   const name = user?.displayName || user?.email?.split("@")[0] || "";
   const picture = avatar.data?.image ?? null;
+
+  // Any saved chain counts: only one chain is offered right now, and a user who
+  // saved an address before a chain was retired has still done the task.
+  const hasAddress = Object.keys(addrs.data?.addresses ?? {}).length > 0;
+  // Saved and PROVED by connecting the wallet, versus saved because it was typed
+  // in. Two different states, and merging them would tell the user a check
+  // happened that did not — on the setting that decides where real money goes.
+  const addressVerified = Object.values(addrs.data?.verified ?? {}).some(Boolean);
+
+  // The ID check can be switched off by an Admin (/staff → Verify IDs). When it
+  // is, the row stays visible but reads "Coming soon" and does not open: a tab
+  // that vanishes looks like a bug, and a tab that opens a dead screen is worse.
+  const kycOn = kyc.data?.enabled !== false;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -76,13 +94,42 @@ export default function ProfilePage() {
           label={t("profile.refer")}
           hint={t("profile.referHint")}
         />
+        {/* Where your money gets sent — moved off /wallet (founder, 2026-08-01).
+            The badge is the whole point of it being a row: a user who typed an
+            address months ago can see at a glance whether it was ever proved,
+            without opening the withdraw screen. */}
         <Row
-          href="/kyc"
-          Icon={ShieldIcon}
-          label={t("profile.verifyId")}
-          hint={t("profile.verifyIdHint")}
-          badge={kyc.data ? <KycBadge status={kyc.data.status} /> : undefined}
+          href="/wallet/withdraw"
+          Icon={WalletIcon}
+          label={t("wallet.setup.title")}
+          hint={t("profile.walletHint")}
+          badge={
+            addrs.data
+              ? <PlainBadge
+                  label={t(hasAddress
+                    ? addressVerified ? "profile.wallet.badge.checked" : "profile.wallet.badge.saved"
+                    : "profile.wallet.badge.none")}
+                  tone={hasAddress ? (addressVerified ? "success" : "pending") : "brand"}
+                />
+              : undefined
+          }
         />
+        {kycOn ? (
+          <Row
+            href="/kyc"
+            Icon={ShieldIcon}
+            label={t("profile.verifyId")}
+            hint={t("profile.verifyIdHint")}
+            badge={kyc.data ? <KycBadge status={kyc.data.status} /> : undefined}
+          />
+        ) : (
+          <DeadRow
+            Icon={ShieldIcon}
+            label={t("profile.verifyId")}
+            hint={t("profile.verifyIdOffHint")}
+            badge={<PlainBadge label={t("profile.comingSoon")} tone="brand" />}
+          />
+        )}
         <Row
           href="/leaderboard"
           Icon={StarIcon}
@@ -159,6 +206,43 @@ function Row({ href, Icon, label, hint, badge }: {
         <ArrowRightIcon size={20} className="shrink-0 text-brand" />
       </Card>
     </Link>
+  );
+}
+
+// A row that deliberately goes nowhere: same shape as the others, greyed, with a
+// word saying why. Used for a feature an Admin has switched off. Hiding it
+// instead would be worse — a user who was told about the ID check by a friend
+// would hunt for a tab that is not there and open a ticket.
+function DeadRow({ Icon, label, hint, badge }: {
+  Icon: (p: { size?: number }) => React.ReactElement;
+  label: string;
+  hint: string;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <Card className="flex items-center gap-3 p-4 opacity-60">
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+        <Icon size={22} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold text-brand-ink">{label}</p>
+        <p className="text-sm text-muted">{hint}</p>
+      </div>
+      {badge}
+    </Card>
+  );
+}
+
+// A one-word status pill for a row. Same shape as KycBadge, but for states that
+// are not a KYC status.
+function PlainBadge({ label, tone }: { label: string; tone: "brand" | "pending" | "success" }) {
+  const cls = {
+    brand: "bg-brand-tint text-brand",
+    pending: "bg-pending-tint text-pending",
+    success: "bg-success-tint text-success",
+  }[tone];
+  return (
+    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${cls}`}>{label}</span>
   );
 }
 

@@ -1,10 +1,12 @@
 "use client";
 
-// "Verify your ID" — the earner side of KYC.
+// "Verify your KYC" — the earner side of the ID check.
 //
-// The word "KYC" appears nowhere on this screen. It is jargon, and most of our
-// users would not know it. Everything here is said in plain English: three
-// photos, why we want them, and what they unlock.
+// The three letters are in the TITLE and nowhere else (founder, 2026-08-01):
+// in our markets every bank, wallet and exchange calls this step KYC, so it is
+// the word users recognise, while "verify your ID" was the vague one. Everything
+// BELOW the title is still plain English — three photos, why we want them, and
+// what they unlock — and no other piece of jargon gets in on the back of this.
 //
 // Photos are downscaled in the browser BEFORE upload. A modern phone camera
 // produces a 4-6MB JPEG, which would bounce straight off the server's 4MB cap and
@@ -125,6 +127,30 @@ export default function KycPage() {
 
   const s: KycState = kyc.data;
   const showForm = s.status === "none" || (s.status === "rejected" && resubmitting);
+
+  // An Admin has switched the ID check off. Someone can still arrive here from a
+  // bookmark, a push notification or a shared link, so the screen answers for
+  // itself instead of showing an upload form the API would refuse. No date is
+  // promised — "soon" is the ceiling everywhere in this app.
+  if (s.enabled === false) {
+    return (
+      <div className="px-4 pt-5 pb-8 space-y-5">
+        <header>
+          <h1 className="text-xl font-bold text-brand-ink">{t("kyc.title")}</h1>
+        </header>
+        <Card className="p-5 text-center">
+          <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-tint text-brand">
+            <LockIcon size={28} />
+          </span>
+          <p className="mt-3 font-bold text-brand-ink">{t("kyc.off.title")}</p>
+          <p className="mt-1 text-sm text-muted">{t("kyc.off.body")}</p>
+          <div className="mt-4">
+            <Button href="/profile" variant="ghost">{t("kyc.off.back")}</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   async function onSubmit() {
     if (!selfie || !front || !back) {

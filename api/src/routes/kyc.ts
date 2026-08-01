@@ -14,7 +14,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { sql, now, newId } from "../db.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
-import { encryptImage, parseDataUrl } from "../kyc.ts";
+import { encryptImage, parseDataUrl, kycFeatureEnabled } from "../kyc.ts";
 
 function guard(
   handler: (userId: string, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
@@ -41,6 +41,11 @@ export async function kycRoutes(app: FastifyInstance) {
        WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, userId);
 
     return {
+      // Whether the whole feature is switched on (Admin, /staff → Verify IDs).
+      // The app renders the tab as "Coming soon" and refuses to open it when this
+      // is false — see kycFeatureEnabled() for why switching it off WAIVES the
+      // check rather than sealing every door behind it.
+      enabled: await kycFeatureEnabled(),
       status: u?.kyc_status ?? "none",
       // Only ever the reason for a REJECTION. There is nothing else in the
       // submission a user needs back from us, and the photos are never returned
@@ -69,6 +74,14 @@ export async function kycRoutes(app: FastifyInstance) {
       idFront: z.string().min(1),
       idBack: z.string().min(1),
     }).parse(req.body);
+
+    // Refused while the feature is off, and refused HERE rather than only in the
+    // UI: hiding a button is a presentation choice, and this route accepts up to
+    // 20MB of identity documents. Nothing should be able to push a selfie and an
+    // ID card into a queue nobody is reading.
+    if (!(await kycFeatureEnabled())) {
+      throw { statusCode: 403, message: "The ID check is not open yet." };
+    }
 
     const u = await sql.get<{ kyc_status: string }>(
       "SELECT kyc_status FROM users WHERE id = ?", userId);

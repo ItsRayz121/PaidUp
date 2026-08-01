@@ -439,6 +439,19 @@ const MIGRATIONS = `
   -- would be a third-party request on a money screen and a way to smuggle
   -- tracking pixels into it. NULL falls back to the icon for the task's type.
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS icon TEXT;
+  -- Whether a 'proof' task ASKS THE USER FOR EVIDENCE (founder, 2026-08-01).
+  --
+  -- 1 (the default, and what every existing row keeps): the user types their
+  --   username / a description of what they did, and staff read it.
+  -- 0: the user taps "I did it" and the claim goes to the same queue with no
+  --   text. For "join our WhatsApp channel" there is nothing worth typing —
+  --   asking for it just loses people at the last step.
+  --
+  -- ⚠️ THIS IS NOT A SELF-CREDIT SWITCH, and it must never become one. Both
+  -- settings end in exactly the same place: a pending row in task_proofs that a
+  -- STAFF MEMBER approves before any points move (guardrail #1). What changes is
+  -- only whether the app collects a sentence on the way there.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_required INTEGER NOT NULL DEFAULT 1;
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_type_check
     CHECK (type IN ('install','survey','video','custom'));

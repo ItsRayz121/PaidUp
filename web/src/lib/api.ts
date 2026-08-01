@@ -127,6 +127,11 @@ export type Task = {
   verifyMode?: "proof" | "postback";
   instructions?: string;
   proofLabel?: string;
+  // Whether this task asks the user to TYPE evidence. False = a single "I did
+  // it" confirmation. Either way the claim lands in the staff queue and a human
+  // approves it before any points move (guardrail #1). Optional so an older API
+  // that does not send it is read as true, which is the stricter default.
+  proofRequired?: boolean;
   actionUrl?: string;
   // Which logo the card shows — a key into `taskIcon` (components/icons.tsx),
   // never a URL. Absent => the icon for the task's type.
@@ -226,6 +231,8 @@ export const fetchBalance = () =>
   apiFetch<{ points: number; minWithdrawPoints: number; withdrawalFeePoints: number }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
+// `proof` is empty for a task whose Admin switched evidence off. The server
+// decides whether that is allowed — it re-reads the task's own setting.
 export const submitTaskProof = (taskId: string, proof: string) =>
   apiFetch<{ ok: boolean; status?: string; error?: string }>(`/tasks/${taskId}/proof`, {
     method: "POST", body: JSON.stringify({ proof }),
@@ -428,12 +435,15 @@ export const updateAllNetworkReferrals = (patch: {
 export type CustomTask = {
   id: string; title: string; points: number; type: string;
   verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
+  // Postgres INTEGER: 1 = ask the user for evidence, 0 = a tap-to-confirm task.
+  proof_required: number;
   action_url: string | null; icon: string | null; minutes: number; country: string; status: string;
   created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
 };
 export type CustomTaskInput = {
   title: string; points: number; verifyMode: "proof" | "postback";
-  instructions?: string; proofLabel?: string; actionUrl?: string; icon?: string;
+  instructions?: string; proofLabel?: string; proofRequired?: boolean;
+  actionUrl?: string; icon?: string;
   minutes?: number; country?: string; status?: "active" | "disabled";
 };
 // Must match TASK_ICONS in api/src/routes/staffTasks.ts — the API refuses
@@ -473,8 +483,12 @@ export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 
 // ---- Admin: global settings (withdrawal fee) -----------------------------
 export const fetchSettings = () =>
-  apiFetch<{ withdrawalFeePoints: number; treasury: TreasuryAddresses }>("/staff/settings");
-export const updateSettings = (patch: { withdrawalFeePoints?: number; treasury?: Partial<TreasuryAddresses> }) =>
+  apiFetch<{ withdrawalFeePoints: number; kycEnabled: boolean; treasury: TreasuryAddresses }>("/staff/settings");
+export const updateSettings = (patch: {
+  withdrawalFeePoints?: number;
+  kycEnabled?: boolean;
+  treasury?: Partial<TreasuryAddresses>;
+}) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
 
 // ---- ROZI mining (docs/MINING_SPEC.md) ------------------------------------
@@ -631,6 +645,11 @@ export const completeAd = (nonce: string) =>
 // the user who sent them. There is no endpoint that returns them to a browser
 // outside the admin review screen.
 export type KycState = {
+  // Whether the ID check is switched on at all (Admin, /staff → Verify IDs).
+  // When false the tab reads "Coming soon" and does not open. It is optional on
+  // the type so an older API that does not send it is read as ON, which is the
+  // safe default — the alternative would hide a live feature after a deploy skew.
+  enabled?: boolean;
   status: "none" | "pending" | "approved" | "rejected";
   rejectReason: string | null;
   submittedAt: string | null;

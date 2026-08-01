@@ -6,6 +6,7 @@ import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
+import { kycFeatureEnabled } from "../kyc.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -332,6 +333,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // payout.ts), so a leaked admin session cannot move treasury funds from here.
   app.get("/staff/settings", staffGuard(["admin"], async () => ({
     withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+    kycEnabled: await kycFeatureEnabled(),
     treasury: {
       bep20: await getSetting("treasury_address_bep20", ""),
       base: await getSetting("treasury_address_base", ""),
@@ -342,6 +344,10 @@ export async function staffRoutes(app: FastifyInstance) {
   const settingsSchema = z.object({
     // Flat fee (points) taken out of every withdrawal. 0 = no fee.
     withdrawalFeePoints: z.number().int().min(0).max(1_000_000).optional(),
+    // The ID check, on or off. OFF hides the tab ("Coming soon") AND waives the
+    // requirement everywhere it is enforced — see kycFeatureEnabled() in kyc.ts
+    // for why the alternative (hidden but still required) is a dead end.
+    kycEnabled: z.boolean().optional(),
     // Treasury (hot wallet) address per chain. Empty string clears it.
     treasury: z.object({
       bep20: z.string().trim().max(120).optional(),
@@ -355,6 +361,16 @@ export async function staffRoutes(app: FastifyInstance) {
 
     if (parsed.data.withdrawalFeePoints !== undefined) {
       await setSetting("withdrawal_fee_points", String(parsed.data.withdrawalFeePoints));
+    }
+    if (parsed.data.kycEnabled !== undefined) {
+      await setSetting("kyc_enabled", parsed.data.kycEnabled ? "1" : "0");
+      // Audit-logged for the same reason a treasury change is: this switch
+      // relaxes an identity requirement on every money path in the product, and
+      // "who turned it off, and when" is the first question after an incident.
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "kyc_feature_toggle",
+        detail: parsed.data.kycEnabled ? "on" : "off — ID check waived everywhere",
+      });
     }
     if (parsed.data.treasury) {
       for (const [chain, address] of Object.entries(parsed.data.treasury)) {

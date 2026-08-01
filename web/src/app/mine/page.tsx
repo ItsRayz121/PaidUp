@@ -5,8 +5,8 @@ import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import {
-  MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon, ShareIcon,
-  ChartIcon, CopyIcon, WalletIcon, GiftIcon,
+  MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon,
+  ChartIcon, WalletIcon, GiftIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -376,11 +376,20 @@ export default function MinePage() {
           leads to a "not open yet" page teaches users to ignore this grid. What
           changed is only how much room the survivors take.
 
-          ⚠️ SEND IS A TILE AND SENDING IS NOT. Tapping it opens the send screen,
-          where the amount, the recipient and a full-size button still stand
-          between a user and parting with ROZI. No tile in this grid moves money
-          by itself, and none ever should. */}
+          ⚠️ SEND AND RECEIVE ARE NOT HERE ANY MORE (founder, 2026-08-01), and
+          that is a placement decision, not a rollback. Both screens still exist,
+          `POST /mining/transfer` is untouched, and the ID check, the account-age
+          minimum and the daily cap all still apply — the two entry points simply
+          live on /wallet now, which is the screen people open when they want to
+          move money. Two doors into the same room, one of them on the screen
+          about mining, was the duplication.
+
+          THE ROAD MAP LEADS. It is the only tile that is true for everyone: the
+          rest appear and disappear with their flags, so on a fresh instance this
+          grid was one rigs tile and a road map hidden behind it. Someone working
+          out whether ROZI is worth their time should meet the plan first. */}
       <div className="grid grid-cols-3 gap-2.5">
+        <Tile href="/mine/roadmap" Icon={ChartIcon} label={t("mine.roadmap.title")} />
         <Tile href="/mine/rigs" Icon={MineIcon} label={t("mine.boost.rigs.title")} />
         {s.usdtTopup && (
           <Tile href="/mine/topup" Icon={WalletIcon} label={t("mine.topup.title")} tone="accent" />
@@ -391,13 +400,6 @@ export default function MinePage() {
         {s.storeOpen && (
           <Tile href="/mine/store" Icon={GiftIcon} label={t("mine.store.title")} />
         )}
-        {s.transfer.enabled && (
-          <>
-            <Tile href="/mine/send" Icon={ShareIcon} label={t("wallet.send")} />
-            <Tile href="/mine/receive" Icon={CopyIcon} label={t("wallet.receive")} />
-          </>
-        )}
-        <Tile href="/mine/roadmap" Icon={ChartIcon} label={t("mine.roadmap.title")} />
       </div>
 
       {/* ---- Where your hashrate comes from ---- */}

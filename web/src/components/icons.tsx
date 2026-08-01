@@ -152,9 +152,24 @@ export const WhatsAppIcon = (p: IconProps) => (
     <path d="M9.6 8.8a.9.9 0 0 1 1.1-.3l.9.4c.4.2.5.6.4 1l-.2.7c0 .3 0 .5.2.7l1.4 1.4c.2.2.4.3.7.2l.7-.2c.4-.1.8.1 1 .4l.4.9c.2.4 0 .8-.3 1.1-.9.7-2.2.6-3.6-.5a12 12 0 0 1-2.4-2.4c-1.1-1.4-1.2-2.7-.5-3.6Z" />
   </svg>
 );
-// X's mark IS a crossed stroke, so the house line weight loses nothing here.
+// X (formerly Twitter). ⚠️ THE ONE ICON IN THIS FILE THAT IS DRAWN AS THE REAL
+// MARK, not as a house-style glyph, and it is deliberate (founder, 2026-08-01).
+//
+// It used to be two crossed strokes — geometrically "an X", and nobody read it as
+// the app. A social task card lives or dies on being recognised in half a second:
+// a user scanning the list is looking for the logo they know, and a multiplication
+// sign is not it. The real mark is a solid wordmark-style glyph with tapered
+// terminals, so the stroke defaults are overridden here: `fill` paints it and
+// `stroke` is switched off, or the base's `fill="none"` would render nothing at
+// all and `stroke` would outline the letter twice.
+//
+// The other logos in this file stay as line glyphs. WhatsApp, Telegram and the
+// rest are already unmistakable from their silhouette; X is the one whose brand
+// change made the generic shape ambiguous.
 export const TwitterIcon = (p: IconProps) => (
-  <svg {...base(p)}><path d="M4 4.5 19.5 20M20 4 4.5 19.5" /></svg>
+  <svg {...base(p)} fill="currentColor" stroke="none">
+    <path d="M17.53 3h3.02l-6.6 7.54L21.72 21h-6.07l-4.76-6.22L5.44 21H2.42l7.06-8.07L2.05 3h6.23l4.3 5.69L17.53 3Zm-1.06 16.2h1.67L7.6 4.71H5.81l10.66 14.49Z" />
+  </svg>
 );
 export const YouTubeIcon = (p: IconProps) => (
   <svg {...base(p)}><rect x="2.5" y="6" width="19" height="12" rx="3.5" /><path d="m10.5 9.5 4.5 2.5-4.5 2.5Z" /></svg>

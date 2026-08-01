@@ -15,6 +15,7 @@
 // a reviewer as if they were a real ID.
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 import { config } from "./config.ts";
+import { getSetting } from "./db.ts";
 
 const ALGO = "aes-256-gcm";
 const IV_BYTES = 12;   // 96-bit nonce, the size GCM is defined for
@@ -42,6 +43,36 @@ function key(): Buffer {
 // True when we are running on the public dev key. Used by the boot check.
 export function usingDevKycKey(): boolean {
   return !config.kycEncryptionKey;
+}
+
+// ---- The master on/off switch (Admin, /staff → Verify IDs) ------------------
+//
+// Founder, 2026-08-01: the ID check must be hideable, so the tab can read
+// "Coming soon" until we are ready to review documents. Stored in app_settings
+// so it flips with no redeploy. Default ON — an instance that has never been
+// configured keeps today's behaviour.
+//
+// ⚠️ SWITCHING IT OFF WAIVES THE ID CHECK EVERYWHERE, IT DOES NOT SEAL THE DOOR.
+// That is the whole design decision and it is not an oversight. Sending ROZI,
+// withdrawing and refunding all require `kyc_status = 'approved'`; if the only
+// screen that can produce that status is hidden, those features become
+// permanently impossible with a message telling the user to do something they
+// cannot do. A gate whose door has been removed is not a control, it is a dead
+// end — and it would silently kill ROZI transfers, which are live.
+//
+// So: the check is either running (default) or not being asked for. It is never
+// "required but unobtainable". Everything else on those paths is untouched —
+// staff approval on withdrawals, the fraud flags, the advisory locks, the daily
+// caps and the account-age minimum on transfers all still apply.
+export async function kycFeatureEnabled(): Promise<boolean> {
+  return (await getSetting("kyc_enabled", "1")) !== "0";
+}
+
+// The one place that decides whether a user has cleared the ID check. Returns
+// true when the feature is switched off, for the reason above.
+export async function kycSatisfied(status: string | null | undefined): Promise<boolean> {
+  if (status === "approved") return true;
+  return !(await kycFeatureEnabled());
 }
 
 // Encrypt raw image bytes. The IV is random per image (never reused — reusing a

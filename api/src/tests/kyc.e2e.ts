@@ -8,10 +8,12 @@
 //   • a second submission flooding the review queue
 //
 //   npm run test:kyc
-import { sql, now, newId, initDb, balanceOf } from "../db.ts";
+import { sql, now, newId, initDb, balanceOf, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { creditCompletion } from "../credit.ts";
-import { encryptImage, decryptImage, parseDataUrl } from "../kyc.ts";
+import {
+  encryptImage, decryptImage, parseDataUrl, kycFeatureEnabled, kycSatisfied,
+} from "../kyc.ts";
 import { minerPopulation } from "../mining/engine.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 
@@ -247,6 +249,102 @@ await doTask("post2");
 const gain2 = (await balanceOf(boss)) - beforeSecond;
 check("the one-time bonus does NOT fire again on the next task",
   gain2 === commission, `got ${gain2}, want ${commission}`);
+
+// ---------------------------------------------------------------------------
+console.log("\n-- the master on/off switch (founder, 2026-08-01) --");
+//
+// The whole point of these checks: switching the ID check OFF must WAIVE it, not
+// leave it required-but-unobtainable. If kycSatisfied() ever goes back to a bare
+// `status === 'approved'`, sending ROZI, withdrawing and deposit refunds all die
+// silently the moment an Admin hides the tab — and the user is told to go and
+// verify on a screen that no longer opens.
+const unverified = await mkUser("switch-off", "none");
+const verified = await mkUser("switch-on", "approved");
+
+await setSetting("kyc_enabled", "1");
+check("default: the feature is on", await kycFeatureEnabled());
+check("on + approved  => satisfied", await kycSatisfied("approved"));
+check("on + none      => NOT satisfied", !(await kycSatisfied("none")));
+check("on + pending   => NOT satisfied", !(await kycSatisfied("pending")));
+
+await setSetting("kyc_enabled", "0");
+check("switched off: the feature reports off", !(await kycFeatureEnabled()));
+check("off + none     => satisfied (waived, never a dead end)", await kycSatisfied("none"));
+check("off + pending  => satisfied", await kycSatisfied("pending"));
+check("off + approved => still satisfied", await kycSatisfied("approved"));
+
+// And back on again: the waive is not sticky. An Admin who switches it off for a
+// week and back on must find the gate exactly as they left it.
+await setSetting("kyc_enabled", "1");
+check("switched back on: an unverified user is blocked again", !(await kycSatisfied("none")));
+check("...and an approved one still passes", await kycSatisfied("approved"));
+
+// The two users exist to prove the helper is about STATUS, not identity — there
+// is no per-user exemption hiding in here.
+const uRow = await sql.get<{ kyc_status: string }>("SELECT kyc_status FROM users WHERE id = ?", unverified);
+const vRow = await sql.get<{ kyc_status: string }>("SELECT kyc_status FROM users WHERE id = ?", verified);
+check("a stored 'none' user is refused while the check is on", !(await kycSatisfied(uRow!.kyc_status)));
+check("a stored 'approved' user is allowed while the check is on", await kycSatisfied(vRow!.kyc_status));
+
+// ---------------------------------------------------------------------------
+console.log("\n-- asking for proof is optional, CREDITING IS NOT (founder, 2026-08-01) --");
+//
+// proof_required = 0 means the user taps "I did it" instead of typing evidence.
+// It must NOT mean the task credits itself: the row still lands PENDING and a
+// staff member still approves it (guardrail #1).
+const noProofTask = newId();
+await sql.run(
+  `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, country, status,
+                      source, verify_mode, proof_required, created_at)
+   VALUES (?,'custom','Join our channel',50,'custom','RoziPay',1,'Pakistan','active','custom','proof',0,?)`,
+  noProofTask, now(),
+);
+const askProofTask = newId();
+await sql.run(
+  `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, country, status,
+                      source, verify_mode, proof_required, created_at)
+   VALUES (?,'custom','Send your username',50,'custom','RoziPay',1,'Pakistan','active','custom','proof',1,?)`,
+  askProofTask, now(),
+);
+
+const defaultTask = newId();
+await sql.run(
+  `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, country, status,
+                      source, verify_mode, created_at)
+   VALUES (?,'custom','Older row',50,'custom','RoziPay',1,'Pakistan','active','custom','proof',?)`,
+  defaultTask, now(),
+);
+const dflt = await sql.get<{ proof_required: number }>(
+  "SELECT proof_required FROM tasks WHERE id = ?", defaultTask);
+check("a task created without the column defaults to ASKING for proof",
+  dflt!.proof_required === 1, `got ${dflt!.proof_required}`);
+
+const claimer = await mkUser("claimer");
+// What the route does for a no-proof task: files a pending row with a stand-in
+// sentence, so the reviewer never sees an empty box.
+await sql.run(
+  "INSERT INTO task_proofs (id, task_id, user_id, proof_text, status, created_at) VALUES (?,?,?,?, 'pending', ?)",
+  newId(), noProofTask, claimer, "The user says they finished this task.", now(),
+);
+const filed = await sql.get<{ status: string; proof_text: string }>(
+  "SELECT status, proof_text FROM task_proofs WHERE task_id = ? AND user_id = ?", noProofTask, claimer);
+check("a no-proof claim is filed as PENDING, not credited", filed!.status === "pending");
+check("...with a stand-in line, so the reviewer never sees an empty box",
+  filed!.proof_text.length > 0);
+check("no points moved from filing the claim", (await balanceOf(claimer)) === 0);
+
+const noProofRow = await sql.get<{ proof_required: number }>(
+  "SELECT proof_required FROM tasks WHERE id = ?", noProofTask);
+const askRow = await sql.get<{ proof_required: number }>(
+  "SELECT proof_required FROM tasks WHERE id = ?", askProofTask);
+check("the flag is per-task: one asks, the other does not",
+  noProofRow!.proof_required === 0 && askRow!.proof_required === 1);
+// The setting says nothing about HOW a task is credited. Both are still
+// verify_mode 'proof', i.e. both still go through a human.
+const modes = await sql.all<{ verify_mode: string }>(
+  "SELECT verify_mode FROM tasks WHERE id IN (?,?)", noProofTask, askProofTask);
+check("both remain staff-approved tasks — neither can self-credit",
+  modes.every((m) => m.verify_mode === "proof"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -6,6 +6,7 @@ import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { validateAddress, chainIsOffered, chainById, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
+import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
@@ -98,10 +99,14 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // money to. Checked here, at REQUEST time, rather than at approval: a user who
     // cannot be paid should be told so before their points are held, not after
     // they have sat in a queue for two days waiting for a payout that will not come.
+    //
+    // `kycSatisfied` returns true when an Admin has switched the ID check off
+    // entirely, so a hidden /kyc screen can never leave a user permanently unable
+    // to withdraw with a message telling them to go and verify — see kyc.ts.
     if (config.kycRequiredForWithdrawal) {
       const u = await sql.get<{ kyc_status: string }>(
         "SELECT kyc_status FROM users WHERE id = ?", userId);
-      if (u?.kyc_status !== "approved") {
+      if (!(await kycSatisfied(u?.kyc_status))) {
         return reply.code(403).send({
           error: u?.kyc_status === "pending"
             ? "We are still checking your ID. You can withdraw as soon as that is done."

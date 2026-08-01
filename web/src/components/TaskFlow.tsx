@@ -103,8 +103,20 @@ function ProofSheet({ task, onClose }: { task: Task; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(already === "pending");
 
+  // Does this task ask for evidence, or only for a confirmation? An Admin picks
+  // this per task: "send us your username" is worth typing, "join our WhatsApp
+  // channel" is not, and asking anyway is where people quit at the last step.
+  //
+  // ⚠️ THE TWO BRANCHES END IN THE SAME PLACE. Both POST to the same route, both
+  // create a PENDING row, and a staff member approves either one before a single
+  // point moves (guardrail #1). Undefined means an older API, read as "asks".
+  const asksForProof = task.proofRequired !== false;
+
   async function send() {
-    if (proof.trim().length === 0) { setError("Please write your proof first."); return; }
+    if (asksForProof && proof.trim().length === 0) {
+      setError("Please write your proof first.");
+      return;
+    }
     setBusy(true); setError(null);
     try {
       const r = await submitTaskProof(task.id, proof.trim());
@@ -156,20 +168,31 @@ function ProofSheet({ task, onClose }: { task: Task; onClose: () => void }) {
                 Last time: {task.proofNote}. Please fix it and send again.
               </p>
             )}
-            <label className="mt-4 block text-sm font-semibold text-brand-ink">
-              {task.proofLabel || "Send your proof"}
-            </label>
-            <textarea
-              value={proof}
-              onChange={(e) => setProof(e.target.value)}
-              rows={3}
-              placeholder="Type your proof here (for example your username, or what you did)."
-              className="mt-2 w-full rounded-xl border border-line bg-bg p-3 text-sm outline-none focus:border-brand"
-            />
+            {asksForProof ? (
+              <>
+                <label className="mt-4 block text-sm font-semibold text-brand-ink">
+                  {task.proofLabel || "Send your proof"}
+                </label>
+                <textarea
+                  value={proof}
+                  onChange={(e) => setProof(e.target.value)}
+                  rows={3}
+                  placeholder="Type your proof here (for example your username, or what you did)."
+                  className="mt-2 w-full rounded-xl border border-line bg-bg p-3 text-sm outline-none focus:border-brand"
+                />
+              </>
+            ) : (
+              // No text box, and the copy must not pretend the ROZI is instant:
+              // this still goes to a person. "We will check" is the honest verb
+              // and it is the same one the with-proof branch uses after sending.
+              <p className="mt-4 rounded-xl bg-brand-tint/50 p-3 text-sm text-brand-ink">
+                Finished it? Tell us, and our team will check and add your ROZI.
+              </p>
+            )}
             {error && <p className="mt-2 text-sm text-danger">{error}</p>}
             <div className="mt-4 space-y-2.5">
               <Button variant="primary" onClick={send} disabled={busy}>
-                {busy ? "Sending…" : "Send proof"}
+                {busy ? "Sending…" : asksForProof ? "Send proof" : "I did it"}
               </Button>
               <Button variant="ghost" onClick={onClose}>Close</Button>
             </div>

@@ -49,7 +49,29 @@ const upsertSchema = z.object({
   verifyMode: z.enum(["proof", "postback"]),
   instructions: z.string().max(2000).optional(),
   proofLabel: z.string().max(120).optional(),
-  actionUrl: z.string().url().max(500).optional().or(z.literal("")),
+  // Ask the user to type evidence? Only meaningful for verifyMode 'proof'.
+  // False still routes the claim through the staff queue — see the column note
+  // in db.ts. Defaults to true so an older client that never sends it keeps the
+  // behaviour it was written against.
+  proofRequired: z.boolean().optional(),
+  // ⚠️ http/https ONLY, AND THE SCHEME CHECK IS THE POINT — `.url()` alone is not
+  // enough. Zod's `.url()` is `new URL()`, which happily accepts
+  // `javascript:alert(1)` and `data:text/html,…`. This value is rendered as the
+  // href of the task card's button in the earner app (components/TaskFlow.tsx)
+  // and of the Open link in the staff panel, so anything but http(s) here is
+  // stored XSS on a screen that sits next to a balance — reachable by whoever
+  // holds an admin session, which is exactly the session worth stealing.
+  //
+  // Checked at this boundary, not at render: there are two render sites already
+  // and the next one will not remember.
+  // The try/catch is load-bearing: zod v3 still runs a refinement after the
+  // inner `.url()` has already failed, so a bare `new URL("")` in here THROWS
+  // out of safeParse instead of producing a validation error — and "" is the
+  // legal value that clears the link.
+  actionUrl: z.string().url().max(500)
+    .refine((u) => { try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; } },
+      { message: "The link must start with http:// or https://" })
+    .optional().or(z.literal("")),
   minutes: z.number().int().min(0).max(600).default(1),
   country: z.string().max(60).default("Pakistan"),
   status: z.enum(["active", "disabled"]).default("active"),
@@ -61,7 +83,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   app.get("/staff/tasks", staffGuard(["admin"], async () => {
     const tasks = await sql.all<Record<string, unknown>>(
       `SELECT t.id, t.title, t.points, t.type, t.verify_mode, t.instructions, t.proof_label,
-              t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
+              t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
               (t.postback_secret IS NOT NULL) AS has_secret,
               (SELECT COUNT(*) FROM task_completions c WHERE c.task_id = t.id AND c.status = 'credited') AS credited_count,
               (SELECT COUNT(*) FROM task_proofs p WHERE p.task_id = t.id AND p.status = 'pending') AS pending_proofs
@@ -82,11 +104,13 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     await sql.run(
       `INSERT INTO tasks
         (id, type, title, points, network, advertiser, minutes, requirement, country, status,
-         source, verify_mode, instructions, proof_label, action_url, icon, postback_secret, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?)`,
+         source, verify_mode, instructions, proof_label, proof_required, action_url, icon,
+         postback_secret, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?)`,
       id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
       b.instructions ?? null, b.country, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
+      b.proofRequired === false ? 0 : 1,
       b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null,
       b.icon && b.icon.length > 0 ? b.icon : null, secret, now(),
     );
@@ -125,6 +149,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (b.status !== undefined) set("status", b.status);
     if (b.instructions !== undefined) { set("instructions", b.instructions); set("requirement", b.instructions); }
     if (b.proofLabel !== undefined) set("proof_label", b.proofLabel);
+    if (b.proofRequired !== undefined) set("proof_required", b.proofRequired ? 1 : 0);
     if (b.actionUrl !== undefined) set("action_url", b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null);
     if (b.icon !== undefined) set("icon", b.icon && b.icon.length > 0 ? b.icon : null);
     set("verify_mode", nextMode);
