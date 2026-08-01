@@ -29,7 +29,14 @@ export const config = {
 
   // Product rules (mirror the frontend demo values; real numbers are a
   // business decision — see docs/PROJECT_SPEC.md Open Questions).
-  minWithdrawPoints: 2000,
+  // 5000 points = 50 ROZI = 5 USDT (founder, 2026-08-01, raised from 2000/$2).
+  //
+  // ⚠️ GUARDRAIL #4 — a payout threshold must never be effectively unreachable.
+  // $5 is defensible; the $10 option discussed alongside it was not taken,
+  // because CPX has no survey fill for Pakistani traffic most of the day and a
+  // threshold nobody reaches is the single fastest way to lose an earner base.
+  // Revisit upward only once real fill data says users clear it.
+  minWithdrawPoints: 5000,
   otpTtlMinutes: 10,
   otpMaxAttempts: 5,
 

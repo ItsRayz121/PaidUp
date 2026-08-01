@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { Card, Button, StatusBadge, SectionTitle } from "@/components/ui";
 import { StatusLegend } from "@/components/TaskFlow";
-import { InviteRewards } from "@/components/InviteRewards";
-import { Loading, ErrorState, EmptyState, LogoutButton } from "@/components/state";
+import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
   StarIcon, WalletIcon, GiftIcon, InfoIcon, MineIcon, BoltIcon, CheckIcon,
   SendIcon, ReceiveIcon,
@@ -12,7 +11,7 @@ import {
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchBalance, fetchLedger, fetchMiningState, fetchReferrals, fetchPayoutAddresses, fetchUsdt,
+  fetchBalance, fetchLedger, fetchMiningState, fetchPayoutAddresses, fetchUsdt,
   type LedgerEntry,
 } from "@/lib/api";
 import {
@@ -33,7 +32,6 @@ export default function WalletPage() {
   const bal = useApi(fetchBalance, []);
   const led = useApi(fetchLedger, []);
   const mining = useApi(fetchMiningState, []);
-  const ref = useApi(fetchReferrals, []);
   const addrs = useApi(fetchPayoutAddresses, []);
   // The spend-only top-up credit, for the USDT row of the token list. Its own
   // endpoint rather than a field on /mining/state, which is called on nearly
@@ -51,19 +49,26 @@ export default function WalletPage() {
   const points = bal.data?.points ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 2000;
   const canWithdraw = points >= min;
-  const entries = led.data?.entries ?? [];
+  // HISTORY IS MONEY THAT MOVED (founder, 2026-08-01), not a status board of
+  // task attempts. `rejected` rows are dropped: nothing moved, so a line saying
+  // "not added" beside a balance is noise that makes the app look broken.
+  //
+  // ⚠️ `pending` ROWS STAY, DELIBERATELY. A withdrawal being checked is real
+  // money in flight, and a user who cannot see it will assume it vanished and
+  // open a ticket. "Clean history" must never mean hiding money we owe someone.
+  const entries = (led.data?.entries ?? []).filter((e: LedgerEntry) => e.status !== "rejected");
   // Any saved chain counts: only one chain is offered right now, and a user who
   // saved an address before a chain was retired has still done the task.
   const hasAddress = Object.keys(addrs.data?.addresses ?? {}).length > 0;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
-      <header className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-brand-ink">{t("nav.wallet")}</h1>
-          <p className="text-sm text-muted">{t("wallet.subtitle")}</p>
-        </div>
-        <LogoutButton />
+      {/* No sign-out here (founder, 2026-08-01). It lives on /profile, which is
+          where people look for it, and a destructive action does not belong in
+          the corner of the screen holding someone's balance. */}
+      <header>
+        <h1 className="text-xl font-bold text-brand-ink">{t("nav.wallet")}</h1>
+        <p className="text-sm text-muted">{t("wallet.subtitle")}</p>
       </header>
 
       {/* ---- The one balance, same number as home ----
@@ -231,17 +236,11 @@ export default function WalletPage() {
           shows the live status badge). The withdraw screen still walls off
           unverified users, so the check itself is not weakened. */}
 
-      {/* The money screen is where people decide the app is worth telling a
-          friend about — they are looking at a balance and working out how to
-          make it bigger. Doing tasks is one answer; being paid a share of what
-          four friends earn is the better one, and until now this screen never
-          mentioned it. */}
-      {ref.data && (
-        <section>
-          <SectionTitle>{t("wallet.invite.title")}</SectionTitle>
-          <InviteRewards rewards={ref.data.rewards} showCta />
-        </section>
-      )}
+      {/* The invite-rewards block used to sit here and is GONE (founder,
+          2026-08-01). A wallet is for holding, sending and reviewing money —
+          the pitch to recruit friends belongs on /refer and home, where it
+          already runs. Putting a marketing card between a balance and its
+          history is what made this screen feel like a feed instead of a wallet. */}
 
       <section>
         <SectionTitle>{t("wallet.history")}</SectionTitle>
