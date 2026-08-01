@@ -11,9 +11,9 @@ import {
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchMiningState, startMining, issueAd, completeAd, type MiningState,
+  fetchMiningState, startMining, issueAd, completeAd, fetchBalance, type MiningState,
 } from "@/lib/api";
-import { formatRozi } from "@/lib/format";
+import { formatRozi, formatPointsAsRozi } from "@/lib/format";
 import {
   ensureVignette, ensureBanner, ensureRewarded, showRewarded, openAdTab, showGateAd,
 } from "@/lib/ads";
@@ -26,6 +26,11 @@ export default function MinePage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const mining = useApi(fetchMiningState, []);
+  // Task/referral earnings, for the reconciling line under the balance. This
+  // screen's big number is MINED ONLY — it is what can be spent on rigs, sent or
+  // converted — while home and the top bar show mined + earned. Naming both here
+  // is what stops the smaller number reading as money going missing.
+  const bal = useApi(fetchBalance, []);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // A direct-link ad the user opened and has not claimed yet. `readyAt` is when
@@ -225,6 +230,16 @@ export default function MinePage() {
         <p className="num mt-1 text-4xl font-extrabold text-brand-ink">
           {formatRozi(s.roziMicro)} <span className="text-2xl text-brand">ROZI</span>
         </p>
+        {/* The other half of the balance, named. Home and the top bar add these
+            two together; this screen cannot, because only the mined figure above
+            is spendable. Showing the earned part here is what makes the smaller
+            number legible instead of alarming — a user who taps 14.68 on home
+            and lands on 4.68 can see, in one line, where the rest of it is. */}
+        {(bal.data?.points ?? 0) > 0 && (
+          <p className="num mt-1 text-xs text-muted">
+            {t("mine.balance.earned", { n: formatPointsAsRozi(bal.data?.points ?? 0) })}
+          </p>
+        )}
 
         <div className="mt-4 rounded-xl bg-brand-tint/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">

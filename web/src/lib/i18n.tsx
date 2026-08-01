@@ -30,22 +30,21 @@ const copy: Record<string, string> = {
   //
   // ROZI is the other currency and stays exactly as it was: a separate word, a
   // separate card, and it still says plainly that it cannot be cashed out.
-  "topbar.points": "USDT",
-  "topbar.balanceLabel": "Your money. Tap to open your wallet.",
+  //
+  // ⚠️ THE TOP BAR SHOWS THE COMBINED FIGURE, so its label must not say "money".
+  // It used to, as an aria-label — which meant sighted users were carefully told
+  // this balance is not cash while screen-reader users were told it is. The
+  // accessibility path must never leak the one claim the visible copy works
+  // hardest to avoid. Same words in both places, always.
+  "topbar.balanceLabel": "Your RoziPay balance. Tap to open your wallet.",
 
   "nav.home": "Home",
   "nav.tasks": "Tasks",
   "nav.wallet": "Wallet",
   "nav.profile": "Profile",
   "common.yourCountry": "your country",
-  "common.yourPoints": "Your money",
   "common.getMyMoney": "Get my money",
   "common.cancel": "Cancel",
-  // The amount already arrives formatted as USDT (formatMoney), so this is now
-  // a pass-through. It is kept rather than deleted because it is threaded through
-  // a dozen screens, and a key that renders its argument unchanged is a safer
-  // edit than removing it from all of them at once.
-  "common.pointsAmount": "{n}",
   // install (PWA add-to-home-screen). Say plainly that nothing is downloaded —
   // "install" makes people expect an APK, and we must not over-promise.
   "install.title": "Put RoziPay on your phone",
@@ -123,7 +122,10 @@ const copy: Record<string, string> = {
   "profile.telegramConnectedHint": "Open RoziPay in Telegram and you stay on this account.",
   // tasks
   "tasks.title": "Ways to earn",
-  "tasks.subtitle": "Finish a task and get paid in USDT.",
+  // In ROZI, like the reward pill on every card below it. This said "get paid in
+  // USDT" while each row underneath showed a ROZI figure — a section header
+  // contradicting every item it introduces.
+  "tasks.subtitle": "Finish a task and earn ROZI.",
   "tasks.disclosure":
     "These are sponsored offers from our partners. We tell you who gives the reward before you start.",
   "tasks.empty.title": "More ways to earn are coming",
@@ -147,10 +149,40 @@ const copy: Record<string, string> = {
   // the same word the mining screen and the road map use — three screens, one
   // promise, so a user cannot find a version of it that says more.
   "home.hello": "Hello,",
-  "home.wePayCash": "Free to join",
+  // The badge beside the greeting, behind a shield icon. It said "Free to join",
+  // which is what every scam in this category leads with — and a shield promises
+  // a guarantee while those words promise only an absence of cost. Say the thing
+  // an operator can say and a fake cannot: we pay in a real currency, on a real
+  // chain, and the token is capped.
+  "home.wePayCash": "Real USDT payouts",
   "home.quickTaskTitle": "Do a quick task now",
   "home.friendsJoined": "{n} friends joined",
   "home.earnedFromThem": "They are earning with you.",
+  // ---- TWO NUMBERS, TWO LABELS, AND THE SPLIT IS PERMANENT ------------------
+  //
+  // ⚠️ READ THIS BEFORE RENAMING ANY BALANCE STRING IN THIS FILE.
+  //
+  // The app shows a balance in two different scopes and they are NOT the same
+  // number:
+  //
+  //   "Your RoziPay balance"  = mined + earned   home, /wallet, the top bar
+  //   "Your mined ROZI"       = mined only       /mine, rigs, send, store, convert
+  //
+  // Both are correct. The combined figure is a DISPLAY merge (lib/format.ts);
+  // the ledgers underneath are still separate, and only MINED ROZI can actually
+  // be spent on rigs, sent to a friend, put in the conversion pot or spent in
+  // the store. So the merge can never reach those five screens — which means the
+  // two numbers must be told apart by their LABEL, permanently.
+  //
+  // This was a real defect (review 2026-08-01, docs/REVIEW_2026-08-01.md § 1):
+  // five screens said "Your ROZI" or "You have" for the mined-only figure while
+  // three said effectively the same thing for the combined one. Home showed
+  // 14.68 and linked straight to a screen headed 4.68, and the send screen
+  // validated against the smaller number — so a user reading the top bar on that
+  // very screen typed 10 and was told "You do not have that much ROZI".
+  //
+  // If you ever shorten one of these back to "Your ROZI", you have reintroduced
+  // it. The word that carries the meaning is "mined".
   "home.rozi.label": "Your RoziPay balance",
   "home.rozi.tagline":
     "Mine ROZI free, every day. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
@@ -164,8 +196,15 @@ const copy: Record<string, string> = {
   "home.taskBoost": "Every task you finish adds ROZI and makes your mining faster.",
   // wallet
   "wallet.subtitle": "Your balance, and where your money will be sent.",
-  "wallet.aboutValue": "Ready to take out",
-  "wallet.reachAt": "You can get your money at {points}. Keep earning — you are close.",
+  // ⚠️ THE THRESHOLD IS ON THE EARNED HALF ONLY, and this string has to say so.
+  // The check behind it is `points >= min` — mined ROZI is not counted — so a
+  // user who saved exactly this much COMBINED would arrive at the withdraw
+  // screen under the minimum and file a support ticket they would be right about.
+  //
+  // "Keep earning — you are close" also used to be here, unconditionally: a user
+  // at zero was told they were close. Small, and a lie, on the money screen.
+  "wallet.reachAt":
+    "You need {points} earned from tasks and friends to get money. Mined ROZI does not count towards this.",
   "wallet.history": "History",
   "wallet.noHistoryTitle": "No history yet",
   "wallet.noHistoryBody": "Finish a task to see your first earnings here.",
@@ -195,7 +234,12 @@ const copy: Record<string, string> = {
   "invite.title": "Every friend pays you twice",
   "invite.subtitle": "A share of what they earn. And a share of what their friends earn.",
   "invite.l1.title": "Your friends earn, you get {pct}%",
-  "invite.l1.body": "Every task they finish, forever. You do nothing.",
+  // ⚠️ NOT "forever". It said so, and `referral_bonus_days` is Admin-tunable per
+  // network (0 = lifetime) — so the word was a hard promise about a field an
+  // Admin can change from a form. That is the exact failure the header above
+  // warns about; it guarded the percentages and left the duration hard-coded.
+  // "Every task they finish" is true under every setting of that field.
+  "invite.l1.body": "Every task they finish. You do nothing.",
   "invite.l2.title": "Their friends earn, you get {pct}%",
   "invite.l2.body": "When your friends invite people, you get paid from them too.",
   "invite.first.title": "{n} ROZI when a friend gets started",
@@ -229,7 +273,13 @@ const copy: Record<string, string> = {
   "refer.step2": "They join and start earning.",
   "refer.step3": "You get paid when they earn.",
   "refer.step4": "You also mine faster while they mine.",
-  "refer.trustNote": "Your friends only trust apps that pay. Get your money first, then share.",
+  // ⚠️ THIS USED TO SAY "Get your money first, then share." Cash-out is not open,
+  // so the invite screen was setting an impossible prerequisite for inviting —
+  // on the one screen whose entire job is getting a link sent. Good advice, and
+  // it goes back the day a real payout clears. Until then the trust argument
+  // that IS available is the honest one: nothing is taken from the friend.
+  "refer.trustNote":
+    "Your friends only trust apps that pay. Tell them what you have earned — and that it costs them nothing.",
   "refer.inviteMessage":
     "I earn real money on RoziPay, and I mine free ROZI every day. Join with my code {code} and we both get paid. {link}",
   "refer.telegramTitle": "Invite on Telegram",
@@ -262,6 +312,14 @@ const copy: Record<string, string> = {
   // withdraw
   "withdraw.youHave": "You have",
   "withdraw.aboutEquals": "Ready to take out",
+  // ⚠️ THE BRIDGE, and the screen is dishonest without it. Every other earner
+  // screen shows ROZI; this one shows USDT, because USDT is what we actually
+  // send. A user arriving from /wallet went from "14.68 ROZI" to "1.60 USDT" —
+  // different number, different currency, no sentence connecting them — at the
+  // one screen where real money is at stake. This says which half is being
+  // counted and where the other half went, before the amount field.
+  "withdraw.whatCanBePaid":
+    "Only what you earned from tasks and friends can be paid out. Mined ROZI stays in the app to spend.",
   "withdraw.getPaidUsdt": "Get paid in USDT",
   "withdraw.localRow": "More local payment methods",
   "withdraw.comingSoon": "Coming soon",
@@ -354,7 +412,9 @@ const copy: Record<string, string> = {
   "wallet.receive": "Receive",
   "wallet.sendOff": "Sending is not switched on yet.",
   "wallet.tokens.title": "Your tokens",
-  "wallet.token.rozi.name": "RoziPay",
+  // The TOKEN, not the company. This row said "RoziPay", so the list read
+  // RoziPay / USDT / BNB — two rows naming a token and one naming the app.
+  "wallet.token.rozi.name": "ROZI",
   "wallet.token.rozi.sub": "Mined, and earned from tasks",
   "wallet.token.usdt.name": "USDT",
   "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",
@@ -364,9 +424,17 @@ const copy: Record<string, string> = {
   // beside two real balances reads as a bug, or worse, as money that went
   // missing — so the row names itself as not open yet. When per-user deposit
   // wallets are built, this line is what gets deleted.
+  //
+  // ⚠️ AND IT MUST NOT SAY "SOON" EITHER. This amount used to read "Soon" — the
+  // same word /mine and the road map use for cashing out, which IS actively
+  // being worked on. Per-user deposit wallets are a custody and licensing
+  // decision we have declined for now (CUSTODY_SPEC.md), not a near-term item.
+  // One word covering both flattens exactly the distinction the rest of this
+  // file exists to protect. The subtitle already says "not open yet" in words;
+  // the amount column should hold a dash, which promises nothing at all.
   "wallet.token.bnb.name": "BNB",
   "wallet.token.bnb.sub": "BNB Smart Chain · not open yet",
-  "wallet.token.soon": "Soon",
+  "wallet.token.soon": "—",
   "withdraw.saveAddress": "Save this address",
   "withdraw.addressSaved": "Address saved",
   "withdraw.feeLabel": "Withdrawal fee",
@@ -420,10 +488,23 @@ const copy: Record<string, string> = {
   // we are working on, never an amount we have promised. Home and the road map
   // use the same word on purpose — one promise, three screens, no version of it
   // anywhere that says more.
+  //
+  // ⚠️ IT PROMISED SENDING "SOON" AFTER SENDING SHIPPED. Transfers went live
+  // (transfersEnabled = 1) and this banner kept saying you would be able to send
+  // ROZI to friends soon — with the Send card rendering two scrolls below it on
+  // the same screen. Every "soon" in this app is protecting the one claim we
+  // cannot yet back, and a user who can visibly disprove one of them discounts
+  // all of them. Never leave a "soon" attached to something already shipped.
   "mine.notcash.title": "You are early. Mine ROZI now.",
   "mine.notcash.body":
-    "Soon you will be able to send ROZI to friends and cash it out. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
-  "mine.balance": "Your ROZI",
+    "Soon you will be able to cash out your ROZI. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
+  // MINED ONLY — see the label block at home.rozi.label. This screen's number is
+  // what can be spent on rigs, sent, converted or spent in the store, and it is
+  // smaller than the figure on home and in the top bar. The earned half is shown
+  // on its own line right under it so the two visibly reconcile here, on the
+  // screen a user is most likely to notice the gap.
+  "mine.balance": "Your mined ROZI",
+  "mine.balance.earned": "You also have {n} from tasks and friends.",
   "mine.hashrate": "Your mining speed",
   "mine.today": "You will get today",
   "mine.estimate.note":
@@ -466,7 +547,8 @@ const copy: Record<string, string> = {
   "rigs.back": "Back to mining",
   "rigs.title": "Mining machines",
   "rigs.subtitle": "Spend ROZI now to mine faster from now on.",
-  "rigs.yourRozi": "Your ROZI",
+  // MINED ONLY — see the label block at home.rozi.label.
+  "rigs.yourRozi": "Your mined ROZI",
   "rigs.available": "Machines",
   "rigs.notOwned": "You do not have this yet",
   "rigs.speed": "Speed",
@@ -484,7 +566,11 @@ const copy: Record<string, string> = {
   // the copy is where it gets crossed first. "Send", never "sell".
   "send.title": "Send ROZI",
   "send.subtitle": "Send ROZI to anyone on RoziPay.",
-  "send.balance": "You have",
+  // MINED ONLY — see the label block at home.rozi.label. This is the screen the
+  // mislabelling hurt most: the amount field validates against THIS number, so a
+  // user reading the combined figure in the top bar was told they did not have
+  // ROZI the app had just shown them.
+  "send.balance": "Your mined ROZI",
   "send.to.label": "Who are you sending to?",
   "send.to.placeholder": "Their @handle, invite code or email",
   "send.amount.label": "How much?",
@@ -551,7 +637,10 @@ const copy: Record<string, string> = {
   "convert.potNote":
     "Everyone who puts ROZI in shares this pot. The more people join, the smaller each share.",
   "convert.closesIn": "Closes in {time}",
-  "convert.yourRozi": "Your ROZI",
+  // MINED ONLY — see the label block at home.rozi.label. Correct twice over
+  // here: the conversion ceiling is a percentage of what you have ever MINED, so
+  // showing the combined figure would over-state what can go into the pot.
+  "convert.yourRozi": "Your mined ROZI",
   "convert.amount.label": "How much ROZI do you want to put in?",
   "convert.youPutIn": "You put in",
   "convert.ifClosedNow": "Your share if it closed right now",
@@ -588,7 +677,8 @@ const copy: Record<string, string> = {
   // is a promise we would have to keep forever.
   "store.title": "Spend your ROZI",
   "store.subtitle": "Use the ROZI you mined on real things.",
-  "store.yourRozi": "You have",
+  // MINED ONLY — see the label block at home.rozi.label.
+  "store.yourRozi": "Your mined ROZI",
   "store.cost": "{n} ROZI",
   "store.get": "Get this",
   "store.outOfStock": "All gone for now",
@@ -696,7 +786,11 @@ const copy: Record<string, string> = {
   "roadmap.live.mining": "Mine ROZI every day",
   "roadmap.live.tasks": "Answer surveys and earn",
   "roadmap.live.rigs": "Buy machines to mine faster",
-  "roadmap.live.send": "Send ROZI to a friend",
+  // ⚠️ THE QUALIFIER IS LOAD-BEARING. Sending requires the ID check
+  // (transferRequireKyc = 1), and the "What is next" section below dates the ID
+  // check to October — November. Unqualified, this row told a user a feature
+  // works today sixty pixels above the date its gate arrives.
+  "roadmap.live.send": "Send ROZI to a friend (after your ID check)",
   "roadmap.live.invite": "Invite friends and earn with them",
   "roadmap.next.title": "What is next",
   "roadmap.step.launch.when": "August — September 2026",
@@ -723,13 +817,23 @@ const copy: Record<string, string> = {
     "We will build in this order. Dates can move, and we will say so here if they do. We never promise a price for ROZI.",
   "roadmap.mine.cta": "Mine ROZI now",
 
-  "wallet.rozi.label": "Your mined ROZI",
-  // GUARDRAIL, and it did not soften when money became "USDT" — it got MORE
-  // important. Two balances on one screen, one of them now labelled in dollars,
-  // makes it easy to read both as cash. This sentence is the thing stopping
-  // that, so it says outright which one can be paid out and which cannot.
+  // COMBINED — see the label block at home.rozi.label. This card shows mined +
+  // earned, so it must carry the combined label. It said "Your mined ROZI" over
+  // the combined figure, which was the label bug pointing the wrong way.
+  "wallet.rozi.label": "Your RoziPay balance",
+  // GUARDRAIL: this sentence is what stops a user reading the whole balance as
+  // cash, and it is the only place on the screen that says which half can be
+  // paid out. It stays, in plain words, however the screen is rearranged.
+  //
+  // ⚠️ IT SAID "only your USDT above can be paid out today" AND POINTED AT
+  // NOTHING. The "Your money · USDT" card it referred to was deleted in the same
+  // commit that reordered this screen, so the sentence aimed at empty space.
+  //
+  // It also said "you cannot cash it out yet" while /mine said "soon you will be
+  // able to" — the same fact in two tones, and the defensive one had already
+  // been retired. One promise, every screen: "soon", never more, never less.
   "wallet.rozi.notcash":
-    "You are mining ROZI early. Soon you will be able to send it to friends and turn it into money. You cannot cash it out yet — only your USDT above can be paid out today.",
+    "You are mining ROZI early. Soon you will be able to cash it out. Only what you earned from tasks and friends can be paid out now.",
 
   // ---- Verify your ID -------------------------------------------------------
   // The word "KYC" appears nowhere a user can see it. It is jargon, and half our

@@ -107,16 +107,32 @@ export function roziFromMicro(micro: number): number {
 //
 // Trailing zeros are trimmed: "10" not "10.000000", but "0.104166" in full. A
 // miner watching a small balance grow needs to see it move.
-export function formatRozi(micro: number): string {
+// `maxDecimals` caps the places for HERO-SIZED numbers only. The six places
+// below are right on the mining dial, where watching the last digit move is the
+// point — and wrong at text-5xl on home, where a first balance rendered as
+// "0.104166": nine glyphs of 48px extrabold on a 360px phone, four of them
+// noise. Pass HERO_DECIMALS there, nothing anywhere else.
+export function formatRozi(micro: number, maxDecimals?: number): string {
   const rozi = roziFromMicro(micro);
   if (rozi === 0) return "0";
   // Below a thousandth, show enough places that a real balance is never "0.00".
-  const decimals = Math.abs(rozi) < 1 ? 6 : Math.abs(rozi) < 1000 ? 4 : 2;
+  const natural = Math.abs(rozi) < 1 ? 6 : Math.abs(rozi) < 1000 ? 4 : 2;
+  // A cap must NEVER round a real balance down to "0" — that is the same defect
+  // formatUsdt's adaptive precision exists to avoid, and it would land on the
+  // newest users, whose balances are smallest. Below what the cap can express,
+  // full precision wins.
+  const decimals =
+    maxDecimals !== undefined && Math.abs(rozi) >= 10 ** -maxDecimals
+      ? Math.min(natural, maxDecimals)
+      : natural;
   const s = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 0, maximumFractionDigits: decimals,
   }).format(rozi);
   return s;
 }
+
+// What the one big balance on home is allowed to show.
+export const HERO_DECIMALS = 4;
 
 // ---- ONE CURRENCY ON SCREEN (founder, 2026-07-30) --------------------------
 //

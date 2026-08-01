@@ -11,7 +11,7 @@ import {
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchReferrals, fetchTasks, fetchMiningState } from "@/lib/api";
-import { formatRozi, pointsToRoziMicro, totalRoziMicro } from "@/lib/format";
+import { formatRozi, pointsToRoziMicro, totalRoziMicro, HERO_DECIMALS } from "@/lib/format";
 
 // ONE CURRENCY (founder, 2026-07-30). This screen shows a SINGLE balance, in
 // ROZI: what the user mined, plus what they earned from tasks and friends,
@@ -45,7 +45,14 @@ export default function HomePage() {
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
-  const name = user?.email?.split("@")[0] ?? "there";
+  // What the user CHOSE to be called (profile/settings) wins. The email prefix is
+  // only a fallback, and for a Telegram-created account it is a synthetic address
+  // (…@telegram.local) whose prefix is a number — this screen greeted those users
+  // as "Hello, tg7734219". `hasEmail === false` marks exactly those accounts.
+  const name =
+    user?.displayName?.trim() ||
+    (user?.hasEmail === false ? "" : user?.email?.split("@")[0]) ||
+    "there";
   const points = bal.data?.points ?? 0;
   const m = mining.data;
   const isMining = Boolean(m?.session.active && countdown);
@@ -69,8 +76,17 @@ export default function HomePage() {
       </header>
 
       {/* ---- The one balance ---- */}
-      {!ready2 ? <Loading lines={2} /> : bal.error ? (
-        <ErrorState message={bal.error} onRetry={bal.reload} />
+      {/* BOTH errors, not just the balance one. This branch checked bal.error
+          alone while the card itself rendered behind `m &&` — so a failing
+          /mining/state made the balance card SILENTLY VANISH, with no message
+          and no retry, leaving home as a greeting and a hole where the product
+          is. The one number this screen now stakes everything on must have a
+          failure state. */}
+      {!ready2 ? <Loading lines={2} /> : (bal.error || mining.error) ? (
+        <ErrorState
+          message={bal.error ?? mining.error ?? ""}
+          onRetry={() => { bal.reload(); mining.reload(); }}
+        />
       ) : m && (
         <Card className="overflow-hidden">
           <Link href="/mine" className="block bg-brand p-5 text-white">
@@ -78,7 +94,7 @@ export default function HomePage() {
               <MineIcon size={16} /> {t("home.rozi.label")}
             </p>
             <p className="num mt-1 text-5xl font-extrabold">
-              {formatRozi(totalRoziMicro(minedMicro, points))}{" "}
+              {formatRozi(totalRoziMicro(minedMicro, points), HERO_DECIMALS)}{" "}
               <span className="text-2xl font-bold text-white/70">ROZI</span>
             </p>
             {/* The split, small. One currency does not mean one source: a user

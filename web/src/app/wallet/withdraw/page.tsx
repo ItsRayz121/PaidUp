@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
-import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
+import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal, ApiError } from "@/lib/api";
@@ -132,8 +132,19 @@ export default function WithdrawPage() {
         error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
       )}
 
+      {/* THE CURRENCY BRIDGE, and this screen was dishonest without it. Every
+          other earner screen shows ROZI; this one shows USDT, because USDT is
+          what we actually send. So a user walked from "14.68 ROZI" on /wallet to
+          "1.60 USDT" here — different number, different currency, nothing
+          connecting them — at the one screen where real money is at stake. The
+          line says which half is counted and where the other half went, above
+          the figure rather than under it. */}
       <Card className="p-4">
-        <p className="text-sm text-muted">{t("withdraw.youHave")}</p>
+        <p className="flex gap-2 text-sm text-muted">
+          <ShieldIcon size={16} className="mt-0.5 shrink-0 text-brand" />
+          {t("withdraw.whatCanBePaid")}
+        </p>
+        <p className="mt-3 text-sm text-muted">{t("withdraw.youHave")}</p>
         <p className="num text-2xl font-bold text-brand-ink">{formatMoney(balance)}</p>
         <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
       </Card>
@@ -214,7 +225,10 @@ export default function WithdrawPage() {
       <div>
         <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">{t("withdraw.howManyPoints")}</label>
         <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
-          <StarIcon size={20} className="text-accent" />
+          {/* Not StarIcon: that one means "earnings" everywhere else in the app
+              (wallet history, the invite rows), and on a field where the user
+              types dollars it meant nothing at all. */}
+          <WalletIcon size={20} className="text-brand" />
           <input id="amt" type="number" inputMode="decimal" value={usdtInput}
             min={pointsToUsdt(min)} max={pointsToUsdt(balance)} step={0.5}
             placeholder={String(pointsToUsdt(min))}
