@@ -139,6 +139,23 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: `The withdrawal fee is ${fee} points. Ask for more than that.` });
     }
 
+    // Snapshot whether THIS destination was proved by the user (they signed for
+    // it — see src/wallet.ts), for the same reason the fee is snapshotted: the
+    // person approving an irreversible on-chain payout must see what was true
+    // when the user asked, not a value that can move while the request queues.
+    //
+    // ⚠️ The match is on the ADDRESS, not merely "this user has some proved
+    // wallet". A user who proved wallet A and is now withdrawing to wallet B has
+    // proved nothing about B — and B is exactly where a scammer's address would
+    // be. Compared case-insensitively because the proved copy is stored in
+    // EIP-55 mixed case and a typed one may not be.
+    const proved = await sql.get<{ n: number }>(
+      `SELECT 1 AS n FROM payout_addresses
+       WHERE user_id = ? AND chain = ? AND verified_at IS NOT NULL AND LOWER(address) = LOWER(?)`,
+      userId, chain, address,
+    );
+    const addressVerified = proved ? 1 : 0;
+
     const id = newId();
     try {
       await sql.tx(async (t) => {
@@ -152,9 +169,9 @@ export async function withdrawalRoutes(app: FastifyInstance) {
           throw { statusCode: 400, message: "You do not have that many points yet." };
         }
         await t.run(
-          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, status, created_at)
-           VALUES (?,?,?,?,?,?, 'pending', ?)`,
-          id, userId, amountPoints, chain, address, fee, now(),
+          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified, status, created_at)
+           VALUES (?,?,?,?,?,?,?, 'pending', ?)`,
+          id, userId, amountPoints, chain, address, fee, addressVerified, now(),
         );
         // Hold the funds.
         await postLedger({
@@ -349,6 +366,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         status: r.status, at: r.created_at, reviewNote: r.review_note ?? undefined,
         paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
         usdtAmount: r.usdt_amount ?? undefined, feePoints: (r.fee_points as number) ?? 0,
+        addressVerified: Boolean(r.address_verified),
       })),
     };
   }));

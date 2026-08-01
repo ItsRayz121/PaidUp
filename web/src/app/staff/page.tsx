@@ -286,6 +286,20 @@ function WithdrawalQueue({ onViewLedger }: { onViewLedger: (userId: string) => v
                         {r.address}
                       </button>
                     ) : <span className="text-xs text-muted">—</span>}
+                    {/* Did the user sign for this exact address with the wallet?
+                        The most decision-relevant thing on the row: an on-chain
+                        payout cannot be undone, and the way users lose money
+                        here is being talked into pasting someone else's
+                        address. Both states are stated in words — "not checked"
+                        is not the same as an absent badge, which reads as a
+                        column that failed to load. */}
+                    {r.address && (
+                      <div className={`mt-1 text-xs font-semibold ${r.addressVerified ? "text-success" : "text-pending"}`}>
+                        {r.addressVerified
+                          ? "✓ signed by the user's wallet"
+                          : "not checked — typed in"}
+                      </div>
+                    )}
                   </td>
                   <td className="p-2.5 text-muted">{timeAgo(r.at)}</td>
                   <td className="p-2.5">

@@ -55,6 +55,12 @@ export async function staffRoutes(app: FastifyInstance) {
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
         chain: r.payout_rail, address: r.payout_address ?? null,
+        // Did the user PROVE this exact address is theirs, by signing for it
+        // with the wallet? Snapshotted at request time (see routes/withdrawals
+        // .ts). The single most useful thing on this card: an on-chain payout
+        // cannot be undone, and the common way users lose money here is being
+        // talked into pasting somebody else's address.
+        addressVerified: Boolean(r.address_verified),
         status: r.status, at: r.created_at,
         withinAgentLimit: (r.amount as number) <= config.agentApprovalMaxPoints,
       })),

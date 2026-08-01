@@ -527,6 +527,22 @@ const MIGRATIONS = `
   -- request time so a later Admin change never alters an in-flight request.
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS fee_points INTEGER NOT NULL DEFAULT 0;
 
+  -- Whether the destination address had been PROVED by the user (they signed
+  -- for it with the wallet — see src/wallet.ts) at the moment they asked to be
+  -- paid. Shown to whoever approves the payout, because sending USDT on-chain
+  -- cannot be undone and this is the strongest signal we have that the money is
+  -- going to the account holder rather than to someone who talked them into
+  -- pasting an address.
+  --
+  -- ⚠️ SNAPSHOTTED, for the same reason fee_points is. The saved address can
+  -- change after the request is filed; the reviewer must see what was true when
+  -- the user asked, and it must not shift under them while the request sits in
+  -- the queue. Recomputing it at read time would do both.
+  --
+  -- 0 for every row that predates connect-wallet, which is honest: nobody
+  -- proved those.
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS address_verified INTEGER NOT NULL DEFAULT 0;
+
   -- ---- Web push subscriptions ----------------------------------------------
   -- One row per browser/device a user turned notifications on for. The endpoint
   -- is the push service's URL for that browser and is unique by construction;

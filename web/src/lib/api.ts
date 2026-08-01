@@ -295,6 +295,10 @@ export const fetchLeaderboard = () =>
 export type StaffWithdrawal = {
   id: string; userId: string; userEmail: string; amount: number;
   chain: string; address: string | null; status: string; at: string; withinAgentLimit: boolean;
+  // Whether the user proved this exact address is theirs by signing for it with
+  // the wallet, as of the moment they asked. Optional so an older API build
+  // (mid-deploy) renders "not checked" rather than crashing the queue.
+  addressVerified?: boolean;
 };
 // Treasury (hot wallet) address per chain — where payouts are sent FROM.
 export type TreasuryAddresses = { bep20: string; base: string; aptos: string };

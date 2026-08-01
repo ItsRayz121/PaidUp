@@ -163,6 +163,44 @@ wanted soon, step 1 is the thing to build.**
 
 ---
 
+## 5b. What "connect wallet" already delivered (built 2026-08-01)
+
+Before any of section 5, the **withdrawal** side got the part of this that needs
+no keys, no gas and no listener: the user connects the wallet they already have,
+signs a message we wrote, and the server recovers the address from the
+signature. `api/src/wallet.ts`, `web/src/lib/wallet.ts`, 52 checks in
+`npm run test:wallet`.
+
+It is worth being precise about what that does and does not cover, because the
+two get conflated:
+
+| | connect wallet (built) | per-user wallets (§ 5) |
+|---|---|---|
+| Where money goes **out** to | an address the user proved is theirs | same, plus auto-send |
+| Where money comes **in** to | unchanged — one published treasury address | an address per user |
+| Identifies a deposit sent from an exchange | **no** | yes — that is its whole point |
+| Private keys in this system | **none** | the master seed |
+| Makes us a custodian | **no** | yes |
+
+So connect-wallet is not a smaller version of section 5 and does not postpone
+it. It closes a **fraud** hole on the payout side (an address that was merely
+pasted proves nothing, and the common theft in our markets is a fake "support
+agent" supplying one). Deposits are untouched: a user topping up from a Binance
+hot wallet still arrives as an unidentifiable transfer that a human has to match
+by tx hash, and **only § 5 step 1 fixes that.**
+
+The proof is snapshotted onto each withdrawal request (`address_verified`) and
+shown in the staff queue, for the same reason the fee is snapshotted — the
+person approving an irreversible on-chain payout must see what was true when the
+user asked, not a value that can move while the request sits in the queue.
+
+⚠️ **It is a signal, never a gate.** A smart-contract wallet cannot
+`personal_sign` and an exchange deposit address has no signer the user controls,
+so requiring a proof would lock out legitimate users. Typing an address in still
+works and says so on screen.
+
+---
+
 ## 6. The narrower thing that already works
 
 For contrast, the current design (`CLAUDE.md`, "ONE CHAIN IN, ONE CHAIN OUT"):

@@ -493,7 +493,7 @@ These override convenience or speed at every step:
   a text box you paste 42 characters into: the user taps **Connect my wallet**,
   their wallet app hands over the address, signs a message we wrote, and the
   server works out the address **from the signature**. Verified: `npm run
-  test:wallet` (44 checks) + all 12 other suites green (341 → **385**); api +
+  test:wallet` (52 checks) + all 12 other suites green (341 → **393**); api +
   web typecheck, eslint, web production build, `security-review` (no findings).
   - **THIS IS A THEFT FIX, NOT AUTOFILL, and that is why it was worth building.**
     Every check we had on a payout address was a check on the *string* — 42
@@ -536,6 +536,21 @@ These override convenience or speed at every step:
     be wrong and would send them to install a second one.
   - **No wallet SDK, no third-party script on a money screen.** The whole client
     is two EIP-1193 `request` calls (`web/src/lib/wallet.ts`).
+  - **The proof reaches whoever approves the payout.**
+    `withdrawal_requests.address_verified` is snapshotted at request time — same
+    reason `fee_points` is — and rendered in the `/staff` queue as "signed by
+    the user's wallet" or "not checked — typed in". ⚠️ **The match is on the
+    ADDRESS, not on the user.** Proving wallet A says nothing about wallet B,
+    and B is exactly where a scammer's address would be; there is a test for
+    that specific walk.
+  - ⚠️ **A SIGNAL, NEVER A GATE.** Nothing about withdrawing is blocked by an
+    unproved address, deliberately — see the paste-still-works note above.
+  - ⚠️ **This does NOT touch deposits.** A top-up from a Binance hot wallet is
+    still an unidentifiable transfer a human matches by tx hash. Only
+    `CUSTODY_SPEC.md` § 5 step 1 (address per user) fixes that, and it is still
+    waiting on the founder's xpub + a BSC RPC endpoint as Railway env vars.
+    **An xpub, never a seed phrase.** The two features are complementary, not
+    substitutes — § 5b of that doc has the table.
 
 - ⚠️ **A HANDLE MUST NEVER SHADOW AN INVITE CODE (security fix, 2026-07-29).**
   Caught by `security-review` on the @handle work, and it was theft-by-squatting.

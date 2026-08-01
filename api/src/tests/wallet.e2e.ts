@@ -31,7 +31,7 @@ import jwt from "jsonwebtoken";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, utf8ToBytes, concatBytes } from "@noble/hashes/utils.js";
-import { initDb, sql, now, newId } from "../db.ts";
+import { initDb, sql, now, newId, postLedger } from "../db.ts";
 import { config } from "../config.ts";
 import { withdrawalRoutes } from "../routes/withdrawals.ts";
 import { toChecksumAddress, recoverSigner, buildWalletMessage } from "../wallet.ts";
@@ -309,6 +309,74 @@ res = await app.inject({
 row = await savedFor(user);
 check("saving the same address again keeps the proof (differing only in case)",
   row?.verified_at != null, JSON.stringify(row));
+
+console.log("\n-- the proof reaches whoever approves the payout --");
+
+// Sending USDT on-chain cannot be undone, so the person approving it needs to
+// know whether the destination was proved. That answer is SNAPSHOTTED onto the
+// request, like the fee is: the saved address can change while a request sits
+// in the queue, and a reviewer must see what was true when the user asked.
+{
+  const payer = await mkUser("walletpayer");
+  const w = makeWallet();
+  // Fund them through the real ledger helper, not a hand-written INSERT — the
+  // balance is SUM(ledger) and this test has no business knowing that shape.
+  await postLedger({
+    userId: payer, points: 50_000, direction: "credit",
+    sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e funding",
+  });
+  await sql.run("UPDATE users SET kyc_status = 'approved' WHERE id = ?", payer);
+
+  // Withdrawing to an address that was only ever typed in.
+  let r = await app.inject({
+    method: "POST", url: "/withdrawals", headers: tok(payer),
+    payload: { amountPoints: 6000, chain: "bep20", address: w.address },
+  });
+  check("a withdrawal to a typed-in address is allowed", r.statusCode === 200, r.body);
+  let req = await sql.get<{ address_verified: number }>(
+    "SELECT address_verified FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", payer);
+  check("and it is recorded as NOT proved", req?.address_verified === 0, JSON.stringify(req));
+
+  // Now prove that same wallet, and withdraw again.
+  r = await challenge(payer, w.address);
+  const c = r.json() as { nonce: string; message: string };
+  await verify(payer, c.nonce, w.sign(c.message));
+  r = await app.inject({
+    method: "POST", url: "/withdrawals", headers: tok(payer),
+    payload: { amountPoints: 6000, chain: "bep20", address: w.address },
+  });
+  check("a withdrawal to the proved address is allowed", r.statusCode === 200, r.body);
+  req = await sql.get<{ address_verified: number }>(
+    "SELECT address_verified FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", payer);
+  check("and it IS recorded as proved", req?.address_verified === 1, JSON.stringify(req));
+
+  // THE ATTACK THIS ANSWERS. A user proves their own wallet, then is talked
+  // into withdrawing to a stranger's address. Having proved SOMETHING must not
+  // make the new destination look checked — the match is on the address.
+  const stranger = makeWallet();
+  r = await app.inject({
+    method: "POST", url: "/withdrawals", headers: tok(payer),
+    payload: { amountPoints: 6000, chain: "bep20", address: stranger.address },
+  });
+  check("withdrawing to a DIFFERENT address is allowed (we never block)", r.statusCode === 200, r.body);
+  req = await sql.get<{ address_verified: number }>(
+    "SELECT address_verified FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", payer);
+  check("but it is NOT proved — proving one wallet proves nothing about another",
+    req?.address_verified === 0, JSON.stringify(req));
+
+  // The earlier request must still read as proved: a snapshot that moves is not
+  // a snapshot, and the reviewer would be looking at a different fact than the
+  // one the user's request was filed under.
+  const earlier = await sql.all<{ address_verified: number; payout_address: string }>(
+    "SELECT address_verified, payout_address FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at ASC", payer);
+  check("the earlier proved request still reads as proved after the address changed",
+    earlier[1]?.address_verified === 1, JSON.stringify(earlier));
+
+  r = await app.inject({ method: "GET", url: "/withdrawals", headers: tok(payer) });
+  const reqs = r.json().requests as { addressVerified: boolean }[];
+  check("the user's own history carries the same flag",
+    reqs.filter((x) => x.addressVerified).length === 1, r.body);
+}
 
 console.log("\n-- the same gates as the rest of the payout path --");
 
