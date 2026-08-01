@@ -38,7 +38,13 @@ export default function WalletPage() {
   // The spend-only top-up credit, for the USDT row of the token list. Its own
   // endpoint rather than a field on /mining/state, which is called on nearly
   // every screen — this balance is needed on exactly one.
-  const usdt = useApi(fetchUsdt, []);
+  //
+  // AND ONLY WHEN TOP-UPS ARE ON. This screen was firing six requests on mount,
+  // and this was the one paying for a row that read 0.00 for every user — the
+  // feature ships OFF, so nobody could have a balance to show. Gated, it costs
+  // nothing until an Admin switches top-ups on, and comes back with them.
+  const usdtOn = Boolean(mining.data?.usdtTopup);
+  const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -141,16 +147,23 @@ export default function WalletPage() {
             symbol="ROZI"
             amount={formatRozi(totalRoziMicro(mining.data?.roziMicro ?? 0, points))}
           />
-          <TokenRow
-            Icon={WalletIcon}
-            name={t("wallet.token.usdt.name")}
-            sub={t("wallet.token.usdt.sub")}
-            symbol="USDT"
-            // The symbol is its own column here, so the amount must NOT carry a
-            // unit — string-stripping " USDT" off formatUsdtMicro would break
-            // the day that function's format changes. Format the number itself.
-            amount={usdtFromMicro(usdt.data?.balanceMicro ?? 0).toFixed(2)}
-          />
+          {/* Only while top-ups are on, which is the same rule /mine and
+              /mine/rigs already use for every USDT entry point — the whole
+              feature appears and disappears together. A row for credit a user
+              cannot obtain, spend or have is the "link to a room with nothing
+              in it" this codebase avoids everywhere else. */}
+          {usdtOn && (
+            <TokenRow
+              Icon={WalletIcon}
+              name={t("wallet.token.usdt.name")}
+              sub={t("wallet.token.usdt.sub")}
+              symbol="USDT"
+              // The symbol is its own column here, so the amount must NOT carry a
+              // unit — string-stripping " USDT" off formatUsdtMicro would break
+              // the day that function's format changes. Format the number itself.
+              amount={usdtFromMicro(usdt.data?.balanceMicro ?? 0).toFixed(2)}
+            />
+          )}
           <TokenRow
             Icon={BoltIcon}
             name={t("wallet.token.bnb.name")}

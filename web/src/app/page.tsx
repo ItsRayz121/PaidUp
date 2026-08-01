@@ -90,8 +90,13 @@ export default function HomePage() {
       ) : m && (
         <Card className="overflow-hidden">
           <Link href="/mine" className="block bg-brand p-5 text-white">
+            {/* The chevron is the affordance, and it was missing. Every other
+                row on this screen ends in one, so the single most important
+                tappable element on the app's first screen was the only one that
+                did not look tappable. */}
             <p className="flex items-center gap-1.5 text-sm text-white/80">
               <MineIcon size={16} /> {t("home.rozi.label")}
+              <ArrowRightIcon size={16} className="ml-auto shrink-0 text-white/70" />
             </p>
             <p className="num mt-1 text-5xl font-extrabold">
               {formatRozi(totalRoziMicro(minedMicro, points), HERO_DECIMALS)}{" "}

@@ -27,7 +27,16 @@ export function useRequireAuth(): { user: SessionUser | null; ready: boolean } {
 }
 
 // Small data-fetching hook: loading / error / data + reload.
-export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
+//
+// `enabled` defers the request until it is true, for data that only some users
+// need. Hooks cannot be called conditionally, so the gate has to live in here
+// rather than at the call site. While it is false the hook reports
+// `loading: false` and `data: null` — never a spinner that resolves to nothing.
+//
+// It exists for /wallet's USDT row: top-ups ship OFF, so that request was a
+// round trip on the second-most-visited screen to render 0.00 for ~100% of
+// users. The gate flips it on with the feature.
+export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true): {
   data: T | null; error: string | null; loading: boolean; reload: () => void;
 } {
   const [data, setData] = useState<T | null>(null);
@@ -38,6 +47,10 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
   // deps, exactly like useEffect's second argument. That opts this hook out of
   // the compiler's memoization analysis (use-memo needs a literal array).
   const run = useCallback(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     fn()
@@ -45,7 +58,7 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []): {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
-  }, deps);
+  }, [...deps, enabled]);
 
   useEffect(() => { run(); }, [run]);
 
