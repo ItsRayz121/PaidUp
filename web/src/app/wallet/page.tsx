@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Card, Button, StatusBadge, SectionTitle } from "@/components/ui";
 import { StatusLegend } from "@/components/TaskFlow";
@@ -51,6 +52,9 @@ export default function WalletPage() {
   // nothing until an Admin switches top-ups on, and comes back with them.
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
+  // The history opens short (founder, 2026-08-01) — see the section below.
+  // Declared up here with the other hooks because of the `ready` early return.
+  const [showAll, setShowAll] = useState(false);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -81,6 +85,15 @@ export default function WalletPage() {
   // render, because a history that silently drops half of itself is worse than
   // one that is briefly short.
   const historyError = led.error && rozi.error ? led.error : null;
+  // ---- The history opens short (founder, 2026-08-01) ----
+  // The full list ran to every transaction this account has ever had, so a
+  // miner who settles every epoch turned the wallet into an endless feed and
+  // pushed the balance, Send/Receive and the token list off the top of the
+  // screen after a week. Two rows answer the question people actually open
+  // this screen with — "did the last thing land?" — and the rest is one tap
+  // away, the same shape home already uses for tasks.
+  const visible = showAll ? entries : preview(entries);
+  const hidden = entries.length - visible.length;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -240,7 +253,7 @@ export default function WalletPage() {
           <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
         ) : (
           <ul className="space-y-2.5">
-            {entries.map((e) => {
+            {visible.map((e) => {
               const credit = e.micro >= 0;
               return (
                 <li key={e.key}>
@@ -273,6 +286,17 @@ export default function WalletPage() {
             })}
           </ul>
         )}
+
+        {/* Shown only when something is actually hidden. "Show less" appears
+            once the list is open so the screen can be put back the way it was —
+            a one-way expand leaves a long history no way to close. */}
+        {!historyLoading && !historyError && (hidden > 0 || showAll) && (
+          <div className="mt-3">
+            <Button onClick={() => setShowAll(!showAll)} variant="ghost" size="md">
+              {showAll ? t("wallet.history.less") : t("wallet.history.seeAll", { count: String(hidden) })}
+            </Button>
+          </div>
+        )}
       </section>
 
       <p className="text-center text-xs text-muted">
@@ -302,6 +326,23 @@ type Row = {
   status?: LedgerEntry["status"];
   Icon: (p: { size?: number; className?: string }) => React.ReactElement;
 };
+
+// The two newest rows — plus anything still waiting, wherever it sits.
+//
+// ⚠️ A PENDING ROW IS NEVER COLLAPSED, and that exception is the whole reason
+// this is a function instead of `.slice(0, 2)`. A withdrawal being checked is
+// real money in flight; it can sit for a day while newer mining rows pile on
+// top of it, and a user who opens the wallet and cannot see it will assume it
+// vanished and open a ticket. The rest of this screen already refuses to hide
+// money we owe someone (see the `unify` note on why `pending` survives the
+// filter) — shortening the list must not undo that.
+const HISTORY_PREVIEW = 2;
+
+function preview(rows: Row[]): Row[] {
+  const keep = new Set(rows.slice(0, HISTORY_PREVIEW).map((r) => r.key));
+  for (const r of rows) if (r.status === "pending") keep.add(r.key);
+  return rows.filter((r) => keep.has(r.key)); // filter, so the order is kept
+}
 
 function unify(
   ledger: LedgerEntry[],
