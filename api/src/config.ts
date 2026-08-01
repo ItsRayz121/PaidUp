@@ -5,6 +5,19 @@ if (existsSync(new URL("../.env", import.meta.url))) {
   process.loadEnvFile(new URL("../.env", import.meta.url));
 }
 
+// Parse a comma-separated RPC list from the environment, falling back to the
+// built-in public endpoints when it is unset or blank. Entries are trimmed, and
+// anything that is not an http(s) URL is dropped rather than silently kept — a
+// typo'd endpoint in the middle of a failover list would otherwise burn a retry
+// on every single call.
+function rpcList(raw: string | undefined, fallback: string[]): string[] {
+  const parsed = (raw ?? "")
+    .split(",")
+    .map((u) => u.trim().replace(/\/+$/, ""))
+    .filter((u) => /^https?:\/\//i.test(u));
+  return parsed.length ? parsed : fallback;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   // Postgres. Unset locally => PGlite (embedded Postgres) under api/data/pg.
@@ -29,14 +42,18 @@ export const config = {
 
   // Product rules (mirror the frontend demo values; real numbers are a
   // business decision — see docs/PROJECT_SPEC.md Open Questions).
-  // 5000 points = 50 ROZI = 5 USDT (founder, 2026-08-01, raised from 2000/$2).
+  // 1000 points = 10 ROZI = 1 USDT (founder, 2026-08-01, second pass — lowered
+  // from 5000/$5, which had itself been raised from 2000/$2 earlier the same day).
   //
   // ⚠️ GUARDRAIL #4 — a payout threshold must never be effectively unreachable.
-  // $5 is defensible; the $10 option discussed alongside it was not taken,
-  // because CPX has no survey fill for Pakistani traffic most of the day and a
-  // threshold nobody reaches is the single fastest way to lose an earner base.
-  // Revisit upward only once real fill data says users clear it.
-  minWithdrawPoints: 5000,
+  // Each move has been DOWNWARD for the same reason: CPX has no survey fill for
+  // Pakistani traffic most of the day, so the honest read of our own numbers is
+  // that a $5 threshold takes an ordinary user weeks. $1 is reachable in days.
+  // The cost is more, smaller, manual payouts — an operational load we accept
+  // deliberately, because a threshold nobody reaches is the single fastest way
+  // to lose an earner base. Revisit upward only once real fill data says users
+  // clear it comfortably.
+  minWithdrawPoints: 1000,
   otpTtlMinutes: 10,
   otpMaxAttempts: 5,
 
@@ -94,12 +111,39 @@ export const config = {
   // Treasury signer for onchain mode (EVM hot wallet private key, 0x + 64 hex).
   // Empty => onchain mode refuses to send (falls back to requiring manual hash).
   payoutSignerKey: process.env.PAYOUT_SIGNER_KEY ?? "",
-  // Per-chain JSON-RPC endpoints for onchain broadcast. Empty => that chain
-  // cannot auto-send and staff must pay it manually.
+  // Per-chain JSON-RPC endpoints. A LIST, not one URL (founder, 2026-08-01):
+  // set RPC_BEP20 to a comma-separated list and callers try them in order,
+  // moving to the next on a network error, a 429, or a 5xx.
+  //
+  // The defaults below are PUBLIC endpoints, so a chain read works out of the
+  // box with nothing to sign up for. That is the point — but be clear-eyed
+  // about what public endpoints are:
+  //   • They rate-limit aggressively and without warning, which is why there
+  //     are several and why failover exists at all. One is a single point of
+  //     failure; five is a working system at small volume.
+  //   • They are fine for READ traffic (checking a deposit exists, reading a
+  //     balance) at our scale.
+  //   • They are NOT fine as the only source for a chain LISTENER that must
+  //     not miss a deposit — CUSTODY_SPEC.md § 4 still wants a paid provider
+  //     before anything credits automatically. Missing a block on a public
+  //     node is silent, and a silently-missed deposit is a user who paid us
+  //     and got nothing.
+  // Put a paid endpoint FIRST in the list when you have one; the public ones
+  // then act as the fallback rather than the primary.
   payoutRpc: {
-    bep20: process.env.RPC_BEP20 ?? "",
-    base: process.env.RPC_BASE ?? "",
-  } as Record<string, string>,
+    bep20: rpcList(process.env.RPC_BEP20, [
+      "https://bsc-dataseed.bnbchain.org",
+      "https://bsc-dataseed1.defibit.io",
+      "https://bsc-dataseed1.ninicoin.io",
+      "https://bsc-rpc.publicnode.com",
+      "https://1rpc.io/bnb",
+    ]),
+    base: rpcList(process.env.RPC_BASE, [
+      "https://mainnet.base.org",
+      "https://base-rpc.publicnode.com",
+      "https://1rpc.io/base",
+    ]),
+  } as Record<string, string[]>,
 
   // Per-network postback secrets (HMAC). Empty in dev falls back to a known
   // dev secret so the demo adapter still verifies. Set real secrets in prod.

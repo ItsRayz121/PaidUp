@@ -622,13 +622,34 @@ const MIGRATIONS = `
   -- The founder asked to let people pay real USDT for mining machines. This is
   -- the narrowest shape that answers that, and every narrowing is deliberate:
   --
-  --   1. IT IS SPEND-ONLY. Top-up credit buys rigs and nothing else. It can
-  --      NEVER be withdrawn, transferred, or converted back. The moment a user
-  --      can take it out again we are holding customer money on their behalf,
-  --      which is the licensed activity (PVARA) this product has refused to do
-  --      everywhere else — see MINING_SPEC.md § 7. Spend-only makes it prepaid
-  --      credit for a service instead. THERE IS NO WITHDRAWAL PATH IN THIS
-  --      CODE AND ONE MUST NOT BE ADDED without a licence conversation first.
+  --   1. IT IS SPEND-OR-REFUND. ⚠️ AMENDED BY THE FOUNDER 2026-08-01 — read
+  --      this whole note before touching the refund path, because the original
+  --      rule here was "spend-only, and one must not be added".
+  --
+  --      What changed: a user may now ask for their own UNSPENT deposit back.
+  --      What did NOT change: this balance still cannot be transferred to
+  --      another user, converted to Points or ROZI, or used to cash out
+  --      EARNINGS. It goes back to the person who sent it, and nowhere else.
+  --
+  --      Be honest about what that costs. Returning customer money on request
+  --      is custody in the plain sense, and custody is the licensed activity
+  --      (PVARA) this product routes around everywhere else — see
+  --      MINING_SPEC.md § 7 and CUSTODY_SPEC.md § 2c. The founder was told
+  --      this and chose it, on the reasoning that money a user can never get
+  --      back is a harder sell than the licence question is a risk. That is a
+  --      business judgement, recorded here so it is not mistaken for an
+  --      oversight and quietly "fixed" by a later reader.
+  --
+  --      The refund is deliberately the NARROWEST shape that honours it:
+  --        • capped at the user's own remaining deposit balance, so no earned
+  --          money and no minted ROZI can ever leave through this door;
+  --        • staff-approved and sent BY HAND from the treasury, same as every
+  --          payout — no hot wallet, no signer, no automation;
+  --        • debited at REQUEST time under the advisory lock, so it cannot be
+  --          double-spent against a rig purchase while it queues.
+  --      A general 'withdrawal' source_type is STILL refused below, and that
+  --      is not an oversight either: it is what keeps "refund your deposit"
+  --      from drifting into "withdraw any balance" by one careless commit.
   --   2. DEPOSITS ARE MANUAL AND STAFF-CONFIRMED. The user sends USDT to our
   --      published treasury address and submits the transaction hash; a human
   --      checks it on-chain and confirms. No hot wallet, no derived per-user
@@ -648,12 +669,50 @@ const MIGRATIONS = `
     amount      BIGINT NOT NULL CHECK (amount <> 0),
     direction   TEXT NOT NULL CHECK (direction IN ('credit','debit')),
     source_type TEXT NOT NULL
-                  CHECK (source_type IN ('topup','rig_purchase','admin_adjustment')),
+                  CHECK (source_type IN ('topup','rig_purchase','admin_adjustment','refund')),
     source_ref_id TEXT,
     note        TEXT,
     created_at  TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_usdt_ledger_user ON usdt_ledger(user_id, created_at);
+
+  -- Existing databases were created with the pre-refund CHECK, and
+  -- CREATE TABLE IF NOT EXISTS above is a no-op for them — so the new value has
+  -- to be granted explicitly or every refund fails at the constraint on a
+  -- deployed instance while passing on a fresh one.
+  --
+  -- ⚠️ 'withdrawal' is STILL NOT IN THIS LIST, on purpose. Deposit credit
+  -- leaves by 'refund' (bounded by what the user themselves put in) and by
+  -- nothing else. If you are adding a value here, you are changing what this
+  -- balance is — go and read the note above the table first.
+  ALTER TABLE usdt_ledger DROP CONSTRAINT IF EXISTS usdt_ledger_source_type_check;
+  ALTER TABLE usdt_ledger ADD CONSTRAINT usdt_ledger_source_type_check
+    CHECK (source_type IN ('topup','rig_purchase','admin_adjustment','refund'));
+
+  -- One request to send a user's own unspent deposit back to them. Mirrors
+  -- withdrawal_requests deliberately: same pending/approved/paid/rejected walk,
+  -- same human sending it, same tx hash recorded as proof.
+  CREATE TABLE IF NOT EXISTS usdt_refund_requests (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    chain         TEXT NOT NULL,
+    address       TEXT NOT NULL,
+    -- micro-USDT, held by a ledger debit written in the same transaction.
+    amount        BIGINT NOT NULL CHECK (amount > 0),
+    status        TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','paid','rejected')),
+    -- Snapshotted at request time for the same reason withdrawal_requests
+    -- snapshots fee_points and address_verified: the person approving an
+    -- irreversible on-chain send must see what was true when the user asked.
+    address_verified INTEGER NOT NULL DEFAULT 0,
+    tx_hash       TEXT,
+    reject_reason TEXT,
+    reviewed_by   TEXT REFERENCES users(id),
+    reviewed_at   TEXT,
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_usdt_refunds_status ON usdt_refund_requests(status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_usdt_refunds_user ON usdt_refund_requests(user_id, created_at);
 
   -- One claimed deposit. Credit is posted ONLY when a staff member confirms.
   CREATE TABLE IF NOT EXISTS usdt_topups (
@@ -1328,15 +1387,19 @@ export async function roziBalanceMicroOf(
 // ---- USDT top-up credit ---------------------------------------------------
 // A THIRD append-only ledger, same shape as the two above for the same reason.
 //
-// This one is SPEND-ONLY: credit enters by a staff-confirmed deposit and leaves
-// only by buying a rig. There is no withdrawal, no transfer and no conversion,
-// and that absence is the whole safety argument (see usdt_ledger in the schema).
-// If you are here to add a way for this balance to leave the app, stop.
+// Credit enters by a staff-confirmed deposit and leaves in exactly two ways:
+// buying a rig, or being REFUNDED to the user who deposited it (founder,
+// 2026-08-01 — see the long note above usdt_ledger in the schema for what that
+// changed and what it deliberately did not).
+//
+// There is still no transfer to another user and no conversion to Points or
+// ROZI, and earnings still cannot leave through here at all. If you are adding
+// a third way out, you are changing what this balance is — read the schema note.
 export const USDT_SCALE = 1_000_000;
 export const usdtToMicro = (usdt: number) => Math.round(usdt * USDT_SCALE);
 export const usdtFromMicro = (micro: number) => micro / USDT_SCALE;
 
-export type UsdtSource = "topup" | "rig_purchase" | "admin_adjustment";
+export type UsdtSource = "topup" | "rig_purchase" | "admin_adjustment" | "refund";
 
 export async function postUsdt(
   params: {

@@ -67,7 +67,7 @@ export default function WithdrawPage() {
   if (bal.error) return <div className="p-4 pt-6"><ErrorState message={bal.error} onRetry={bal.reload} /></div>;
 
   const balance = bal.data?.points ?? 0;
-  const min = bal.data?.minWithdrawPoints ?? 2000;
+  const min = bal.data?.minWithdrawPoints ?? 1000;
   const fee = bal.data?.withdrawalFeePoints ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
   // Blank field means "the minimum", which is what the placeholder shows.

@@ -115,6 +115,18 @@ export default function TopUpPage() {
         <p className="num text-2xl font-bold text-brand-ink">
           {formatUsdtMicro(s.balanceMicro)}
         </p>
+        {/* Only offered once there is something to send back. A "get your money
+            back" link above a zero balance is noise on the screen whose job is
+            to explain how to put money in. */}
+        {s.balanceMicro > 0 && (
+          <Link
+            href="/mine/refund"
+            className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand"
+          >
+            {t("refund.link")}
+            <ArrowRightIcon size={16} />
+          </Link>
+        )}
       </Card>
 
       {/* Above the address, on purpose. See the note at the top of this file. */}

@@ -11,7 +11,8 @@ import {
   sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf,
   postUsdt, usdtBalanceMicroOf, usdtToMicro, type TxApi,
 } from "../db.ts";
-import { chainById } from "../chains.ts";
+import { chainById, validateAddress, type ChainId } from "../chains.ts";
+import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
@@ -487,9 +488,26 @@ export async function miningRoutes(app: FastifyInstance) {
        FROM usdt_topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
       userId,
     );
+    const refunds = await sql.all<{
+      id: string; chain: string; address: string; amount: string;
+      status: string; tx_hash: string | null; reject_reason: string | null; created_at: string;
+    }>(
+      `SELECT id, chain, address, amount, status, tx_hash, reject_reason, created_at
+       FROM usdt_refund_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      userId,
+    );
     return {
       enabled,
       balanceMicro: await usdtBalanceMicroOf(userId),
+      // Asking for a deposit back does NOT depend on `enabled`. Deposits can be
+      // switched off while people still hold a balance, and that is exactly when
+      // being unable to ask for it back would be worst.
+      refundMinMicro: 1_000_000,
+      refunds: refunds.map((r) => ({
+        id: r.id, chain: r.chain, address: r.address, amountMicro: Number(r.amount),
+        status: r.status, txHash: r.tx_hash, rejectReason: r.reject_reason,
+        createdAt: r.created_at,
+      })),
       // Only sent when the feature is on — there is no reason for an address we
       // are not currently accepting deposits at to be sitting in a JSON response.
       treasuryAddress: enabled ? s.usdtTreasuryAddress : null,
@@ -552,6 +570,102 @@ export async function miningRoutes(app: FastifyInstance) {
       throw { statusCode: 409, message: "That transaction has already been sent to us." };
     }
     return { ok: true, id, status: "pending" };
+  }));
+
+  // ---- Refund an unspent deposit (founder, 2026-08-01) ----------------------
+  //
+  // ⚠️ THIS IS THE ONE WAY DEPOSIT CREDIT LEAVES THE APP AS MONEY. Read the
+  // note above usdt_ledger in db.ts before changing it — it records why the
+  // original spend-only rule was amended and what was deliberately NOT amended.
+  //
+  // The short version of the boundary this route defends:
+  //   • It can only return what the user DEPOSITED and has not spent. The cap
+  //     is the usdt_ledger balance, which is topups minus rig purchases minus
+  //     earlier refunds. Points and ROZI are different ledgers and cannot reach
+  //     this route at all.
+  //   • It is sent BY HAND by staff from the treasury, like every other payout.
+  //     No signer, no hot wallet, no automation.
+  //   • The debit happens HERE, at request time, under the advisory lock — not
+  //     when staff get to it. Otherwise a user requests a refund of their whole
+  //     balance and buys a rig with it while the request sits in the queue.
+  const MIN_REFUND_MICRO = 1_000_000; // 1 USDT
+
+  app.post("/usdt/refunds", guard(async (userId, req) => {
+    const body = z.object({
+      amount: z.number().positive(),      // whole USDT, as the user typed it
+      address: z.string().trim().min(1).max(120),
+    }).parse(req.body);
+
+    const s = await loadMiningSettings();
+    // NOT gated on usdtTopupEnabled, deliberately. Switching deposits OFF must
+    // never strand money people already sent us — that is the exact situation
+    // in which someone most wants their balance back.
+    const chain = s.usdtTreasuryChain as ChainId;
+
+    const addrCheck = validateAddress(chain, body.address);
+    if (!addrCheck.ok) throw { statusCode: 400, message: addrCheck.error };
+    const address = body.address.trim();
+
+    // Same gate as a withdrawal, for the same reason: we are sending real money
+    // to a real address and should know who is receiving it. A refund is also
+    // the obvious laundering shape (deposit, then ask for it back somewhere
+    // else), and the ID check is the only thing standing in front of that.
+    if (config.kycRequiredForWithdrawal) {
+      const u = await sql.get<{ kyc_status: string }>(
+        "SELECT kyc_status FROM users WHERE id = ?", userId);
+      if (u?.kyc_status !== "approved") {
+        throw {
+          statusCode: 403,
+          message: u?.kyc_status === "pending"
+            ? "We are still checking your ID. You can ask for your money back as soon as that is done."
+            : "Verify your ID first, then you can ask for your money back.",
+        };
+      }
+    }
+
+    const micro = usdtToMicro(body.amount);
+    if (micro < MIN_REFUND_MICRO) {
+      // Sending USDT on BEP20 costs us real gas. Below about a dollar the
+      // transfer costs more than it returns, so a dust refund is a request we
+      // should decline up front rather than queue and then argue about.
+      throw { statusCode: 400, message: "The smallest amount we can send back is 1 USDT." };
+    }
+
+    // Snapshot whether this exact destination was proved by a wallet signature,
+    // for the same reason withdrawal_requests does: the staff member approving
+    // an irreversible send must see what was true when the user asked.
+    const proved = await sql.get<{ n: number }>(
+      `SELECT 1 AS n FROM payout_addresses
+       WHERE user_id = ? AND chain = ? AND verified_at IS NOT NULL AND LOWER(address) = LOWER(?)`,
+      userId, chain, address,
+    );
+
+    const id = newId();
+    return sql.tx(async (t) => {
+      await lockUser(t, userId);
+
+      const balance = await usdtBalanceMicroOf(userId, t);
+      if (micro > balance) {
+        throw { statusCode: 400, message: "You do not have that much deposited money left." };
+      }
+
+      await t.run(
+        `INSERT INTO usdt_refund_requests (id, user_id, chain, address, amount, address_verified, status, created_at)
+         VALUES (?,?,?,?,?,?, 'pending', ?)`,
+        id, userId, chain, address, micro, proved ? 1 : 0, now(),
+      );
+      // Hold the funds by debiting now. A rejection writes the compensating
+      // credit (see the staff route).
+      await postUsdt({
+        userId, micro, direction: "debit", sourceType: "refund",
+        sourceRefId: id, note: "Money sent back",
+      }, t);
+
+      return {
+        ok: true, id, status: "pending",
+        balanceMicro: balance - micro,
+      };
+    });
   }));
 
   // ---- ROZI store (a ROZI sink, and the honest answer to "what is it worth?") -

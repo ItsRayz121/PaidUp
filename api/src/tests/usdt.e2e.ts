@@ -307,12 +307,21 @@ check("ROZI went down", (await roziOf(user)) < roziBefore2, `${roziBefore2} -> $
 check("and the USDT credit was NOT touched",
   (await usdtOf(user)) === usdtBefore, `${usdtBefore} -> ${await usdtOf(user)}`);
 
-console.log("\n-- SPEND-ONLY: there is no way out, and that is the safety property --");
+console.log("\n-- THE ONLY WAY OUT IS A REFUND OF YOUR OWN DEPOSIT --");
 
-// Asserting the ABSENCE of routes. This is the check that stops "we just never
-// built a withdrawal" from quietly becoming "someone built one" — the moment
-// this credit can leave the app we are holding customer funds, which is the
-// licensed activity the whole product is shaped to avoid (MINING_SPEC.md § 7).
+// ⚠️ THIS SECTION WAS REWRITTEN ON 2026-08-01 AND THE REWRITE WAS DELIBERATE.
+//
+// It used to assert that NOTHING could take this balance out of the app. The
+// founder amended that: a user may ask for their own unspent deposit back. So
+// the property under test changed shape rather than disappearing — it is no
+// longer "nothing leaves", it is "only the user's own unspent deposit leaves,
+// only to them, only by hand".
+//
+// The routes below are still absent, and their absence is still the point: a
+// refund is not a transfer to someone else, not a conversion into Points or
+// ROZI, and not a way to cash out EARNINGS. Those are what would make this a
+// general withdrawal system, which is the licensed activity (PVARA) the product
+// still refuses — see MINING_SPEC.md § 7 and CUSTODY_SPEC.md § 2c.
 for (const [method, url] of [
   ["POST", "/usdt/withdraw"],
   ["POST", "/usdt/withdrawals"],
@@ -321,11 +330,12 @@ for (const [method, url] of [
   ["POST", "/usdt/convert"],
 ] as const) {
   const r = await app.inject({ method, url, headers: tok(user), payload: { amount: 1 } });
-  check(`${method} ${url} does not exist`, r.statusCode === 404, `${r.statusCode}`);
+  check(`${method} ${url} still does not exist`, r.statusCode === 404, `${r.statusCode}`);
 }
 
-// And the ledger itself cannot record one: the source_type CHECK constraint only
-// permits the three kinds this feature has.
+// The ledger still refuses a general 'withdrawal' row. 'refund' was added to the
+// CHECK; 'withdrawal' was NOT, and that gap is what stops "refund your deposit"
+// drifting into "withdraw any balance" by one careless commit.
 let ledgerRefused = false;
 try {
   await sql.run(
@@ -334,8 +344,102 @@ try {
     newId(), user, -1_000_000, now(),
   );
 } catch { ledgerRefused = true; }
-check("the ledger refuses a 'withdrawal' row outright (database-level, not just routing)",
+check("the ledger still refuses a 'withdrawal' row outright (database-level)",
   ledgerRefused);
+
+const ADDR = "0x1234567890123456789012345678901234567890";
+
+// The ID check gates a refund exactly like it gates a withdrawal: we are sending
+// real money to a real address, and a refund is the obvious laundering shape
+// (deposit, ask for it back somewhere else).
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: 1, address: ADDR },
+});
+check("a refund is refused until the ID check passes", res.statusCode === 403, res.body);
+
+config.kycRequiredForWithdrawal = false; // rest of the suite tests the money maths
+
+const balBeforeRefund = await usdtOf(user);
+check("the user has deposit credit to refund", balBeforeRefund > 0, `${balBeforeRefund}`);
+
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: 0.5, address: ADDR },
+});
+check("dust is refused — a BEP20 send costs more gas than it returns",
+  res.statusCode === 400, res.body);
+
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: balBeforeRefund + 1000, address: ADDR },
+});
+check("you cannot refund more than you deposited", res.statusCode === 400, res.body);
+
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: 1, address: "not-an-address" },
+});
+check("a malformed address is refused before anything is held",
+  res.statusCode === 400, res.body);
+
+// The debit lands AT REQUEST TIME, not at approval. Without that a user asks for
+// their whole balance back and buys a rig with it while the request queues.
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: 1, address: ADDR },
+});
+check("a valid refund request is accepted", res.statusCode === 200, res.body);
+const refundId = JSON.parse(res.body).id as string;
+check("the money is held immediately (debited on request, not on approval)",
+  (await usdtOf(user)) === balBeforeRefund - 1, `${balBeforeRefund} -> ${await usdtOf(user)}`);
+
+// Rejecting gives it back — unlike a rejected TOP-UP, where nothing was ever
+// credited so there is nothing to reverse.
+res = await app.inject({
+  method: "POST", url: `/staff/mining/refunds/${refundId}/reject`, headers: tok(admin),
+  payload: { reason: "Address did not match our records" },
+});
+check("staff can reject a refund", res.statusCode === 200, res.body);
+check("and rejecting puts the money back", (await usdtOf(user)) === balBeforeRefund,
+  `${await usdtOf(user)} vs ${balBeforeRefund}`);
+
+res = await app.inject({
+  method: "POST", url: `/staff/mining/refunds/${refundId}/reject`, headers: tok(admin),
+  payload: { reason: "second try" },
+});
+check("a handled refund cannot be handled twice", res.statusCode === 409, res.body);
+
+// Paying it must NOT write a second debit — the money left the balance when the
+// user asked. Writing another row here would take it twice.
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(user),
+  payload: { amount: 1, address: ADDR },
+});
+const paidId = JSON.parse(res.body).id as string;
+const afterHold = await usdtOf(user);
+res = await app.inject({
+  method: "POST", url: `/staff/mining/refunds/${paidId}/paid`, headers: tok(admin),
+  payload: { txHash: "0x" + "a".repeat(64) },
+});
+check("staff can mark a refund paid with the on-chain proof", res.statusCode === 200, res.body);
+check("marking paid does NOT debit a second time",
+  (await usdtOf(user)) === afterHold, `${afterHold} -> ${await usdtOf(user)}`);
+
+// The cap is the DEPOSIT ledger, so mined ROZI and earned Points can never walk
+// out through this door however large they get. This is the anti-laundering
+// property and the reason the refund is capped by ledger rather than by "what
+// the user is owed".
+const roziRich = await mkUser("rozi-rich");
+await postRozi({ userId: roziRich, micro: toMicro(5000), direction: "credit", sourceType: "mining" });
+res = await app.inject({
+  method: "POST", url: "/usdt/refunds", headers: tok(roziRich),
+  payload: { amount: 1, address: ADDR },
+});
+check("a user with ROZI but no deposit cannot refund a cent",
+  res.statusCode === 400, res.body);
+
+config.kycRequiredForWithdrawal = true; // leave the gate as we found it
 
 console.log("\n-- ONE CHAIN IN, ONE CHAIN OUT: payouts are BEP20 only --");
 

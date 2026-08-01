@@ -12,6 +12,7 @@ import {
   usdtFromMicro, usdtToMicro, logAudit,
 } from "../db.ts";
 import { chainById, validateAddress } from "../chains.ts";
+import { rpcHealth, endpointsFor } from "../rpc.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
@@ -427,6 +428,107 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       detail: `${id}: ${b.reason}`,
     });
     return { ok: true };
+  }));
+
+  // ---- USDT refund queue (founder, 2026-08-01) ------------------------------
+  //
+  // A user asked for their own unspent deposit back. The money was ALREADY
+  // debited from their credit when they asked (routes/mining.ts) — that is what
+  // stops them spending it on a rig while this queues — so:
+  //
+  //   • marking it paid records the tx hash and posts NO ledger row, because
+  //     the debit already happened;
+  //   • rejecting it posts the compensating CREDIT to give the balance back.
+  //
+  // Getting that backwards in either direction is a double-debit or a free
+  // top-up, so the two handlers below say which one they are doing out loud.
+  app.get("/staff/mining/refunds", staffGuard(["manager", "admin"], async (_ctx, req) => {
+    const q = z.object({ status: z.enum(["pending", "paid", "rejected"]).default("pending") })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT r.*, u.email, u.username FROM usdt_refund_requests r
+       JOIN users u ON u.id = r.user_id
+       WHERE r.status = ? ORDER BY r.created_at LIMIT 200`,
+      q.status,
+    );
+    return {
+      refunds: rows.map((r) => ({
+        ...r,
+        amount: usdtFromMicro(Number(r.amount)),
+        chainLabel: chainById(String(r.chain))?.label ?? r.chain,
+        // Same signal the withdrawal queue shows: did the user prove this exact
+        // address with a wallet signature, or did they type it in?
+        addressVerified: Boolean(r.address_verified),
+      })),
+    };
+  }));
+
+  app.post("/staff/mining/refunds/:id/paid", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = z.object({ txHash: z.string().trim().min(6).max(200) }).parse(req.body);
+
+    // Claim the row first and only if still pending — two admins on the queue
+    // would otherwise both mark one refund paid and it would be sent twice.
+    const claimed = await sql.get<{ user_id: string; amount: string }>(
+      `UPDATE usdt_refund_requests SET status = 'paid', tx_hash = ?, reviewed_by = ?, reviewed_at = ?
+       WHERE id = ? AND status = 'pending' RETURNING user_id, amount`,
+      b.txHash.trim(), userId, now(), id,
+    );
+    if (!claimed) throw { statusCode: 409, message: "That refund was already handled." };
+
+    // NO LEDGER ROW HERE. The debit was written when the user asked; writing
+    // another one now would take the money twice.
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "usdt_refund_paid",
+      detail: `${id} -> ${claimed.user_id}: ${usdtFromMicro(Number(claimed.amount))} USDT, tx ${b.txHash.trim()}`,
+    });
+    return { ok: true };
+  }));
+
+  app.post("/staff/mining/refunds/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = z.object({ reason: z.string().min(3).max(300) }).parse(req.body);
+
+    return sql.tx(async (t) => {
+      const claimed = await t.get<{ user_id: string; amount: string }>(
+        `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = ?, reviewed_at = ?
+         WHERE id = ? AND status = 'pending' RETURNING user_id, amount`,
+        b.reason, userId, now(), id,
+      );
+      if (!claimed) throw { statusCode: 409, message: "That refund was already handled." };
+
+      // GIVE THE MONEY BACK. Unlike a rejected top-up (where nothing was ever
+      // credited, so there is nothing to reverse), a rejected refund is undoing
+      // a debit we already took.
+      await postUsdt({
+        userId: claimed.user_id, micro: Number(claimed.amount), direction: "credit",
+        sourceType: "refund", sourceRefId: id, note: "Refund declined — money returned to your balance",
+      }, t);
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "usdt_refund_reject",
+        detail: `${id}: ${b.reason}`,
+      }, t);
+      return { ok: true, balanceMicro: await usdtBalanceMicroOf(claimed.user_id, t) };
+    });
+  }));
+
+  // ---- RPC endpoint health -------------------------------------------------
+  //
+  // The chain endpoints default to PUBLIC nodes, which rate-limit and disappear
+  // without notice. This is how an operator finds that out on a quiet afternoon
+  // instead of at the moment a deposit needs checking. Read-only: it asks each
+  // endpoint for the current block height and reports who answered.
+  //
+  // Admin-only because it discloses the endpoint URLs, which may carry a paid
+  // provider's API key in the path once one is configured.
+  app.get("/staff/mining/rpc", staffGuard(["admin"], async (_ctx, req) => {
+    const q = z.object({ chain: z.string().min(1).max(20).default("bep20") })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const endpoints = endpointsFor(q.chain);
+    if (!endpoints.length) {
+      return { chain: q.chain, endpoints: [], results: [], note: "No RPC endpoints are configured for this network." };
+    }
+    return { chain: q.chain, endpoints, results: await rpcHealth(q.chain) };
   }));
 
   // ---- Boosters (CRUD) — priced in POINTS ----------------------------------

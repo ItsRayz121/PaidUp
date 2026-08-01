@@ -3,10 +3,40 @@
 The app is built and verified. What stands between it and real users is a set of
 **accounts, keys, and approvals that only you (the founder) can obtain** — a
 non-interactive Claude session cannot create third-party accounts or run OAuth
-flows. This is the single to-do list. Work top to bottom; the first three are the
-real launch blockers.
+flows. This is the single to-do list. Work top to bottom.
 
-Legend: 🔴 launch blocker · 🟡 strongly recommended · ⚪ optional
+Legend: 🔴 launch blocker · 🟡 strongly recommended · ⚪ optional ·
+✅ done · ❌ declined by the founder
+
+---
+
+## Status as of 2026-08-01
+
+The list below was written when everything was outstanding. Most of it is not
+any more, and the strategy behind the remainder changed, so read this first.
+
+| Item | State |
+|---|---|
+| 2. Resend key + verified domain | ✅ **done** (founder, 2026-08-01) |
+| 3b. KYC encryption key | ✅ **done** — set on Railway |
+| 3c. Monetag ads + zones | ✅ done 2026-07-17/18 |
+| 5. Domain `rozipay.xyz` | ✅ live — ⚠️ confirm `WEB_ORIGIN` on Railway |
+| 6. Telegram Mini App | ✅ fully live 2026-07-18 |
+| 1. More ad networks | 🔴 **tried, none have approved us yet** |
+| 3. Funded USDT treasury | ⏸️ **deliberately deferred** — see below |
+| 4. Sentry | ❌ **declined** — founder does not want it |
+
+**The plan the remaining items now serve** (founder, 2026-08-01). Months 1–2 are
+**mining only**. Month 2–3 opens P2P transfer. Then a DEX listing, then a
+centralised exchange. Cash payouts are not part of that runway — which is why
+the treasury is deferred rather than blocking, and why the ad-network rejections
+hurt less right now than they would have a month ago.
+
+⚠️ **The one thing that does not fit that plan is the withdrawal screen.** The
+code works and the minimum is now $1, but an unfunded treasury means a user who
+requests a payout waits for money that is not there. The road map already omits
+"cash out to USDT" from *Working today*. Keep it omitted until a real payout has
+cleared.
 
 ---
 
@@ -16,6 +46,19 @@ Legend: 🔴 launch blocker · 🟡 strongly recommended · ⚪ optional
 real revenue. That unblocked the product. But CPX sells **surveys only**, and its
 inventory is thin and swings hard (measured 5 surveys one minute, 1 the next). One
 survey network is not a business.
+
+> ⚠️ **Applied to several; none have approved us yet** (founder, 2026-08-01).
+> That is the normal experience for a new publisher with no traffic history, and
+> it is not something more code fixes. What actually moves it:
+> - **Apply again once the Mini App has real daily users.** Approval teams look
+>   for existing traffic, and "we have N daily actives in Pakistan" is the whole
+>   pitch. The mining-first months are, usefully, exactly how that gets built.
+> - **Try the ones that take small publishers**: Lootably, Torox, BitLabs. AdGate
+>   and AyeT are the better inventory but the harder door.
+> - **Ask CPX for more.** An existing publisher relationship is the easiest yes
+>   available, and their offerwall (not just surveys) may be a separate product.
+> - When a rejection gives a **reason**, send it to me — some are fixable in the
+>   product (a missing privacy policy, an unreachable support address).
 
 `offerhub`, `tapvid`, `surveyx` in the code are **adapters written to an imagined
 spec with no account behind them**. They can never pay a user. Don't count them,
@@ -74,7 +117,10 @@ Then set the secret on Railway as `POSTBACK_SECRET_<NETWORK>` **before** deployi
 
 ---
 
-## 🔴 2. Resend account + verified email domain (no email = nobody can log in)
+## ✅ 2. Resend account + verified email domain — DONE (founder, 2026-08-01)
+
+Signup codes, forgot-password and the Telegram-account "add your email" flow all
+send for real now. Steps kept for reference / if the key is ever rotated.
 
 Without `RESEND_API_KEY`, signup codes only print to the Railway logs — real users
 never receive them.
@@ -96,7 +142,17 @@ never receive them.
 
 ---
 
-## 🔴 3. Fund a USDT treasury wallet (no wallet = nobody gets paid)
+## ⏸️ 3. Fund a USDT treasury wallet — DEFERRED (founder, 2026-08-01)
+
+**Not needed on the current runway.** Months 1–2 are mining only; there is
+nothing to pay out because nothing is being cashed out. It comes back the moment
+either of these is true: earnings withdrawals open to users, or someone asks for
+a **USDT deposit refund** (built 2026-08-01 — the refund is sent by hand from
+this same treasury, so a refund request with no treasury is a promise we cannot
+keep). Steps kept below for when that day comes.
+
+⚠️ One number changed: the withdrawal minimum is now **1000 points = $1**, down
+from $5. More payouts, each smaller, each still sent by hand.
 
 v1 payouts are **manual and approval-gated** (a non-goal is automated payout in
 v1). An admin approves a withdrawal, sends USDT from the treasury wallet, and now
@@ -104,11 +160,11 @@ v1). An admin approves a withdrawal, sends USDT from the treasury wallet, and no
 as proof. (This is the new payout flow I just built; see below.)
 
 **Steps:**
-1. Create/choose a **hot wallet** you control on the chains you'll support
-   (BEP20 / Base — both EVM, one address; plus Aptos if you offer it. Polygon
-   was dropped from the withdraw screen).
-2. **Fund it** with USDT + a little native gas token (BNB / ETH / APT) on each
-   chain.
+1. Create/choose a **hot wallet** you control. **One chain: BEP20** (founder,
+   2026-07-29 — Base and Aptos are still recognised for historical rows but are
+   no longer offered; see `chains.ts`, `KNOWN_CHAINS` vs `CHAINS`).
+2. **Fund it** with USDT + a little **BNB** for gas. One chain, one gas token,
+   one explorer, one answer when a user asks support which network.
 3. Decide the **points → USDT rate** and tell me. Default in code is
    `POINTS_PER_USDT=1000` (1000 points = 1 USDT). Set the real number on Railway.
 4. That's it for manual mode. When you later want the API to **auto-send** on
@@ -182,13 +238,16 @@ streak.
 
 ---
 
-## 🟡 4. Authorize Sentry (error monitoring before you have real users)
+## ❌ 4. Sentry — DECLINED (founder, 2026-08-01)
 
-Blocked from my side: it needs an **OAuth flow** I can't run in a non-interactive
-session.
+The founder does not want error monitoring set up. Closed; do not re-suggest it
+as an outstanding task.
 
-**Steps:** Open **claude.ai → Settings → Connectors**, authorize the **Sentry**
-connector. Once done, tell me and I'll wire error monitoring into the API + web.
+The trade-off, recorded once so the decision is informed rather than forgotten:
+without it, a crash affecting real users surfaces only when a user reports it,
+and Railway's logs are the only place to look afterwards. That is survivable at
+current volume. Revisit if support tickets start describing things the logs
+cannot explain.
 
 ---
 

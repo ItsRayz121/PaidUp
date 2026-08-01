@@ -99,6 +99,57 @@ Per-user wallets end that. Concretely:
   which is recoverable from an append-only history. With custody the worst case
   is other people's money, which is not recoverable at all.
 
+### 2d. ⚠️ AMENDED 2026-08-01 — deposits are now refundable
+
+The sentence above, *"USDT top-up is spend-only"*, **is no longer true**, and
+this section exists so nobody reads the rest of this document believing it is.
+
+**The founder's decision:** a user may ask for their own deposited USDT back.
+It was put to them that this is custody in the plain sense — we hold money and
+return it on request — and they chose it anyway, on the reasoning that money a
+user can never get back is a harder sell than the licence question is a risk.
+That is a business judgement, not an engineering one, and it is recorded here so
+it is not mistaken for drift and quietly reverted by a later reader.
+
+**What that does and does not change:**
+
+| | before | now |
+|---|---|---|
+| Deposit credit buys machines | yes | yes |
+| Deposit credit can be returned to the depositor | **no** | **yes**, staff-sent |
+| Deposit credit can be sent to another user | no | **still no** |
+| Deposit credit can become Points or ROZI | no | **still no** |
+| **Earnings** can leave via this path | no | **still no** |
+| Private keys in this system | none | **still none** |
+
+The refund is deliberately the narrowest shape that honours the decision:
+
+1. **Capped by the deposit ledger**, not by anything the user is owed. The
+   ceiling is `SUM(usdt_ledger)` — topups minus machine purchases minus earlier
+   refunds. Mined ROZI and earned Points are different ledgers and cannot reach
+   the route at all. There is a regression test that a ROZI-rich account with no
+   deposit cannot refund a cent, and it is there because that is the laundering
+   shape: deposit nothing, withdraw something.
+2. **Sent by hand, from the treasury, by staff.** No signer, no hot wallet, no
+   automation. Identical posture to every payout since launch, so § 2c above is
+   otherwise untouched — this amendment adds **zero** key material.
+3. **Debited at request time, under `pg_advisory_xact_lock`** (guardrail #8), so
+   a queued refund cannot be spent on a machine while it waits. A rejection
+   writes the compensating credit; marking it sent writes no ledger row at all,
+   because the money already left.
+4. **ID check required**, the same gate as a withdrawal, for the same reason.
+5. **Minimum 1 USDT**, because a BEP20 transfer costs real gas and below about a
+   dollar the send costs more than it returns.
+6. **Not gated on `usdtTopupEnabled`.** Switching deposits off must never strand
+   money people already sent us — that is exactly when being unable to ask for
+   it back would be worst.
+
+A general `withdrawal` source type is **still refused by the `usdt_ledger` CHECK
+constraint**, and that gap is load-bearing: it is what stops "refund your own
+deposit" drifting into "withdraw any balance" by one careless commit. Code:
+`POST /usdt/refunds` in `api/src/routes/mining.ts`, the queue in
+`api/src/routes/staffMining.ts`, 13 checks in `npm run test:usdt`.
+
 ---
 
 ## 3. What must be decided before any code
@@ -126,6 +177,14 @@ These are founder decisions. None of them are engineering choices.
 
 - An **RPC provider** account with real rate limits (Alchemy / QuickNode /
   Ankr). Public endpoints will silently drop deposits under load.
+  > **Partly answered 2026-08-01.** `config.payoutRpc` now holds a **list** of
+  > endpoints per chain with failover (`api/src/rpc.ts`), defaulting to five
+  > public BSC nodes, and `/staff/mining/rpc` pings them so an operator can see
+  > which are alive. That is enough for **occasional reads** — checking whether a
+  > transaction exists. It is **not** enough for step 2's listener: a public node
+  > that drops a block does so silently, and a silently-missed deposit is a user
+  > who paid us and got nothing. When a paid endpoint exists, put it **first** in
+  > `RPC_BEP20` and the public ones become the fallback rather than the primary.
 - A **KMS or HSM** (decision 1 above).
 - A **funded gas wallet** in BNB, topped up on a schedule.
 - For TRC20: **staked TRX** for energy, or an accepted ~$2–3/sweep bill.

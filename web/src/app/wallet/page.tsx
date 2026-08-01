@@ -47,7 +47,7 @@ export default function WalletPage() {
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
   const points = bal.data?.points ?? 0;
-  const min = bal.data?.minWithdrawPoints ?? 2000;
+  const min = bal.data?.minWithdrawPoints ?? 1000;
   const canWithdraw = points >= min;
   // HISTORY IS MONEY THAT MOVED (founder, 2026-08-01), not a status board of
   // task attempts. `rejected` rows are dropped: nothing moved, so a line saying

@@ -552,6 +552,65 @@ These override convenience or speed at every step:
     **An xpub, never a seed phrase.** The two features are complementary, not
     substitutes — § 5b of that doc has the table.
 
+- **DEPOSITS BECOME REFUNDABLE, AND THE PAYOUT FLOOR DROPS TO $1 (founder,
+  2026-08-01).** Verified: 41 unit + 50 mining e2e + 31 profile + **65 usdt** +
+  25 conversion + 29 store + 14 referrals + 15 admin + 25 kyc + 9 push +
+  45 telegram + 5 proxy + 52 wallet = **406 checks green** (was 393); api + web
+  typecheck, eslint, web production build all clean.
+  - ⚠️ **THE SPEND-ONLY RULE ON USDT TOP-UP CREDIT IS AMENDED.** The old rule —
+    written in `db.ts` as "THERE IS NO WITHDRAWAL PATH AND ONE MUST NOT BE
+    ADDED" — no longer holds. A user may now ask for their own **unspent
+    deposit** back (`POST /usdt/refunds`, `/mine/refund`, staff queue in
+    `/staff → Mining`). The founder was told plainly that returning customer
+    money on request is **custody in the plain sense** (PVARA — the licensed
+    activity every other decision in this product routes around) and chose it,
+    on the reasoning that money a user can never get back is a harder sell than
+    the licence question is a risk. Recorded in `CUSTODY_SPEC.md` § 2d as a
+    **decision with a date**, so it is not mistaken for drift and reverted.
+  - ⚠️ **EVERY NARROWING IS WHAT KEEPS IT SURVIVABLE, and none are optional.**
+    (a) The cap is the **deposit ledger** — `SUM(usdt_ledger)`, i.e. topups
+    minus machine purchases minus earlier refunds — **never** what the user is
+    owed, so mined ROZI and earned Points cannot walk out through this door.
+    There is a test that a ROZI-rich account with **zero** deposits cannot
+    refund a cent, because that is the laundering shape: put nothing in, take
+    something out. (b) **Staff send it by hand from the treasury** — no signer,
+    no hot wallet, **zero new key material**, so `CUSTODY_SPEC.md` § 2c is
+    otherwise untouched. (c) The **debit lands at REQUEST time under
+    `lockUser()`** (guardrail #8) or a queued refund gets spent on a rig while
+    it waits; `usdt refund` is now in the `LOCKED_PATHS` tripwire. (d) ID check
+    required, same gate as a withdrawal. (e) **1 USDT minimum** — a BEP20 send
+    costs real gas, and below a dollar the transfer costs more than it returns.
+    (f) **Not gated on `usdtTopupEnabled`**: switching deposits off must never
+    strand money people already sent us.
+  - ⚠️ **`'withdrawal'` IS STILL REFUSED BY THE `usdt_ledger` CHECK.** Only
+    `'refund'` was added. That gap is load-bearing — it is what stops "refund
+    your own deposit" drifting into "withdraw any balance" by one commit. The
+    `/usdt/transfer` and `/usdt/convert` routes are still asserted **absent**.
+  - **The top-up screen no longer says "you cannot take it back out."** That
+    string became false the moment this shipped, and it sat directly above the
+    address someone is about to send money to. A false promise about money, on
+    that element, is the worst string this app could carry.
+  - **Withdrawal minimum: 5000 → 1000 points ($5 → $1).** Both moves this week
+    were **downward**, for the same reason: CPX has no survey fill for Pakistani
+    traffic most of the day, so our own numbers say $5 takes an ordinary user
+    weeks. Guardrail #4 — a threshold nobody reaches is the fastest way to lose
+    an earner base. The cost is more, smaller, hand-sent payouts; accepted.
+  - **Chain RPC is now a LIST with failover** (`api/src/rpc.ts`,
+    `RPC_BEP20=a,b,c`), defaulting to five public BSC nodes, plus
+    `GET /staff/mining/rpc` to see which are alive. ⚠️ Public nodes are fine for
+    **occasional reads**; they are **not** fine under a deposit listener, where
+    a dropped block is silent and a silently-missed deposit is a user who paid
+    us and got nothing. A paid endpoint goes **first** in the list.
+    ⚠️ `payoutRpc` values are **arrays now** — `Boolean([])` is `true`, so the
+    onchain-payout readiness check is `.length > 0`. Getting that wrong makes
+    the one code path whose job is to refuse say "yes, I can auto-send".
+  - **Founder runway (recorded, drives what is and is not a blocker):** months
+    1–2 **mining only**, month 2–3 opens **P2P transfer**, then a **DEX**
+    listing, then a **centralised exchange**. Cash payouts are not on that
+    runway — hence the treasury is **deferred, not blocking**. **Sentry is
+    declined.** Ad networks: applied, **none approved yet** — the fix is real
+    daily users, not more code (see `LAUNCH_CHECKLIST.md` § 1).
+
 - ⚠️ **A HANDLE MUST NEVER SHADOW AN INVITE CODE (security fix, 2026-07-29).**
   Caught by `security-review` on the @handle work, and it was theft-by-squatting.
   Invite codes are generated as uppercase letters + two digits (`AHMED42`,
@@ -718,6 +777,14 @@ Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
 
 **Still open (business decisions):** ✅ all three locked (60% split / Pakistan / RoziPay — domain rozipay.xyz).
 
-**Phase 2 remaining:** Sentry authorization (still **blocked** — needs founder to authorize the connector in claude.ai settings; non-interactive session can't run the OAuth flow). Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
+**Phase 2 remaining:** Sentry is ❌ **declined by the founder (2026-08-01)** — closed, do not re-raise it as outstanding. Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
+
+**What is actually still blocked on the founder (2026-08-01):** just two things.
+(1) **A real ad network approval** — applications are in and none have landed;
+the unlock is daily users, not code. Send me the four postback items for any
+network that says yes and the adapter + smoke test is one session.
+(2) **The xpub + a BSC RPC endpoint** if per-user deposit addresses are wanted
+(`CUSTODY_SPEC.md` § 5 step 1). **An xpub, never a seed phrase.** Everything
+else on the old checklist is done, deferred by decision, or declined.
 
 See `docs/` for the full spec.

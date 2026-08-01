@@ -574,14 +574,20 @@ export const upgradeRig = (id: string, pay: "rozi" | "usdt" = "rozi") =>
   }>(`/mining/rigs/${id}/upgrade`, { method: "POST", body: JSON.stringify({ pay }) });
 
 // ---- USDT top-up credit -----------------------------------------------------
-// Spend-only credit for buying mining machines. There is no withdrawal endpoint
-// here because there is no withdrawal endpoint at all — see the usdt_ledger
-// comment in api/src/db.ts.
+// Credit for buying mining machines. It leaves in exactly two ways: buying a
+// machine, or being refunded to the person who deposited it (founder,
+// 2026-08-01). There is still no transfer and no conversion — see the
+// usdt_ledger comment in api/src/db.ts for what that boundary is protecting.
 
 export type UsdtTopup = {
   id: string; chain: string; txHash: string; amountMicro: number;
   status: "pending" | "confirmed" | "rejected";
   rejectReason: string | null; createdAt: string;
+};
+export type UsdtRefund = {
+  id: string; chain: string; address: string; amountMicro: number;
+  status: "pending" | "paid" | "rejected";
+  txHash: string | null; rejectReason: string | null; createdAt: string;
 };
 export type UsdtState = {
   enabled: boolean;
@@ -592,11 +598,19 @@ export type UsdtState = {
   minTopup: number;
   maxTopup: number;
   topups: UsdtTopup[];
+  // Asking for a deposit back does NOT depend on `enabled`: deposits can be
+  // switched off while people still hold a balance, and that is exactly when
+  // being unable to ask for it back would be worst.
+  refundMinMicro: number;
+  refunds: UsdtRefund[];
 };
 export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");
 export const claimUsdtTopup = (txHash: string, amount: number) =>
   apiFetch<{ ok: true; id: string; status: string }>(
     "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });
+export const requestUsdtRefund = (amount: number, address: string) =>
+  apiFetch<{ ok: true; id: string; status: string; balanceMicro: number }>(
+    "/usdt/refunds", { method: "POST", body: JSON.stringify({ amount, address }) });
 
 export type RoziEntry = {
   id: string; amountMicro: number; direction: "credit" | "debit";
@@ -799,6 +813,26 @@ export const confirmTopup = (id: string, amount: number) =>
 export const rejectTopup = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(
     `/staff/mining/topups/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+
+// ---- USDT refund queue (staff) ----------------------------------------------
+// The money was already debited when the user asked, so "paid" records the tx
+// hash and moves no balance, while "reject" credits it back. See the handlers
+// in api/src/routes/staffMining.ts — getting those two backwards is a
+// double-debit or a free top-up.
+export type AdminRefund = {
+  id: string; user_id: string; email: string; username: string | null;
+  chain: string; chainLabel: string; address: string; amount: number;
+  status: string; tx_hash: string | null; reject_reason: string | null;
+  addressVerified: boolean; created_at: string;
+};
+export const fetchAdminRefunds = (status = "pending") =>
+  apiFetch<{ refunds: AdminRefund[] }>(`/staff/mining/refunds?status=${status}`);
+export const payRefund = (id: string, txHash: string) =>
+  apiFetch<{ ok: true }>(
+    `/staff/mining/refunds/${id}/paid`, { method: "POST", body: JSON.stringify({ txHash }) });
+export const rejectRefund = (id: string, reason: string) =>
+  apiFetch<{ ok: true; balanceMicro: number }>(
+    `/staff/mining/refunds/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
 
 export type ConversionWindow = {
   id: string; pot_points: number; opens_at: string; closes_at: string;

@@ -11,7 +11,8 @@ import {
   fetchAdminRigs, updateAdminRig, fetchConversion, openConversionWindow,
   settleConversionWindow, fetchStoreAdmin, createStoreItem, updateStoreItem,
   fetchRedemptions, decideRedemption,
-  fetchAdminTopups, confirmTopup, rejectTopup, type MiningStats,
+  fetchAdminTopups, confirmTopup, rejectTopup,
+  fetchAdminRefunds, payRefund, rejectRefund, type MiningStats,
 } from "@/lib/api";
 // The staff panel deliberately still shows POINTS, not USDT. This is where the
 // ledger is reconciled, and hiding the underlying unit from the people checking
@@ -165,6 +166,7 @@ export function MiningPanel() {
       <RigPanel />
 
       <TopupPanel />
+      <RefundPanel />
 
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -749,6 +751,115 @@ function RigPanel() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// The USDT refund queue — sending a user's own unspent deposit back to them
+// (founder, 2026-08-01).
+//
+// ⚠️ THE MONEY HAS ALREADY LEFT THEIR BALANCE. It was debited the moment they
+// asked, so that they could not spend it on a machine while this queued. That
+// makes the two buttons here asymmetric, and it is worth knowing which is which
+// before clicking either:
+//
+//   "Sent"     — you have ALREADY sent the USDT by hand from the treasury and
+//                are recording the proof. It moves no balance.
+//   "Reject"   — you are not sending it, so the money goes BACK to their credit.
+//
+// So: send the USDT first, then click Sent. Clicking Sent before sending means
+// a user is told their money is on the way when it is not.
+function RefundPanel() {
+  const refunds = useApi(() => fetchAdminRefunds("pending"), []);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function pay(id: string, amount: number, address: string) {
+    const txHash = window.prompt(
+      `Send ${amount} USDT to:\n\n${address}\n\n` +
+      "Do that FIRST, from the treasury wallet. Then paste the transaction hash here " +
+      "as proof — the user will see it.",
+    );
+    if (!txHash) return;
+    setBusy(id);
+    try {
+      await payRefund(id, txHash.trim());
+      setMsg(`Recorded ${amount} USDT as sent.`);
+      refunds.reload();
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
+  }
+
+  async function decline(id: string) {
+    const reason = window.prompt(
+      "Why is this being rejected? The user will see this, and their USDT credit goes back.",
+    );
+    if (!reason) return;
+    setBusy(id);
+    try {
+      await rejectRefund(id, reason);
+      setMsg("Rejected — the money went back to their balance.");
+      refunds.reload();
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
+  }
+
+  if (refunds.loading || !refunds.data) return null;
+  const rows = refunds.data.refunds;
+
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <h3 className="font-bold text-brand-ink">USDT refunds waiting to be sent</h3>
+      <p className="mt-1 text-xs text-muted">
+        This is a user asking for the deposit they have not spent. It is their own money
+        coming back, not their task earnings — those go out through the withdrawal queue.
+        The amount has already been taken off their credit.
+      </p>
+      {msg && <p className="mt-2 text-xs text-brand-ink">{msg}</p>}
+
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">Nothing waiting.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-xs">
+            <thead className="text-left uppercase text-muted">
+              <tr><th className="py-1">User</th><th>Amount</th><th>Send to</th><th>When</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line align-top">
+                  <td className="py-1.5">
+                    <div className="font-semibold text-brand-ink">{r.username ? `@${r.username}` : r.email}</div>
+                  </td>
+                  <td className="font-mono">{r.amount} USDT</td>
+                  <td className="max-w-[220px] break-all font-mono text-[10px]">
+                    {r.address}
+                    <div className="mt-0.5 font-sans text-[10px]">
+                      {/* Same signal the withdrawal queue carries: a signature
+                          proves the wallet is theirs; a typed address proves
+                          nothing, and a refund cannot be undone either. */}
+                      {r.addressVerified
+                        ? <span className="text-success">signed by the user&apos;s wallet</span>
+                        : <span className="text-pending">not checked — typed in</span>}
+                    </div>
+                  </td>
+                  <td className="text-muted">{timeAgo(r.created_at)}</td>
+                  <td className="whitespace-nowrap">
+                    <button disabled={busy === r.id} onClick={() => pay(r.id, r.amount, r.address)}
+                      className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
+                      Sent
+                    </button>
+                    <button disabled={busy === r.id} onClick={() => decline(r.id)}
+                      className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
+                      Reject
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -402,6 +402,11 @@ if (usingRealPostgres) {
     // The store debits ROZI at ORDER time, so two concurrent redeems would
     // otherwise both read the same balance and both go through.
     "store redeem",
+    // The USDT refund debits deposit credit at REQUEST time (founder,
+    // 2026-08-01). Without the lock, two concurrent refund requests both read
+    // the same deposit balance, both pass the affordability check, and we agree
+    // to send out twice what the user put in — with real money, on a chain.
+    "usdt refund",
   ];
   const locks = (await import("node:fs")).readFileSync(
     new URL("../routes/mining.ts", import.meta.url), "utf8",

@@ -739,9 +739,14 @@ const copy: Record<string, string> = {
   "topup.title": "Add USDT",
   "topup.subtitle": "Add USDT to buy mining machines.",
   "topup.balance": "Your USDT here",
-  "topup.spendOnly.title": "This USDT buys machines only.",
+  // ⚠️ THIS CARD USED TO SAY "you cannot take it back out". That stopped being
+  // true on 2026-08-01, when the founder opened refunds — and a false promise
+  // about money, sitting above the address someone is about to send money to,
+  // is the worst single string this app could carry. It says what is true now:
+  // this is not your task earnings, and what you have not spent, you can ask for.
+  "topup.spendOnly.title": "This USDT buys machines.",
   "topup.spendOnly.body":
-    "You cannot take it back out, and it is not the same as the money you earn from tasks. Only add what you want to spend on mining.",
+    "It is not the same as the money you earn from tasks. If you change your mind, you can ask us to send back whatever you have not spent.",
   "topup.how": "How to add USDT",
   // THE TOKEN AND THE NETWORK ARE TWO DIFFERENT THINGS, and this copy has to keep
   // them apart or it kills people's money.
@@ -783,6 +788,33 @@ const copy: Record<string, string> = {
   "topup.empty": "You have not added any USDT yet.",
   "topup.off.title": "Not open yet",
   "topup.off.body": "Adding USDT is not switched on. You can still buy machines with ROZI.",
+
+  // ---- Asking for a deposit back (founder, 2026-08-01) ----------------------
+  // Deliberately never called a "withdrawal": this sends back money the user
+  // themselves put in, and it is not the route their task earnings take out.
+  // Blurring those two on screen would teach people the wrong thing about which
+  // balance is which, on the screen where that matters most.
+  "refund.title": "Get your USDT back",
+  "refund.subtitle": "We can send back the USDT you added and have not spent.",
+  "refund.link": "Ask for your USDT back",
+  "refund.available": "You can ask for",
+  "refund.amountLabel": "How much do you want back?",
+  "refund.addressLabel": "Send it to this address",
+  "refund.addressHint": "Your own USDT wallet on BNB Smart Chain (BEP20).",
+  "refund.min": "The smallest amount we can send back is {min} USDT.",
+  "refund.notSpent": "Only USDT you have not spent on machines can come back.",
+  "refund.notEarnings": "This is not your task money. Your task money goes out from your wallet.",
+  "refund.submit": "Ask for it back",
+  "refund.sending": "Sending…",
+  "refund.done.title": "We got your request",
+  "refund.done.body":
+    "Someone from our team will send it and show you the transaction. This usually takes a few hours.",
+  "refund.history": "Your requests",
+  "refund.empty": "You have not asked for any money back.",
+  "refund.status.pending": "Sending",
+  "refund.status.paid": "Sent",
+  "refund.status.rejected": "Not sent",
+  "refund.none": "You have no USDT to send back yet.",
   "rigs.yourUsdt": "Your USDT",
   "rigs.payRozi": "Pay with ROZI",
   "rigs.payUsdt": "Pay with USDT",

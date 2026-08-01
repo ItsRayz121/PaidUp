@@ -87,7 +87,12 @@ const onchainProvider: PayoutProvider = {
   canSettle(chain) {
     const meta = chainById(chain);
     if (!meta || meta.kind !== "evm") return false; // Aptos: manual only
-    return Boolean(config.payoutSignerKey) && Boolean(config.payoutRpc[chain]);
+    // ⚠️ `.length > 0`, NOT Boolean(...). payoutRpc holds ARRAYS since the
+    // failover change, and Boolean([]) is TRUE — so the truthiness check this
+    // replaced would have reported "yes, I can auto-send" for a chain with no
+    // endpoint configured at all, on the one code path whose entire job is to
+    // refuse when it is not ready.
+    return Boolean(config.payoutSignerKey) && (config.payoutRpc[chain]?.length ?? 0) > 0;
   },
   async send(req) {
     if (!this.canSettle(req.chain)) {
