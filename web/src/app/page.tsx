@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
-import { TaskFlow } from "@/components/TaskFlow";
+import { TaskPreview } from "@/components/TaskFlow";
 import { Loading, ErrorState } from "@/components/state";
 import {
   ArrowRightIcon, GiftIcon, ShieldIcon, MineIcon, TasksIcon, WalletIcon,
@@ -60,6 +60,11 @@ export default function HomePage() {
   const ready2 = !mining.loading && !bal.loading;
   const minedMicro = m?.roziMicro ?? 0;
   const earnedMicro = pointsToRoziMicro(points);
+  // The single task home shows. The API already returns the catalog in the order
+  // it wants surfaced, so this is the top one rather than a pick made here — two
+  // screens choosing a "best" task by different rules is how they start
+  // disagreeing about what is on offer.
+  const first = tasks.data?.tasks?.[0];
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -163,17 +168,36 @@ export default function HomePage() {
         <Tile href="/wallet" Icon={WalletIcon} label={t("nav.wallet")} />
       </div>
 
-      {/* Tasks */}
-      <section>
-        <SectionTitle action={<Link href="/tasks" className="text-sm font-semibold text-brand">{t("tasks.seeAll")}</Link>}>
-          {t("tasks.title")}
-        </SectionTitle>
-        {tasks.loading ? <Loading lines={2} /> : tasks.error ? (
-          <ErrorState message={tasks.error} onRetry={tasks.reload} />
-        ) : (
-          <TaskFlow tasks={(tasks.data?.tasks ?? []).slice(0, 3)} />
-        )}
-      </section>
+      {/* ---- One task, and it is a door, not a desk (founder, 2026-08-01) ----
+          Home showed three fully interactive task cards: the sheet, the
+          disclosure and the proof box all opened right here. So the screen whose
+          job is "here is your balance, here is where to go" was also a place to
+          work, and /tasks — the screen that actually lists everything on offer —
+          became somewhere users had no reason to open.
+
+          Now there is ONE card, it is a preview, and tapping it lands on /tasks.
+          See TaskPreview in components/TaskFlow.tsx for why it must stay a link:
+          the sponsored disclosure (guardrail #3) lives in the sheet, so exactly
+          one screen may start an offer and the notice always sits in front of it.
+
+          The section hides itself ONLY when the call succeeded and the catalog is
+          genuinely empty — a heading with empty space under it reads as a card
+          that failed to load, and a fresh instance really has no tasks. It stays
+          up while loading and, above all, on error: hiding the whole section
+          there would turn "we could not reach the server" into a screen that
+          quietly claims there is no work available. */}
+      {(tasks.loading || tasks.error || first) && (
+        <section>
+          <SectionTitle action={<Link href="/tasks" className="text-sm font-semibold text-brand">{t("tasks.seeAll")}</Link>}>
+            {t("tasks.title")}
+          </SectionTitle>
+          {tasks.loading ? <Loading lines={2} /> : tasks.error ? (
+            <ErrorState message={tasks.error} onRetry={tasks.reload} />
+          ) : first ? (
+            <TaskPreview task={first} />
+          ) : null}
+        </section>
+      )}
     </div>
   );
 }

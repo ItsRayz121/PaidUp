@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Card, PointsPill, SponsoredTag, Button } from "./ui";
 import { offerIcon, taskIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon } from "./icons";
 import { formatPointsAsRozi } from "@/lib/format";
@@ -22,45 +23,19 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
   return (
     <>
       <ul className="space-y-3">
-        {tasks.map((task) => {
-          // An Admin-picked logo wins; otherwise fall back to the task type's
-          // icon. `taskIcon[...]` can still miss if the API ever learns a name
-          // the web app has not shipped yet, so the fallback is not optional.
-          const Icon = (task.icon && taskIcon[task.icon]) || offerIcon[task.type];
-          return (
-            <li key={task.id}>
-              <Card className="p-3.5">
-                <button
-                  onClick={() => setOpenTask(task)}
-                  className="flex w-full items-center gap-3 text-left"
-                >
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-                    <Icon size={22} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold text-brand-ink leading-snug">
-                      {task.title}
-                    </span>
-                    <span className="mt-1 flex items-center gap-2 text-xs text-muted">
-                      <ClockIcon size={13} />
-                      About {task.minutes} min
-                    </span>
-                  </span>
-                  <span className="flex flex-col items-end gap-1.5">
-                    <PointsPill points={task.points} />
-                    {task.proofStatus ? <ProofBadge status={task.proofStatus} /> : <ArrowRightIcon size={18} className="text-muted" />}
-                  </span>
-                </button>
-                <div className="mt-3 border-t border-line pt-2.5">
-                  {/* Our own tasks aren't sponsored — no third-party disclosure. */}
-                  {task.source === "custom"
-                    ? <span className="text-xs font-medium text-brand">RoziPay task</span>
-                    : <SponsoredTag network={task.network} />}
-                </div>
-              </Card>
-            </li>
-          );
-        })}
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <Card className="p-3.5">
+              <button
+                onClick={() => setOpenTask(task)}
+                className="flex w-full items-center gap-3 text-left"
+              >
+                <TaskRowBody task={task} />
+              </button>
+              <TaskCardFooter task={task} />
+            </Card>
+          </li>
+        ))}
       </ul>
 
       {openTask && openTask.source === "custom" && openTask.verifyMode === "proof" ? (
@@ -79,6 +54,77 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
 
       {started && <TaskStartedInfo task={started} onDone={() => setStarted(null)} />}
     </>
+  );
+}
+
+// ---- The task card, split in two so home and /tasks cannot drift -----------
+//
+// The row (logo, title, time, reward) and the footer line are shared between the
+// interactive list above and the single preview card on home. They are one
+// definition on purpose: the home card is meant to look like the thing it leads
+// to, and a second hand-copied version of this markup would be identical for
+// about a week.
+
+function TaskRowBody({ task }: { task: Task }) {
+  // An Admin-picked logo wins; otherwise fall back to the task type's icon.
+  // `taskIcon[...]` can still miss if the API ever learns a name the web app has
+  // not shipped yet, so the fallback is not optional.
+  const Icon = (task.icon && taskIcon[task.icon]) || offerIcon[task.type];
+  return (
+    <>
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+        <Icon size={22} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold text-brand-ink leading-snug">
+          {task.title}
+        </span>
+        <span className="mt-1 flex items-center gap-2 text-xs text-muted">
+          <ClockIcon size={13} />
+          About {task.minutes} min
+        </span>
+      </span>
+      <span className="flex flex-col items-end gap-1.5">
+        <PointsPill points={task.points} />
+        {task.proofStatus ? <ProofBadge status={task.proofStatus} /> : <ArrowRightIcon size={18} className="text-muted" />}
+      </span>
+    </>
+  );
+}
+
+function TaskCardFooter({ task }: { task: Task }) {
+  return (
+    <div className="mt-3 border-t border-line pt-2.5">
+      {/* Our own tasks aren't sponsored — no third-party disclosure. */}
+      {task.source === "custom"
+        ? <span className="text-xs font-medium text-brand">RoziPay task</span>
+        : <SponsoredTag network={task.network} />}
+    </div>
+  );
+}
+
+// ONE TASK ON HOME, AND TAPPING IT GOES TO /tasks (founder, 2026-08-01).
+//
+// It looks like a task card and it is deliberately NOT one: there is no sheet,
+// no proof box, no start. Home showed three fully interactive cards, so a user
+// could open a sponsored offer, read the disclosure and start it without ever
+// meeting the screen that lists what else is on offer — and the two screens
+// then held two copies of the same in-progress state. Home's job is to say
+// "there is work here"; /tasks is where work gets done.
+//
+// ⚠️ THE DISCLOSURE IS WHY THIS MUST STAY A LINK. Guardrail #3 says a user sees
+// the sponsored notice BEFORE starting a task, and that notice lives in the
+// sheet this card no longer opens. A card here that could start an offer would
+// have to carry the disclosure itself. Sending the user to /tasks keeps exactly
+// one place where an offer can begin, with the disclosure in front of it.
+export function TaskPreview({ task }: { task: Task }) {
+  return (
+    <Card className="p-3.5">
+      <Link href="/tasks" className="flex w-full items-center gap-3 text-left">
+        <TaskRowBody task={task} />
+      </Link>
+      <TaskCardFooter task={task} />
+    </Card>
   );
 }
 
