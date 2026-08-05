@@ -478,6 +478,47 @@ res = await app.inject({
 check("a Base payout address is refused, even though the address itself is valid",
   res.statusCode === 400, `${res.statusCode} ${res.body}`);
 
+console.log("\n-- per-user deposit addresses (CUSTODY_SPEC.md § 5 step 1) --");
+
+await setMiningSetting("usdtTopupEnabled", 1);
+await setMiningSetting("usdtTreasuryAddress", TREASURY); // treasury chain defaults to bep20
+
+res = await app.inject({ method: "GET", url: "/usdt", headers: tok(user) });
+check("no xpub configured => no personal address, shared treasury still shown",
+  res.json().personalAddress === null && res.json().treasuryAddress === TREASURY, res.body);
+
+// A throwaway BIP32 test key (fixed seed, never funded). This is the whole
+// point of xpub-only derivation: it is safe to put in a test file because it
+// can never authorize a spend on anything, real or not.
+config.custodyXpub.bep20 =
+  "xpub6DSwDWBPjdopcHjga5am3iJpVY4Doi7xqydtQWimdyWcM7s7op1GcgCKoy5AVZKn5knFtREQjZmP46Rz48nVB21fg4y8gnqj7yUdvHE7AuE";
+
+res = await app.inject({ method: "GET", url: "/usdt", headers: tok(user) });
+const addr1 = res.json().personalAddress;
+check("with an xpub configured, a personal address is handed out",
+  typeof addr1 === "string" && /^0x[0-9a-fA-F]{40}$/.test(addr1), res.body);
+check("the shared treasury address still rides along too — this is additive, not a replacement",
+  res.json().treasuryAddress === TREASURY);
+
+res = await app.inject({ method: "GET", url: "/usdt", headers: tok(user) });
+check("asking again returns the SAME address — it is stored, not re-derived each time",
+  res.json().personalAddress === addr1, res.body);
+
+res = await app.inject({ method: "GET", url: "/usdt", headers: tok(other) });
+const addr2 = res.json().personalAddress;
+check("a different user gets a different address",
+  typeof addr2 === "string" && addr2 !== addr1, `${addr1} vs ${addr2}`);
+
+const rows = await sql.all<{ user_id: string }>(
+  "SELECT user_id FROM deposit_wallets WHERE chain = 'bep20' AND address IN (?,?)", addr1, addr2);
+check("exactly two rows exist for the two addresses just issued", rows.length === 2, JSON.stringify(rows));
+
+config.custodyXpub.bep20 = ""; // leave the gate as we found it
+
+res = await app.inject({ method: "GET", url: "/usdt", headers: tok(user) });
+check("turning the xpub back off falls back to the shared address, address already on record or not",
+  res.json().personalAddress === null && res.json().treasuryAddress === TREASURY, res.body);
+
 // Put the economy back so a re-run and the other suites start clean.
 await setMiningSetting("usdtTopupEnabled", 0);
 await setMiningSetting("usdtTreasuryAddress", "");

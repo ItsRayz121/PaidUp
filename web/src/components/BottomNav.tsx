@@ -16,7 +16,13 @@ const items = [
   { href: "/", key: "nav.home", Icon: HomeIcon, also: [] as string[] },
   { href: "/tasks", key: "nav.tasks", Icon: TasksIcon, also: ["/surveys"] },
   { href: "/mine", key: "nav.mine", Icon: MineIcon, also: [] },
-  { href: "/wallet", key: "nav.wallet", Icon: WalletIcon, also: [] },
+  // /mine/send and /mine/receive are ROZI transfer screens that live at a
+  // /mine URL for historical reasons (they were built before Wallet existed),
+  // but Wallet's Send/Receive buttons are their ONLY entry point in the app —
+  // nothing on /mine links to them. Without this, tapping Send or Receive from
+  // Wallet silently switched the active tab to Mine, which read as being
+  // bounced out of the screen you were just on.
+  { href: "/wallet", key: "nav.wallet", Icon: WalletIcon, also: ["/mine/send", "/mine/receive"] },
   { href: "/profile", key: "nav.profile", Icon: ProfileIcon, also: ["/refer", "/help", "/kyc", "/leaderboard"] },
 ];
 

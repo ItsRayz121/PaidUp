@@ -7,8 +7,9 @@ import { StatusLegend } from "@/components/TaskFlow";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
   StarIcon, WalletIcon, GiftIcon, MineIcon, BoltIcon, ChipIcon,
-  SendIcon, ReceiveIcon,
+  SendIcon, ReceiveIcon, ArrowRightIcon,
 } from "@/components/icons";
+import { UsdtLogo, BnbLogo, RoziMark } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -16,7 +17,7 @@ import {
   type LedgerEntry, type RoziEntry,
 } from "@/lib/api";
 import {
-  formatRozi, usdtFromMicro, pointsToRoziMicro, totalRoziMicro, timeAgo,
+  formatRozi, usdtFromMicro, pointsToRoziMicro, timeAgo,
 } from "@/lib/format";
 
 // The money screen, and now the ONLY one (founder, 2026-07-30). Home no longer
@@ -55,6 +56,14 @@ export default function WalletPage() {
   // The history opens short (founder, 2026-08-01) — see the section below.
   // Declared up here with the other hooks because of the `ready` early return.
   const [showAll, setShowAll] = useState(false);
+  // Send/Receive open a token chooser instead of linking straight to ROZI
+  // (founder, 2026-08-05). ROZI and USDT are different balances with different
+  // screens — ROZI transfer is peer-to-peer by handle, USDT deposit/withdraw
+  // talks to a real chain — and a single button that only ever went to ROZI
+  // was invisible to anyone trying to move real USDT. See the note above the
+  // chooser components at the bottom of this file.
+  const [sendOpen, setSendOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -105,86 +114,51 @@ export default function WalletPage() {
         <p className="text-sm text-muted">{t("wallet.subtitle")}</p>
       </header>
 
-      {/* ---- The one balance, same number as home ----
-          Mined ROZI plus task/referral earnings, converted at the display ratio
-          in lib/format.ts. It MUST match home exactly: two screens disagreeing
-          about a balance is the single fastest way to lose a user's trust. */}
-      {mining.data && (
-        <Link href="/mine" className="block">
-          <Card className="overflow-hidden">
-            <div className="bg-brand p-5 text-white">
-              <p className="flex items-center gap-1.5 text-sm text-white/80">
-                <MineIcon size={16} /> {t("wallet.rozi.label")}
-              </p>
-              <p className="num mt-1 text-4xl font-extrabold">
-                {formatRozi(totalRoziMicro(mining.data.roziMicro, points))}{" "}
-                <span className="text-xl font-bold text-white/70">ROZI</span>
-              </p>
-              {points > 0 && (
-                <p className="num mt-1 text-xs text-white/70">
-                  {t("home.rozi.breakdown", {
-                    mined: formatRozi(mining.data.roziMicro),
-                    earned: formatRozi(pointsToRoziMicro(points)),
-                  })}
-                </p>
-              )}
-            </div>
-            <p className="flex gap-2 p-3.5 text-xs text-muted">
-              {/* Not StarIcon: that one is spent on earnings in the history list
-                  below, and reusing it here would blur mining and money in the
-                  place the copy works hardest to keep them apart. */}
-              <BoltIcon size={14} className="mt-0.5 shrink-0 text-brand" />
-              {t("wallet.rozi.notcash")}
-            </p>
-          </Card>
-        </Link>
-      )}
+      {/* ---- ROZI is OFF this screen, deliberately (founder, 2026-08-03) ----
+          The wallet is now the "real deposit/withdraw" screen — USDT and BNB,
+          with real logos — so the balance card that used to lead this screen
+          is gone. ROZI still gets exactly one line, in the token list below,
+          marked "Coming soon" like BNB. Mining itself is untouched — /mine
+          still shows the full balance and history. */}
 
-      {/* ---- Send / Receive (founder, 2026-07-30) ----
-          The two actions a wallet is expected to have, in the place people look
-          for them. Both screens already existed under /mine; nothing about the
-          transfer rules changed by surfacing them here — the send screen and
-          POST /mining/transfer still enforce the ID check, the account-age
-          minimum and the daily cap.
-
-          Send is disabled, not hidden, when transfers are off: a wallet missing
-          its Send button reads as a broken app, where a greyed one with a reason
-          reads as a feature that is not open yet. */}
+      {/* ---- Send / Receive (founder, 2026-07-30; token chooser 2026-08-05) ----
+          These open a chooser instead of linking straight to ROZI. ROZI
+          transfer (peer-to-peer, by handle) and USDT (a real chain, deposit
+          and withdraw are different screens with different rules) are not the
+          same action wearing two colours — routing both through one button
+          made USDT invisible here even though the token list two inches below
+          shows a USDT balance. Neither button is ever disabled at this level;
+          the specific row inside the sheet is what carries a reason, so
+          someone whose ROZI sending is off can still reach USDT. */}
       <div className="grid grid-cols-2 gap-2.5">
-        {mining.data?.transfersEnabled ? (
-          <Button href="/mine/send" variant="primary">
-            <SendIcon size={20} /> {t("wallet.send")}
-          </Button>
-        ) : (
-          <button
-            type="button"
-            disabled
-            title={t("wallet.sendOff")}
-            className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-semibold text-white opacity-50"
-          >
-            <SendIcon size={20} /> {t("wallet.send")}
-          </button>
-        )}
-        <Button href="/mine/receive" variant="ghost">
+        <Button onClick={() => setSendOpen(true)} variant="primary">
+          <SendIcon size={20} /> {t("wallet.send")}
+        </Button>
+        <Button onClick={() => setReceiveOpen(true)} variant="ghost">
           <ReceiveIcon size={20} /> {t("wallet.receive")}
         </Button>
       </div>
 
       {/* ---- The token list ----
           What this account holds, one row per token, the way a wallet app shows
-          it. ROZI and USDT are real balances. BNB is NOT — see the comment on
-          wallet.token.bnb.sub in lib/i18n.tsx: nothing in this system can make
-          that number move, so the row says "not open yet" rather than showing a
-          bare 0.00 that reads as a bug or as missing money. */}
+          it, with each token's REAL logo (tokenIcons.tsx) rather than a generic
+          app icon — a wallet showing the wrong mark for USDT/BNB is the kind of
+          detail that makes people distrust the whole screen.
+          USDT is a real balance. ROZI and BNB are NOT shown as balances here:
+          ROZI is mined and not yet cashable (see /mine for the real number),
+          BNB is not held by this system at all — see wallet.token.bnb.sub in
+          lib/i18n.tsx. Both say "Coming soon" rather than a bare 0.00, which
+          would read as a bug or as missing money. */}
       <section>
         <SectionTitle>{t("wallet.tokens.title")}</SectionTitle>
         <Card className="divide-y divide-line">
           <TokenRow
-            Icon={MineIcon}
+            Icon={RoziMark}
             name={t("wallet.token.rozi.name")}
             sub={t("wallet.token.rozi.sub")}
             symbol="ROZI"
-            amount={formatRozi(totalRoziMicro(mining.data?.roziMicro ?? 0, points))}
+            amount={t("wallet.token.comingSoon")}
+            muted
           />
           {/* Only while top-ups are on, which is the same rule /mine and
               /mine/rigs already use for every USDT entry point — the whole
@@ -193,7 +167,7 @@ export default function WalletPage() {
               in it" this codebase avoids everywhere else. */}
           {usdtOn && (
             <TokenRow
-              Icon={WalletIcon}
+              Icon={UsdtLogo}
               name={t("wallet.token.usdt.name")}
               sub={t("wallet.token.usdt.sub")}
               symbol="USDT"
@@ -204,7 +178,7 @@ export default function WalletPage() {
             />
           )}
           <TokenRow
-            Icon={BoltIcon}
+            Icon={BnbLogo}
             name={t("wallet.token.bnb.name")}
             sub={t("wallet.token.bnb.sub")}
             symbol="BNB"
@@ -302,8 +276,112 @@ export default function WalletPage() {
       <p className="text-center text-xs text-muted">
         {t("wallet.needHelp")} <Link href="/help" className="font-semibold text-brand">{t("wallet.contactSupport")}</Link>
       </p>
+
+      {sendOpen && (
+        <ChooserSheet titleId="send-chooser-title" title={t("wallet.chooser.send.title")} onClose={() => setSendOpen(false)}>
+          <ChooserRow
+            Icon={RoziMark}
+            title={t("wallet.token.rozi.name")}
+            sub={t("wallet.chooser.rozi.sendSub")}
+            href="/mine/send"
+            disabled={!mining.data?.transfersEnabled}
+            reason={t("wallet.sendOff")}
+          />
+          <ChooserRow
+            Icon={UsdtLogo}
+            title={t("wallet.chooser.usdt.cashout.title")}
+            sub={t("wallet.chooser.usdt.cashout.sub")}
+            href="/wallet/withdraw"
+          />
+          {/* Only when there is an unspent deposit to ask back for — a row
+              that opens onto "you have nothing to refund" is the "link to a
+              room with nothing in it" this codebase avoids everywhere else
+              (see the same rule on the topup screen's refund link). */}
+          {usdtOn && (usdt.data?.balanceMicro ?? 0) > 0 && (
+            <ChooserRow
+              Icon={UsdtLogo}
+              title={t("wallet.chooser.usdt.refund.title")}
+              sub={t("wallet.chooser.usdt.refund.sub")}
+              href="/mine/refund"
+            />
+          )}
+        </ChooserSheet>
+      )}
+
+      {receiveOpen && (
+        <ChooserSheet titleId="receive-chooser-title" title={t("wallet.chooser.receive.title")} onClose={() => setReceiveOpen(false)}>
+          <ChooserRow
+            Icon={RoziMark}
+            title={t("wallet.token.rozi.name")}
+            sub={t("wallet.chooser.rozi.receiveSub")}
+            href="/mine/receive"
+          />
+          {usdtOn && (
+            <ChooserRow
+              Icon={UsdtLogo}
+              title={t("wallet.chooser.usdt.deposit.title")}
+              sub={t("wallet.chooser.usdt.deposit.sub")}
+              href="/mine/topup"
+            />
+          )}
+        </ChooserSheet>
+      )}
     </div>
   );
+}
+
+// ---- Send / Receive token chooser ------------------------------------------
+//
+// A bottom sheet, not a second page: picking wrong should cost a tap to close,
+// not a back-navigation. Reuses the same dialog shape as TaskFlow's sheets
+// (backdrop button + rounded top card + drag handle) so a sheet looks the same
+// everywhere in the app.
+function ChooserSheet({
+  titleId, title, onClose, children,
+}: { titleId: string; title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center">
+      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/40" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="animate-rise relative w-full max-w-[480px] rounded-t-3xl bg-card p-5 pb-7"
+      >
+        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-line" />
+        <h2 id={titleId} className="mb-3 text-lg font-bold text-brand-ink">{title}</h2>
+        <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One row in the chooser. `disabled` greys it out and swaps the subtitle for
+// `reason` instead of hiding the row — same rule as the old Send button: a
+// row that vanishes reads as broken, a greyed one with a reason reads as a
+// feature that isn't open yet.
+function ChooserRow({
+  Icon, title, sub, href, disabled = false, reason,
+}: {
+  Icon: (p: { size?: number; className?: string }) => React.ReactElement;
+  title: string; sub: string; href: string; disabled?: boolean; reason?: string;
+}) {
+  const inner = (
+    <div className={`flex items-center gap-3 p-4 ${disabled ? "opacity-50" : "active:bg-brand-tint/40"}`}>
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+        <Icon size={22} />
+      </span>
+      <div className="min-w-0 flex-1 text-left">
+        <p className="font-bold text-brand-ink">{title}</p>
+        <p className="text-xs text-muted">{disabled && reason ? reason : sub}</p>
+      </div>
+      {!disabled && <ArrowRightIcon size={18} className="shrink-0 text-muted" />}
+    </div>
+  );
+  if (disabled) return <div title={reason}>{inner}</div>;
+  return <Link href={href} className="block">{inner}</Link>;
 }
 
 // ---- One history out of two ledgers ---------------------------------------

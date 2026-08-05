@@ -1,8 +1,11 @@
 # Per-user deposit & withdrawal wallets — spec and cost
 
-**Status: NOT BUILT. Specified only.** Founder decision 2026-07-30: give every
-user their own wallet address on USDT BEP20 + TRC20, which they can deposit to
-and withdraw from.
+**Status: STEP 1 SHIPPED (2026-08-03) for BEP20. Steps 2–4 NOT BUILT.**
+Founder decision 2026-07-30: give every user their own wallet address on USDT
+BEP20 + TRC20, which they can deposit to and withdraw from. Founder decision
+2026-08-03, on being told what a live seed phrase in this app would cost: build
+step 1 the safe way — an OFFLINE seed, an xpub-only server. See § 5b-2 below
+for what actually shipped and what it deliberately still does not do.
 
 This document exists because the answer to *"if this will not cost us"* is that
 it does cost, in three separate currencies — gas, engineering time, and legal
@@ -257,6 +260,52 @@ user asked, not a value that can move while the request sits in the queue.
 `personal_sign` and an exchange deposit address has no signer the user controls,
 so requiring a proof would lock out legitimate users. Typing an address in still
 works and says so on screen.
+
+---
+
+## 5b-2. Step 1, shipped (2026-08-03) — read-only addresses, BEP20
+
+`api/src/custody.ts` derives a deterministic BEP20 address per user from ONE
+account-level xpub (`CUSTODY_XPUB_BEP20`), using public-only (CKDpub)
+derivation. `getOrCreateDepositAddress()` in `db.ts` finds-or-creates the row
+in `deposit_wallets` the first time a user asks; `GET /usdt` returns it as
+`personalAddress`, additive alongside the existing shared `treasuryAddress`,
+and `/mine/topup` shows it in place of the shared address once present. 7
+checks in `npm run test:usdt`.
+
+**What this is:** exactly step 1 as scoped above, no more.
+- ✅ Every user with the feature on gets a real, unique, deterministic BEP20
+  address, derived, stored, shown.
+- ✅ Zero new private key material anywhere in this process — verified by the
+  test suite deriving from a throwaway public xpub with no funds behind it.
+- ❌ Nothing watches the chain. Nothing auto-credits. A deposit to a personal
+  address is confirmed **exactly the same way it always has been** — the user
+  pastes a tx hash, staff checks it, staff confirms it. That is unchanged by
+  this feature on purpose; the address is a display upgrade over the old
+  shared-pool address, not a new pipeline.
+- ❌ Nothing sweeps. Funds sitting on a derived address stay there; nobody has
+  moved anything into treasury by writing this code.
+- ❌ No withdrawal side. Paying a user is still `payout.ts` manual mode, same
+  as it was before this file existed.
+
+**Why the xpub, not the seed, even though the founder asked for the seed:**
+the founder's stated reason for wanting the seed was multi-chain support (TRC20
+today's ask, "Apple"/Aptos mentioned too) — the belief that only the raw seed
+can unlock other chains later. That's not quite right: a *chain-type branch*
+xpub (`m/44'/195'/0'` for TRON, derived offline from the same seed, whenever
+TRC20 is actually wanted) gets the same multi-chain outcome with the seed never
+leaving wherever it was generated. Aptos is Ed25519, not secp256k1 — it was
+never going to derive from this seed either way, xpub or not, so that part of
+the ask doesn't change the recommendation. Recorded here so a future reader
+doesn't see "founder wanted the seed" in history and assume this doc lost that
+argument; the founder heard the tradeoff and chose the xpub-only path.
+
+**Adding TRC20 later:** repeat this exactly — generate the TRON branch xpub
+OFFLINE from the same seed, add `CUSTODY_XPUB_TRC20` to config, add a `"trc20"`
+case to `custody.ts` (TRON also uses secp256k1, so `deriveChild` is identical;
+only the address ENCODING differs — base58check with a 0x41 prefix instead of
+a checksummed hex string). Nothing else in this file needs to change; the seed
+still never enters this codebase.
 
 ---
 

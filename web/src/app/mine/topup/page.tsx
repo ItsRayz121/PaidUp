@@ -50,6 +50,11 @@ export default function TopUpPage() {
   }
 
   const s = usdt.data;
+  // Prefer the user's own address once custody derivation is on (deployments
+  // without an xpub configured always get null here — see CUSTODY_SPEC.md §5
+  // step 1). Falls back to the one shared treasury address, exactly the
+  // behaviour this screen had before the per-user feature existed.
+  const depositAddress = s.personalAddress ?? s.treasuryAddress;
 
   const header = (
     <header>
@@ -85,7 +90,7 @@ export default function TopUpPage() {
   const canSubmit = tx.trim().length >= 6 && amtValid;
 
   function copyAddress() {
-    void navigator.clipboard?.writeText(s.treasuryAddress ?? "");
+    void navigator.clipboard?.writeText(depositAddress ?? "");
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   }
@@ -181,8 +186,15 @@ export default function TopUpPage() {
             <dt className="text-muted">{t("topup.network")}</dt>
             <dd className="font-bold text-brand-ink">{t("topup.networkValue")}</dd>
           </dl>
+          {/* When custody derivation is on, this is the user's OWN address —
+              still confirmed by staff reading the tx hash exactly as before
+              (CUSTODY_SPEC.md § 5 step 1 is read-only), but it means a deposit
+              is no longer landing in a pool shared with every other user. */}
+          {s.personalAddress && (
+            <p className="mb-2 text-xs font-semibold text-brand">{t("topup.yourOwnAddress")}</p>
+          )}
           <p className="num break-all border-t border-line pt-3 text-sm font-semibold text-brand-ink">
-            {s.treasuryAddress}
+            {depositAddress}
           </p>
           <button
             onClick={copyAddress}

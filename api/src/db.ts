@@ -14,6 +14,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
+import { deriveAddress } from "./custody.ts";
 
 export const now = () => new Date().toISOString();
 export const newId = () => randomUUID();
@@ -760,6 +761,27 @@ const MIGRATIONS = `
   -- price implies (real money buys convenience, not a discount), or leave it
   -- NULL. This is a founder decision each time, which is why nothing is seeded.
   ALTER TABLE rigs ADD COLUMN IF NOT EXISTS base_cost_usdt BIGINT;
+
+  -- Per-user deposit addresses (CUSTODY_SPEC.md § 5, step 1 — READ-ONLY: this
+  -- table only records an address that was shown to a user. Nothing sweeps,
+  -- nothing auto-credits; a deposit made to one of these still gets confirmed
+  -- the same way every deposit has been confirmed since launch, by a staff
+  -- member matching a pasted tx hash. See custody.ts for the derivation itself
+  -- — it holds no private key, only the account xpub named in config.ts.
+  CREATE SEQUENCE IF NOT EXISTS deposit_wallet_index_seq;
+  CREATE TABLE IF NOT EXISTS deposit_wallets (
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    chain      TEXT NOT NULL,
+    addr_index BIGINT NOT NULL,
+    address    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, chain)
+  );
+  -- Two different accounts must never be handed the same address, and the
+  -- same (chain, index) must never be derived twice — either one would mean
+  -- a deposit could land somewhere staff cannot tell apart.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_wallets_index ON deposit_wallets(chain, addr_index);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_wallets_address ON deposit_wallets(chain, LOWER(address));
 `;
 
 // ---------------------------------------------------------------------------
@@ -1446,4 +1468,40 @@ export async function usdtBalanceMicroOf(
     userId,
   );
   return Number(row?.bal ?? 0);
+}
+
+// Find-or-create the user's own deposit address on `chain` (CUSTODY_SPEC.md
+// § 5 step 1). Read-only: this writes a row that records what address was
+// shown, nothing more — no balance is touched, nothing sweeps or credits.
+//
+// No advisory lock (guardrail #8 is about read-balance-then-debit races; this
+// is neither). Instead: insert-if-absent, and on a lost race just re-read the
+// winner's row. The sequence value we drew is simply skipped — sequences are
+// allowed gaps, and skipping one derivation index costs nothing.
+export async function getOrCreateDepositAddress(
+  userId: string,
+  chain: "bep20",
+): Promise<string> {
+  const existing = await sql.get<{ address: string }>(
+    "SELECT address FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
+  if (existing) return existing.address;
+
+  const idx = await sql.get<{ nextval: string }>(
+    "SELECT nextval('deposit_wallet_index_seq') AS nextval");
+  const index = Number(idx!.nextval);
+  const address = deriveAddress(chain, index);
+
+  const inserted = await sql.get<{ address: string }>(
+    `INSERT INTO deposit_wallets (user_id, chain, addr_index, address, created_at)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT (user_id, chain) DO NOTHING
+     RETURNING address`,
+    userId, chain, index, address, now(),
+  );
+  if (inserted) return inserted.address;
+
+  // Lost the race to a concurrent request for the same user+chain.
+  const winner = await sql.get<{ address: string }>(
+    "SELECT address FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
+  return winner!.address;
 }

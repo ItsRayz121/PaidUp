@@ -9,13 +9,14 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf,
-  postUsdt, usdtBalanceMicroOf, usdtToMicro, type TxApi,
+  postUsdt, usdtBalanceMicroOf, usdtToMicro, getOrCreateDepositAddress, type TxApi,
 } from "../db.ts";
 import { chainById, validateAddress, type ChainId } from "../chains.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
 import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
+import { custodyEnabled } from "../custody.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -522,6 +523,14 @@ export async function miningRoutes(app: FastifyInstance) {
       treasuryAddress: enabled ? s.usdtTreasuryAddress : null,
       treasuryChain: enabled ? s.usdtTreasuryChain : null,
       chainLabel: chainById(s.usdtTreasuryChain)?.label ?? s.usdtTreasuryChain,
+      // Per-user deposit address (CUSTODY_SPEC.md § 5 step 1). Only present
+      // when an xpub is configured for the treasury chain — most deployments
+      // have none yet, and null means "use the shared address above", exactly
+      // like before this existed. Read-only: getting this address does not
+      // change how a deposit is confirmed (still a staff member + a tx hash).
+      personalAddress: enabled && custodyEnabled(s.usdtTreasuryChain)
+        ? await getOrCreateDepositAddress(userId, s.usdtTreasuryChain)
+        : null,
       minTopup: s.usdtMinTopup,
       maxTopup: s.usdtMaxTopup,
       topups: rows.map((r) => ({

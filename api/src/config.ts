@@ -236,6 +236,26 @@ export const config = {
   // you should know who you are sending money to.
   kycRequiredForWithdrawal:
     (process.env.KYC_REQUIRED_FOR_WITHDRAWAL ?? "true").toLowerCase() === "true",
+
+  // ---- Per-user deposit addresses (docs/CUSTODY_SPEC.md § 5, step 1) --------
+  // ONE public extended key (xpub) per chain, at the account-derivation branch
+  // (m/44'/60'/0' for BEP20/EVM). From this alone the server can derive an
+  // unlimited number of user addresses — but can never sign a transaction,
+  // because no private key is ever present in this process.
+  //
+  // ⚠️ FOUNDER DECISION 2026-08-03: "an xpub, never a seed phrase." Generate the
+  // seed OFFLINE (hardware wallet or an air-gapped tool), derive this ONE
+  // account-level xpub from it, and only THIS value goes into Railway. The seed
+  // itself must never be typed into this codebase, an env var, or a chat.
+  //
+  // Empty => the feature is off and every user falls back to the one shared
+  // treasury address (usdtTreasuryAddress) exactly as today. Setting this does
+  // NOT turn on auto-crediting or auto-withdrawal — those are stages 2-4 of
+  // CUSTODY_SPEC.md and are not built. Deposits made to a per-user address are
+  // still confirmed by a staff member pasting the tx hash, same as always.
+  custodyXpub: {
+    bep20: process.env.CUSTODY_XPUB_BEP20 ?? "",
+  },
 };
 
 export const isProdSecretsMissing =

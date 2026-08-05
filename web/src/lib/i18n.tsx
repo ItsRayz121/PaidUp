@@ -466,8 +466,29 @@ const copy: Record<string, string> = {
   "wallet.tokens.title": "Your tokens",
   // The TOKEN, not the company. This row said "RoziPay", so the list read
   // RoziPay / USDT / BNB — two rows naming a token and one naming the app.
+  // ---- Send / Receive chooser (founder, 2026-08-05) -------------------------
+  // ROZI transfer and USDT deposit/withdraw are different balances with
+  // different screens. Tapping Send or Receive opens this chooser instead of
+  // going straight to ROZI, which is what made USDT unreachable from here.
+  "wallet.chooser.send.title": "What do you want to send?",
+  "wallet.chooser.receive.title": "What do you want to receive?",
+  "wallet.chooser.rozi.sendSub": "To another RoziPay user, by handle",
+  "wallet.chooser.rozi.receiveSub": "Show your handle so a friend can send you ROZI",
+  "wallet.chooser.usdt.cashout.title": "USDT — cash out",
+  "wallet.chooser.usdt.cashout.sub": "Your task and referral earnings",
+  "wallet.chooser.usdt.refund.title": "USDT — get your deposit back",
+  "wallet.chooser.usdt.refund.sub": "Unspent USDT you added",
+  "wallet.chooser.usdt.deposit.title": "USDT — add money",
+  "wallet.chooser.usdt.deposit.sub": "Get your deposit address",
+
   "wallet.token.rozi.name": "ROZI",
-  "wallet.token.rozi.sub": "Mined, and earned from tasks",
+  // ⚠️ CHANGED 2026-08-03 (founder): the wallet screen no longer shows a ROZI
+  // balance at all, real or combined — it shows "Coming soon" like the BNB
+  // row. Mining is unaffected; this is a display choice on ONE screen. The
+  // full balance and history still live on /mine, which this sub-line points
+  // to in words rather than a tap target, since the row itself is not a link.
+  "wallet.token.rozi.sub": "See your mining balance on the Mine tab",
+  "wallet.token.comingSoon": "Coming soon",
   "wallet.token.usdt.name": "USDT",
   "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",
   // ⚠️ THE BNB ROW HAS NO BALANCE BEHIND IT AND MUST SAY SO. We hold no BNB for
@@ -808,6 +829,11 @@ const copy: Record<string, string> = {
   "topup.step2": "Copy the transaction ID from your wallet.",
   "topup.step3": "Paste it here with the amount you sent. We check it and add it.",
   "topup.address": "Send USDT to this address",
+  // Shown only when CUSTODY_SPEC.md § 5 step 1 is on (an xpub is configured)
+  // and this address was derived just for this account, not shared with every
+  // other user. Deposits are still confirmed by staff reading the tx hash —
+  // this line is not a promise of automatic crediting, only whose address it is.
+  "topup.yourOwnAddress": "This address belongs only to your account",
   "topup.addressWarn":
     "Send USDT only — never BNB or any other coin, and only on BNB Smart Chain (BEP20). Anything else is lost and we cannot get it back.",
   "topup.network": "Network",

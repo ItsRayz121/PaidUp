@@ -769,6 +769,52 @@ These override convenience or speed at every step:
   auto-login, linking, invites all armed.** NOTE: sending the real
   add-email/signup code emails still needs the Resend key.
 
+- **THE WALLET SCREEN GETS REAL TOKEN LOGOS, AND ROZI STEPS BACK OFF IT
+  (founder, 2026-08-03).** Verified: full e2e matrix unchanged and green (72
+  usdt — was 65, +7 for the new address feature — plus every other suite:
+  41 unit + 50 mining e2e + 31 profile + 25 conversion + 29 store + 14
+  referrals + 15 admin + 43 kyc + 9 push + 45 telegram + 5 proxy + 52 wallet +
+  15 admin); api + web typecheck, eslint, web production build all clean.
+  - **Real brand-coloured USDT and BNB marks** replace the generic outline
+    icons on the `/wallet` token list — new `web/src/components/tokenIcons.tsx`,
+    deliberately separate from `icons.tsx` (that file is outline-only,
+    currentColor, functional UI icons; a token logo identifies a specific coin
+    and needs fixed brand colours regardless of theme, the same reason a bank
+    app never re-themes a Visa mark).
+  - **ROZI is off `/wallet` entirely**, top balance card included. The screen
+    that shows deposits/withdrawals/Send/Receive no longer states a ROZI
+    number anywhere; its token-list row reads "Coming soon" instead, same
+    treatment as the BNB row. `/mine` is completely untouched — the full
+    mined+earned balance and history still live there exactly as before; this
+    was a display change on one screen, not a mining change.
+  - **Per-user USDT deposit addresses, STEP 1 of `docs/CUSTODY_SPEC.md` § 5,
+    now shipped for BEP20.** `api/src/custody.ts` derives a deterministic
+    address per user from ONE public account xpub (`CUSTODY_XPUB_BEP20`) —
+    public-key-only (CKDpub) derivation, so this process holds no private key
+    and can never sign anything. `GET /usdt` returns it as `personalAddress`,
+    additive alongside the existing shared `treasuryAddress`; `/mine/topup`
+    shows it once present. **Still exactly step 1**: nothing watches the
+    chain, nothing auto-credits or sweeps, a deposit is confirmed by staff
+    reading a pasted tx hash precisely as it always has been. Steps 2–4
+    (auto-credit, sweeping, auto-withdrawal) are unbuilt and each needs its
+    own founder sign-off per `CUSTODY_SPEC.md` § 3 — this did not open that
+    door, it only removed the "same address as everyone else" wart.
+  - ⚠️ **The founder asked to provide the actual seed phrase; that was declined.**
+    A live seed in this app can spend every user's funds on every chain,
+    forever, the moment the server is breached — the exact failure mode
+    `CUSTODY_SPEC.md` § 2c was written to keep out. The xpub-only path gets the
+    same outcome the founder wanted (a wallet "extracted from the official
+    wallet," ready for more chains later) with none of that blast radius: a
+    leaked xpub exposes addresses and balances, never spending power. See
+    `CUSTODY_SPEC.md` § 5b-2 for the full reasoning, including why Aptos
+    (Ed25519) was never going to ride the same derivation as BEP20/TRC20
+    (secp256k1) regardless of seed vs. xpub.
+  - ⚠️ **The admin KYC toggle was NOT flipped.** `/staff → Verify IDs` already
+    has an on/off switch (`kyc_enabled` in `app_settings`, built 2026-08-01)
+    that waives the ID check on withdrawals, refunds and ROZI transfers all at
+    once — deposits never required it. Flipping it needs the live production
+    database; do it from `/staff` directly when ready.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
@@ -779,12 +825,16 @@ Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
 
 **Phase 2 remaining:** Sentry is ❌ **declined by the founder (2026-08-01)** — closed, do not re-raise it as outstanding. Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
 
-**What is actually still blocked on the founder (2026-08-01):** just two things.
+**What is actually still blocked on the founder (2026-08-03):** just two things.
 (1) **A real ad network approval** — applications are in and none have landed;
 the unlock is daily users, not code. Send me the four postback items for any
 network that says yes and the adapter + smoke test is one session.
-(2) **The xpub + a BSC RPC endpoint** if per-user deposit addresses are wanted
-(`CUSTODY_SPEC.md` § 5 step 1). **An xpub, never a seed phrase.** Everything
-else on the old checklist is done, deferred by decision, or declined.
+(2) **The BEP20 xpub itself.** Per-user deposit addresses (step 1) are built
+and tested (`CUSTODY_SPEC.md` § 5b-2) — the only thing missing to turn it on is
+`CUSTODY_XPUB_BEP20` as a Railway env var. Generate the seed OFFLINE (hardware
+wallet or an air-gapped tool), derive the account-level xpub at `m/44'/60'/0'`
+from it, send me that string. **An xpub, never a seed phrase** — send me the
+seed itself and I'll ask you to regenerate it, the same way I did in-session.
+Everything else on the old checklist is done, deferred by decision, or declined.
 
 See `docs/` for the full spec.

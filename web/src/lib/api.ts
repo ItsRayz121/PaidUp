@@ -609,6 +609,10 @@ export type UsdtState = {
   treasuryAddress: string | null;
   treasuryChain: string | null;
   chainLabel: string;
+  // Per-user deposit address (CUSTODY_SPEC.md § 5 step 1). Null on every
+  // deployment that has not set an xpub — meaning "use treasuryAddress above",
+  // exactly as before this existed.
+  personalAddress: string | null;
   minTopup: number;
   maxTopup: number;
   topups: UsdtTopup[];

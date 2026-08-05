@@ -35,11 +35,13 @@ export default function ReceiveRoziPage() {
     window.setTimeout(() => setCopied(null), 2000);
   }
 
+  // Reached ONLY from /wallet's Receive button today (nothing on /mine links
+  // here) — see the comment on the /wallet BottomNav entry.
   const header = (
     <header>
-      <Link href="/mine" className="inline-flex items-center gap-1 text-sm font-semibold text-brand">
+      <Link href="/wallet" className="inline-flex items-center gap-1 text-sm font-semibold text-brand">
         <ArrowRightIcon size={16} className="rotate-180" />
-        {t("nav.mine")}
+        {t("nav.wallet")}
       </Link>
       <h1 className="mt-2 text-xl font-bold text-brand-ink">{t("receive.title")}</h1>
       <p className="text-sm text-muted">{t("receive.subtitle")}</p>

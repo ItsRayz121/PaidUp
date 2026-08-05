@@ -73,9 +73,12 @@ export default function SendRoziPage() {
     }
   }
 
+  // Reached ONLY from /wallet's Send button today (nothing on /mine links
+  // here) — so every way back off this screen goes to Wallet, not Mine. See
+  // the comment on the /wallet BottomNav entry for why this matters.
   const header = (
     <header className="flex items-center gap-2">
-      <Link href="/mine" aria-label="Back to mining" className="text-brand">
+      <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
         <ArrowRightIcon size={22} className="rotate-180" />
       </Link>
       <h1 className="text-xl font-bold text-brand-ink">{t("send.title")}</h1>
@@ -94,7 +97,7 @@ export default function SendRoziPage() {
             {t("send.done", { n: formatRozi(sent.received * ROZI_SCALE) })}
           </p>
         </Card>
-        <Button href="/mine" full>{t("nav.mine")}</Button>
+        <Button href="/wallet" full>{t("nav.wallet")}</Button>
       </div>
     );
   }
@@ -112,7 +115,7 @@ export default function SendRoziPage() {
           <p className="mt-3 font-bold text-brand-ink">{t("send.off.title")}</p>
           <p className="mt-1 text-sm text-muted">{t("send.off.body")}</p>
         </Card>
-        <Button href="/mine" full>{t("nav.mine")}</Button>
+        <Button href="/wallet" full>{t("nav.wallet")}</Button>
       </div>
     );
   }
@@ -153,7 +156,7 @@ export default function SendRoziPage() {
             {t("send.age.body", { days: String(tr.minAccountDays) })}
           </p>
         </Card>
-        <Button href="/mine" full>{t("nav.mine")}</Button>
+        <Button href="/wallet" full>{t("nav.wallet")}</Button>
       </div>
     );
   }
