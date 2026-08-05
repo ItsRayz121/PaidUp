@@ -108,9 +108,20 @@ export const config = {
   // On-chain is OFF unless explicitly set AND a signer key is present, and it
   // must be proven on testnet before mainnet use — see api/src/payout.ts.
   payoutMode: (process.env.PAYOUT_MODE ?? "manual") as "manual" | "onchain",
-  // Treasury signer for onchain mode (EVM hot wallet private key, 0x + 64 hex).
-  // Empty => onchain mode refuses to send (falls back to requiring manual hash).
-  payoutSignerKey: process.env.PAYOUT_SIGNER_KEY ?? "",
+  // Treasury signer for onchain mode — encrypted at rest (api/src/signer.ts),
+  // NOT a plaintext private key in an env var. TWO separate variables: the
+  // ciphertext, and the AES key that unlocks it. Both empty => onchain mode
+  // refuses to send (falls back to requiring a manual hash), same as before.
+  treasuryKeyEncrypted: process.env.TREASURY_KEY_ENCRYPTED ?? "",
+  treasuryKeySecret: process.env.TREASURY_KEY_SECRET ?? "",
+  // Ceiling for FULLY AUTOMATIC withdrawal (founder, 2026-08-05) — a request at
+  // or under this settles the instant it's made, no staff step at all. Above
+  // it, or if the account is held (users.withdrawal_hold_reason), it drops
+  // into the same manual queue every withdrawal used to go through — nothing
+  // about the manual path changed. Defaulted to match agentApprovalMaxPoints
+  // (the founder deferred a real number for this; it needs revisiting once
+  // real withdrawal volume exists — see CUSTODY_SPEC.md § 3).
+  autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 5000),
   // Per-chain JSON-RPC endpoints. A LIST, not one URL (founder, 2026-08-01):
   // set RPC_BEP20 to a comma-separated list and callers try them in order,
   // moving to the next on a network error, a 429, or a 5xx.

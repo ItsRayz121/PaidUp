@@ -8,6 +8,7 @@ import { validateAddress, chainIsOffered, chainById, type ChainId } from "../cha
 import { checkPayoutAddressReuse } from "../fraud.ts";
 import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
+import { tryAutoSettle } from "../autoWithdraw.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -197,6 +198,16 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // Flag (never block) if this wallet is shared across accounts — staff see it
     // in the fraud queue before approving the payout. Runs after the hold commits.
     await checkPayoutAddressReuse(userId, address);
+
+    // Fully automatic withdrawal (founder, 2026-08-05): try to settle right
+    // now. Never blocks or fails the request either way — see the guarantee
+    // on tryAutoSettle. Below the auto ceiling and the account isn't held?
+    // The user gets "paid" back immediately. Otherwise this is a no-op and
+    // the request sits in the same manual queue as always.
+    const auto = await tryAutoSettle(id);
+    if (auto.settled) {
+      return { request: { id, amount: amountPoints, chain, address, status: "paid", txHash: auto.txHash, usdt: auto.usdt } };
+    }
 
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
   }));

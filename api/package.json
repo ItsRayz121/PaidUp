@@ -14,6 +14,8 @@
     "test:proxy": "tsx src/tests/proxy.e2e.ts",
     "test:mining": "tsx --test src/tests/mining.test.ts",
     "test:custody": "tsx --test src/tests/custody.test.ts",
+    "test:signer": "tsx --test src/tests/signer.test.ts",
+    "test:autowithdraw": "tsx src/tests/autoWithdraw.e2e.ts",
     "test:mining:e2e": "tsx src/tests/mining.e2e.ts",
     "test:kyc": "tsx src/tests/kyc.e2e.ts",
     "test:telegram": "tsx src/tests/telegram.e2e.ts",
@@ -36,6 +38,7 @@
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0",
     "tsx": "^4.19.2",
+    "viem": "^2.55.11",
     "web-push": "^3.6.7",
     "zod": "^3.24.1"
   },

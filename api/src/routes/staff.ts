@@ -569,6 +569,54 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true, status: parsed.data.status };
   }));
 
+  // ---- Manager/Admin: hold a user's withdrawals ---------------------------
+  // The safety valve for FULLY AUTOMATIC on-chain withdrawal (founder,
+  // 2026-08-05, api/src/autoWithdraw.ts). Narrower than suspending the whole
+  // account (/staff/users/:id/status above): a held user can still do
+  // everything else — mine, earn, receive ROZI — they just can't have a
+  // withdrawal auto-pay. A held request doesn't vanish; it drops into the
+  // exact same manual Agent->Manager queue every withdrawal used to go
+  // through, so staff still see it and can approve it by hand if that's
+  // actually the right call.
+  const holdSchema = z.object({
+    // null clears the hold. A reason is mandatory when SETTING one (same rule
+    // as suspend, above) — an unexplained hold on someone's money is the kind
+    // of thing that must always have a written "why" attached.
+    reason: z.string().trim().max(500).nullable(),
+    // Omitted or null = PERMANENT, stays held until a staff member clears it.
+    // A date = lifts itself the instant it passes (checked at use, see
+    // db.ts's isWithdrawalHeld — nothing to sweep or expire on a schedule).
+    until: z.string().datetime().nullable().optional(),
+  });
+  app.post("/staff/users/:id/withdrawal-hold", staffGuard(["manager", "admin"], async ({ userId: actorId, role }, req, reply) => {
+    const parsed = holdSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Say why, or clear the hold." });
+    const { reason, until } = parsed.data;
+    if (reason !== null && reason.length < 3) {
+      return reply.code(400).send({ error: "Say why — a few words is enough." });
+    }
+    const targetId = (req.params as { id: string }).id;
+
+    const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    await sql.tx(async (t) => {
+      await t.run(
+        `UPDATE users SET
+           withdrawal_hold_reason = ?, withdrawal_hold_until = ?,
+           withdrawal_hold_by = ?, withdrawal_hold_at = ?
+         WHERE id = ?`,
+        reason, until ?? null, reason ? actorId : null, reason ? now() : null, targetId,
+      );
+      await logAudit({
+        actorUserId: actorId, actorRole: role,
+        action: reason ? "withdrawal_held" : "withdrawal_hold_cleared",
+        targetUserId: targetId, detail: reason ?? undefined,
+      }, t);
+    });
+    return { ok: true, held: reason !== null, reason, until: until ?? null };
+  }));
+
   // ---- Admin: adjust a user's points by hand ------------------------------
   // This MINTS MONEY. Points are redeemable for real USDT, so a credit here is a
   // withdrawal from the treasury with extra steps. Constraints, all deliberate:

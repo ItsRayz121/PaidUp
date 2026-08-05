@@ -782,6 +782,19 @@ const MIGRATIONS = `
   -- a deposit could land somewhere staff cannot tell apart.
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_wallets_index ON deposit_wallets(chain, addr_index);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_wallets_address ON deposit_wallets(chain, LOWER(address));
+
+  -- The safety valve for automatic on-chain withdrawal (founder, 2026-08-05):
+  -- "fully automatic, staff can hold/pause/restrict an account or funds". A
+  -- withdrawal request from a held account is never auto-settled — it drops
+  -- into the exact same manual queue every withdrawal used to go through, so
+  -- "held" costs nothing extra to implement on the paying side. NULL reason =
+  -- not held. A hold with a NULL until date is PERMANENT until a staff member
+  -- explicitly clears it; a hold with a date lifts itself the moment that date
+  -- passes, checked at the point of use, never swept or cleaned up separately.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_reason TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_until TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_by TEXT REFERENCES users(id);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_at TEXT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -1348,6 +1361,22 @@ export async function logAudit(
     params.targetUserId ?? null, params.detail ?? null, now(),
   );
   return id;
+}
+
+// Is this account currently held from automatic withdrawal? A permanent hold
+// (withdrawal_hold_until IS NULL) stays held until a staff member clears it; a
+// timed hold lifts itself the instant `until` passes — checked right here, at
+// the point of use, so there is nothing to sweep or expire on a schedule.
+export async function isWithdrawalHeld(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<{ held: boolean; reason: string | null }> {
+  const row = await t.get<{ withdrawal_hold_reason: string | null; withdrawal_hold_until: string | null }>(
+    "SELECT withdrawal_hold_reason, withdrawal_hold_until FROM users WHERE id = ?", userId,
+  );
+  if (!row?.withdrawal_hold_reason) return { held: false, reason: null };
+  if (row.withdrawal_hold_until && row.withdrawal_hold_until <= now()) return { held: false, reason: null };
+  return { held: true, reason: row.withdrawal_hold_reason };
 }
 
 export async function balanceOf(

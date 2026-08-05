@@ -1,11 +1,16 @@
 # Per-user deposit & withdrawal wallets — spec and cost
 
-**Status: STEP 1 SHIPPED (2026-08-03) for BEP20. Steps 2–4 NOT BUILT.**
-Founder decision 2026-07-30: give every user their own wallet address on USDT
-BEP20 + TRC20, which they can deposit to and withdraw from. Founder decision
-2026-08-03, on being told what a live seed phrase in this app would cost: build
-step 1 the safe way — an OFFLINE seed, an xpub-only server. See § 5b-2 below
-for what actually shipped and what it deliberately still does not do.
+**Status (2026-08-05): deposit side is step 1 (BEP20, read-only, live).
+Withdrawal side now has a real signer — step 4's signing engine, built and
+unit-tested, NOT YET LIVE. Steps 2–3 (chain listener, sweeper) still do not
+exist.** Founder decision 2026-07-30: give every user their own wallet address
+on USDT BEP20 + TRC20, deposit and withdraw. Founder decision 2026-08-03: the
+deposit side ships the safe way — an offline seed, an xpub-only server (§
+5b-2). Founder decision 2026-08-05, after being told exactly what it costs:
+build the withdrawal signer too, encrypted-at-rest (not a KMS — cost was the
+deciding factor), fully automatic, with a per-account hold as the safety valve
+instead of a per-request approval gate. See § 5c below for what that is and,
+just as important, what it still is not.
 
 This document exists because the answer to *"if this will not cost us"* is that
 it does cost, in three separate currencies — gas, engineering time, and legal
@@ -306,6 +311,82 @@ case to `custody.ts` (TRON also uses secp256k1, so `deriveChild` is identical;
 only the address ENCODING differs — base58check with a 0x41 prefix instead of
 a checksummed hex string). Nothing else in this file needs to change; the seed
 still never enters this codebase.
+
+---
+
+## 5c. The withdrawal signer, built (2026-08-05) — NOT YET LIVE
+
+The founder was told plainly what this reverses: real custody, the licensed
+activity (PVARA) every other decision in this product routes around, and the
+first private key this codebase has ever held that can actually spend. They
+chose to proceed anyway, on the reasoning that a legal opinion is obtainable
+and a stuck product is not — recorded here as a decision with a date, the same
+way § 2d records the refund decision, not as drift to be quietly reverted.
+
+**What exists:**
+
+- **`api/src/signer.ts`** — AES-256-GCM encrypted-at-rest storage for ONE
+  treasury private key, in the exact pattern `kyc.ts` already used for ID
+  photos: two SEPARATE env vars (`TREASURY_KEY_ENCRYPTED`, the ciphertext;
+  `TREASURY_KEY_SECRET`, the AES key), so a leak of either alone is not enough
+  to reconstruct the key. ⚠️ **This is explicitly NOT a KMS/HSM** — decision 1
+  of § 3 above was answered "free" over "small monthly cost", so anyone with
+  real Railway dashboard access to this service can read both variables the
+  same way the running process does. That gap is what a KMS closes and this
+  does not; upgrading later means changing this one file.
+- **`api/src/payout.ts`**'s `onchainProvider` — the ERC-20 `transfer` signer
+  that was scaffolded and deliberately left unimplemented is now real, via
+  `viem`. Per-chain USDT contract address + decimals live in one map
+  (`ONCHAIN_CHAINS`) specifically because BSC's USDT has **18 decimals**, not
+  the 6 most USDT deployments use — the exact silent-wrong-amount bug this map
+  exists to prevent. Only `bep20` is filled in, matching "ONE CHAIN IN, ONE
+  CHAIN OUT".
+- **`api/src/autoWithdraw.ts`** — the "fully automatic" half. Every new
+  withdrawal request tries to settle itself the instant it's created. It
+  succeeds only when ALL of: `PAYOUT_MODE=onchain`, a treasury key is
+  configured, the amount is at or under `AUTO_WITHDRAW_MAX_POINTS` (defaults
+  to 5000 — the founder deferred a real number for this; it needs revisiting
+  with actual withdrawal volume), and the account is not held. Fail any one of
+  those and the request drops into the **exact same manual Agent→Manager
+  queue** withdrawals have always used — nothing about that path changed.
+- **The hold, `POST /staff/users/:id/withdrawal-hold`** — manager/admin only,
+  a mandatory reason to set one, `null` to clear it, an optional `until` for a
+  timed hold that lifts itself the instant the date passes (checked at the
+  point of use, nothing scheduled). Narrower than suspending the whole
+  account: a held user still mines, earns, and receives ROZI — only their
+  withdrawals stop auto-paying and fall back to manual review.
+
+**What does NOT exist yet, and this is load-bearing:** a chain listener, a
+sweeper, and a gas funder (§ 5, steps 2–3). Nothing watches for deposits or
+consolidates them into the treasury automatically — deposits are still
+confirmed by a staff member reading a pasted tx hash, exactly as before this
+section existed. The treasury wallet this signer pays FROM has to be funded by
+hand, on a schedule, by a human, until steps 2–3 exist. "Fully automatic"
+describes the withdrawal side only.
+
+**What is proven and what is not.** `npm run test:signer` pins the exact
+address and ERC-20 calldata this signer produces against a public secp256k1
+test vector — the cryptography is verified. `npm run test:autowithdraw` proves
+every refusal path (mode off, no key, over the ceiling, held account) never
+reaches a network call. **Neither test, nor anything else in this repo, has
+broadcast a real transaction.** Per the standing rule in `payout.ts`'s header
+comment — unchanged by any of this — `PAYOUT_MODE` must stay `manual` until
+this has been run end-to-end on BSC testnet with a funded test wallet,
+including the failure cases (insufficient gas mid-send, a duplicate trigger,
+an RPC endpoint going down mid-broadcast). Moving mainnet funds with code that
+has never been exercised is exactly what guardrail #1/#4 exist to prevent.
+
+**To actually turn this on, in order:**
+1. Generate a NEW wallet for the treasury (not the deposit-derivation seed —
+   a separate key, whose only job is holding and sending USDT/BNB).
+2. Encrypt its private key locally (a script mirroring `derive-xpub.mjs`'s
+   pattern will be provided when this step is reached) and set the resulting
+   ciphertext + AES key as `TREASURY_KEY_ENCRYPTED` / `TREASURY_KEY_SECRET`.
+3. Fund that wallet: real USDT for payouts, real BNB for gas.
+4. Prove the whole path on BSC **testnet** first — testnet BNB, a testnet
+   USDT-like token, real withdrawal requests, real failures induced on
+   purpose.
+5. Only then set `PAYOUT_MODE=onchain` on the real deployment.
 
 ---
 

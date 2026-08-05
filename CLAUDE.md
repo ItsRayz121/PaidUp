@@ -815,6 +815,58 @@ These override convenience or speed at every step:
     once — deposits never required it. Flipping it needs the live production
     database; do it from `/staff` directly when ready.
 
+- **REAL CUSTODY, PART ONE: A WITHDRAWAL SIGNER (founder, 2026-08-05).** The
+  founder asked for platform-controlled wallets (deposit AND withdraw from one
+  address, platform can freeze on abuse) after being told the per-user
+  deposit addresses shipped 2026-08-03 are watch-only and can never spend —
+  that was the whole safety property. Told plainly what the alternative
+  costs — this is the licensed activity (PVARA) every other decision in this
+  product has routed around, and needs a real legal opinion, not a coding
+  answer — the founder chose to proceed anyway. Verified: `npm run
+  test:signer` (8, pins the exact address + ERC-20 calldata a known test key
+  produces) + `npm run test:autowithdraw` (15, proves every refusal path
+  never reaches a network call) + all 15 other suites green (390+ checks);
+  api typecheck clean. Full detail and the activation checklist:
+  `CUSTODY_SPEC.md` § 5c.
+  - **This is the withdrawal side ONLY, and it is NOT LIVE.** `signer.ts`
+    holds one encrypted treasury private key (AES-256-GCM, two separate env
+    vars — `TREASURY_KEY_ENCRYPTED` + `TREASURY_KEY_SECRET` — same pattern
+    `kyc.ts` already used for ID photos). `payout.ts`'s `onchainProvider`,
+    scaffolded since payouts existed and left deliberately unimplemented, now
+    really signs and broadcasts a USDT `transfer` via `viem` — per-chain
+    contract + decimals in one map (`ONCHAIN_CHAINS`) because BSC USDT is
+    **18 decimals**, not the 6 most USDT deployments use, which is exactly
+    the silent-wrong-amount bug that map exists to prevent.
+  - ⚠️ **"FREE" WAS THE FOUNDER'S CHOICE OVER A KMS, AND THAT IS A REAL GAP,
+    NOT A ROUNDING ERROR.** A cloud KMS/HSM signs without ever exposing the
+    key; encrypted-at-rest does not — anyone with real Railway dashboard
+    access to this service can read both env vars the same way the process
+    does. Told clearly before building; recorded here so it reads as a
+    decision, not an oversight, if it's ever questioned.
+  - **`autoWithdraw.ts` is the "fully automatic" half**: every new
+    withdrawal tries to settle itself the instant it's created, no staff
+    click. It only succeeds when `PAYOUT_MODE=onchain` AND a treasury key
+    exists AND the amount is at or under `AUTO_WITHDRAW_MAX_POINTS`
+    (defaults to 5000 — the founder deferred a real number; needs revisiting
+    with real volume) AND the account is not held. Miss any one of those and
+    the request drops into the **unchanged** manual Agent→Manager queue.
+  - **The safety valve the founder asked for**: `POST
+    /staff/users/:id/withdrawal-hold` (manager/admin, mandatory reason,
+    optional `until` for a hold that lifts itself). Narrower than suspending
+    the whole account — a held user still mines and earns, only their
+    withdrawals stop auto-paying.
+  - ⚠️ **`PAYOUT_MODE` stays `manual` until this is proven on BSC testnet
+    end-to-end, including the failure cases.** Nothing in this build has
+    broadcast a real transaction — the tests pin the cryptography and prove
+    the refusal paths, deliberately never reaching a live RPC call. Turning
+    this on for real needs a NEW treasury wallet (not the deposit-derivation
+    seed), funded with real USDT + gas, proven on testnet first — see
+    `CUSTODY_SPEC.md` § 5c for the exact activation order.
+  - ⚠️ **Steps 2–3 of the custody build (a chain listener, a sweeper) still
+    do not exist.** Deposits are still confirmed by staff reading a pasted tx
+    hash. "Fully automatic" describes withdrawals only — do not read this
+    entry as "custody is done," it is the harder, narrower half of it.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
@@ -825,16 +877,19 @@ Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
 
 **Phase 2 remaining:** Sentry is ❌ **declined by the founder (2026-08-01)** — closed, do not re-raise it as outstanding. Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
 
-**What is actually still blocked on the founder (2026-08-03):** just two things.
+**What is actually still blocked on the founder (2026-08-05):** the xpub is
+done — `CUSTODY_XPUB_BEP20` is set and live, per-user deposit addresses work.
+Two things remain.
 (1) **A real ad network approval** — applications are in and none have landed;
 the unlock is daily users, not code. Send me the four postback items for any
 network that says yes and the adapter + smoke test is one session.
-(2) **The BEP20 xpub itself.** Per-user deposit addresses (step 1) are built
-and tested (`CUSTODY_SPEC.md` § 5b-2) — the only thing missing to turn it on is
-`CUSTODY_XPUB_BEP20` as a Railway env var. Generate the seed OFFLINE (hardware
-wallet or an air-gapped tool), derive the account-level xpub at `m/44'/60'/0'`
-from it, send me that string. **An xpub, never a seed phrase** — send me the
-seed itself and I'll ask you to regenerate it, the same way I did in-session.
+(2) **A funded treasury wallet + testnet proof, to turn on automatic
+withdrawal.** The signing engine is built and unit-tested (`CUSTODY_SPEC.md`
+§ 5c) but genuinely not live — `PAYOUT_MODE` stays `manual` until it has run
+end-to-end on BSC testnet. When ready: generate a NEW wallet (separate from
+the deposit-derivation seed), I'll give you a script to encrypt its key
+locally, you send me the ciphertext + a random key (never the plaintext key),
+fund it with testnet BNB/USDT first, prove it, then fund it for real.
 Everything else on the old checklist is done, deferred by decision, or declined.
 
 See `docs/` for the full spec.
