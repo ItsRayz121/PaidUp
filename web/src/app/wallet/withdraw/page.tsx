@@ -5,12 +5,12 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
-import { ConnectWallet } from "@/components/ConnectWallet";
-import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, ArrowRightIcon } from "@/components/icons";
+import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchPayoutAddresses, savePayoutAddress, createWithdrawal, ApiError } from "@/lib/api";
+import { fetchBalance, fetchPayoutAddresses, createWithdrawal, ApiError } from "@/lib/api";
 import { formatMoney, pointsToUsdt, usdtToPoints } from "@/lib/format";
+import { shortAddress } from "@/lib/wallet";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
 // Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
@@ -31,14 +31,6 @@ export default function WithdrawPage() {
   // once, at `amt` below, which is the only value the API ever sees.
   const [usdtInput, setUsdtInput] = useState("");
   const [busy, setBusy] = useState(false);
-  // Connecting the wallet is the default way to set a payout address; the text
-  // field is behind "Type it in instead". It is not a fallback for people who
-  // find connecting hard — it is the only path for a smart-contract wallet or an
-  // exchange address, neither of which can sign our challenge. See
-  // components/ConnectWallet.tsx.
-  const [typing, setTyping] = useState(false);
-  const [savingAddr, setSavingAddr] = useState(false);
-  const [savedMsg, setSavedMsg] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   // Set when the server refuses the withdrawal because the user has not verified
@@ -58,7 +50,6 @@ export default function WithdrawPage() {
 
   function selectChain(c: ChainId) {
     setChain(c);
-    setSavedMsg(false);
     // Switching chain swaps in that chain's saved address (or clears the field).
     setAddress(savedAddresses[c] ?? "");
   }
@@ -81,7 +72,7 @@ export default function WithdrawPage() {
   const addressOk = addressLooksValid(chain, address);
   const invalid = belowMin || overBalance || !addressOk;
   const trimmed = address.trim();
-  const canSaveAddr = addressOk && trimmed !== (savedAddresses[chain] ?? "");
+  const addressVerified = saved.data?.verified?.[chain];
 
   if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} />;
 
@@ -100,16 +91,6 @@ export default function WithdrawPage() {
       setError((e as Error).message);
     }
     finally { setBusy(false); }
-  }
-
-  async function saveAddr() {
-    setSavingAddr(true); setError(null);
-    try {
-      await savePayoutAddress(chain, address.trim());
-      setSavedMsg(true);
-      saved.reload();
-    } catch (e) { setError((e as Error).message); }
-    finally { setSavingAddr(false); }
   }
 
   return (
@@ -139,19 +120,13 @@ export default function WithdrawPage() {
         error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
       )}
 
-      {/* THE CURRENCY BRIDGE, and this screen was dishonest without it. Every
-          other earner screen shows ROZI; this one shows USDT, because USDT is
-          what we actually send. So a user walked from "14.68 ROZI" on /wallet to
-          "1.60 USDT" here — different number, different currency, nothing
-          connecting them — at the one screen where real money is at stake. The
-          line says which half is counted and where the other half went, above
-          the figure rather than under it. */}
+      {/* The "only what you earned" bridge sentence that used to open this
+          card is gone (founder, 2026-08-05, asked and reconfirmed after being
+          told what it was for — it explained why this number can be smaller
+          than the ROZI balance on /wallet). If that confusion resurfaces in
+          support tickets, this is the line to bring back. */}
       <Card className="p-4">
-        <p className="flex gap-2 text-sm text-muted">
-          <ShieldIcon size={16} className="mt-0.5 shrink-0 text-brand" />
-          {t("withdraw.whatCanBePaid")}
-        </p>
-        <p className="mt-3 text-sm text-muted">{t("withdraw.youHave")}</p>
+        <p className="text-sm text-muted">{t("withdraw.youHave")}</p>
         <p className="num text-2xl font-bold text-brand-ink">{formatMoney(balance)}</p>
         <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
       </Card>
@@ -188,66 +163,46 @@ export default function WithdrawPage() {
               );
             })
           )}
-          {/* Local money rails — not live yet. Named generically on purpose: we
-              don't promise a specific provider before one is actually signed. */}
-          <div className="col-span-2 flex items-center justify-between rounded-xl border border-dashed border-line bg-card/50 p-3">
-            <span className="font-semibold text-muted">{t("withdraw.localRow")}</span>
-            <span className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending">{t("withdraw.comingSoon")}</span>
-          </div>
         </div>
       </div>
 
       {/* ---- Where the money goes ----
-          Connect first, type second. The pasted-address box was the weakest
-          point on the whole money path: it accepts any well-formed address,
-          including the one a fake "support agent" sent the user on WhatsApp,
-          and we cannot get the money back afterwards. A connected wallet has
-          signed for itself, so that particular theft stops working. */}
-      {!typing ? (
-        <ConnectWallet
-          chain={chain}
-          savedAddress={savedAddresses[chain]}
-          verified={saved.data?.verified?.[chain]}
-          onConnected={(addr) => { setAddress(addr); setSavedMsg(false); saved.reload(); }}
-          onUseTyping={() => setTyping(true)}
-        />
+          Read-only summary now (founder, 2026-08-05) — the actual connect/type
+          flow moved to /profile/settings, so it exists in exactly one place.
+          This card shows what's already saved and links there to change it;
+          it never collects an address itself, which is what made the old
+          version of this screen feel like a second, competing setup flow. */}
+      {trimmed ? (
+        <Card className="p-4">
+          <p className="flex items-center gap-2 font-bold text-brand-ink">
+            <WalletIcon size={20} className="shrink-0 text-brand" />
+            {t("withdraw.sendingTo")}
+          </p>
+          <p className="num mt-1 break-all font-semibold text-brand-ink">{shortAddress(trimmed)}</p>
+          {addressVerified ? (
+            <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold text-success">
+              <CheckIcon size={16} /> {t("connect.isYours")}
+            </p>
+          ) : (
+            <p className="mt-1.5 flex items-start gap-1.5 text-sm text-muted">
+              <InfoIcon size={16} className="mt-0.5 shrink-0" /> {t("connect.typedIn")}
+            </p>
+          )}
+          <Link href="/profile/settings" className="mt-3 inline-block text-sm font-semibold text-brand underline-offset-2 hover:underline">
+            {t("withdraw.changeWallet")}
+          </Link>
+        </Card>
       ) : (
-      <div>
-        <label htmlFor="addr" className="mb-2 block px-1 font-semibold text-brand-ink">{t("withdraw.yourWalletAddress")}</label>
-        <input id="addr" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}
-          placeholder={chain === "aptos" ? t("withdraw.addrPlaceholderAptos") : t("withdraw.addrPlaceholderEvm")}
-          value={address} onChange={(e) => setAddress(e.target.value)}
-          className="w-full rounded-xl border border-line bg-card p-3.5 text-brand-ink outline-none placeholder:text-muted/60 break-all" />
-        {address.length > 0 && !addressOk && (
-          <p className="mt-1.5 px-1 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
-        )}
-        {/* Save the address so it's pre-filled next time (works below threshold). */}
-        {(canSaveAddr || savedMsg) && (
-          <div className="mt-2 flex items-center gap-2">
-            {savedMsg && !canSaveAddr ? (
-              <span className="flex items-center gap-1 text-sm font-semibold text-success">
-                <CheckIcon size={16} /> {t("withdraw.addressSaved")}
-              </span>
-            ) : (
-              <button type="button" onClick={saveAddr} disabled={savingAddr}
-                className="rounded-lg border border-brand px-3 py-1.5 text-sm font-semibold text-brand disabled:opacity-60">
-                {savingAddr ? t("withdraw.sending") : t("withdraw.saveAddress")}
-              </button>
-            )}
+        <Card className="border-pending/30 bg-pending-tint p-4">
+          <p className="flex items-center gap-2 font-bold text-pending">
+            <WalletIcon size={20} className="shrink-0" />
+            {t("withdraw.noWallet.title")}
+          </p>
+          <p className="mt-1 text-sm text-brand-ink">{t("withdraw.noWallet.body")}</p>
+          <div className="mt-3">
+            <Button href="/profile/settings" full>{t("withdraw.noWallet.cta")}</Button>
           </div>
-        )}
-        <p className="mt-1.5 flex items-start gap-1.5 px-1 text-xs text-muted">
-          <ShieldIcon size={14} className="mt-0.5 shrink-0" />
-          {t("withdraw.sendRightNetwork", { label: chainMeta.label })}
-        </p>
-        <button
-          type="button"
-          onClick={() => setTyping(false)}
-          className="mt-3 text-sm font-semibold text-brand underline-offset-2 hover:underline"
-        >
-          {t("connect.connectInstead")}
-        </button>
-      </div>
+        </Card>
       )}
 
       {/* Amount */}

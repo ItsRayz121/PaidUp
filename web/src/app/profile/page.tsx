@@ -94,12 +94,14 @@ export default function ProfilePage() {
           label={t("profile.refer")}
           hint={t("profile.referHint")}
         />
-        {/* Where your money gets sent — moved off /wallet (founder, 2026-08-01).
-            The badge is the whole point of it being a row: a user who typed an
-            address months ago can see at a glance whether it was ever proved,
-            without opening the withdraw screen. */}
+        {/* Where your money gets sent — moved off /wallet (founder, 2026-08-01),
+            then off the withdraw screen entirely and into Settings (founder,
+            2026-08-05): the actual connect/type flow lives at /profile/settings
+            now, not on the way to asking for money. The badge is the whole
+            point of it being a row: a user who typed an address months ago can
+            see at a glance whether it was ever proved, without opening it. */}
         <Row
-          href="/wallet/withdraw"
+          href="/profile/settings"
           Icon={WalletIcon}
           label={t("wallet.setup.title")}
           hint={t("profile.walletHint")}

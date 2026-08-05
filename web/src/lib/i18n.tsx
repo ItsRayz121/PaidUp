@@ -89,6 +89,7 @@ const copy: Record<string, string> = {
   "settings.usernameTaken": "Someone already has that name. Try another.",
   "settings.usernameRules": "3 to 20 letters, numbers or _. Start with a letter.",
   "settings.save": "Save",
+  "settings.payout.title": "Payout wallet",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.nothing": "Nothing to save yet.",
@@ -355,17 +356,15 @@ const copy: Record<string, string> = {
   // withdraw
   "withdraw.youHave": "You have",
   "withdraw.aboutEquals": "Ready to take out",
-  // ⚠️ THE BRIDGE, and the screen is dishonest without it. Every other earner
-  // screen shows ROZI; this one shows USDT, because USDT is what we actually
-  // send. A user arriving from /wallet went from "14.68 ROZI" to "1.60 USDT" —
-  // different number, different currency, no sentence connecting them — at the
-  // one screen where real money is at stake. This says which half is being
-  // counted and where the other half went, before the amount field.
-  "withdraw.whatCanBePaid":
-    "Only what you earned from tasks and friends can be paid out. Mined ROZI stays in the app to spend.",
   "withdraw.getPaidUsdt": "Get paid in USDT",
-  "withdraw.localRow": "More local payment methods",
-  "withdraw.comingSoon": "Coming soon",
+  // ---- Where the money goes (moved to /profile/settings, 2026-08-05) -------
+  // This screen only ever SHOWS what's saved now; it never collects an
+  // address itself. See the note above this block in the withdraw page.
+  "withdraw.sendingTo": "Sending your money to",
+  "withdraw.changeWallet": "Change it",
+  "withdraw.noWallet.title": "Add a payout wallet first",
+  "withdraw.noWallet.body": "We need to know where to send your money before you can ask for it.",
+  "withdraw.noWallet.cta": "Add a payout wallet",
   "withdraw.yourWalletAddress": "Your USDT wallet address",
   "withdraw.addrPlaceholderEvm": "0x… (42 characters)",
   "withdraw.addrPlaceholderAptos": "0x… (Aptos)",
