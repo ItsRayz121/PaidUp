@@ -531,6 +531,28 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { chain: q.chain, endpoints, results: await rpcHealth(q.chain) };
   }));
 
+  // Reconciliation timeline (CUSTODY_SPEC.md § 5 step 3 / § 3.5) — treasury +
+  // unswept on-chain balance vs what the ledger says we owe, one row per
+  // scheduled check. There is no paging in this codebase; this endpoint IS
+  // the alerting — someone has to open it to see a mismatch.
+  app.get("/staff/mining/reconciliation", staffGuard(["manager", "admin"], async (_ctx, req) => {
+    const q = z.object({ chain: z.string().min(1).max(20).default("bep20"), limit: z.number().int().min(1).max(200).default(50) })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT * FROM treasury_balance_snapshots WHERE chain = ? ORDER BY checked_at DESC LIMIT ?`,
+      q.chain, q.limit,
+    );
+    return {
+      chain: q.chain,
+      snapshots: rows.map((r) => ({
+        ...r,
+        onchainBalance: usdtFromMicro(Number(r.onchain_balance)),
+        ledgerTotal: usdtFromMicro(Number(r.ledger_total)),
+        delta: usdtFromMicro(Number(r.delta)),
+      })),
+    };
+  }));
+
   // ---- Boosters (CRUD) — priced in POINTS ----------------------------------
   app.get("/staff/mining/boosters", staffGuard(["admin"], async () => ({
     boosters: await sql.all("SELECT * FROM boosters ORDER BY price_points"),

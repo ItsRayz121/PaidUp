@@ -55,9 +55,9 @@ async function verifyPassword(password: string, stored: string | null): Promise<
 // caller passes the chosen password hash; it rides on the code and is applied
 // only when the code is confirmed, so an unverified account's password can't be
 // set by anyone who doesn't control the inbox. Throws if the email can't be sent.
-async function issueCode(
+export async function issueCode(
   email: string,
-  purpose: "verify" | "reset" | "link",
+  purpose: "verify" | "reset" | "link" | "withdraw",
   pendingPasswordHash: string | null = null,
 ): Promise<void> {
   const code = makeCode();
@@ -75,10 +75,12 @@ async function issueCode(
 
 // Validate + consume an OTP for a purpose. Returns a structured result (with the
 // password bound to the code, if any) so each route can map it to a status code.
-type CodeResult =
+export type CodeResult =
   | { ok: true; pendingPasswordHash: string | null }
   | { ok: false; statusCode: number; error: string };
-async function consumeCode(email: string, code: string, purpose: "verify" | "reset" | "link"): Promise<CodeResult> {
+export async function consumeCode(
+  email: string, code: string, purpose: "verify" | "reset" | "link" | "withdraw",
+): Promise<CodeResult> {
   const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number; pending_password_hash: string | null }>(
     "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",
     email, purpose,

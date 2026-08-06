@@ -46,6 +46,12 @@ await initDb();
 const app = Fastify();
 await app.register(withdrawalRoutes);
 
+// Step-up auth (docs/CUSTODY_SPEC.md § 3.3) is a separate concern with its
+// own suite (withdrawControls.e2e.ts) — disabled here so this file's 6000-point
+// withdrawal scenarios (chosen to exercise address-proof logic, not step-up)
+// don't also need a code.
+config.stepUpMinPoints = Infinity;
+
 const mkUser = async (label: string) => {
   const id = newId();
   await sql.run(

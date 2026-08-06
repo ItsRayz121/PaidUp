@@ -795,6 +795,141 @@ const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_until TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_by TEXT REFERENCES users(id);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_at TEXT;
+
+  -- CUSTODY_SPEC.md § 5 steps 2-3: the chain listener + sweeper. This is where
+  -- deposits stop needing a staff member to paste a tx hash.
+
+  -- One row per on-chain transfer the listener (or a webhook, later) has
+  -- OBSERVED paying one of our deposit addresses. Mirrors usdt_topups' walk
+  -- (pending-ish -> confirmed -> credited) but system-detected, not
+  -- staff-confirmed, and general across chains rather than BEP20-only.
+  CREATE TABLE IF NOT EXISTS chain_deposits (
+    id                     TEXT PRIMARY KEY,
+    user_id                TEXT NOT NULL REFERENCES users(id),
+    chain                  TEXT NOT NULL,
+    address                TEXT NOT NULL,
+    tx_hash                TEXT NOT NULL,
+    -- NULL for chains with no concept of "which event in this tx" (UTXO vout,
+    -- account-based chains): COALESCE'd to -1 in the unique index below so
+    -- every chain shares one idempotency shape.
+    log_index              INTEGER,
+    amount                 BIGINT NOT NULL CHECK (amount > 0), -- micro-token, as OBSERVED on-chain
+    token                  TEXT NOT NULL,
+    block_number           BIGINT NOT NULL,
+    block_hash              TEXT NOT NULL,
+    confirmations_required INTEGER NOT NULL,
+    status                 TEXT NOT NULL DEFAULT 'seen'
+                            CHECK (status IN ('seen','confirmed','credited','reorged_out')),
+    credited_ledger_id     TEXT,
+    -- Set once the sweeper has moved this deposit's share of the address's
+    -- balance into treasury. NULL = still sitting on the deposit address.
+    -- Sweeping never re-touches usdt_ledger; this column is purely how
+    -- deposits/sweep.ts knows what still needs consolidating.
+    swept_at               TEXT,
+    first_seen_at          TEXT NOT NULL,
+    confirmed_at           TEXT,
+    credited_at            TEXT,
+    created_at             TEXT NOT NULL
+  );
+  -- ONE CLAIM PER (chain, tx, event), EVER. A single EVM transaction can emit
+  -- several Transfer events to DIFFERENT known addresses (e.g. a router
+  -- splitting a payment) — without log_index in the key those would collide
+  -- and only the first would ever be recorded. This is the actual defence
+  -- against crediting the same on-chain event twice, same role idx_usdt_topups_tx
+  -- plays for staff-confirmed deposits.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_chain_deposits_event
+    ON chain_deposits(LOWER(chain), LOWER(tx_hash), COALESCE(log_index, -1));
+  CREATE INDEX IF NOT EXISTS idx_chain_deposits_status ON chain_deposits(chain, status);
+  CREATE INDEX IF NOT EXISTS idx_chain_deposits_user ON chain_deposits(user_id, created_at);
+
+  -- How far the deposit scanner has scanned, per chain. Read+advanced inside
+  -- the same locked tick as the scan itself (deposits/scanner.ts), so two API
+  -- instances never scan the same block range twice or skip one.
+  CREATE TABLE IF NOT EXISTS deposit_scan_cursors (
+    chain                 TEXT PRIMARY KEY,
+    last_scanned_block    BIGINT NOT NULL,
+    last_scanned_block_hash TEXT,
+    updated_at            TEXT NOT NULL
+  );
+
+  -- One sweep (deposit address -> treasury) per row. Two-phase for chains that
+  -- need native gas funded to the deposit address before it can send the token
+  -- itself (deposits/sweep.ts): pending -> gas_sent -> gas_confirmed -> swept.
+  -- Sweeping NEVER touches usdt_ledger — crediting already happened when
+  -- chain_deposits flipped to 'credited'. This table is pure treasury
+  -- consolidation bookkeeping.
+  CREATE TABLE IF NOT EXISTS sweep_jobs (
+    id                    TEXT PRIMARY KEY,
+    chain                 TEXT NOT NULL,
+    deposit_wallet_ref    TEXT NOT NULL, -- the deposit address being swept
+    token                 TEXT NOT NULL,
+    amount_at_sweep_start BIGINT NOT NULL, -- micro-token, snapshotted when the job opened
+    status                TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending','gas_sent','gas_confirmed','swept','failed')),
+    gas_tx_hash           TEXT,
+    sweep_tx_hash         TEXT,
+    attempts              INTEGER NOT NULL DEFAULT 0,
+    last_error            TEXT,
+    created_at            TEXT NOT NULL,
+    completed_at          TEXT
+  );
+  -- THE double-sweep guard. Only one job that is not yet swept/failed may
+  -- exist per (chain, address) at a time — a duplicate sweep trigger (a
+  -- restarted process, a re-run tick, a staff retry) hits this constraint
+  -- instead of funding gas or sending the token twice.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sweep_jobs_active
+    ON sweep_jobs(chain, deposit_wallet_ref) WHERE status NOT IN ('swept','failed');
+  CREATE INDEX IF NOT EXISTS idx_sweep_jobs_status ON sweep_jobs(status, created_at);
+
+  -- Pre-generated address inventory for chains where watch-only derivation is
+  -- cryptographically impossible (Solana, Aptos — ed25519 has no public-only
+  -- child derivation; see custodySeeds.ts). Generated OFFLINE in batches,
+  -- imported once, assigned to users like numbered stock rather than derived
+  -- live. private_key_encrypted uses its OWN AES secret (POOL_KEY_ENCRYPTED_SECRET,
+  -- config.ts), separate from every other encrypted secret in this system.
+  CREATE TABLE IF NOT EXISTS deposit_address_pool (
+    id                    TEXT PRIMARY KEY,
+    chain                 TEXT NOT NULL CHECK (chain IN ('solana','aptos')),
+    address               TEXT NOT NULL,
+    private_key_encrypted TEXT NOT NULL,
+    assigned_to_user_id   TEXT REFERENCES users(id),
+    assigned_at           TEXT,
+    created_at            TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pool_address ON deposit_address_pool(chain, LOWER(address));
+  -- One pool row per (user, chain) — the assigned half mirrors deposit_wallets'
+  -- own (user_id, chain) primary key, just expressed as a partial index because
+  -- this table's own primary key is the pool row, not the (user, chain) pair.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pool_one_per_user
+    ON deposit_address_pool(chain, assigned_to_user_id) WHERE assigned_to_user_id IS NOT NULL;
+
+  -- Which pool row a deposit_wallets row for an ed25519 chain points back to.
+  -- secp256k1 chains (bep20 today) leave this NULL and keep using addr_index.
+  ALTER TABLE deposit_wallets ADD COLUMN IF NOT EXISTS pool_ref_id TEXT REFERENCES deposit_address_pool(id);
+
+  -- Which chain a usdt_ledger row's deposit/withdrawal touched. Lets
+  -- reconciliation (deposits/reconcile.ts) compare "on-chain balance for THIS
+  -- chain" against "what we owe for THIS chain" without joining through three
+  -- tables. NULL on every row written before this column existed (an
+  -- admin_adjustment has no chain at all) — reconciliation treats NULL as
+  -- "not attributable to a specific chain" and excludes it from the per-chain
+  -- comparison, which is honest: we never knew which chain those rows meant.
+  ALTER TABLE usdt_ledger ADD COLUMN IF NOT EXISTS chain TEXT;
+
+  -- Reconciliation trail (deposits/reconcile.ts): one row per scheduled check
+  -- per chain, so the staff panel can show a timeline, not just "right now".
+  -- Append-only, same posture as postback_log — an audit record, not a table
+  -- anything on the live path reads back.
+  CREATE TABLE IF NOT EXISTS treasury_balance_snapshots (
+    id              TEXT PRIMARY KEY,
+    chain           TEXT NOT NULL,
+    token           TEXT NOT NULL,
+    onchain_balance BIGINT NOT NULL, -- micro-token: treasury + known-unswept deposit addresses
+    ledger_total    BIGINT NOT NULL, -- micro-token: SUM(usdt_ledger) for this chain
+    delta           BIGINT NOT NULL,
+    checked_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_treasury_snapshots_chain ON treasury_balance_snapshots(chain, checked_at);
 `;
 
 // ---------------------------------------------------------------------------
@@ -1473,6 +1608,11 @@ export async function postUsdt(
     sourceType: UsdtSource;
     sourceRefId?: string;
     note?: string;
+    // Which chain this row is attributable to — lets reconciliation
+    // (deposits/reconcile.ts) compare a chain's on-chain balance against what
+    // we owe for THAT chain without joining through chain_deposits/usdt_topups.
+    // Omitted (NULL) for rows with no single chain (an admin_adjustment).
+    chain?: string;
   },
   t: Pick<TxApi, "run"> = sql,
 ): Promise<string> {
@@ -1480,10 +1620,10 @@ export async function postUsdt(
   const amount = params.direction === "credit" ? magnitude : -magnitude;
   const id = newId();
   await t.run(
-    `INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, source_ref_id, note, created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
+    `INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, source_ref_id, note, chain, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
     id, params.userId, amount, params.direction, params.sourceType,
-    params.sourceRefId ?? null, params.note ?? null, now(),
+    params.sourceRefId ?? null, params.note ?? null, params.chain ?? null, now(),
   );
   return id;
 }

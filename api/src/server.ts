@@ -19,6 +19,9 @@ import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
 import { configureTelegramMenuButton } from "./telegram.ts";
 import { initDb, sql, usingRealPostgres } from "./db.ts";
+import { tickDepositScan } from "./deposits/scanner.ts";
+import { tickSweep } from "./deposits/sweep.ts";
+import { tickReconcile } from "./deposits/reconcile.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -178,9 +181,48 @@ async function tickSettlement() {
 }
 setInterval(tickSettlement, SETTLE_INTERVAL_MS).unref();
 
+// ---- Deposits: chain scan + sweep — CUSTODY_SPEC.md § 5, steps 2-3 --------
+// Same posture as the settlement timer above: one setInterval each, in this
+// same process, no external cron/queue. tickDepositScan takes its own global
+// advisory lock internally (deposits/scanner.ts) so multiple API instances
+// never scan the same block range twice. tickSweep is deliberately NOT
+// wrapped in one lock/transaction — each address's sweep is its own small
+// atomic step, so one address failing does not block the others, and a
+// concurrent instance racing to open the same sweep job just loses a DB
+// constraint, not a network broadcast.
+//
+// Both are no-ops (return immediately) until their respective config is set —
+// CUSTODY_XPUB_BEP20 for scanning, CUSTODY_SEED_EVM_ENCRYPTED/_SECRET plus a
+// treasury signer for sweeping — so enabling this feature is adding env vars,
+// never a code change.
+async function tickDeposits() {
+  try {
+    await tickDepositScan();
+  } catch (err) {
+    app.log.error({ err }, "Deposit scan tick failed");
+  }
+  try {
+    await tickSweep();
+  } catch (err) {
+    app.log.error({ err }, "Sweep tick failed");
+  }
+}
+setInterval(tickDeposits, config.depositScanIntervalMs).unref();
+
+// ---- Reconciliation — CUSTODY_SPEC.md § 5 step 3 / § 3.5 -------------------
+// Hourly, much slower than the deposit/sweep ticks above: this is a
+// treasury-balance-vs-ledger check, not something that needs to be fresh to
+// the second. A no-op until a treasury signer is configured (reconcile.ts).
+const RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
+setInterval(() => {
+  void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
+}, RECONCILE_INTERVAL_MS).unref();
+
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   void tickSettlement();
+  void tickDeposits();
+  void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
   // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
   // being slow or down must never delay or fail OUR boot.
   void configureTelegramMenuButton();

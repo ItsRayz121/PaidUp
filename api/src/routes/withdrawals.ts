@@ -3,9 +3,10 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
-import { getUserId, requireActiveUser } from "../auth.ts";
+import { getUserId, requireActiveUser, issueCode, consumeCode } from "../auth.ts";
 import { validateAddress, chainIsOffered, chainById, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
+import { checkWithdrawalVelocity, requestedLast24hPoints } from "../velocity.ts";
 import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 import { tryAutoSettle } from "../autoWithdraw.ts";
@@ -74,6 +75,9 @@ const createSchema = z.object({
   amountPoints: z.number().int().positive(),
   chain: z.enum(["bep20", "base", "aptos"]),
   address: z.string().min(1).max(120),
+  // Only required once amountPoints >= config.stepUpMinPoints — see the check
+  // below. A 6-digit code from POST /withdrawals/request-step-up.
+  stepUpCode: z.string().trim().optional(),
 });
 
 const addressSchema = z.object({
@@ -88,12 +92,43 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   app.post("/withdrawals", guard(async (userId, req, reply) => {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount, network, and wallet address." });
-    const { amountPoints, chain, address: addressRaw } = parsed.data;
+    const { amountPoints, chain, address: addressRaw, stepUpCode } = parsed.data;
 
     if (amountPoints < config.minWithdrawPoints) {
       return reply.code(400).send({
         error: `You need at least ${config.minWithdrawPoints} points to get money.`,
       });
+    }
+
+    // STEP-UP AUTH (docs/CUSTODY_SPEC.md § 3.3): now that most withdrawals
+    // settle with no human ever looking at them, a large one gets one more
+    // proof of control over the account before it's even created — reusing
+    // the exact email_codes machinery every login/reset already relies on,
+    // not a new channel. Below the threshold, nothing changes.
+    //
+    // ⚠️ TRIGGERED ON THE ROLLING 24H TOTAL, NOT JUST THIS REQUEST. A single
+    // request under the threshold is not the actual risk being defended
+    // against — "no human review, so prove you control the account" applies
+    // exactly as much to five 900-point requests as to one 4000-point one.
+    // Checking only amountPoints would make the threshold a suggestion:
+    // structure around it once and never need the code again that day.
+    const priorRequested = await requestedLast24hPoints(userId);
+    if (priorRequested + amountPoints >= config.stepUpMinPoints) {
+      // `email` is NOT NULL — even a Telegram-only account has a row, just a
+      // synthetic, never-read @telegram.local one (auth.ts). That is the real
+      // "no usable email" case here, not a null column.
+      const user = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", userId);
+      if (!user || user.email.endsWith("@telegram.local")) {
+        return reply.code(400).send({ error: "Add an email to your account before a withdrawal this large." });
+      }
+      if (!stepUpCode) {
+        return reply.code(400).send({
+          error: `For ${config.stepUpMinPoints} points or more in a day, confirm with the code we email you.`,
+          stepUpRequired: true,
+        });
+      }
+      const result = await consumeCode(user.email, stepUpCode, "withdraw");
+      if (!result.ok) return reply.code(result.statusCode).send({ error: result.error, stepUpRequired: true });
     }
 
     // KYC GATE (founder decision, 2026-07-13). You should know who you are sending
@@ -198,6 +233,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // Flag (never block) if this wallet is shared across accounts — staff see it
     // in the fraud queue before approving the payout. Runs after the hold commits.
     await checkPayoutAddressReuse(userId, address);
+    await checkWithdrawalVelocity(userId);
 
     // Fully automatic withdrawal (founder, 2026-08-05): try to settle right
     // now. Never blocks or fails the request either way — see the guarantee
@@ -210,6 +246,18 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     }
 
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
+  }));
+
+  // Send a step-up code for a large withdrawal (see stepUpMinPoints above).
+  // No amount is taken here — the amount only decides whether POST
+  // /withdrawals requires the code, not whether one can be requested.
+  app.post("/withdrawals/request-step-up", guard(async (userId, _req, reply) => {
+    const user = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", userId);
+    if (!user || user.email.endsWith("@telegram.local")) {
+      return reply.code(400).send({ error: "Add an email to your account first." });
+    }
+    await issueCode(user.email, "withdraw");
+    return { sent: true };
   }));
 
   // Saved payout addresses — a user sets a USDT address per chain ONCE and the

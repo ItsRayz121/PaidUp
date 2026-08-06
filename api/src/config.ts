@@ -267,6 +267,75 @@ export const config = {
   custodyXpub: {
     bep20: process.env.CUSTODY_XPUB_BEP20 ?? "",
   },
+
+  // ---- Sweep signing (docs/CUSTODY_SPEC.md § 5, steps 2-4) -------------------
+  // ⚠️ THIS IS A STRICTLY BIGGER SECRET THAN THE TREASURY KEY. Where the
+  // treasury key can only move the treasury's own balance and is rotatable
+  // after a leak, a chain-family seed can derive the PRIVATE key of every
+  // deposit address on that chain, past and future, and cannot be rotated
+  // after the fact — the addresses are already published to users. This is
+  // the encrypted-at-rest extension of custody.ts's account-branch xpub: the
+  // SAME account branch (m/44'/60'/0' for EVM), just its private half, so a
+  // child derived here (custodySeeds.ts) always produces the identical
+  // address custody.ts's public-only derivation already shows the user.
+  //
+  // ONE KEY PAIR PER CHAIN FAMILY, not one shared seed — a leaked UTXO seed
+  // must not also compromise every EVM deposit address. Empty => sweeping is
+  // off for that family; deposits still accrue on-chain, just unswept, same
+  // as today before any of this existed.
+  custodySweepSeedEncrypted: {
+    evm: process.env.CUSTODY_SEED_EVM_ENCRYPTED ?? "",
+    tron: process.env.CUSTODY_SEED_TRON_ENCRYPTED ?? "",
+    utxo: process.env.CUSTODY_SEED_UTXO_ENCRYPTED ?? "",
+  } as Record<string, string>,
+  custodySweepSeedSecret: {
+    evm: process.env.CUSTODY_SEED_EVM_SECRET ?? "",
+    tron: process.env.CUSTODY_SEED_TRON_SECRET ?? "",
+    utxo: process.env.CUSTODY_SEED_UTXO_SECRET ?? "",
+  } as Record<string, string>,
+
+  // Unlocks EVERY row in deposit_address_pool at once (Solana/Aptos — ed25519
+  // has no public-only child derivation, so those addresses are pre-generated
+  // offline instead of derived; see custodySeeds.ts). One key for the whole
+  // pool, same shape as TREASURY_KEY_SECRET unlocking the one treasury key.
+  poolKeyEncryptedSecret: process.env.POOL_KEY_ENCRYPTED_SECRET ?? "",
+
+  // How many blocks/confirmations a deposit needs before it is credited.
+  // Never credit before this — a reorg underneath an uncredited deposit costs
+  // nothing; a reorg underneath a CREDITED one is money paid for a deposit
+  // that no longer exists on-chain. bep20 defaults to ~15 blocks (≈45s at 3s
+  // blocks), a common exchange practice for a BEP20-value stablecoin.
+  depositConfirmations: {
+    bep20: Number(process.env.DEPOSIT_CONFIRMATIONS_BEP20 ?? 15),
+  } as Record<string, number>,
+
+  // How often the deposit scanner ticks, per chain family cadence. One value
+  // today (EVM); other chain families will want their own once built (a
+  // 10-minute-block UTXO chain scanning every 20s is pure wasted RPC calls).
+  depositScanIntervalMs: Number(process.env.DEPOSIT_SCAN_INTERVAL_MS ?? 20_000),
+
+  // Below this, sweeping a deposit costs more in gas than it moves — CUSTODY_SPEC.md
+  // § 2a prices a BEP20 sweep at ~$0.15-0.25. Micro-USDT.
+  sweepDustFloorMicro: Number(process.env.SWEEP_DUST_FLOOR_MICRO ?? 500_000), // $0.50
+  // Native gas (BNB, in wei-equivalent smallest unit as a decimal string) sent
+  // to a deposit address before it can send the token it holds out.
+  evmSweepGasAmountWei: process.env.EVM_SWEEP_GAS_AMOUNT_WEI ?? "300000000000000", // 0.0003 BNB
+
+  // ---- Withdrawal abuse controls, now that there is no per-request human
+  // approval below the auto-withdraw ceiling (docs/CUSTODY_SPEC.md § 3.3: "a
+  // limit is where an attacker will aim, repeatedly, just under it"). --------
+  // Cumulative cap across a rolling 24h window, DISTINCT from the per-request
+  // autoWithdrawMaxPoints ceiling above — closes "many requests just under the
+  // limit". A request that would push the user's own trailing-24h auto-paid
+  // total over this falls back to the manual queue, same as any other refusal.
+  autoWithdrawMaxPointsPer24h: Number(process.env.AUTO_WITHDRAW_MAX_POINTS_PER_24H ?? 15000),
+  // Soft flag (never blocks): this many withdrawal REQUESTS from one user in
+  // 24h gets a staff-review flag, regardless of amount or auto/manual outcome.
+  withdrawalVelocityFlagCount: Number(process.env.WITHDRAWAL_VELOCITY_FLAG_COUNT ?? 4),
+  // At or above this amount, a withdrawal needs a fresh email code before it
+  // can be created at all — reusing the exact email_codes machinery every
+  // login/reset already relies on, not a new channel. 0 = never required.
+  stepUpMinPoints: Number(process.env.STEP_UP_MIN_POINTS ?? 4000),
 };
 
 export const isProdSecretsMissing =

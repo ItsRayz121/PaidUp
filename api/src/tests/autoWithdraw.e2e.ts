@@ -77,6 +77,10 @@ const requestStatus = async (userId: string) => {
 config.payoutMode = "manual";
 config.treasuryKeyEncrypted = "";
 config.treasuryKeySecret = "";
+// Step-up auth (docs/CUSTODY_SPEC.md § 3.3) is a SEPARATE concern with its
+// own suite (withdrawControls.e2e.ts) — disabled here so amounts chosen to
+// exercise the auto-ceiling/hold gates don't also trip it.
+config.stepUpMinPoints = Infinity;
 
 console.log("\n-- payout mode off => never auto-settles --");
 
@@ -122,6 +126,52 @@ console.log("\n-- onchain mode + signer configured, above the auto ceiling => st
   check("stays pending — above config.autoWithdrawMaxPoints falls back to manual",
     r.json().request.status === "pending", r.body);
 }
+
+console.log("\n-- under the per-request ceiling, but over the ROLLING 24H CAP => stays manual --");
+
+// Security-review fix (2026-08-06): the per-request ceiling bounds ONE
+// request; this rolling-window cap bounds the SUM, closing "many requests
+// just under the ceiling" — the compensating control for having no
+// per-request human approval. Seeds prior auto-paid history directly (no
+// real network call needed) rather than actually settling several requests.
+{
+  const u = await mkUser("autow3b");
+  await fund(u, 100_000);
+
+  // Simulate history: this user already had a request auto-paid recently,
+  // close to the cap.
+  const priorAmount = config.autoWithdrawMaxPointsPer24h - 500;
+  await sql.run(
+    `INSERT INTO withdrawal_requests
+       (id, user_id, amount, payout_rail, payout_address, status, reviewed_by, paid_at, created_at)
+     VALUES (?,?,?,'bep20',?,'paid','system:auto',?,?)`,
+    newId(), u, priorAmount, testAddress(), now(), now(),
+  );
+
+  const r = await app.inject({
+    method: "POST", url: "/withdrawals", headers: tok(u),
+    payload: { amountPoints: 1000, chain: "bep20", address: testAddress() }, // under autoWithdrawMaxPoints alone
+  });
+  check("stays pending — priorAmount + this request exceeds the 24h cap",
+    r.json().request?.status === "pending", r.body);
+  // This refusal must happen BEFORE provider.send() — confirmed by the fact
+  // that it returns at all without this suite's no-real-network-call
+  // invariant (see file header) being violated: the cap check now runs
+  // inside the locked transaction, ahead of the send, exactly like the
+  // per-request ceiling check above it always has.
+}
+
+// ⚠️ The concurrent-race this cap exists to close (two auto-settle attempts
+// for the same user reading the rolling total before either commits) is NOT
+// re-tested here with real concurrency: doing so would require either
+// reaching a real provider.send() network call — which this whole suite
+// deliberately never does, see the file header — or mocking viem's full
+// RPC call sequence, which is out of scope for this file. The fix itself
+// (pg_advisory_xact_lock(hashtext(userId)) taken before the read, inside the
+// same transaction that writes 'paid') is the same pattern guardrail #8
+// already requires and this codebase already trusts elsewhere without a
+// dedicated concurrency test (e.g. the withdrawal-creation balance debit in
+// routes/withdrawals.ts). Reviewed by inspection, not integration-tested.
 
 console.log("\n-- signer configured, under the ceiling, but the account is HELD => stays manual --");
 

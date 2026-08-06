@@ -867,6 +867,82 @@ These override convenience or speed at every step:
     hash. "Fully automatic" describes withdrawals only — do not read this
     entry as "custody is done," it is the harder, narrower half of it.
 
+- **CUSTODY, STEPS 2–3, BEP20 ONLY: a real chain listener + sweeper, built
+  (founder, 2026-08-06).** The gap the entry directly above named — "deposits
+  are still confirmed by staff, nothing sweeps" — is closed for BEP20. Full
+  design: `docs/CUSTODY_SPEC.md` § 5 (unchanged) — this is that spec's steps
+  2–3 in code, phase 1 of a five-chain plan (TRC20/BTC/Solana/Aptos are next,
+  not started). Verified (every suite actually re-run this pass, not carried
+  forward from an earlier entry): 41 unit + 50 mining e2e + 31 profile +
+  72 usdt + 25 conversion + 29 store + 14 referrals + 15 admin + 43 kyc +
+  9 push + 45 telegram + 5 proxy + 52 wallet + **8 custodySeeds (new) +
+  17 deposits (new) + 21 withdrawal-controls (new) + 16 autowithdraw (was
+  15)** = all green; api + web typecheck, `security-review` (2 findings,
+  both fixed — see below).
+  - **The architectural fact this rests on**: sweeping needs a private key
+    capable of spending FROM a deposit address, which the existing xpub-only
+    system (`custody.ts`) deliberately never held. `custodySeeds.ts` is the
+    new, strictly bigger secret: the encrypted-at-rest PRIVATE half of the
+    same account-branch key `custody.ts`'s xpub is the public half of, so a
+    child it derives is *guaranteed* the same address custody.ts already
+    showed the user (proven in `test:custodyseeds` against an independent
+    signer, viem, not this codebase's own arithmetic). ⚠️ **Unlike the
+    treasury key, this is not rotatable after a leak** — it can eventually
+    derive every past and future deposit address on the chain. Recorded
+    plainly, not hidden, same as every other custody trade-off in this repo.
+  - Kept deliberately out of `custody.ts` itself (which still holds zero
+    private key material and still says so) — the new file is a separate,
+    narrower blast-radius surface, and `custodyPool.ts` (the ed25519/pool
+    counterpart, unused until Solana/Aptos exist) is separate again so a pure
+    unit test of the derivation math never has to open a live database
+    connection (see `mining.test.ts`'s header for the exact node:test hang
+    that split avoids).
+  - **Deposit scanner** (`deposits/scanner.ts` + `adapters/evm.ts`): polls
+    `eth_getLogs` for USDT `Transfer` events into any known deposit address,
+    wired into the *existing* in-API timer next to mining settlement — no
+    new process, no Redis, one global `pg_advisory_xact_lock('deposit-scan')`
+    so two Railway instances can't double-scan. **Never credits before
+    `depositConfirmations` blocks, and re-checks the block hash at credit
+    time** — a block that had enough confirmations when first seen can still
+    reorg before being credited; the re-check, not the depth filter, is what
+    actually enforces it (`deposits/credit.ts`).
+  - **Sweeper** (`deposits/sweep.ts`): two-phase per address
+    (`pending → gas_sent → gas_confirmed → swept`) so a crash mid-sweep
+    resumes instead of re-sending gas. **Never calls `postUsdt()`** —
+    crediting already happened at deposit-confirm time; sweeping is pure
+    treasury consolidation, enforced by that file having no ledger import at
+    all. A dust floor (`sweepDustFloorMicro`, default $0.50) skips sweeps that
+    would cost more in gas than they move (CUSTODY_SPEC.md § 2a's own pricing).
+  - **Reconciliation** (`deposits/reconcile.ts`, hourly): treasury +
+    known-unswept balance vs. what the ledger says we owe, written to
+    `treasury_balance_snapshots` every tick; a shortfall raises a
+    `reconciliation_mismatch` flag. New staff read endpoint,
+    `GET /staff/mining/reconciliation`. ⚠️ **This IS the alerting** — no
+    Sentry, no paging, so a mismatch at 3am is silent until a human opens the
+    panel. `CUSTODY_SPEC.md` § 3.5's "who is accountable at 3am" is still open.
+  - **Withdrawal abuse controls**, shipped alongside (not after) — the
+    compensating controls for having no per-request human approval below the
+    auto-withdraw ceiling: a **rolling 24h auto-withdraw cap**
+    (`autoWithdrawMaxPointsPer24h`, default 15,000 points) distinct from the
+    per-request ceiling, and **step-up email confirmation**
+    (`stepUpMinPoints`, default 4,000) reusing the existing `email_codes`
+    machinery under a new `"withdraw"` purpose — no new channel.
+  - ⚠️ **`security-review` caught two real races/gaps in this same pass, both
+    fixed before landing:** (1) the 24h cap was read *before* the per-user
+    lock in `tryAutoSettle`, so concurrent requests could each see a stale
+    sum and jointly exceed it — moved inside `pg_advisory_xact_lock(userId)`,
+    guardrail #8 applied to an aggregate read, not just a balance. (2) the
+    step-up trigger checked only the current request's own amount, so
+    splitting one large withdrawal into several requests each individually
+    under the threshold never asked for a code — it now checks the rolling
+    24h REQUESTED total, not the single request. Both have regression tests
+    (`test:autowithdraw`'s new "rolling 24h cap" scenario,
+    `test:withdrawcontrols`'s new "splitting does not skip step-up" scenario).
+  - **Not done, on purpose, this pass**: TRC20/BTC/Solana/Aptos (phases 2–4
+    of the plan); the offline ed25519 address-pool generation tooling;
+    `PAYOUT_MODE` is still `manual` — none of this auto-sends anything real
+    yet, same standing rule as the withdrawal signer above.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

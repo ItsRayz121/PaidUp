@@ -89,7 +89,10 @@ const manualProvider: PayoutProvider = {
 // in: it is the only chain this product offers for new withdrawals (chains.ts,
 // "ONE CHAIN IN, ONE CHAIN OUT"). Adding another chain here is one map entry —
 // it does NOT need touching anything else in this file.
-const ONCHAIN_CHAINS: Partial<Record<ChainId, { viemChain: ViemChain; usdt: `0x${string}`; decimals: number }>> = {
+// Exported so deposits/adapters/evm.ts's listener scans the SAME contract
+// address this signer pays out from — one source of truth for "which token
+// contract is USDT on this chain", not two definitions that could drift.
+export const ONCHAIN_CHAINS: Partial<Record<ChainId, { viemChain: ViemChain; usdt: `0x${string}`; decimals: number }>> = {
   bep20: { viemChain: bsc, usdt: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
 };
 
