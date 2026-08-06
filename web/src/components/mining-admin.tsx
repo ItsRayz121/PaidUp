@@ -108,6 +108,17 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
       ["adminAdjustMaxRozi", "Max ROZI per manual adjustment"],
     ],
   },
+  {
+    title: "USDT top-up (deposits)",
+    note: "Ships OFF, and stays off until BOTH usdtTopupEnabled=1 AND usdtTreasuryAddress are set — a top-up screen with no address to send to would take people's money nowhere. This is the setting the Receive/top-up screen checks; without it, no address (personal or shared) is ever shown to any user, regardless of whether the per-user deposit-address system (CUSTODY_XPUB_BEP20) is configured. usdtTreasuryChain must stay \"bep20\" — the API refuses anything else. usdtTreasuryAddress must be the TREASURY wallet's address (the one you funded), never a private key.",
+    keys: [
+      ["usdtTopupEnabled", "Top-ups on (1) / off (0)"],
+      ["usdtTreasuryChain", "Chain (must be \"bep20\")"],
+      ["usdtTreasuryAddress", "Treasury wallet address (0x...)"],
+      ["usdtMinTopup", "Minimum deposit (whole USDT)"],
+      ["usdtMaxTopup", "Max per claim before a human re-checks it (whole USDT)"],
+    ],
+  },
 ];
 
 export function MiningPanel() {
