@@ -17,6 +17,7 @@ import { getUserId, requireActiveUser } from "../auth.ts";
 import { flagOnce } from "../fraud.ts";
 import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { custodyEnabled } from "../custody.ts";
+import { tryAutoSettleRefund } from "../autoRefund.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -663,7 +664,7 @@ export async function miningRoutes(app: FastifyInstance) {
     );
 
     const id = newId();
-    return sql.tx(async (t) => {
+    const { balanceMicro } = await sql.tx(async (t) => {
       await lockUser(t, userId);
 
       const balance = await usdtBalanceMicroOf(userId, t);
@@ -683,11 +684,22 @@ export async function miningRoutes(app: FastifyInstance) {
         sourceRefId: id, note: "Money sent back",
       }, t);
 
-      return {
-        ok: true, id, status: "pending",
-        balanceMicro: balance - micro,
-      };
+      return { balanceMicro: balance - micro };
     });
+
+    // Fully automatic refund settlement (founder, 2026-08-06: "the money he
+    // deposited, he can withdraw it any time with no issues" — the only gate
+    // should be staff approval, above a ceiling). Never blocks or fails the
+    // request either way — see the guarantee on tryAutoSettleRefund. This
+    // stays a silent no-op (falls back to the manual queue below, exactly the
+    // pre-existing behaviour) until PAYOUT_MODE=onchain AND a proven treasury
+    // signer are actually turned on — see autoRefund.ts and payout.ts.
+    const auto = await tryAutoSettleRefund(id);
+    if (auto.settled) {
+      return { ok: true, id, status: "paid", txHash: auto.txHash, balanceMicro };
+    }
+
+    return { ok: true, id, status: "pending", balanceMicro };
   }));
 
   // ---- ROZI store (a ROZI sink, and the honest answer to "what is it worth?") -

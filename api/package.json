@@ -19,6 +19,7 @@
     "test:deposits": "tsx src/tests/deposits.e2e.ts",
     "test:withdrawcontrols": "tsx src/tests/withdrawControls.e2e.ts",
     "test:autowithdraw": "tsx src/tests/autoWithdraw.e2e.ts",
+    "test:autorefund": "tsx src/tests/autoRefund.e2e.ts",
     "test:mining:e2e": "tsx src/tests/mining.e2e.ts",
     "test:kyc": "tsx src/tests/kyc.e2e.ts",
     "test:telegram": "tsx src/tests/telegram.e2e.ts",

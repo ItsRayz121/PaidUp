@@ -943,6 +943,48 @@ These override convenience or speed at every step:
     `PAYOUT_MODE` is still `manual` — none of this auto-sends anything real
     yet, same standing rule as the withdrawal signer above.
 
+- **A DEPOSIT REFUND CAN NOW AUTO-SETTLE TOO (founder, 2026-08-06).** The
+  founder's framing: "the money he deposited, he can withdraw it any time
+  with no issues — the only restriction should be admin approval." That
+  restated what `POST /usdt/refunds` already did (any address, capped only by
+  what the user themselves deposited, a staff queue) — what was actually
+  missing was that the staff step was **mandatory**, not optional, and the
+  screen's disclosure line ("this is not your task money…") read like a
+  refusal instead of information. Both are fixed. Verified: **8 new checks**
+  (`npm run test:autorefund`) + `test:usdt` re-run at 72 (was 65) + all other
+  suites green; api + web typecheck, eslint, web production build clean.
+  - **`autoRefund.ts` mirrors `autoWithdraw.ts` exactly, one level narrower.**
+    A refund request tries to settle itself the instant it's created, no
+    staff click, when `PAYOUT_MODE=onchain` AND a treasury signer exists AND
+    the amount is at or under `autoRefundMaxMicro` (default $5) — same shape
+    as the withdrawal ceiling, in micro-USDT instead of points because a
+    refund never touches the points ledger. Miss any gate and it drops into
+    the **unchanged** manual staff queue, exactly today's live behaviour.
+  - **This stays completely dormant right now, same as withdrawal
+    auto-settle.** `PAYOUT_MODE` is still `manual` — nothing about this
+    ships live until the signer is proven on testnet (see the entry above).
+    Building it now, gated the same way, means the moment that switch is
+    flipped for real, refunds go instant alongside withdrawals instead of
+    needing a second build later.
+  - **Reuses the withdrawal hold**, deliberately not a second flag: a staff
+    member holding an account means "stop this account's automatic outgoing
+    money," full stop, and a second independent hold would be a second place
+    fraud response has to remember to check.
+  - **The rolling 24h cap (`autoRefundMaxMicroPer24h`, default $15) is the
+    same compensating control** CUSTODY_SPEC.md § 3.3 named for withdrawals —
+    a per-request ceiling is where an attacker aims, repeatedly, just under
+    it — read inside the same `pg_advisory_xact_lock(userId)` scope as the
+    write, guardrail #8 applied to an aggregate read.
+  - ⚠️ **`usdt_refund_requests.reviewed_by` had a `REFERENCES users(id)` FK
+    that `withdrawal_requests.reviewed_by` never had — a real latent bug this
+    surfaced immediately in testing.** `'system:auto'` is not a user row, so
+    the first auto-settle would have failed the constraint in production. The
+    FK is dropped (`db.ts`, migrated for existing databases the same way the
+    `usdt_ledger` CHECK constraint above it is).
+  - The refund screen now shows a distinct "Sent!" confirmation with the tx
+    hash when a request settles instantly, instead of the "staff will send it
+    in a few hours" copy every request showed before.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

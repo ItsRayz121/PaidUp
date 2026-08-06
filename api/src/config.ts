@@ -122,6 +122,20 @@ export const config = {
   // (the founder deferred a real number for this; it needs revisiting once
   // real withdrawal volume exists — see CUSTODY_SPEC.md § 3).
   autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 5000),
+  // The same automatic-settlement idea, applied to a refund of a user's OWN
+  // USDT deposit (routes/mining.ts POST /usdt/refunds) instead of a points
+  // withdrawal (founder, 2026-08-06: "money he deposited, he can withdraw it
+  // anytime with no issues" — the only gate should be staff approval, and only
+  // above a ceiling). Shares the same PAYOUT_MODE/signer/RPC gating as
+  // withdrawals — see autoRefund.ts — so this stays a no-op (falls back to the
+  // manual queue) until onchain payout is actually proven and turned on.
+  // Denominated in MICRO-USDT, not points, because a refund never touches the
+  // points ledger at all.
+  autoRefundMaxMicro: Number(process.env.AUTO_REFUND_MAX_MICRO ?? 5_000_000), // $5
+  // Rolling 24h cap on auto-settled refunds, same reasoning as
+  // autoWithdrawMaxPointsPer24h below: the per-request ceiling above bounds
+  // ONE request, this bounds the SUM of many.
+  autoRefundMaxMicroPer24h: Number(process.env.AUTO_REFUND_MAX_MICRO_PER_24H ?? 15_000_000), // $15
   // Per-chain JSON-RPC endpoints. A LIST, not one URL (founder, 2026-08-01):
   // set RPC_BEP20 to a comma-separated list and callers try them in order,
   // moving to the next on a network error, a 429, or a 5xx.

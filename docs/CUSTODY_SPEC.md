@@ -138,9 +138,16 @@ The refund is deliberately the narrowest shape that honours the decision:
    the route at all. There is a regression test that a ROZI-rich account with no
    deposit cannot refund a cent, and it is there because that is the laundering
    shape: deposit nothing, withdraw something.
-2. **Sent by hand, from the treasury, by staff.** No signer, no hot wallet, no
-   automation. Identical posture to every payout since launch, so § 2c above is
-   otherwise untouched — this amendment adds **zero** key material.
+2. **Sent by hand, from the treasury, by staff** — unless auto-settlement is
+   proven and turned on, exactly like a withdrawal. ⚠️ **UPDATED 2026-08-06**:
+   `api/src/autoRefund.ts` now mirrors `autoWithdraw.ts` — a refund at or under
+   `autoRefundMaxMicro` (default $5) settles itself instantly when
+   `PAYOUT_MODE=onchain` and a treasury signer exists, same gate, same rolling
+   24h cap idea (`autoRefundMaxMicroPer24h`), same reused withdrawal-hold
+   safety valve. It adds **zero new key material** — it calls the exact § 5c
+   signer, not a second one — and it is exactly as dormant as § 5c is: nothing
+   auto-sends anything real until `PAYOUT_MODE` leaves `manual`, which needs
+   the same testnet proof named there.
 3. **Debited at request time, under `pg_advisory_xact_lock`** (guardrail #8), so
    a queued refund cannot be spent on a machine while it waits. A rejection
    writes the compensating credit; marking it sent writes no ledger row at all,
@@ -156,7 +163,9 @@ A general `withdrawal` source type is **still refused by the `usdt_ledger` CHECK
 constraint**, and that gap is load-bearing: it is what stops "refund your own
 deposit" drifting into "withdraw any balance" by one careless commit. Code:
 `POST /usdt/refunds` in `api/src/routes/mining.ts`, the queue in
-`api/src/routes/staffMining.ts`, 13 checks in `npm run test:usdt`.
+`api/src/routes/staffMining.ts`, checks in `npm run test:usdt` (manual-queue
+behaviour) and `npm run test:autorefund` (the auto-settle gates in point 2
+above).
 
 ---
 

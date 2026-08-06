@@ -36,6 +36,11 @@ export default function RefundPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  // Set when the request settled instantly (auto-send is on and it was under
+  // the ceiling) instead of dropping into the manual queue — see
+  // requestUsdtRefund's response and autoRefund.ts. Undefined = the ordinary
+  // "we got it, staff will send it" confirmation.
+  const [instantTxHash, setInstantTxHash] = useState<string | null>(null);
 
   if (!ready || usdt.loading) return <div className="p-4 pt-6"><Loading /></div>;
   if (usdt.error || !usdt.data) {
@@ -63,8 +68,9 @@ export default function RefundPage() {
     setBusy(true);
     setError(null);
     try {
-      await requestUsdtRefund(Number(amount), addr.trim());
+      const res = await requestUsdtRefund(Number(amount), addr.trim());
       setSent(true);
+      setInstantTxHash(res.status === "paid" ? (res.txHash ?? null) : null);
       setAmount("");
       usdt.reload();
     } catch (e) {
@@ -103,9 +109,12 @@ export default function RefundPage() {
         <Card className="border-success/30 bg-success-tint/60 p-4">
           <p className="flex items-center gap-2 font-bold text-success">
             <CheckIcon size={18} />
-            {t("refund.done.title")}
+            {t(instantTxHash ? "refund.done.instant.title" : "refund.done.title")}
           </p>
-          <p className="mt-1 text-sm text-brand-ink">{t("refund.done.body")}</p>
+          <p className="mt-1 text-sm text-brand-ink">
+            {t(instantTxHash ? "refund.done.instant.body" : "refund.done.body")}
+          </p>
+          {instantTxHash && <p className="num mt-2 break-all text-xs text-muted">{instantTxHash}</p>}
         </Card>
       )}
 
@@ -130,7 +139,7 @@ export default function RefundPage() {
               min={min}
               max={balance}
               value={amount}
-              onChange={(e) => { setAmount(e.target.value); setSent(false); }}
+              onChange={(e) => { setAmount(e.target.value); setSent(false); setInstantTxHash(null); }}
               placeholder="0"
               className="num w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none focus:border-brand"
             />
@@ -146,7 +155,7 @@ export default function RefundPage() {
             <input
               id="addr"
               value={addr}
-              onChange={(e) => { setAddress(e.target.value); setSent(false); }}
+              onChange={(e) => { setAddress(e.target.value); setSent(false); setInstantTxHash(null); }}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}

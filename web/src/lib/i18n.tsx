@@ -872,12 +872,18 @@ const copy: Record<string, string> = {
   "refund.addressHint": "Your own USDT wallet on BNB Smart Chain (BEP20).",
   "refund.min": "The smallest amount we can send back is {min} USDT.",
   "refund.notSpent": "Only USDT you have not spent on machines can come back.",
-  "refund.notEarnings": "This is not your task money. Your task money goes out from your wallet.",
+  "refund.notEarnings": "This is the USDT you put in yourself — it is yours, and you can ask for all of it back, any time. (Your task and referral earnings are a separate balance and go out from your wallet instead.)",
   "refund.submit": "Ask for it back",
   "refund.sending": "Sending…",
   "refund.done.title": "We got your request",
   "refund.done.body":
     "Someone from our team will send it and show you the transaction. This usually takes a few hours.",
+  // Shown instead of the two lines above when the request settled the moment
+  // it was made (automatic on-chain send is on and the amount was under the
+  // ceiling) — see autoRefund.ts. Off by default; the copy above is what
+  // almost every user sees until that is turned on.
+  "refund.done.instant.title": "Sent!",
+  "refund.done.instant.body": "Your USDT is already on its way. The transaction is below.",
   "refund.history": "Your requests",
   "refund.empty": "You have not asked for any money back.",
   "refund.status.pending": "Sending",

@@ -627,7 +627,7 @@ export const claimUsdtTopup = (txHash: string, amount: number) =>
   apiFetch<{ ok: true; id: string; status: string }>(
     "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });
 export const requestUsdtRefund = (amount: number, address: string) =>
-  apiFetch<{ ok: true; id: string; status: string; balanceMicro: number }>(
+  apiFetch<{ ok: true; id: string; status: "pending" | "paid"; txHash?: string; balanceMicro: number }>(
     "/usdt/refunds", { method: "POST", body: JSON.stringify({ amount, address }) });
 
 export type RoziEntry = {

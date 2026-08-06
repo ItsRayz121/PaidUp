@@ -721,12 +721,21 @@ const MIGRATIONS = `
     address_verified INTEGER NOT NULL DEFAULT 0,
     tx_hash       TEXT,
     reject_reason TEXT,
-    reviewed_by   TEXT REFERENCES users(id),
+    -- No REFERENCES users(id): autoRefund.ts stamps this 'system:auto' for a
+    -- refund that settled itself, the same sentinel withdrawal_requests.reviewed_by
+    -- already uses for the identical reason on the withdrawal side (see that
+    -- table above — its column was never given this FK for exactly this reason).
+    reviewed_by   TEXT,
     reviewed_at   TEXT,
     created_at    TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_usdt_refunds_status ON usdt_refund_requests(status, created_at);
   CREATE INDEX IF NOT EXISTS idx_usdt_refunds_user ON usdt_refund_requests(user_id, created_at);
+  -- Existing databases were created with the FK above; DROP so 'system:auto'
+  -- (autoRefund.ts) does not fail the constraint on a deployed instance while
+  -- passing on a fresh one — same reason the CHECK constraint below is
+  -- re-granted explicitly instead of relying on CREATE TABLE IF NOT EXISTS.
+  ALTER TABLE usdt_refund_requests DROP CONSTRAINT IF EXISTS usdt_refund_requests_reviewed_by_fkey;
 
   -- One claimed deposit. Credit is posted ONLY when a staff member confirms.
   CREATE TABLE IF NOT EXISTS usdt_topups (

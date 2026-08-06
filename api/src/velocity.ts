@@ -70,3 +70,23 @@ export async function autoWithdrawnLast24hPoints(
   );
   return Number(row?.total ?? 0);
 }
+
+// Same idea as autoWithdrawnLast24hPoints, for a USDT deposit refund
+// (autoRefund.ts) instead of a points withdrawal — see config.autoRefundMaxMicroPer24h.
+// usdt_refund_requests has no paid_at column (unlike withdrawal_requests); the
+// staff/auto "paid" handler stamps reviewed_at at the same moment, so that is
+// the timestamp to sum against here.
+//
+// ⚠️ MUST be called from inside tryAutoSettleRefund's
+// pg_advisory_xact_lock(userId) scope, not before it — same race guardrail #8
+// exists to close on the withdrawal side (see the note above).
+export async function autoRefundedLast24hMicro(
+  userId: string, t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ total: string }>(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM usdt_refund_requests
+     WHERE user_id = ? AND reviewed_by = 'system:auto' AND status = 'paid' AND reviewed_at >= ?`,
+    userId, hoursAgoIso(24),
+  );
+  return Number(row?.total ?? 0);
+}
