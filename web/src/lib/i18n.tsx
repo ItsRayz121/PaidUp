@@ -509,6 +509,16 @@ const copy: Record<string, string> = {
   "wallet.token.soon": "—",
   "withdraw.saveAddress": "Save this address",
   "withdraw.addressSaved": "Address saved",
+  // Shown next to a typed address that has NOT been saved yet — the exact gap
+  // a founder fell into (2026-08-07): typed an address, thought that alone was
+  // enough, never tapped the separate Save button, and the withdraw screen's
+  // button stayed disabled with no obvious reason why. This makes the
+  // in-between state visible instead of silent.
+  "withdraw.addressNotSaved": "Not saved yet — tap \"Save this address\" below, or it will not be used.",
+  // Shown on /wallet/withdraw right next to the disabled Send button when the
+  // reason is a missing/unsaved payout wallet, not the amount — belowMin and
+  // overBalance already get their own message, an address problem must too.
+  "withdraw.needWalletFirst": "Set up your payout wallet above first — the button will turn on once it is saved.",
   "withdraw.feeLabel": "Withdrawal fee",
   "withdraw.youReceive": "You receive",
   // ---- Connect a wallet (2026-08-01) ---------------------------------------

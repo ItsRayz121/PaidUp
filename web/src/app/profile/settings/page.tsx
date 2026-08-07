@@ -332,7 +332,13 @@ export default function ProfileSettingsPage() {
             savedAddress={savedPayoutAddr}
             verified={payoutVerified}
             onConnected={onPayoutConnected}
-            onUseTyping={() => setPayoutTyping(true)}
+            onUseTyping={() => {
+              setPayoutTyping(true);
+              // Seed the field with whatever is already saved, so switching to
+              // the typing view shows the true current state instead of a
+              // blank box that reads as "nothing set" when something is.
+              if (!payoutAddress && savedPayoutAddr) setPayoutAddress(savedPayoutAddr);
+            }}
           />
         ) : (
           <Card className="p-4">
@@ -354,6 +360,17 @@ export default function ProfileSettingsPage() {
             {payoutAddress.length > 0 && !typedAddrOk && (
               <p className="mt-1.5 text-sm text-danger">
                 {t("withdraw.addrInvalid", { label: chainLabel(payoutChain) })}
+              </p>
+            )}
+            {/* The exact gap that left a real user's withdraw button dead with
+                no explanation (2026-08-07): a valid address just sitting in
+                the box, typed but never saved, looks identical to a saved one
+                at a glance — an input holds text either way. This makes the
+                in-between state visible instead of silent. Disappears the
+                moment Save succeeds (payoutSaved) or while it is in flight. */}
+            {typedAddrOk && typedAddr !== savedPayoutAddr && !payoutSaved && !payoutSaving && (
+              <p className="mt-1.5 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">
+                {t("withdraw.addressNotSaved")}
               </p>
             )}
             <div className="mt-3 flex items-center gap-3">

@@ -238,6 +238,15 @@ export default function WithdrawPage() {
         <p className="px-1 text-xs text-muted">{t("withdraw.lowestPayout", { points: formatMoney(min) })}</p>
         {belowMin && <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needAtLeast", { points: formatMoney(min) })}</p>}
         {overBalance && <p className="mt-2 rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("withdraw.notEnough")}</p>}
+        {/* The amount can be perfectly valid while the button stays dead,
+            because the address is what "invalid" is ALSO checking — and
+            unlike belowMin/overBalance, that reason had no message of its
+            own before this. The noWallet card above already explains a
+            MISSING address; this covers the identical case at the point
+            where someone is actually staring at the disabled button. */}
+        {!belowMin && !overBalance && !addressOk && (
+          <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needWalletFirst")}</p>
+        )}
       </div>
 
       <Button variant="accent" disabled={invalid || busy} onClick={submit}>
