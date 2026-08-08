@@ -22,6 +22,7 @@ import { initDb, sql, usingRealPostgres } from "./db.ts";
 import { tickDepositScan } from "./deposits/scanner.ts";
 import { tickSweep } from "./deposits/sweep.ts";
 import { tickReconcile } from "./deposits/reconcile.ts";
+import { tickPayoutRelay } from "./payoutRelay.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -209,6 +210,21 @@ async function tickDeposits() {
 }
 setInterval(tickDeposits, config.depositScanIntervalMs).unref();
 
+// ---- Payout relay — payoutRelay.ts ------------------------------------------
+// Advances every in-flight withdrawal/refund relay job one phase (gas ->
+// prefund -> forward, per-phase confirmation waits). Same cadence as the
+// deposit scan above — a user is actively watching this one, unlike the
+// hourly reconciliation below. A no-op per job until the RPC receipt it's
+// waiting on lands; a no-op entirely when no jobs are open.
+async function tickPayoutRelayJob() {
+  try {
+    await tickPayoutRelay();
+  } catch (err) {
+    app.log.error({ err }, "Payout relay tick failed");
+  }
+}
+setInterval(tickPayoutRelayJob, config.depositScanIntervalMs).unref();
+
 // ---- Reconciliation — CUSTODY_SPEC.md § 5 step 3 / § 3.5 -------------------
 // Hourly, much slower than the deposit/sweep ticks above: this is a
 // treasury-balance-vs-ledger check, not something that needs to be fresh to
@@ -222,6 +238,7 @@ try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   void tickSettlement();
   void tickDeposits();
+  void tickPayoutRelayJob();
   void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
   // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
   // being slow or down must never delay or fail OUR boot.

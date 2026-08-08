@@ -251,8 +251,13 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // The user gets "paid" back immediately. Otherwise this is a no-op and
     // the request sits in the same manual queue as always.
     const auto = await tryAutoSettle(id);
-    if (auto.settled) {
+    if (auto.settled === true) {
       return { request: { id, amount: amountPoints, chain, address, status: "paid", txHash: auto.txHash, usdt: auto.usdt } };
+    }
+    if (auto.settled === "processing") {
+      // Routed through the user's own derived address (payoutRelay.ts) — a
+      // few blocks away from 'paid', not instant, but not the manual queue.
+      return { request: { id, amount: amountPoints, chain, address, status: "sending" } };
     }
 
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };

@@ -398,6 +398,10 @@ function statusFor(source: string, withdrawalStatus: string | null): string {
   if (source !== "withdrawal") return "earned";
   if (withdrawalStatus === "paid") return "paid";
   if (withdrawalStatus === "rejected") return "rejected";
+  // 'sending' = payoutRelay.ts's job is in flight (signed by the user's own
+  // address, a few blocks from 'paid') — distinct from a request still
+  // sitting in a queue, which is what plain "pending" means below.
+  if (withdrawalStatus === "sending") return "sending";
   return "pending"; // pending / agent_approved / manager_approved
 }
 

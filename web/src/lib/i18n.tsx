@@ -906,9 +906,14 @@ const copy: Record<string, string> = {
   // almost every user sees until that is turned on.
   "refund.done.instant.title": "Sent!",
   "refund.done.instant.body": "Your USDT is already on its way. The transaction is below.",
+  // Shown when the request is signing and broadcasting right now (a few
+  // blocks from done — payoutRelay.ts), not instant and not queued for staff.
+  "refund.done.sending.title": "On its way",
+  "refund.done.sending.body": "We're sending it now. It should land in your wallet within a few minutes.",
   "refund.history": "Your requests",
   "refund.empty": "You have not asked for any money back.",
-  "refund.status.pending": "Sending",
+  "refund.status.pending": "Waiting",
+  "refund.status.sending": "Sending",
   "refund.status.paid": "Sent",
   "refund.status.rejected": "Not sent",
   "refund.none": "You have no USDT to send back yet.",

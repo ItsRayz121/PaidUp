@@ -3,6 +3,15 @@
 // right step instead of re-sending gas that already landed:
 //   pending -> gas_sent -> gas_confirmed -> swept
 //
+// ⚠️ OFF BY DEFAULT since 2026-08-08 (config.custodySweepEnabled) — the
+// founder chose "never sweep" so a deposit stays at the user's own address
+// long enough for a refund (and payoutRelay.ts's withdrawal pass-through) to
+// genuinely be signed BY that address instead of by treasury. The code stays
+// here, working, for a possible future admin-triggered manual consolidation;
+// it just no longer runs on the automatic tick. See payoutRelay.ts's header
+// for what replaced the "consolidate then pay from treasury" flow this used
+// to feed.
+//
 // ⚠️ NEVER CALLS postUsdt(). Crediting already happened when chain_deposits
 // flipped to 'credited' (deposits/credit.ts) — this file's only job is
 // treasury consolidation. Keep this file free of any usdt_ledger import; that
@@ -91,6 +100,7 @@ async function markDepositsSwept(chain: string, address: string): Promise<void> 
 }
 
 export async function sweepDepositAddress(chain: string, address: string, addrIndex: number): Promise<void> {
+  if (!config.custodySweepEnabled) return; // "never sweep" default — see header
   if (!sweepSigningEnabled("evm")) return; // no sweep seed configured — deposits sit safely unswept
   const token = ONCHAIN_CHAINS[chain as keyof typeof ONCHAIN_CHAINS];
   if (!token) return;
@@ -160,6 +170,7 @@ export async function sweepDepositAddress(chain: string, address: string, addrIn
 }
 
 export async function tickSweep(): Promise<void> {
+  if (!config.custodySweepEnabled) return; // "never sweep" default — see header
   if (!sweepSigningEnabled("evm")) return;
   for (const chain of ["bep20"]) {
     const work = await findSweepWork(chain);

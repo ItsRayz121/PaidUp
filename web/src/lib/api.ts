@@ -142,7 +142,7 @@ export type Task = {
 };
 export type LedgerEntry = {
   id: string; label: string; points: number;
-  status: "earned" | "pending" | "paid" | "rejected"; kind: string; at: string;
+  status: "earned" | "pending" | "sending" | "paid" | "rejected"; kind: string; at: string;
 };
 export type Withdrawal = {
   id: string; amount: number; chain: string; address?: string;
@@ -619,7 +619,7 @@ export type UsdtRefund = {
   // The gas fee (founder, 2026-08-08), snapshotted at request time. What was
   // actually sent is amountMicro - feeMicro.
   feeMicro: number;
-  status: "pending" | "paid" | "rejected";
+  status: "pending" | "sending" | "paid" | "rejected";
   txHash: string | null; rejectReason: string | null; createdAt: string;
 };
 export type UsdtState = {
@@ -653,7 +653,7 @@ export const claimUsdtTopup = (txHash: string, amount: number) =>
     "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });
 export const requestUsdtRefund = (amount: number, address: string) =>
   apiFetch<{
-    ok: true; id: string; status: "pending" | "paid"; txHash?: string; balanceMicro: number;
+    ok: true; id: string; status: "pending" | "sending" | "paid"; txHash?: string; balanceMicro: number;
     feeMicro: number; netMicro: number;
   }>("/usdt/refunds", { method: "POST", body: JSON.stringify({ amount, address }) });
 

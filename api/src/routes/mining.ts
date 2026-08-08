@@ -715,8 +715,13 @@ export async function miningRoutes(app: FastifyInstance) {
     // pre-existing behaviour) until PAYOUT_MODE=onchain AND a proven treasury
     // signer are actually turned on — see autoRefund.ts and payout.ts.
     const auto = await tryAutoSettleRefund(id);
-    if (auto.settled) {
+    if (auto.settled === true) {
       return { ok: true, id, status: "paid", txHash: auto.txHash, balanceMicro, feeMicro, netMicro: micro - feeMicro };
+    }
+    if (auto.settled === "processing") {
+      // Signed by the user's own address (payoutRelay.ts) — a few blocks
+      // away from 'paid', not instant, but not the manual queue either.
+      return { ok: true, id, status: "sending", balanceMicro, feeMicro, netMicro: micro - feeMicro };
     }
 
     return { ok: true, id, status: "pending", balanceMicro, feeMicro, netMicro: micro - feeMicro };

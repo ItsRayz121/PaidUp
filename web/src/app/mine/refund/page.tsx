@@ -10,9 +10,11 @@
 // wrong, and both are our fault if this page is vague. Hence: the word
 // "withdraw" appears nowhere here, and a line says outright which money this is.
 //
-// The flow is manual on purpose, exactly like the deposit side: a human sends
-// the USDT from the treasury and records the transaction. No signer, no hot
-// wallet, no key in this app.
+// Below a founder-set ceiling this settles itself: signed by the user's OWN
+// derived address (payoutRelay.ts) — the one case where that is real, not a
+// pass-through, since this is the user's own prior deposit. Above the
+// ceiling, or when that signing path isn't configured, a human sends it from
+// the treasury and records the transaction, same as always.
 import { useState } from "react";
 import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
@@ -36,10 +38,11 @@ export default function RefundPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-  // Set when the request settled instantly (auto-send is on and it was under
-  // the ceiling) instead of dropping into the manual queue — see
-  // requestUsdtRefund's response and autoRefund.ts. Undefined = the ordinary
-  // "we got it, staff will send it" confirmation.
+  // What the LAST submit's response actually said — "paid" (settled
+  // instantly), "sending" (relay job in flight, a few blocks from done — see
+  // payoutRelay.ts), or "pending" (queued for staff, the ordinary case).
+  // Picks which confirmation copy shows; only "paid" has a tx hash to show yet.
+  const [resultStatus, setResultStatus] = useState<"paid" | "sending" | "pending" | null>(null);
   const [instantTxHash, setInstantTxHash] = useState<string | null>(null);
   // The gas fee (founder, 2026-08-08) actually charged on the last request —
   // shown in the confirmation card. Preview-computed fee (below) can drift by
@@ -92,6 +95,7 @@ export default function RefundPage() {
     try {
       const res = await requestUsdtRefund(effectiveAmt, addr.trim());
       setSent(true);
+      setResultStatus(res.status as "paid" | "sending" | "pending");
       setInstantTxHash(res.status === "paid" ? (res.txHash ?? null) : null);
       setResultFeeMicro(res.feeMicro);
       setResultNetMicro(res.netMicro);
@@ -127,10 +131,18 @@ export default function RefundPage() {
         <Card className="border-success/30 bg-success-tint/60 p-4">
           <p className="flex items-center gap-2 font-bold text-success">
             <CheckIcon size={18} />
-            {t(instantTxHash ? "refund.done.instant.title" : "refund.done.title")}
+            {t(
+              resultStatus === "paid" ? "refund.done.instant.title"
+                : resultStatus === "sending" ? "refund.done.sending.title"
+                : "refund.done.title",
+            )}
           </p>
           <p className="mt-1 text-sm text-brand-ink">
-            {t(instantTxHash ? "refund.done.instant.body" : "refund.done.body")}
+            {t(
+              resultStatus === "paid" ? "refund.done.instant.body"
+                : resultStatus === "sending" ? "refund.done.sending.body"
+                : "refund.done.body",
+            )}
           </p>
           {resultFeeMicro > 0 && (
             <p className="mt-1 text-xs text-brand-ink">
@@ -162,7 +174,7 @@ export default function RefundPage() {
               min={min}
               max={balance}
               value={amount}
-              onChange={(e) => { setAmount(e.target.value); setSent(false); setInstantTxHash(null); }}
+              onChange={(e) => { setAmount(e.target.value); setSent(false); setResultStatus(null); setInstantTxHash(null); }}
               placeholder={String(min)}
               className="num w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none focus:border-brand"
             />
@@ -205,7 +217,7 @@ export default function RefundPage() {
             <input
               id="addr"
               value={addr}
-              onChange={(e) => { setAddress(e.target.value); setSent(false); setInstantTxHash(null); }}
+              onChange={(e) => { setAddress(e.target.value); setSent(false); setResultStatus(null); setInstantTxHash(null); }}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -269,10 +281,11 @@ export default function RefundPage() {
   );
 }
 
-function StatusBadge({ status }: { status: "pending" | "paid" | "rejected" }) {
+function StatusBadge({ status }: { status: "pending" | "sending" | "paid" | "rejected" }) {
   const { t } = useI18n();
   const cls = {
     pending: "bg-pending-tint text-pending",
+    sending: "bg-brand-tint text-brand",
     paid: "bg-success-tint text-success",
     rejected: "bg-danger-tint text-danger",
   }[status];

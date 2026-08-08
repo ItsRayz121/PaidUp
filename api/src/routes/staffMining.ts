@@ -12,6 +12,8 @@ import {
   usdtFromMicro, usdtToMicro, logAudit,
 } from "../db.ts";
 import { chainById, validateAddress } from "../chains.ts";
+import { config } from "../config.ts";
+import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
@@ -443,11 +445,20 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // Getting that backwards in either direction is a double-debit or a free
   // top-up, so the two handlers below say which one they are doing out loud.
   app.get("/staff/mining/refunds", staffGuard(["manager", "admin"], async (_ctx, req) => {
-    const q = z.object({ status: z.enum(["pending", "paid", "rejected"]).default("pending") })
+    const q = z.object({ status: z.enum(["pending", "sending", "paid", "rejected"]).default("pending") })
       .parse((req.query as Record<string, unknown>) ?? {});
+    // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay signing
+    // straight from the user's OWN address — see payoutRelay.ts, the one
+    // place that's genuinely real rather than a pass-through) shows its
+    // in-flight phase instead of looking stuck.
     const rows = await sql.all<Record<string, unknown>>(
-      `SELECT r.*, u.email, u.username FROM usdt_refund_requests r
+      `SELECT r.*, u.email, u.username,
+              j.status AS relay_status, j.from_address AS relay_from_address,
+              j.gas_tx_hash AS relay_gas_tx_hash, j.forward_tx_hash AS relay_forward_tx_hash,
+              j.last_error AS relay_last_error
+       FROM usdt_refund_requests r
        JOIN users u ON u.id = r.user_id
+       LEFT JOIN payout_relay_jobs j ON j.purpose = 'refund' AND j.request_id = r.id
        WHERE r.status = ? ORDER BY r.created_at LIMIT 200`,
       q.status,
     );
@@ -464,31 +475,70 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         // Same signal the withdrawal queue shows: did the user prove this exact
         // address with a wallet signature, or did they type it in?
         addressVerified: Boolean(r.address_verified),
+        relay: r.relay_status ? {
+          phase: r.relay_status, fromAddress: r.relay_from_address,
+          gasTxHash: r.relay_gas_tx_hash, forwardTxHash: r.relay_forward_tx_hash,
+          lastError: r.relay_last_error,
+        } : null,
       })),
     };
   }));
 
   app.post("/staff/mining/refunds/:id/paid", staffGuard(["admin"], async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
-    const b = z.object({ txHash: z.string().trim().min(6).max(200) }).parse(req.body);
+    // Optional now: only in onchain mode WITHOUT a relay path does staff still
+    // paste a hash after sending by hand. When the relay is available,
+    // clicking this button is the whole action — see below.
+    const b = z.object({ txHash: z.string().trim().min(6).max(200).optional() }).parse(req.body);
 
-    // Claim the row first and only if still pending — two admins on the queue
-    // would otherwise both mark one refund paid and it would be sent twice.
-    const claimed = await sql.get<{ user_id: string; amount: string; fee_micro: string }>(
-      `UPDATE usdt_refund_requests SET status = 'paid', tx_hash = ?, reviewed_by = ?, reviewed_at = ?
-       WHERE id = ? AND status = 'pending' RETURNING user_id, amount, fee_micro`,
-      b.txHash.trim(), userId, now(), id,
-    );
-    if (!claimed) throw { statusCode: 409, message: "That refund was already handled." };
+    // Locks the row (FOR UPDATE) rather than the bare atomic UPDATE this used
+    // to be — the decision of WHICH path to take (relay vs. pasted hash) now
+    // needs to read the row first, so the "two admins, one refund" race has
+    // to be closed with an explicit lock instead of one UPDATE's atomicity.
+    const outcome = await sql.tx(async (t) => {
+      const refund = await t.get<{
+        user_id: string; chain: string; address: string; amount: string; fee_micro: string; status: string;
+      }>("SELECT user_id, chain, address, amount, fee_micro, status FROM usdt_refund_requests WHERE id = ? FOR UPDATE", id);
+      if (!refund || refund.status !== "pending") {
+        throw { statusCode: 409, message: "That refund was already handled." };
+      }
+      const net = Number(refund.amount) - Number(refund.fee_micro ?? 0);
 
-    // NO LEDGER ROW HERE. The debit was written when the user asked; writing
-    // another one now would take the money twice.
-    const net = Number(claimed.amount) - Number(claimed.fee_micro ?? 0);
-    await logAudit({
-      actorUserId: userId, actorRole: role, action: "usdt_refund_paid",
-      detail: `${id} -> ${claimed.user_id}: ${usdtFromMicro(net)} USDT sent (of ${usdtFromMicro(Number(claimed.amount))} requested), tx ${b.txHash.trim()}`,
+      // Only in onchain mode — payoutMode is the founder's manual/automatic
+      // switch; relayAvailable() alone does not respect it.
+      if (config.payoutMode === "onchain" && relayAvailable(refund.chain)) {
+        // This is the one place payoutRelay's per-user signing is REAL, not a
+        // pass-through: the user's own address genuinely holds this USDT.
+        await createRelayJob("refund", id, {
+          chain: "bep20", userId: refund.user_id, toAddress: refund.address,
+          amountMicro: net, needsPrefund: false,
+        }, t);
+        await t.run(
+          "UPDATE usdt_refund_requests SET status = 'sending', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+          userId, now(), id,
+        );
+        return { status: "sending" as const };
+      }
+
+      if (!b.txHash) {
+        throw { statusCode: 400, message: "Send the USDT by hand first, then paste the transaction hash." };
+      }
+      // NO LEDGER ROW HERE. The debit was written when the user asked; writing
+      // another one now would take the money twice.
+      await t.run(
+        "UPDATE usdt_refund_requests SET status = 'paid', tx_hash = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+        b.txHash.trim(), userId, now(), id,
+      );
+      return { status: "paid" as const, userId: refund.user_id, net, requested: Number(refund.amount), txHash: b.txHash.trim() };
     });
-    return { ok: true };
+
+    if (outcome.status === "paid") {
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "usdt_refund_paid",
+        detail: `${id} -> ${outcome.userId}: ${usdtFromMicro(outcome.net)} USDT sent (of ${usdtFromMicro(outcome.requested)} requested), tx ${outcome.txHash}`,
+      });
+    }
+    return { ok: true, status: outcome.status };
   }));
 
   app.post("/staff/mining/refunds/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {

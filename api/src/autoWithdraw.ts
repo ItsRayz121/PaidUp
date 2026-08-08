@@ -10,9 +10,19 @@
 // routes/staff.ts's manual "pay" action holds a transaction open across the
 // network call to provider.send(): consistency with the one place this
 // codebase already does that, not a new pattern invented here.
+//
+// ⚠️ 2026-08-08: "settlement" is no longer always synchronous. When
+// payoutRelay.relayAvailable() is true, this creates a relay job (routes the
+// destination transaction through the user's OWN derived address — see
+// payoutRelay.ts's header for why) and leaves the request at 'sending';
+// payoutRelay.tickPayoutRelay() flips it to 'paid' once the on-chain relay
+// actually completes, a few blocks later. When the relay isn't available for
+// this chain, this falls straight back to the original synchronous
+// provider.send() (direct treasury pay) — unchanged.
 import { sql, now, isWithdrawalHeld, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { getPayoutProvider, pointsToUsdt } from "./payout.ts";
+import { relayAvailable, createRelayJob } from "./payoutRelay.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoWithdrawnLast24hPoints } from "./velocity.ts";
@@ -20,6 +30,7 @@ import { getAutoWithdrawMaxPoints } from "./autoSettleSettings.ts";
 
 export type AutoSettleResult =
   | { settled: true; txHash: string; usdt: string }
+  | { settled: "processing" }
   | { settled: false; reason: string };
 
 // Attempt to auto-settle a just-created, still-'pending' withdrawal request.
@@ -42,15 +53,16 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
     const hold = await isWithdrawalHeld(req.user_id);
     if (hold.held) return { settled: false, reason: `account held: ${hold.reason}` };
 
+    const relay = relayAvailable(req.payout_rail);
     const provider = getPayoutProvider();
-    if (!provider.canSettle(req.payout_rail as ChainId)) {
+    if (!relay && !provider.canSettle(req.payout_rail as ChainId)) {
       return { settled: false, reason: "provider cannot settle this chain right now" };
     }
 
     const net = Math.max(0, req.amount - (req.fee_points ?? 0));
     const usdt = pointsToUsdt(net);
 
-    const result = await sql.tx(async (t: TxApi) => {
+    const outcome = await sql.tx(async (t: TxApi) => {
       // GUARDRAIL #8, applied to an AGGREGATE read, not just a balance: two
       // withdrawal requests for the same user, auto-settling close together,
       // must not both read autoWithdrawnLast24hPoints before either has
@@ -80,6 +92,23 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
         throw new Error("above rolling 24h auto-withdraw cap");
       }
 
+      if (relay) {
+        // Route the destination send THROUGH the user's own derived address
+        // instead of settling synchronously here — see payoutRelay.ts.
+        await createRelayJob("withdrawal", req.id, {
+          chain: "bep20", userId: req.user_id, toAddress: req.payout_address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+        }, t);
+        await t.run(
+          `UPDATE withdrawal_requests
+           SET status = 'sending', reviewed_by = 'system:auto', review_note = ?, reviewed_at = ?
+           WHERE id = ?`,
+          "Sending automatically — below the auto-withdraw ceiling, no staff review required.",
+          now(), requestId,
+        );
+        return { processing: true as const };
+      }
+
       const sent = await provider.send({
         requestId: req.id,
         chain: req.payout_rail as ChainId,
@@ -95,15 +124,17 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
         "Sent automatically — below the auto-withdraw ceiling, no staff review required.",
         now(), now(), sent.txHash, usdt, requestId,
       );
-      return sent;
+      return { processing: false as const, txHash: sent.txHash };
     });
+
+    if (outcome.processing) return { settled: "processing" };
 
     void sendPushToUser(req.user_id, {
       title: "Your money is sent",
       body: `We sent ${usdt} USDT to your wallet. Check it now.`,
       url: "/wallet",
     });
-    return { settled: true, txHash: result.txHash, usdt };
+    return { settled: true, txHash: outcome.txHash, usdt };
   } catch (e) {
     return { settled: false, reason: (e as Error).message || "auto-settle failed" };
   }

@@ -4,7 +4,7 @@ import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
 import { formatPointsAsRozi } from "@/lib/format";
 
 // Matches the backend's ledger row status (see @/lib/api LedgerEntry).
-type LedgerStatus = "earned" | "paid" | "pending" | "rejected";
+type LedgerStatus = "earned" | "paid" | "pending" | "sending" | "rejected";
 
 // ---- Button ---------------------------------------------------------------
 // One action per button, named by the action (DESIGN_BRIEF simple-English).
@@ -78,6 +78,9 @@ const statusMap: Record<LedgerStatus, { label: string; Icon: typeof CheckIcon; c
   earned: { label: "Added", Icon: CheckIcon, cls: "bg-success-tint text-success" },
   paid: { label: "Paid", Icon: CheckIcon, cls: "bg-success-tint text-success" },
   pending: { label: "Waiting", Icon: ClockIcon, cls: "bg-pending-tint text-pending" },
+  // On its way — signed by your own wallet address, a few blocks from done.
+  // Distinct from plain "Waiting" (that's still in a queue; this is already moving).
+  sending: { label: "Sending", Icon: ClockIcon, cls: "bg-brand-tint text-brand" },
   rejected: { label: "Not added", Icon: XIcon, cls: "bg-danger-tint text-danger" },
 };
 

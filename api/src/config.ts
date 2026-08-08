@@ -311,6 +311,15 @@ export const config = {
     utxo: process.env.CUSTODY_SEED_UTXO_SECRET ?? "",
   } as Record<string, string>,
 
+  // Whether deposits/sweep.ts's automatic treasury consolidation runs at all
+  // (founder, 2026-08-08: "never sweep" — deposits stay at the user's own
+  // address so a refund can genuinely be signed by that address, and
+  // payoutRelay.ts's withdrawal pass-through routes THROUGH it too). Default
+  // OFF. The code is left in place, not deleted, for a possible future
+  // admin-triggered manual consolidation — this flag is the automatic-tick
+  // kill switch, checked at the top of tickSweep/sweepDepositAddress.
+  custodySweepEnabled: (process.env.CUSTODY_SWEEP_ENABLED ?? "false") === "true",
+
   // Unlocks EVERY row in deposit_address_pool at once (Solana/Aptos — ed25519
   // has no public-only child derivation, so those addresses are pre-generated
   // offline instead of derived; see custodySeeds.ts). One key for the whole

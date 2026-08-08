@@ -249,7 +249,7 @@ const SCHEMA = `
     payout_rail    TEXT NOT NULL,          -- chain id: bep20 | base | aptos (old rows may hold the dropped "polygon")
     payout_address TEXT,                   -- destination USDT wallet address
     status         TEXT NOT NULL DEFAULT 'pending'
-                   CHECK (status IN ('pending','agent_approved','manager_approved','paid','rejected')),
+                   CHECK (status IN ('pending','agent_approved','manager_approved','sending','paid','rejected')),
     tx_hash        TEXT,                   -- on-chain hash once paid (send scaffold)
     reviewed_by    TEXT,
     review_note    TEXT,
@@ -722,7 +722,7 @@ const MIGRATIONS = `
     -- staff "mark paid" panel.
     fee_micro     BIGINT NOT NULL DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending','paid','rejected')),
+                    CHECK (status IN ('pending','sending','paid','rejected')),
     -- Snapshotted at request time for the same reason withdrawal_requests
     -- snapshots fee_points and address_verified: the person approving an
     -- irreversible on-chain send must see what was true when the user asked.
@@ -948,6 +948,73 @@ const MIGRATIONS = `
     checked_at      TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_treasury_snapshots_chain ON treasury_balance_snapshots(chain, checked_at);
+
+  -- Existing databases were created with the pre-'sending' CHECK, same reason
+  -- usdt_ledger's source_type constraint above is re-granted explicitly
+  -- instead of relying on CREATE TABLE IF NOT EXISTS (a no-op on a table that
+  -- already exists).
+  ALTER TABLE withdrawal_requests DROP CONSTRAINT IF EXISTS withdrawal_requests_status_check;
+  ALTER TABLE withdrawal_requests ADD CONSTRAINT withdrawal_requests_status_check
+    CHECK (status IN ('pending','agent_approved','manager_approved','sending','paid','rejected'));
+  ALTER TABLE usdt_refund_requests DROP CONSTRAINT IF EXISTS usdt_refund_requests_status_check;
+  ALTER TABLE usdt_refund_requests ADD CONSTRAINT usdt_refund_requests_status_check
+    CHECK (status IN ('pending','sending','paid','rejected'));
+
+  -- payoutRelay.ts — the per-user-wallet payout relay (founder, 2026-08-08).
+  -- One job per withdrawal/refund request that the treasury is going to route
+  -- THROUGH the user's own derived deposit address rather than pay directly.
+  -- Two shapes, picked by needs_prefund:
+  --   refund     (needs_prefund = false): the user's address already holds
+  --               this USDT (their own prior deposit) — no prefund step,
+  --               just gas + forward.
+  --   withdrawal (needs_prefund = true):  the money has never been at this
+  --               address (task/referral earnings only ever existed as a
+  --               treasury balance) — treasury funds gas AND the exact net
+  --               USDT amount into the user's address first, which then
+  --               forwards it on. This is the founder's informed "pass
+  --               through the user's own wallet anyway" choice — see
+  --               payoutRelay.ts's header for why it costs 2-3x the gas of a
+  --               direct treasury send and does not reduce custody exposure.
+  --
+  -- Phases (needs_prefund=false): pending -> gas_sent -> gas_confirmed ->
+  --   forward_sent -> forward_confirmed.
+  -- Phases (needs_prefund=true):  pending -> gas_sent -> gas_confirmed ->
+  --   prefund_sent -> prefund_confirmed -> forward_sent -> forward_confirmed.
+  -- 'failed' is terminal and NOT auto-retried (same convention as
+  -- sweep_jobs) — a genuine on-chain revert needs a human, not a loop that
+  -- might resend into the same failure.
+  CREATE TABLE IF NOT EXISTS payout_relay_jobs (
+    id             TEXT PRIMARY KEY,
+    purpose        TEXT NOT NULL CHECK (purpose IN ('withdrawal','refund')),
+    request_id     TEXT NOT NULL, -- withdrawal_requests.id or usdt_refund_requests.id, per purpose
+    chain          TEXT NOT NULL,
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    from_address   TEXT NOT NULL, -- the user's own derived deposit address
+    addr_index     BIGINT NOT NULL,
+    to_address     TEXT NOT NULL, -- the withdrawal/refund destination
+    amount_micro   BIGINT NOT NULL CHECK (amount_micro > 0), -- net, post-fee, micro-USDT
+    needs_prefund  INTEGER NOT NULL, -- 1 = withdrawal pass-through, 0 = refund (already there)
+    status         TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN (
+                     'pending','gas_sent','gas_confirmed',
+                     'prefund_sent','prefund_confirmed',
+                     'forward_sent','forward_confirmed','failed'
+                   )),
+    gas_tx_hash     TEXT,
+    prefund_tx_hash TEXT,
+    forward_tx_hash TEXT,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    created_at      TEXT NOT NULL,
+    completed_at    TEXT
+  );
+  -- One job per request, ever — createRelayJob is called from both the
+  -- auto-settle path and the staff "approve & send" path, and either could
+  -- run twice (a retried request, a double-click); this is what makes that
+  -- safe rather than a second live job racing the first for the same money.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_relay_jobs_request
+    ON payout_relay_jobs(purpose, request_id);
+  CREATE INDEX IF NOT EXISTS idx_payout_relay_jobs_status ON payout_relay_jobs(status, created_at);
 `;
 
 // ---------------------------------------------------------------------------
@@ -1684,26 +1751,36 @@ export async function getOrCreateDepositAddress(
   userId: string,
   chain: "bep20",
 ): Promise<string> {
-  const existing = await sql.get<{ address: string }>(
-    "SELECT address FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
-  if (existing) return existing.address;
+  return (await getOrCreateDepositWallet(userId, chain)).address;
+}
+
+// Same as getOrCreateDepositAddress, but also returns addr_index — needed by
+// payoutRelay.ts to derive the SPENDING key for this same address
+// (custodySeeds.deriveChildPrivateKey), not just show the address.
+export async function getOrCreateDepositWallet(
+  userId: string,
+  chain: "bep20",
+): Promise<{ address: string; addrIndex: number }> {
+  const existing = await sql.get<{ address: string; addr_index: string }>(
+    "SELECT address, addr_index FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
+  if (existing) return { address: existing.address, addrIndex: Number(existing.addr_index) };
 
   const idx = await sql.get<{ nextval: string }>(
     "SELECT nextval('deposit_wallet_index_seq') AS nextval");
   const index = Number(idx!.nextval);
   const address = deriveAddress(chain, index);
 
-  const inserted = await sql.get<{ address: string }>(
+  const inserted = await sql.get<{ address: string; addr_index: string }>(
     `INSERT INTO deposit_wallets (user_id, chain, addr_index, address, created_at)
      VALUES (?,?,?,?,?)
      ON CONFLICT (user_id, chain) DO NOTHING
-     RETURNING address`,
+     RETURNING address, addr_index`,
     userId, chain, index, address, now(),
   );
-  if (inserted) return inserted.address;
+  if (inserted) return { address: inserted.address, addrIndex: Number(inserted.addr_index) };
 
   // Lost the race to a concurrent request for the same user+chain.
-  const winner = await sql.get<{ address: string }>(
-    "SELECT address FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
-  return winner!.address;
+  const winner = await sql.get<{ address: string; addr_index: string }>(
+    "SELECT address, addr_index FROM deposit_wallets WHERE user_id = ? AND chain = ?", userId, chain);
+  return { address: winner!.address, addrIndex: Number(winner!.addr_index) };
 }

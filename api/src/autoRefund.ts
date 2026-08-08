@@ -10,9 +10,18 @@
 // routes/mining.ts's POST /usdt/refunds commits, same reason tryAutoSettle
 // does: consistency with the one place this codebase already holds a
 // transaction open across a network call (routes/staff.ts's manual "pay").
+//
+// ⚠️ 2026-08-08: same "settlement isn't always synchronous" change as
+// autoWithdraw.ts. A refund is the ONE case where payoutRelay.ts's per-user
+// signing is real (not a pass-through) — the user's own address genuinely
+// holds this USDT, their own prior deposit. When payoutRelay.relayAvailable()
+// is true, this creates a relay job and leaves the request at 'sending';
+// otherwise it falls straight back to the original synchronous
+// provider.send() (direct treasury pay) — unchanged.
 import { sql, now, isWithdrawalHeld, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { getPayoutProvider } from "./payout.ts";
+import { relayAvailable, createRelayJob } from "./payoutRelay.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoRefundedLast24hMicro } from "./velocity.ts";
@@ -20,6 +29,7 @@ import { getAutoRefundMaxMicro } from "./autoSettleSettings.ts";
 
 export type AutoRefundResult =
   | { settled: true; txHash: string; usdt: string }
+  | { settled: "processing" }
   | { settled: false; reason: string };
 
 // micro-USDT -> the decimal string parseUnits/pointsToUsdt-shaped consumers
@@ -63,14 +73,15 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
     const hold = await isWithdrawalHeld(req.user_id);
     if (hold.held) return { settled: false, reason: `account held: ${hold.reason}` };
 
+    const relay = relayAvailable(req.chain);
     const provider = getPayoutProvider();
-    if (!provider.canSettle(req.chain as ChainId)) {
+    if (!relay && !provider.canSettle(req.chain as ChainId)) {
       return { settled: false, reason: "provider cannot settle this chain right now" };
     }
 
     const usdt = microToUsdtString(net);
 
-    const result = await sql.tx(async (t: TxApi) => {
+    const outcome = await sql.tx(async (t: TxApi) => {
       // GUARDRAIL #8, applied to an AGGREGATE read, not just a balance — the
       // exact race the withdrawal side closed for the same reason (see
       // tryAutoSettle's identical comment): two refund requests for the same
@@ -90,6 +101,21 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
         throw new Error("above rolling 24h auto-refund cap");
       }
 
+      if (relay) {
+        // This is the ONE place payoutRelay's per-user signing is real, not
+        // a pass-through: the user's own address genuinely holds this USDT
+        // (their prior deposit). No prefund step — see payoutRelay.ts.
+        await createRelayJob("refund", req.id, {
+          chain: "bep20", userId: req.user_id, toAddress: req.address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000), needsPrefund: false,
+        }, t);
+        await t.run(
+          `UPDATE usdt_refund_requests SET status = 'sending', reviewed_by = 'system:auto', reviewed_at = ? WHERE id = ?`,
+          now(), requestId,
+        );
+        return { processing: true as const };
+      }
+
       const sent = await provider.send({
         requestId: req.id,
         chain: req.chain as ChainId,
@@ -106,15 +132,17 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
          WHERE id = ?`,
         sent.txHash, now(), requestId,
       );
-      return sent;
+      return { processing: false as const, txHash: sent.txHash };
     });
+
+    if (outcome.processing) return { settled: "processing" };
 
     void sendPushToUser(req.user_id, {
       title: "Your money is sent",
       body: `We sent ${usdt} USDT back to your wallet. Check it now.`,
       url: "/wallet",
     });
-    return { settled: true, txHash: result.txHash, usdt };
+    return { settled: true, txHash: outcome.txHash, usdt };
   } catch (e) {
     return { settled: false, reason: (e as Error).message || "auto-settle failed" };
   }

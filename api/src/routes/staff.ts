@@ -4,6 +4,7 @@ import { sql, now, newId, balanceOf, postLedger, logAudit, getSetting, setSettin
 import { config } from "../config.ts";
 import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
+import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled } from "../kyc.ts";
@@ -36,9 +37,18 @@ export async function staffRoutes(app: FastifyInstance) {
   // Withdrawal queue. Agents only see requests within their approval limit.
   app.get("/staff/withdrawals", staffGuard(["agent", "manager", "admin"], async ({ role }, req) => {
     const status = (req.query as { status?: string }).status ?? "pending";
+    // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay pass-through
+    // routing THROUGH the user's own address — see payoutRelay.ts) shows its
+    // in-flight phase and tx hashes instead of looking stuck to staff.
     let rows = await sql.all<Record<string, unknown>>(
-      `SELECT w.*, u.email AS user_email FROM withdrawal_requests w
-       JOIN users u ON u.id = w.user_id WHERE w.status = ? ORDER BY w.created_at ASC`,
+      `SELECT w.*, u.email AS user_email,
+              j.status AS relay_status, j.from_address AS relay_from_address,
+              j.gas_tx_hash AS relay_gas_tx_hash, j.prefund_tx_hash AS relay_prefund_tx_hash,
+              j.forward_tx_hash AS relay_forward_tx_hash, j.last_error AS relay_last_error
+       FROM withdrawal_requests w
+       JOIN users u ON u.id = w.user_id
+       LEFT JOIN payout_relay_jobs j ON j.purpose = 'withdrawal' AND j.request_id = w.id
+       WHERE w.status = ? ORDER BY w.created_at ASC`,
       status,
     );
 
@@ -65,6 +75,11 @@ export async function staffRoutes(app: FastifyInstance) {
         addressVerified: Boolean(r.address_verified),
         status: r.status, at: r.created_at,
         withinAgentLimit: (r.amount as number) <= config.agentApprovalMaxPoints,
+        relay: r.relay_status ? {
+          phase: r.relay_status, fromAddress: r.relay_from_address,
+          gasTxHash: r.relay_gas_tx_hash, prefundTxHash: r.relay_prefund_tx_hash,
+          forwardTxHash: r.relay_forward_tx_hash, lastError: r.relay_last_error,
+        } : null,
       })),
     };
   }));
@@ -142,13 +157,32 @@ export async function staffRoutes(app: FastifyInstance) {
       if (!canApproveAmount(role, w.amount)) {
         throw { statusCode: 403, message: "This is above your limit. A Manager must pay it." };
       }
-      // Settle the payout: manual mode records the hash the staff member sent by
-      // hand; onchain mode (when enabled + tested) signs and broadcasts here.
       // The USDT amount is on the NET (amount minus the fee snapshotted at
-      // request time), derived from one conversion rule, and stored alongside the
-      // on-chain hash as proof of payment.
+      // request time), derived from one conversion rule.
       const net = Math.max(0, w.amount - (w.fee_points ?? 0));
       const usdt = pointsToUsdt(net);
+
+      // Only in onchain mode — payoutMode is the founder's manual/automatic
+      // switch, and relayAvailable() alone does NOT respect it (it only
+      // checks whether the signing key material exists). Gating here is what
+      // keeps a staff "pay" click from silently broadcasting a real relay
+      // send while the founder has deliberately left payoutMode on "manual".
+      if (config.payoutMode === "onchain" && relayAvailable(w.payout_rail)) {
+        // "Approve & Send" -> the backend does the rest automatically, THROUGH
+        // the user's own derived address (payoutRelay.ts), not a manual wallet
+        // operation and not a pasted hash.
+        await createRelayJob("withdrawal", w.id, {
+          chain: "bep20", userId: w.user_id, toAddress: w.payout_address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+        }, t);
+        const s = stampSql("sending");
+        await t.run(s.text, ...s.vals);
+        return { ok: true, status: "sending" };
+      }
+
+      // Settle the payout directly: manual mode records the hash the staff
+      // member sent by hand; onchain mode without a relay path available
+      // signs and broadcasts from treasury here, same as before this feature.
       const provider = getPayoutProvider();
       const result = await provider.send({
         requestId: w.id,
