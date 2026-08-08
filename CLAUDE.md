@@ -1052,6 +1052,15 @@ These override convenience or speed at every step:
     whatever they're set to right now is live money exposure per request,
     not a hypothetical. Check `/staff → Withdrawal fee` before assuming a
     number is still the old default.
+  - ⚠️ **CONFIRMED THE SAME DAY: THE TREASURY HOLDS $0.** Address
+    `0xbabE91B523747A3c96D35C43d240F4adcE9f9d22` (from `treasury_address_bep20`
+    in `app_settings`) — checked live on-chain, 0 BNB and 0 USDT, and the
+    reconciliation snapshot agrees (`onchain_balance: 0, ledger_total: 0,
+    delta: 0` at 12:57 UTC). So right now, "auto-send is on" and "auto-send
+    can pay anyone" are NOT the same fact — every qualifying request will
+    fail to settle (no gas, nothing to send) and fall back to the manual
+    queue via `tryAutoSettle`'s "never throws" guarantee, not lose money.
+    This needs real funding before automatic payout does anything visible.
   - ⚠️ **THE DEPOSIT SCANNER IS FAILING IN PRODUCTION RIGHT NOW, SEPARATELY.**
     Railway logs show a repeating `Deposit scan tick failed … eth_getLogs
     failed: limit exceeded` every ~20s — almost certainly the free public
