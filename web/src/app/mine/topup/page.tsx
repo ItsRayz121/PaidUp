@@ -153,25 +153,6 @@ export default function TopUpPage() {
         </Card>
       )}
 
-      {/* ---- How ---- */}
-      <div>
-        <SectionTitle>{t("topup.how")}</SectionTitle>
-        <Card className="divide-y divide-line">
-          {[
-            t("topup.step1"),
-            t("topup.step2"),
-            t("topup.step3"),
-          ].map((line, i) => (
-            <p key={line} className="flex gap-3 px-4 py-3 text-sm text-brand-ink">
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">
-                {i + 1}
-              </span>
-              {line}
-            </p>
-          ))}
-        </Card>
-      </div>
-
       {/* ---- Address ---- */}
       <div>
         <SectionTitle>{t("topup.address")}</SectionTitle>
@@ -193,16 +174,22 @@ export default function TopUpPage() {
           {s.personalAddress && (
             <p className="mb-2 text-xs font-semibold text-brand">{t("topup.yourOwnAddress")}</p>
           )}
-          <p className="num break-all border-t border-line pt-3 text-sm font-semibold text-brand-ink">
-            {depositAddress}
-          </p>
-          <button
-            onClick={copyAddress}
-            className="mt-3 flex items-center gap-1.5 rounded-xl border border-brand bg-brand-tint px-3 py-2 text-sm font-bold text-brand"
-          >
-            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-            {copied ? t("topup.copied") : t("topup.copy")}
-          </button>
+          {/* One line: the full address, horizontally scrollable rather than
+              truncated (nothing about it is hidden — see the copy button
+              beside it for an exact-value alternative), with Copy pinned
+              next to it instead of stacked below. */}
+          <div className="flex items-center gap-2 border-t border-line pt-3">
+            <p className="num flex-1 overflow-x-auto whitespace-nowrap text-sm font-semibold text-brand-ink">
+              {depositAddress}
+            </p>
+            <button
+              onClick={copyAddress}
+              aria-label={copied ? t("topup.copied") : t("topup.copy")}
+              className="flex shrink-0 items-center justify-center rounded-xl border border-brand bg-brand-tint p-2 text-brand"
+            >
+              {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            </button>
+          </div>
         </Card>
         {/* Wrong-chain deposits are the number one way people lose money doing
             this, and they are unrecoverable. Said in danger colours, next to the
@@ -283,6 +270,27 @@ export default function TopUpPage() {
             ))}
           </Card>
         )}
+      </div>
+
+      {/* ---- How (moved to the bottom, 2026-08-08: redundant with the address
+          card + form above it for most people, but still worth having for
+          anyone who wants the steps spelled out) ---- */}
+      <div>
+        <SectionTitle>{t("topup.how")}</SectionTitle>
+        <Card className="divide-y divide-line">
+          {[
+            t("topup.step1"),
+            t("topup.step2"),
+            t("topup.step3"),
+          ].map((line, i) => (
+            <p key={line} className="flex gap-3 px-4 py-3 text-sm text-brand-ink">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">
+                {i + 1}
+              </span>
+              {line}
+            </p>
+          ))}
+        </Card>
       </div>
     </div>
   );

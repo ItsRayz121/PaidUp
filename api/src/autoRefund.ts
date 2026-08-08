@@ -16,6 +16,7 @@ import { getPayoutProvider } from "./payout.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoRefundedLast24hMicro } from "./velocity.ts";
+import { getAutoRefundMaxMicro } from "./autoSettleSettings.ts";
 
 export type AutoRefundResult =
   | { settled: true; txHash: string; usdt: string }
@@ -52,7 +53,7 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
     // The ceiling and the 24h cap are both measured on the REQUESTED amount,
     // not the discounted net — a fee must never be a way to sneak a request
     // that would otherwise be over the line back under it.
-    if (req.amount > config.autoRefundMaxMicro) return { settled: false, reason: "above auto ceiling" };
+    if (req.amount > (await getAutoRefundMaxMicro())) return { settled: false, reason: "above auto ceiling" };
 
     // Reuses the WITHDRAWAL hold, deliberately not a separate refund hold: a
     // staff member holding an account because of suspected abuse means

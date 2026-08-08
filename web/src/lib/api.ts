@@ -319,7 +319,12 @@ export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay
     method: "POST", body: JSON.stringify({ action, note, txHash }),
   });
 export const fetchStaffUser = (id: string) =>
-  apiFetch<{ user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[] }>(`/staff/users/${id}`);
+  apiFetch<{
+    user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[];
+    // Deposit refunds ("Get your USDT back") and top-ups — a SEPARATE money
+    // trail from `ledger` above (that one is points; this is usdt_ledger).
+    usdtRefunds: Record<string, unknown>[]; usdtTopups: Record<string, unknown>[];
+  }>(`/staff/users/${id}`);
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
 
 // ---- Super-admin ----------------------------------------------------------
@@ -488,12 +493,15 @@ export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 export const fetchSettings = () =>
   apiFetch<{
     withdrawalFeePoints: number; gasFeePercent: number; gasFeeFixedMicro: number;
+    autoWithdrawMaxPoints: number; autoRefundMaxMicro: number; autoSendLive: boolean;
     kycEnabled: boolean; treasury: TreasuryAddresses;
   }>("/staff/settings");
 export const updateSettings = (patch: {
   withdrawalFeePoints?: number;
   gasFeePercent?: number;
   gasFeeFixedMicro?: number;
+  autoWithdrawMaxPoints?: number;
+  autoRefundMaxMicro?: number;
   kycEnabled?: boolean;
   treasury?: Partial<TreasuryAddresses>;
 }) =>

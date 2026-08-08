@@ -8,7 +8,7 @@ import {
   fetchStaffQueue, decideWithdrawal, fetchFraud, fetchStaffUser,
   type StaffWithdrawal,
 } from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { formatPoints, formatMoney, formatUsdtMicro, timeAgo } from "@/lib/format";
 import {
   KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton,
   TreasuryPanel, WithdrawalFeePanel,
@@ -379,6 +379,56 @@ function UserLookup({ target }: { target: string | null }) {
             <p className="mt-2 rounded bg-danger-tint p-2 text-xs text-danger">
               {(res.data.fraudFlags as unknown[]).length} fraud flag(s) on this user.
             </p>
+          )}
+
+          {/* A SEPARATE money trail from the points ledger above — deposit
+              refunds ("Get your USDT back") and top-ups never touch
+              ledger_entries, so they were invisible here before this. */}
+          {(res.data.usdtRefunds as Record<string, unknown>[]).length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT refunds (their own deposit, sent back)</p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[520px] text-xs">
+                  <thead className="text-left text-muted">
+                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Fee</th><th className="p-1.5">Chain / to</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
+                  </thead>
+                  <tbody>
+                    {(res.data.usdtRefunds as Record<string, unknown>[]).map((r, i) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="num p-1.5">{formatUsdtMicro(Number(r.amount))}</td>
+                        <td className="num p-1.5 text-muted">{Number(r.fee_micro) > 0 ? `− ${formatUsdtMicro(Number(r.fee_micro))}` : "—"}</td>
+                        <td className="max-w-[160px] truncate p-1.5 text-muted" title={String(r.address)}>{String(r.chain)} · {String(r.address)}</td>
+                        <td className="p-1.5">{String(r.status)}{r.reject_reason ? ` — ${String(r.reject_reason)}` : ""}</td>
+                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {(res.data.usdtTopups as Record<string, unknown>[]).length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT top-ups (deposit credit, buys machines only)</p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-xs">
+                  <thead className="text-left text-muted">
+                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Chain</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
+                  </thead>
+                  <tbody>
+                    {(res.data.usdtTopups as Record<string, unknown>[]).map((r, i) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="num p-1.5">{formatUsdtMicro(Number(r.amount))}</td>
+                        <td className="p-1.5 text-muted">{String(r.chain)}</td>
+                        <td className="p-1.5">{String(r.status)}{r.reject_reason ? ` — ${String(r.reject_reason)}` : ""}</td>
+                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </div>
       )}

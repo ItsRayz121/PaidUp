@@ -7,6 +7,7 @@ import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled } from "../kyc.ts";
+import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
 
 function staffGuard(
   allowed: Role[],
@@ -185,8 +186,21 @@ export async function staffRoutes(app: FastifyInstance) {
 
     const ledger = await sql.all("SELECT amount, source_type, note, created_at FROM ledger_entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 100", id);
     const flags = await sql.all("SELECT flag_type, severity, detail, created_at, resolution_note FROM fraud_flags WHERE user_id = ? ORDER BY created_at DESC", id);
+    // The points ledger above already shows a withdrawal's DEBIT (it's a
+    // `ledger_entries` row like any other), but nothing about a deposit
+    // refund or top-up — those live on the separate usdt_ledger and never
+    // touch `ledger_entries` at all. Staff looking up a user for a dispute
+    // need both money trails in one place, not two separate screens.
+    const usdtRefunds = await sql.all(
+      "SELECT amount, fee_micro, chain, address, status, tx_hash, reject_reason, created_at FROM usdt_refund_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+      id,
+    );
+    const usdtTopups = await sql.all(
+      "SELECT amount, chain, tx_hash, status, reject_reason, created_at FROM usdt_topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+      id,
+    );
 
-    return { user: { ...user, balancePoints: await balanceOf(id) }, ledger, fraudFlags: flags };
+    return { user: { ...user, balancePoints: await balanceOf(id) }, ledger, fraudFlags: flags, usdtRefunds, usdtTopups };
   }));
 
   // Open fraud flags — managers/admins only.
@@ -339,6 +353,19 @@ export async function staffRoutes(app: FastifyInstance) {
     // flows the founder wants it on. See fees.ts.
     gasFeePercent: Math.max(0, Number(await getSetting("gas_fee_percent", "0")) || 0),
     gasFeeFixedMicro: Math.max(0, Number(await getSetting("gas_fee_fixed_micro", "0")) || 0),
+    // Ceilings for FULLY AUTOMATIC settlement (founder, 2026-08-08): a
+    // withdrawal/refund AT OR UNDER this amount settles itself with no staff
+    // click; above it (or above the fixed rolling-24h cap, or an account
+    // hold) drops into the unchanged manual queue. See autoSettleSettings.ts.
+    autoWithdrawMaxPoints: await getAutoWithdrawMaxPoints(),
+    autoRefundMaxMicro: await getAutoRefundMaxMicro(),
+    // ⚠️ Neither ceiling above does ANYTHING while this is false — automatic
+    // settlement is still gated on PAYOUT_MODE=onchain AND a real treasury
+    // signer key, neither of which is a /staff setting (CUSTODY_SPEC.md §
+    // 5c: needs a NEW funded wallet, proven on testnet first). The panel
+    // uses this to say so plainly instead of implying a ceiling alone turns
+    // anything on.
+    autoSendLive: config.payoutMode === "onchain" && Boolean(config.treasuryKeyEncrypted),
     kycEnabled: await kycFeatureEnabled(),
     treasury: {
       bep20: await getSetting("treasury_address_bep20", ""),
@@ -355,6 +382,12 @@ export async function staffRoutes(app: FastifyInstance) {
     // to deposit refunds. 0/0 = off, the default.
     gasFeePercent: z.number().min(0).max(100).optional(),
     gasFeeFixedMicro: z.number().int().min(0).max(1_000_000).optional(),
+    // Auto-settle ceilings — see the GET handler's comment. Generous upper
+    // bounds (not a real cap on money movement: the ceiling only matters once
+    // PAYOUT_MODE=onchain is separately turned on, and that path has its own
+    // per-request/24h/hold checks regardless of what this is set to).
+    autoWithdrawMaxPoints: z.number().int().min(0).max(10_000_000).optional(),
+    autoRefundMaxMicro: z.number().int().min(0).max(10_000_000_000).optional(),
     // The ID check, on or off. OFF hides the tab ("Coming soon") AND waives the
     // requirement everywhere it is enforced — see kycFeatureEnabled() in kyc.ts
     // for why the alternative (hidden but still required) is a dead end.
@@ -378,6 +411,12 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     if (parsed.data.gasFeeFixedMicro !== undefined) {
       await setSetting("gas_fee_fixed_micro", String(parsed.data.gasFeeFixedMicro));
+    }
+    if (parsed.data.autoWithdrawMaxPoints !== undefined) {
+      await setSetting("auto_withdraw_max_points", String(parsed.data.autoWithdrawMaxPoints));
+    }
+    if (parsed.data.autoRefundMaxMicro !== undefined) {
+      await setSetting("auto_refund_max_micro", String(parsed.data.autoRefundMaxMicro));
     }
     if (parsed.data.kycEnabled !== undefined) {
       await setSetting("kyc_enabled", parsed.data.kycEnabled ? "1" : "0");

@@ -16,6 +16,7 @@ import { getPayoutProvider, pointsToUsdt } from "./payout.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoWithdrawnLast24hPoints } from "./velocity.ts";
+import { getAutoWithdrawMaxPoints } from "./autoSettleSettings.ts";
 
 export type AutoSettleResult =
   | { settled: true; txHash: string; usdt: string }
@@ -36,7 +37,7 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
     if (!req || req.status !== "pending") return { settled: false, reason: "not pending" };
 
     if (config.payoutMode !== "onchain") return { settled: false, reason: "onchain payout mode is off" };
-    if (req.amount > config.autoWithdrawMaxPoints) return { settled: false, reason: "above auto ceiling" };
+    if (req.amount > (await getAutoWithdrawMaxPoints())) return { settled: false, reason: "above auto ceiling" };
 
     const hold = await isWithdrawalHeld(req.user_id);
     if (hold.held) return { settled: false, reason: `account held: ${hold.reason}` };

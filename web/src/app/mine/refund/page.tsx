@@ -123,12 +123,6 @@ export default function RefundPage() {
         <p className="mt-1 text-xs text-muted">{t("refund.notSpent")}</p>
       </Card>
 
-      {/* Which money this is, before the form. See the note at the top. */}
-      <p className="flex gap-2 rounded-xl border border-line bg-card p-3 text-sm text-muted">
-        <InfoIcon size={16} className="mt-0.5 shrink-0" />
-        {t("refund.notEarnings")}
-      </p>
-
       {sent && (
         <Card className="border-success/30 bg-success-tint/60 p-4">
           <p className="flex items-center gap-2 font-bold text-success">
@@ -261,6 +255,16 @@ export default function RefundPage() {
           </Card>
         )}
       </div>
+
+      {/* Which money this is — moved below the form, 2026-08-08: this is a
+          clarification for someone confused about the two balances, not a
+          warning that changes what someone does with the form above it (see
+          topup/page.tsx's spend-only card, which IS kept above its address
+          for exactly that reason and is not the same kind of message). */}
+      <p className="flex gap-2 rounded-xl border border-line bg-card p-3 text-sm text-muted">
+        <InfoIcon size={16} className="mt-0.5 shrink-0" />
+        {t("refund.notEarnings")}
+      </p>
     </div>
   );
 }

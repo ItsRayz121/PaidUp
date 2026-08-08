@@ -242,6 +242,12 @@ export function WithdrawalFeePanel() {
   // fee on. See api/src/fees.ts.
   const [gasPercent, setGasPercent] = useState<number | null>(null);
   const [gasFixedUsdt, setGasFixedUsdt] = useState<number | null>(null);
+  // Auto-settle ceilings (founder, 2026-08-08): a request AT OR UNDER this
+  // amount settles itself with no staff click at all; above it, into the
+  // unchanged manual queue. In USDT for both fields on screen — withdrawals
+  // are stored in points, converted at save/display time.
+  const [autoWithdrawUsdt, setAutoWithdrawUsdt] = useState<number | null>(null);
+  const [autoRefundUsdt, setAutoRefundUsdt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const current = s.data?.withdrawalFeePoints ?? 0;
   const value = fee ?? current;
@@ -249,9 +255,19 @@ export function WithdrawalFeePanel() {
   const currentGasFixedUsdt = (s.data?.gasFeeFixedMicro ?? 0) / 1_000_000;
   const gasPercentValue = gasPercent ?? currentGasPercent;
   const gasFixedValue = gasFixedUsdt ?? currentGasFixedUsdt;
+  // 1000 points = 1 USDT (see web/src/lib/format.ts POINTS_PER_USDT) — kept
+  // as a literal here rather than importing it, since this panel already
+  // works in raw points/micros everywhere else and one more unit conversion
+  // import would obscure more than it clarifies.
+  const currentAutoWithdrawUsdt = (s.data?.autoWithdrawMaxPoints ?? 0) / 1000;
+  const currentAutoRefundUsdt = (s.data?.autoRefundMaxMicro ?? 0) / 1_000_000;
+  const autoWithdrawValue = autoWithdrawUsdt ?? currentAutoWithdrawUsdt;
+  const autoRefundValue = autoRefundUsdt ?? currentAutoRefundUsdt;
   const dirty = (fee !== null && fee !== current)
     || (gasPercent !== null && gasPercent !== currentGasPercent)
-    || (gasFixedUsdt !== null && gasFixedUsdt !== currentGasFixedUsdt);
+    || (gasFixedUsdt !== null && gasFixedUsdt !== currentGasFixedUsdt)
+    || (autoWithdrawUsdt !== null && autoWithdrawUsdt !== currentAutoWithdrawUsdt)
+    || (autoRefundUsdt !== null && autoRefundUsdt !== currentAutoRefundUsdt);
 
   async function save() {
     setBusy(true);
@@ -260,9 +276,12 @@ export function WithdrawalFeePanel() {
         withdrawalFeePoints: value,
         gasFeePercent: gasPercentValue,
         gasFeeFixedMicro: Math.round(gasFixedValue * 1_000_000),
+        autoWithdrawMaxPoints: Math.round(autoWithdrawValue * 1000),
+        autoRefundMaxMicro: Math.round(autoRefundValue * 1_000_000),
       });
       s.reload();
       setFee(null); setGasPercent(null); setGasFixedUsdt(null);
+      setAutoWithdrawUsdt(null); setAutoRefundUsdt(null);
     }
     catch (e) { window.alert((e as Error).message); }
     finally { setBusy(false); }
@@ -294,6 +313,40 @@ export function WithdrawalFeePanel() {
           onChange={(e) => setGasFixedUsdt(Number(e.target.value))}
           className="num w-24 rounded border border-line bg-card p-1.5 text-sm outline-none" />
         <span className="text-sm text-muted">USDT fixed</span>
+        {dirty && (
+          <button disabled={busy} onClick={save}
+            className="ms-auto rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Save</button>
+        )}
+      </div>
+
+      <h3 className="mb-2 mt-4 font-bold text-brand-ink">Send automatically, below this amount</h3>
+      <p className="mb-2 text-xs text-muted">
+        It is the user&apos;s own money — a request at or under this amount is sent with no staff click at
+        all, and its transaction hash shows straight in the user&apos;s history. Above it, a request still
+        needs a staff member to approve and send it, same as today.
+      </p>
+      {s.data && !s.data.autoSendLive && (
+        <p className="mb-2 rounded-lg bg-pending-tint p-2.5 text-xs text-pending">
+          Not live yet — these numbers save, but nothing sends itself until a real treasury signer is
+          set up and proven on testnet (see CUSTODY_SPEC.md § 5c). Every request still goes through the
+          manual queue below regardless of what you set here.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-4 rounded-lg border border-line p-3">
+        <label className="flex items-center gap-2 text-sm">
+          Withdrawals (task/referral money) ≤
+          <input type="number" min={0} step={0.01} value={autoWithdrawValue}
+            onChange={(e) => setAutoWithdrawUsdt(Number(e.target.value))}
+            className="num w-24 rounded border border-line bg-card p-1.5 text-sm outline-none" />
+          USDT
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          Deposit refunds ≤
+          <input type="number" min={0} step={0.01} value={autoRefundValue}
+            onChange={(e) => setAutoRefundUsdt(Number(e.target.value))}
+            className="num w-24 rounded border border-line bg-card p-1.5 text-sm outline-none" />
+          USDT
+        </label>
         {dirty && (
           <button disabled={busy} onClick={save}
             className="ms-auto rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Save</button>

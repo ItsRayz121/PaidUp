@@ -130,8 +130,11 @@ export const config = {
   // withdrawals — see autoRefund.ts — so this stays a no-op (falls back to the
   // manual queue) until onchain payout is actually proven and turned on.
   // Denominated in MICRO-USDT, not points, because a refund never touches the
-  // points ledger at all.
-  autoRefundMaxMicro: Number(process.env.AUTO_REFUND_MAX_MICRO ?? 5_000_000), // $5
+  // points ledger at all. $100 (founder, 2026-08-08: "no human involvement
+  // unless it's a big amount, like $100 or more") — admin-tunable at runtime
+  // now (autoSettleSettings.ts, /staff → Withdrawal fee); this env var is
+  // only the fallback for a deployment that never touches that setting.
+  autoRefundMaxMicro: Number(process.env.AUTO_REFUND_MAX_MICRO ?? 100_000_000), // $100
   // Rolling 24h cap on auto-settled refunds, same reasoning as
   // autoWithdrawMaxPointsPer24h below: the per-request ceiling above bounds
   // ONE request, this bounds the SUM of many.
