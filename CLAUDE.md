@@ -1072,6 +1072,70 @@ These override convenience or speed at every step:
     currently doing its job. Not yet fixed — needs a paid RPC endpoint added
     to `RPC_BEP20` on Railway.
 
+- **GAS IS THE USER'S OWN RESPONSIBILITY, NOT TREASURY'S, NOT A USDT FEE
+  (founder, 2026-08-08, same day, later same evening).** Found by tracing
+  three stuck "Get your USDT back" requests from live screenshots: the relay
+  (built earlier the same day, entry above) funded gas by sending
+  **treasury's own BNB** to the user's derived address first — so the
+  confirmed-$0 treasury silently blocked refunds too, even though a refund
+  never touches treasury money. One relay job retried this **65+ times,
+  forever**, with no terminal state and no staff alert — exactly what "left
+  at 'sending' so staff see it" was supposed to prevent, except nothing ever
+  told staff. Root-caused via a read-only query against the live DB
+  (founder's explicit go-ahead) before any code changed, per the founder's
+  own instruction: trace the money before touching the architecture.
+  Verified: `test:payoutrelay` 48 (22 new) + `test:usdt` 72 + `test:fees` 24
+  + `test:withdrawcontrols` 21 + `test:autorefund` 8 + `test:autowithdraw`
+  16 = 189 green; api+web typecheck, eslint, web build clean; confirmed live
+  on the actual stuck request post-deploy (see below).
+  - **`payoutRelay.ts`'s treasury-BNB-funding hop is GONE.** Refunds now
+    have **zero treasury involvement, period** — the user's own address
+    already holds the USDT (verified on-chain, unchanged) and pays its own
+    gas to forward it. Withdrawals keep the USDT prefund leg (unavoidable —
+    that money only ever existed at treasury) but the forward leg needs the
+    **user's own BNB**, not treasury's.
+  - **The route checks the user's own address's live BNB balance BEFORE any
+    debit** (`routes/withdrawals.ts`, `routes/mining.ts`) — insufficient gas
+    refuses the request outright, exactly the founder's spec: "the withdrawal
+    must NOT start, the USDT must NOT be deducted." A production relay job
+    can also re-check defensively right before signing (BNB can be spent out
+    of the address between request and send).
+  - **A relay job now gives up.** `relayMaxAttempts` (15, ticks every 20s ≈
+    5 min) marks a job `failed` instead of retrying forever, and — the
+    founder's own required test case, "no money disappears" — **auto-credits
+    the held money back** whenever no value has actually moved yet. ⚠️
+    **`safe` is the one thing standing between this and a double payment** —
+    true only while nothing has moved (refund: always, up to a reverted
+    forward tx; withdrawal: only before the prefund leg confirms). Once
+    treasury's USDT genuinely sits at the user's own address, auto-refunding
+    points on top of that would double-pay — that case is left for staff to
+    check the chain, deliberately not automated.
+  - **The 0.05 USDT "network fee" is gone from the relay path.** `fees.ts`'s
+    gas-fee surcharge doesn't apply once the user's own BNB is what's really
+    paying gas — no more "we sent 0.95 after a 0.05 fee" for a $1 refund.
+    Untouched on the manual/direct-treasury fallback, where treasury really
+    is paying real gas and really does recover it this way. The live
+    `gas_fee_percent`/`gas_fee_fixed_micro` settings were reset to 0/0 as
+    part of shipping this (0/$0.05 → 0/$0).
+  - **`/wallet`'s BNB row is real now**, not "Coming soon" — every user's own
+    derived address (`custody.ts`) can genuinely hold BNB since the relay
+    work landed. The refund/withdraw screens show the live gas-wallet status
+    before submit, with the founder's own copy for "not enough": *"You need
+    BNB in your wallet to pay the network fee. Please deposit BNB to your
+    RosiPay wallet before withdrawing USDT."*
+  - **Confirmed live, post-deploy:** the stuck request auto-resolved on its
+    own next tick — `payout_relay_jobs` flipped to `failed` (286 accumulated
+    attempts crossed the new cap), `usdt_refund_requests` flipped to
+    `rejected` with `reviewed_by = 'system:auto'`, and the full $1.00 landed
+    back in the user's balance via a `usdt_ledger` credit — no manual staff
+    click needed, matching exactly how the founder had already resolved the
+    other two by hand.
+  - ⚠️ **Two of the three original stuck requests were already fine** before
+    any of this shipped — the founder had rejected them by hand in `/staff`,
+    which is why the visible balance was $0.04, not $0 or something inflated.
+    Only the third (still "Sending") was actually broken; recorded here so
+    it isn't mistaken for a bigger loss than it was.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
