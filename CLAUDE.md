@@ -1031,6 +1031,38 @@ These override convenience or speed at every step:
     (21), `test:autorefund` (8), `test:autowithdraw` (16) all re-verified
     green; api + web typecheck, eslint, web production build all clean.
 
+- **AUTOMATIC ON-CHAIN PAYOUT IS LIVE (founder, 2026-08-08).** `PAYOUT_MODE=onchain`
+  is now set on Railway — confirmed via `railway variables`, and the API has
+  restarted with it. `TREASURY_KEY_ENCRYPTED`/`_SECRET` and
+  `CUSTODY_SEED_EVM_ENCRYPTED`/`_SECRET` were already set. This is the
+  activation `autoWithdraw.ts`/`autoRefund.ts` (2026-08-05/06) and the two
+  admin-tunable ceilings above (`autoSettleSettings.ts`) were built for —
+  every withdrawal or refund at or under its ceiling now signs and broadcasts
+  for real, no staff click, the instant it's requested.
+  - ⚠️ **THIS WENT LIVE WITHOUT THE TESTNET PROOF STEP.** Every other entry in
+    this file about the signer says, repeatedly and on purpose, "must be
+    proven on testnet before mainnet" — that rule existed for exactly this
+    moment. The founder was told plainly, in those terms, immediately before
+    doing it, and chose to go straight to mainnet anyway. Recorded here as a
+    **decision with a date**, the same way the deposit-refund custody call
+    and the USDT top-up decision are recorded elsewhere in this file — not a
+    gap that was missed, a risk that was accepted knowingly.
+  - The ceilings (`GET/PATCH /staff/settings` → `autoWithdrawMaxPoints` /
+    `autoRefundMaxMicro`) are the only brake left on a single bad request —
+    whatever they're set to right now is live money exposure per request,
+    not a hypothetical. Check `/staff → Withdrawal fee` before assuming a
+    number is still the old default.
+  - ⚠️ **THE DEPOSIT SCANNER IS FAILING IN PRODUCTION RIGHT NOW, SEPARATELY.**
+    Railway logs show a repeating `Deposit scan tick failed … eth_getLogs
+    failed: limit exceeded` every ~20s — almost certainly the free public
+    BEP20 RPC hitting a block-range/result cap, exactly the risk
+    `RPC_BEP20` (a LIST with failover, `rpc.ts`) was built to reduce by
+    putting a paid endpoint first — which was never done. This does not
+    affect the manual "paste your tx hash" topup flow, but it does mean the
+    newer auto-detect/sweep pipeline (`deposits/scanner.ts`) is not
+    currently doing its job. Not yet fixed — needs a paid RPC endpoint added
+    to `RPC_BEP20` on Railway.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
@@ -1041,19 +1073,21 @@ Then 🟡 Sentry auth, ⚪ custom domain, ⚪ Telegram.
 
 **Phase 2 remaining:** Sentry is ❌ **declined by the founder (2026-08-01)** — closed, do not re-raise it as outstanding. Further fraud tuning is open Phase 3 work. (Urdu is no longer on the list — it was dropped, see above.)
 
-**What is actually still blocked on the founder (2026-08-05):** the xpub is
+**What is actually still blocked on the founder (2026-08-08):** the xpub is
 done — `CUSTODY_XPUB_BEP20` is set and live, per-user deposit addresses work.
-Two things remain.
+**Automatic on-chain payout is now LIVE too** (see the entry above) — that
+item is no longer blocked, it was activated without the testnet step, on the
+founder's explicit informed choice. What actually remains:
 (1) **A real ad network approval** — applications are in and none have landed;
 the unlock is daily users, not code. Send me the four postback items for any
 network that says yes and the adapter + smoke test is one session.
-(2) **A funded treasury wallet + testnet proof, to turn on automatic
-withdrawal.** The signing engine is built and unit-tested (`CUSTODY_SPEC.md`
-§ 5c) but genuinely not live — `PAYOUT_MODE` stays `manual` until it has run
-end-to-end on BSC testnet. When ready: generate a NEW wallet (separate from
-the deposit-derivation seed), I'll give you a script to encrypt its key
-locally, you send me the ciphertext + a random key (never the plaintext key),
-fund it with testnet BNB/USDT first, prove it, then fund it for real.
+(2) **The treasury wallet needs to actually hold funds.** Automatic payout
+being "on" is not the same as it having anything to pay with — a request
+under the ceiling will simply fail to send if the treasury has no USDT (to
+pay out) or no BNB (for gas). Confirm what's actually funded before assuming
+withdrawals/refunds will succeed.
+(3) **The deposit scanner's RPC issue** (see the entry above) — needs a paid
+`RPC_BEP20` endpoint added on Railway.
 Everything else on the old checklist is done, deferred by decision, or declined.
 
 See `docs/` for the full spec.
