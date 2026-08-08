@@ -115,8 +115,21 @@ export async function staffRoutes(app: FastifyInstance) {
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
       if (!w) throw { statusCode: 404, message: "Request not found." };
-      if (w.status === "paid" || w.status === "rejected") {
-        throw { statusCode: 409, message: `This request is already ${w.status}.` };
+      // ⚠️ 'sending' MUST be blocked here too, not just 'paid'/'rejected' —
+      // a relay job (payoutRelay.ts) is actively signing/broadcasting for
+      // this request. Letting 'reject' through would credit the points back
+      // while the on-chain send still completes (a real double payment);
+      // letting 'approve' through would overwrite the status away from
+      // 'sending', so completeRequest()'s `WHERE status = 'sending'` would
+      // never match once the relay finishes, leaving money sent but the
+      // request stuck showing 'agent_approved' forever — payable again later.
+      if (w.status === "paid" || w.status === "rejected" || w.status === "sending") {
+        throw {
+          statusCode: 409,
+          message: w.status === "sending"
+            ? "This request is already being sent — wait for it to finish."
+            : `This request is already ${w.status}.`,
+        };
       }
 
       if (action === "approve") {

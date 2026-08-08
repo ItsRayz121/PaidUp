@@ -38,6 +38,16 @@ const MISMATCH_THRESHOLD_MICRO = 1_000_000; // $1
 // being the next thing that trips it.
 const MULTICALL_BATCH_SIZE = 300;
 
+// ⚠️ THROWS on any unresolved address, deliberately — never substitutes 0
+// for a balance the RPC failed to return. A silent 0-on-failure would make a
+// rate-limited or flaky RPC batch (this project's own public BEP20 nodes are
+// documented as hitting "limit exceeded" in production) UNDER-count real
+// on-chain holdings, which reads as a false shortfall and could page staff
+// over nothing — or, on a batch that happens to contain the one address that
+// really is short, get buried in a pile of routine-looking noise instead of
+// standing out. reconcileChain's caller (tickReconcile) already retries
+// every hour, so failing this attempt outright and trying again next tick is
+// strictly safer than recording a number that might not be true.
 async function sumLiveBalances(
   publicClient: ReturnType<typeof createPublicClient>,
   token: NonNullable<(typeof ONCHAIN_CHAINS)[keyof typeof ONCHAIN_CHAINS]>,
@@ -52,8 +62,12 @@ async function sumLiveBalances(
       })),
       allowFailure: true,
     });
-    for (const r of results) {
-      if (r.status === "success") total += r.result as bigint;
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (r.status !== "success") {
+        throw new Error(`balanceOf failed for deposit address ${batch[j]}: ${r.error?.message ?? "unknown error"}`);
+      }
+      total += r.result as bigint;
     }
   }
   return total;

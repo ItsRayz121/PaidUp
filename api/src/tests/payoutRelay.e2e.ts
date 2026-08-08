@@ -267,6 +267,30 @@ console.log("\n-- staff 'pay' action: relay available => one-click, no pasted ha
   const job = await relayJobFor("withdrawal", reqId);
   check("a relay job now exists, routed to the destination the user asked for",
     !!job && job.to_address.toLowerCase() === dest.toLowerCase(), JSON.stringify(job));
+
+  // ⚠️ CODE-REVIEW FIX: the top-of-transaction terminal-state guard in
+  // routes/staff.ts used to only block 'paid'/'rejected', so a 'sending' row
+  // (a relay job actively signing/broadcasting) could still be approved or
+  // rejected. 'reject' would credit the points back to the user while the
+  // on-chain send still completes — a real double payment. Both must now be
+  // refused with 409 while the request is 'sending'.
+  r = await app.inject({
+    method: "POST", url: `/staff/withdrawals/${reqId}/decision`,
+    headers: tok(admin), payload: { action: "reject", note: "e2e: must be refused" },
+  });
+  check("'reject' on a 'sending' request is refused (409), not a double payment",
+    r.statusCode === 409, r.body);
+  check("...and the request is still 'sending', not 'rejected'",
+    (await withdrawalStatus(u)) === "sending");
+
+  r = await app.inject({
+    method: "POST", url: `/staff/withdrawals/${reqId}/decision`,
+    headers: tok(admin), payload: { action: "approve" },
+  });
+  check("'approve' on a 'sending' request is also refused (409)", r.statusCode === 409, r.body);
+  check("...status still 'sending' — not knocked back to agent_approved, which would orphan the relay's completion",
+    (await withdrawalStatus(u)) === "sending");
+
   clearGate();
 }
 

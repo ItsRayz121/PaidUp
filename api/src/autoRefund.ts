@@ -21,7 +21,7 @@
 import { sql, now, isWithdrawalHeld, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { getPayoutProvider } from "./payout.ts";
-import { relayAvailable, createRelayJob } from "./payoutRelay.ts";
+import { relayAvailable, createRelayJob, microToDecimalString } from "./payoutRelay.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoRefundedLast24hMicro } from "./velocity.ts";
@@ -33,12 +33,9 @@ export type AutoRefundResult =
   | { settled: false; reason: string };
 
 // micro-USDT -> the decimal string parseUnits/pointsToUsdt-shaped consumers
-// expect. Exact for any integer micro value: dividing a BIGINT by 1e6 and
-// re-fixing to 6dp never loses a digit the way an intermediate float sum
-// could, because there is exactly one division and no accumulation.
-function microToUsdtString(micro: number): string {
-  return (micro / 1_000_000).toFixed(6);
-}
+// expect. payoutRelay.ts needs the identical conversion, so this reuses its
+// export instead of keeping a second copy that could drift.
+const microToUsdtString = microToDecimalString;
 
 // Attempt to auto-settle a just-created, still-'pending' refund request.
 // ⚠️ NEVER THROWS, same guarantee as tryAutoSettle and for the same reason:
