@@ -59,13 +59,21 @@ export default function WithdrawPage() {
 
   const balance = bal.data?.points ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 1000;
-  const fee = bal.data?.withdrawalFeePoints ?? 0;
+  const flatFee = bal.data?.withdrawalFeePoints ?? 0;
+  const gasFeePercent = bal.data?.gasFeePercent ?? 0;
+  const gasFeeFixedMicro = bal.data?.gasFeeFixedMicro ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
   // Blank field means "the minimum", which is what the placeholder shows.
   const typedUsdt = Number(usdtInput);
   const amt = usdtInput.trim() !== "" && Number.isFinite(typedUsdt)
     ? usdtToPoints(typedUsdt)
     : min;
+  // PREVIEW ONLY — mirrors the server's exact formula (gasFeePoints in
+  // api/src/fees.ts) so this never shows a number the request will then
+  // disagree with, but the fee actually charged is re-computed and
+  // snapshotted server-side at request time (see POST /withdrawals).
+  const gasFee = Math.round((amt * gasFeePercent) / 100) + usdtToPoints(gasFeeFixedMicro / 1_000_000);
+  const fee = flatFee + gasFee;
   const net = Math.max(0, amt - fee); // points actually converted to USDT
   const belowMin = amt < min;
   const overBalance = amt > balance;

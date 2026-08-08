@@ -5,6 +5,7 @@ import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
+import { getGasFeeRate } from "../fees.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -130,11 +131,22 @@ export async function appRoutes(app: FastifyInstance) {
 
   // Balance = SUM(ledger). Never a stored field. Also returns the current
   // withdrawal fee (points) so the withdraw screen can show fee + net.
-  app.get("/wallet/balance", guard(async (userId) => ({
-    points: await balanceOf(userId),
-    minWithdrawPoints: config.minWithdrawPoints,
-    withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
-  })));
+  app.get("/wallet/balance", guard(async (userId) => {
+    const gasFeeRate = await getGasFeeRate();
+    return {
+      points: await balanceOf(userId),
+      minWithdrawPoints: config.minWithdrawPoints,
+      withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+      // The gas fee (founder, 2026-08-08) — percent + a fixed floor, sent as
+      // RATES rather than a pre-computed points figure because the amount it
+      // is charged on is whatever the user is about to type, which the server
+      // does not know yet. The web computes a PREVIEW from these; the amount
+      // actually charged is re-computed and snapshotted server-side at
+      // request time (see POST /withdrawals), never trusted from the client.
+      gasFeePercent: gasFeeRate.percent,
+      gasFeeFixedMicro: gasFeeRate.fixedMicro,
+    };
+  }));
 
   // Full ledger history for the user. A withdrawal's status comes from the
   // withdrawal_requests row (pending/paid/rejected) — NEVER hard-coded, or a

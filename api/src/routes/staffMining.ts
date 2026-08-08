@@ -455,6 +455,11 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       refunds: rows.map((r) => ({
         ...r,
         amount: usdtFromMicro(Number(r.amount)),
+        feeAmount: usdtFromMicro(Number(r.fee_micro ?? 0)),
+        // What staff should ACTUALLY send by hand — the gas fee (founder,
+        // 2026-08-08) is snapshotted on the row and comes out of what's sent,
+        // never out of what was debited from the user.
+        netAmount: usdtFromMicro(Number(r.amount) - Number(r.fee_micro ?? 0)),
         chainLabel: chainById(String(r.chain))?.label ?? r.chain,
         // Same signal the withdrawal queue shows: did the user prove this exact
         // address with a wallet signature, or did they type it in?
@@ -469,18 +474,19 @@ export async function staffMiningRoutes(app: FastifyInstance) {
 
     // Claim the row first and only if still pending — two admins on the queue
     // would otherwise both mark one refund paid and it would be sent twice.
-    const claimed = await sql.get<{ user_id: string; amount: string }>(
+    const claimed = await sql.get<{ user_id: string; amount: string; fee_micro: string }>(
       `UPDATE usdt_refund_requests SET status = 'paid', tx_hash = ?, reviewed_by = ?, reviewed_at = ?
-       WHERE id = ? AND status = 'pending' RETURNING user_id, amount`,
+       WHERE id = ? AND status = 'pending' RETURNING user_id, amount, fee_micro`,
       b.txHash.trim(), userId, now(), id,
     );
     if (!claimed) throw { statusCode: 409, message: "That refund was already handled." };
 
     // NO LEDGER ROW HERE. The debit was written when the user asked; writing
     // another one now would take the money twice.
+    const net = Number(claimed.amount) - Number(claimed.fee_micro ?? 0);
     await logAudit({
       actorUserId: userId, actorRole: role, action: "usdt_refund_paid",
-      detail: `${id} -> ${claimed.user_id}: ${usdtFromMicro(Number(claimed.amount))} USDT, tx ${b.txHash.trim()}`,
+      detail: `${id} -> ${claimed.user_id}: ${usdtFromMicro(net)} USDT sent (of ${usdtFromMicro(Number(claimed.amount))} requested), tx ${b.txHash.trim()}`,
     });
     return { ok: true };
   }));

@@ -333,6 +333,12 @@ export async function staffRoutes(app: FastifyInstance) {
   // payout.ts), so a leaked admin session cannot move treasury funds from here.
   app.get("/staff/settings", staffGuard(["admin"], async () => ({
     withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+    // The gas fee (founder, 2026-08-08): sending USDT on BEP20 costs real
+    // gas, and this is what recovers it — on BOTH withdrawals (added on top
+    // of the flat fee above) and deposit refunds (routes/mining.ts), the two
+    // flows the founder wants it on. See fees.ts.
+    gasFeePercent: Math.max(0, Number(await getSetting("gas_fee_percent", "0")) || 0),
+    gasFeeFixedMicro: Math.max(0, Number(await getSetting("gas_fee_fixed_micro", "0")) || 0),
     kycEnabled: await kycFeatureEnabled(),
     treasury: {
       bep20: await getSetting("treasury_address_bep20", ""),
@@ -344,6 +350,11 @@ export async function staffRoutes(app: FastifyInstance) {
   const settingsSchema = z.object({
     // Flat fee (points) taken out of every withdrawal. 0 = no fee.
     withdrawalFeePoints: z.number().int().min(0).max(1_000_000).optional(),
+    // Gas-cost fee: percent of the amount (0-100) + a fixed floor in
+    // micro-USDT. Applies to withdrawals (on top of the flat fee above) and
+    // to deposit refunds. 0/0 = off, the default.
+    gasFeePercent: z.number().min(0).max(100).optional(),
+    gasFeeFixedMicro: z.number().int().min(0).max(1_000_000).optional(),
     // The ID check, on or off. OFF hides the tab ("Coming soon") AND waives the
     // requirement everywhere it is enforced — see kycFeatureEnabled() in kyc.ts
     // for why the alternative (hidden but still required) is a dead end.
@@ -361,6 +372,12 @@ export async function staffRoutes(app: FastifyInstance) {
 
     if (parsed.data.withdrawalFeePoints !== undefined) {
       await setSetting("withdrawal_fee_points", String(parsed.data.withdrawalFeePoints));
+    }
+    if (parsed.data.gasFeePercent !== undefined) {
+      await setSetting("gas_fee_percent", String(parsed.data.gasFeePercent));
+    }
+    if (parsed.data.gasFeeFixedMicro !== undefined) {
+      await setSetting("gas_fee_fixed_micro", String(parsed.data.gasFeeFixedMicro));
     }
     if (parsed.data.kycEnabled !== undefined) {
       await setSetting("kyc_enabled", parsed.data.kycEnabled ? "1" : "0");

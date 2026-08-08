@@ -39,11 +39,19 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
   try {
     const req = await sql.get<{
       id: string; user_id: string; chain: string; address: string;
-      amount: number; status: string;
+      amount: number; fee_micro: number; status: string;
     }>("SELECT * FROM usdt_refund_requests WHERE id = ?", requestId);
     if (!req || req.status !== "pending") return { settled: false, reason: "not pending" };
 
+    // The gas fee (founder, 2026-08-08) is snapshotted on the row at request
+    // time and reduces only what gets SENT — `req.amount` is still what was
+    // already debited from the user, in full, when they asked.
+    const net = req.amount - (req.fee_micro ?? 0);
+
     if (config.payoutMode !== "onchain") return { settled: false, reason: "onchain payout mode is off" };
+    // The ceiling and the 24h cap are both measured on the REQUESTED amount,
+    // not the discounted net — a fee must never be a way to sneak a request
+    // that would otherwise be over the line back under it.
     if (req.amount > config.autoRefundMaxMicro) return { settled: false, reason: "above auto ceiling" };
 
     // Reuses the WITHDRAWAL hold, deliberately not a separate refund hold: a
@@ -59,7 +67,7 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
       return { settled: false, reason: "provider cannot settle this chain right now" };
     }
 
-    const usdt = microToUsdtString(req.amount);
+    const usdt = microToUsdtString(net);
 
     const result = await sql.tx(async (t: TxApi) => {
       // GUARDRAIL #8, applied to an AGGREGATE read, not just a balance — the

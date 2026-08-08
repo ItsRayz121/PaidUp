@@ -883,7 +883,19 @@ const copy: Record<string, string> = {
   "refund.min": "The smallest amount we can send back is {min} USDT.",
   "refund.notSpent": "Only USDT you have not spent on machines can come back.",
   "refund.notEarnings": "This is the USDT you put in yourself — it is yours, and you can ask for all of it back, any time. (Your task and referral earnings are a separate balance and go out from your wallet instead.)",
-  "refund.submit": "Ask for it back",
+  // The button used to just sit disabled with no explanation whenever the
+  // balance was under refundMinMicro (e.g. a 0.04 USDT balance against a 1
+  // USDT minimum) — these two explain WHY, the same way withdraw.needAtLeast
+  // / withdraw.notEnough do on the withdraw screen.
+  "refund.needAtLeast": "You need at least {min} to ask for it back.",
+  "refund.notEnough": "You do not have that much to give back.",
+  // The gas fee (founder, 2026-08-08) — only shown when Admin has actually
+  // set one (percent or fixed > 0). Most deployments show none of these.
+  "refund.feeLabel": "Network fee",
+  "refund.youGet": "You get",
+  "refund.sentNet": "We sent {net} after a {fee} network fee.",
+  "refund.rowNet": "You got {net} after the network fee",
+  "refund.submit": "Get my USDT back",
   "refund.sending": "Sending…",
   "refund.done.title": "We got your request",
   "refund.done.body":

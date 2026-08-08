@@ -236,13 +236,34 @@ export function TreasuryPanel() {
 export function WithdrawalFeePanel() {
   const s = useApi(fetchSettings, []);
   const [fee, setFee] = useState<number | null>(null);
+  // Gas fee (founder, 2026-08-08): percent + a fixed floor, applied to BOTH
+  // withdrawals (on top of the flat fee above) and deposit refunds
+  // ("Get your USDT back") — the two flows the founder wants a real-gas-cost
+  // fee on. See api/src/fees.ts.
+  const [gasPercent, setGasPercent] = useState<number | null>(null);
+  const [gasFixedUsdt, setGasFixedUsdt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const current = s.data?.withdrawalFeePoints ?? 0;
   const value = fee ?? current;
+  const currentGasPercent = s.data?.gasFeePercent ?? 0;
+  const currentGasFixedUsdt = (s.data?.gasFeeFixedMicro ?? 0) / 1_000_000;
+  const gasPercentValue = gasPercent ?? currentGasPercent;
+  const gasFixedValue = gasFixedUsdt ?? currentGasFixedUsdt;
+  const dirty = (fee !== null && fee !== current)
+    || (gasPercent !== null && gasPercent !== currentGasPercent)
+    || (gasFixedUsdt !== null && gasFixedUsdt !== currentGasFixedUsdt);
 
   async function save() {
     setBusy(true);
-    try { await updateSettings({ withdrawalFeePoints: value }); s.reload(); setFee(null); }
+    try {
+      await updateSettings({
+        withdrawalFeePoints: value,
+        gasFeePercent: gasPercentValue,
+        gasFeeFixedMicro: Math.round(gasFixedValue * 1_000_000),
+      });
+      s.reload();
+      setFee(null); setGasPercent(null); setGasFixedUsdt(null);
+    }
     catch (e) { window.alert((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -256,7 +277,24 @@ export function WithdrawalFeePanel() {
           onChange={(e) => setFee(Number(e.target.value))}
           className="num w-28 rounded border border-line bg-card p-1.5 text-sm outline-none" />
         <span className="text-sm text-muted">points per withdrawal</span>
-        {fee !== null && fee !== current && (
+      </div>
+
+      <h3 className="mb-2 mt-4 font-bold text-brand-ink">Gas fee (withdrawals + deposit refunds)</h3>
+      <p className="mb-2 text-xs text-muted">
+        Percent of the amount plus a fixed floor, taken out of what actually gets SENT — never out of
+        what gets debited. Applies on top of the flat fee above on withdrawals, and is the only fee on
+        deposit refunds (&quot;Get your USDT back&quot;), which had none before. 0% / $0 = off.
+      </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-3">
+        <input type="number" min={0} max={100} step={0.1} value={gasPercentValue}
+          onChange={(e) => setGasPercent(Number(e.target.value))}
+          className="num w-20 rounded border border-line bg-card p-1.5 text-sm outline-none" />
+        <span className="text-sm text-muted">% +</span>
+        <input type="number" min={0} step={0.01} value={gasFixedValue}
+          onChange={(e) => setGasFixedUsdt(Number(e.target.value))}
+          className="num w-24 rounded border border-line bg-card p-1.5 text-sm outline-none" />
+        <span className="text-sm text-muted">USDT fixed</span>
+        {dirty && (
           <button disabled={busy} onClick={save}
             className="ms-auto rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Save</button>
         )}

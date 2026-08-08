@@ -18,6 +18,7 @@ import { flagOnce } from "../fraud.ts";
 import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { custodyEnabled } from "../custody.ts";
 import { tryAutoSettleRefund } from "../autoRefund.ts";
+import { getGasFeeRate, gasFeeMicro } from "../fees.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -500,13 +501,14 @@ export async function miningRoutes(app: FastifyInstance) {
       userId,
     );
     const refunds = await sql.all<{
-      id: string; chain: string; address: string; amount: string;
+      id: string; chain: string; address: string; amount: string; fee_micro: string;
       status: string; tx_hash: string | null; reject_reason: string | null; created_at: string;
     }>(
-      `SELECT id, chain, address, amount, status, tx_hash, reject_reason, created_at
+      `SELECT id, chain, address, amount, fee_micro, status, tx_hash, reject_reason, created_at
        FROM usdt_refund_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
       userId,
     );
+    const gasFeeRate = await getGasFeeRate();
     return {
       enabled,
       balanceMicro: await usdtBalanceMicroOf(userId),
@@ -514,10 +516,17 @@ export async function miningRoutes(app: FastifyInstance) {
       // switched off while people still hold a balance, and that is exactly when
       // being unable to ask for it back would be worst.
       refundMinMicro: 1_000_000,
+      // The gas fee (founder, 2026-08-08) — percent + a fixed floor, deducted
+      // from what gets SENT back, never from what gets debited. Exposed here
+      // so the refund screen can preview it before the user submits; the
+      // actual fee charged is re-computed and snapshotted server-side at
+      // request time (see POST /usdt/refunds), never trusted from the client.
+      gasFeePercent: gasFeeRate.percent,
+      gasFeeFixedMicro: gasFeeRate.fixedMicro,
       refunds: refunds.map((r) => ({
         id: r.id, chain: r.chain, address: r.address, amountMicro: Number(r.amount),
-        status: r.status, txHash: r.tx_hash, rejectReason: r.reject_reason,
-        createdAt: r.created_at,
+        feeMicro: Number(r.fee_micro ?? 0), status: r.status, txHash: r.tx_hash,
+        rejectReason: r.reject_reason, createdAt: r.created_at,
       })),
       // Only sent when the feature is on — there is no reason for an address we
       // are not currently accepting deposits at to be sitting in a JSON response.
@@ -654,6 +663,17 @@ export async function miningRoutes(app: FastifyInstance) {
       throw { statusCode: 400, message: "The smallest amount we can send back is 1 USDT." };
     }
 
+    // Snapshot the gas fee onto the request, same reason withdrawal_requests
+    // snapshots fee_points: a later Admin change must not alter an in-flight
+    // request. `micro` above is still what gets DEBITED — the user's full ask
+    // leaves their deposit balance; the fee only reduces what actually gets
+    // SENT (see the auto-settle and staff "mark paid" paths below).
+    const gasRate = await getGasFeeRate();
+    const feeMicro = gasFeeMicro(micro, gasRate);
+    if (feeMicro >= micro) {
+      throw { statusCode: 400, message: "The fee would take all of this amount. Ask for more than that." };
+    }
+
     // Snapshot whether this exact destination was proved by a wallet signature,
     // for the same reason withdrawal_requests does: the staff member approving
     // an irreversible send must see what was true when the user asked.
@@ -673,9 +693,9 @@ export async function miningRoutes(app: FastifyInstance) {
       }
 
       await t.run(
-        `INSERT INTO usdt_refund_requests (id, user_id, chain, address, amount, address_verified, status, created_at)
-         VALUES (?,?,?,?,?,?, 'pending', ?)`,
-        id, userId, chain, address, micro, proved ? 1 : 0, now(),
+        `INSERT INTO usdt_refund_requests (id, user_id, chain, address, amount, fee_micro, address_verified, status, created_at)
+         VALUES (?,?,?,?,?,?,?, 'pending', ?)`,
+        id, userId, chain, address, micro, feeMicro, proved ? 1 : 0, now(),
       );
       // Hold the funds by debiting now. A rejection writes the compensating
       // credit (see the staff route).
@@ -696,10 +716,10 @@ export async function miningRoutes(app: FastifyInstance) {
     // signer are actually turned on — see autoRefund.ts and payout.ts.
     const auto = await tryAutoSettleRefund(id);
     if (auto.settled) {
-      return { ok: true, id, status: "paid", txHash: auto.txHash, balanceMicro };
+      return { ok: true, id, status: "paid", txHash: auto.txHash, balanceMicro, feeMicro, netMicro: micro - feeMicro };
     }
 
-    return { ok: true, id, status: "pending", balanceMicro };
+    return { ok: true, id, status: "pending", balanceMicro, feeMicro, netMicro: micro - feeMicro };
   }));
 
   // ---- ROZI store (a ROZI sink, and the honest answer to "what is it worth?") -

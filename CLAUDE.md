@@ -985,6 +985,52 @@ These override convenience or speed at every step:
     hash when a request settles instantly, instead of the "staff will send it
     in a few hours" copy every request showed before.
 
+- **A GAS FEE, ON BOTH WAYS MONEY LEAVES (founder, 2026-08-08).** Sending USDT
+  on BEP20 costs the platform real gas, and neither a withdrawal nor a deposit
+  refund recovered any of it before this — a refund of the full requested
+  amount was a guaranteed per-request loss. Percent-of-amount + a fixed floor
+  (the founder's own example: 5% + $0.01 on a $1 request — a pure percentage
+  undercharges on small requests, where the fixed gas cost is the bigger share
+  of the total), admin-tunable in `/staff`, **off (0%/$0) by default**. New
+  shared helper `api/src/fees.ts`.
+  - **Applies to withdrawals (task/referral cash-out) and deposit refunds
+    ("Get your USDT back") — explicitly NOT deposits going in**, per the
+    founder: "only withdrawal need fee not deposit."
+  - **Withdrawals**: the gas fee is ADDED to the pre-existing flat
+    `withdrawal_fee_points` (unchanged, still admin-tunable separately) and
+    stored in the SAME `fee_points` column, so every existing net/display/
+    payout path (`autoWithdraw.ts`, `staff.ts`) already does the right thing
+    with no further changes.
+  - **Refunds had no fee mechanism at all before this** — new
+    `usdt_refund_requests.fee_micro` column, snapshotted at request time for
+    the same reason `fee_points` is (an Admin change mid-flight must not alter
+    an in-flight payout).
+  - ⚠️ **THE FEE COMES OUT OF WHAT GETS SENT, NEVER OUT OF WHAT GETS HELD.**
+    On both flows, the user is still debited the FULL requested amount at
+    request time (unchanged) — only the eventual payout (auto-settle in
+    `autoRefund.ts`, or the amount staff are told to send in the `/staff`
+    refund queue) is reduced by the fee. Getting this backwards would either
+    double-charge the fee or silently let the account holding the money
+    absorb it.
+  - ⚠️ **A REJECTED REFUND RETURNS THE FULL GROSS AMOUNT, NOT THE DISCOUNTED
+    NET.** Nothing was sent, so nothing should be kept — `staffMining.ts`'s
+    reject handler was already crediting back `amount`, not `amount -
+    fee_micro`, and stayed that way; there is a regression test for exactly
+    this (`test:fees`).
+  - **A fee that would consume the entire request is refused up front**, on
+    both flows, rather than settling for a $0 or negative net.
+  - Both screens preview the fee before the user submits (`GET
+    /wallet/balance` and `GET /usdt` now also return `gasFeePercent` /
+    `gasFeeFixedMicro`), but the fee actually charged is always re-computed
+    and snapshotted server-side at request time — the preview is never
+    trusted from the client.
+  - Verified: new `test:fees` (24 checks: off-by-default, the founder's exact
+    5%+$0.01 example on both flows, full-debit-not-net on both flows,
+    reject-returns-gross, staff-queue-shows-net, fee-consumes-whole-request
+    refused on both flows), plus `test:usdt` (72), `test:withdrawcontrols`
+    (21), `test:autorefund` (8), `test:autowithdraw` (16) all re-verified
+    green; api + web typecheck, eslint, web production build all clean.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

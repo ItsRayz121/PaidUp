@@ -228,7 +228,10 @@ export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 
 // ---- Earner ---------------------------------------------------------------
 export const fetchBalance = () =>
-  apiFetch<{ points: number; minWithdrawPoints: number; withdrawalFeePoints: number }>("/wallet/balance");
+  apiFetch<{
+    points: number; minWithdrawPoints: number; withdrawalFeePoints: number;
+    gasFeePercent: number; gasFeeFixedMicro: number;
+  }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
 // `proof` is empty for a task whose Admin switched evidence off. The server
@@ -483,9 +486,14 @@ export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 
 // ---- Admin: global settings (withdrawal fee) -----------------------------
 export const fetchSettings = () =>
-  apiFetch<{ withdrawalFeePoints: number; kycEnabled: boolean; treasury: TreasuryAddresses }>("/staff/settings");
+  apiFetch<{
+    withdrawalFeePoints: number; gasFeePercent: number; gasFeeFixedMicro: number;
+    kycEnabled: boolean; treasury: TreasuryAddresses;
+  }>("/staff/settings");
 export const updateSettings = (patch: {
   withdrawalFeePoints?: number;
+  gasFeePercent?: number;
+  gasFeeFixedMicro?: number;
   kycEnabled?: boolean;
   treasury?: Partial<TreasuryAddresses>;
 }) =>
@@ -600,6 +608,9 @@ export type UsdtTopup = {
 };
 export type UsdtRefund = {
   id: string; chain: string; address: string; amountMicro: number;
+  // The gas fee (founder, 2026-08-08), snapshotted at request time. What was
+  // actually sent is amountMicro - feeMicro.
+  feeMicro: number;
   status: "pending" | "paid" | "rejected";
   txHash: string | null; rejectReason: string | null; createdAt: string;
 };
@@ -620,6 +631,12 @@ export type UsdtState = {
   // switched off while people still hold a balance, and that is exactly when
   // being unable to ask for it back would be worst.
   refundMinMicro: number;
+  // The gas fee (founder, 2026-08-08) — percent + a fixed floor, deducted from
+  // what gets SENT back, never from what gets debited. Used to preview the fee
+  // before submitting; the fee actually charged is re-computed and
+  // snapshotted server-side at request time, never trusted from the client.
+  gasFeePercent: number;
+  gasFeeFixedMicro: number;
   refunds: UsdtRefund[];
 };
 export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");
@@ -627,8 +644,10 @@ export const claimUsdtTopup = (txHash: string, amount: number) =>
   apiFetch<{ ok: true; id: string; status: string }>(
     "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });
 export const requestUsdtRefund = (amount: number, address: string) =>
-  apiFetch<{ ok: true; id: string; status: "pending" | "paid"; txHash?: string; balanceMicro: number }>(
-    "/usdt/refunds", { method: "POST", body: JSON.stringify({ amount, address }) });
+  apiFetch<{
+    ok: true; id: string; status: "pending" | "paid"; txHash?: string; balanceMicro: number;
+    feeMicro: number; netMicro: number;
+  }>("/usdt/refunds", { method: "POST", body: JSON.stringify({ amount, address }) });
 
 export type RoziEntry = {
   id: string; amountMicro: number; direction: "credit" | "debit";
@@ -845,6 +864,10 @@ export const rejectTopup = (id: string, reason: string) =>
 export type AdminRefund = {
   id: string; user_id: string; email: string; username: string | null;
   chain: string; chainLabel: string; address: string; amount: number;
+  // The gas fee (founder, 2026-08-08), snapshotted on the row. `amount` is
+  // what was debited from the user; `netAmount` is what staff should ACTUALLY
+  // send on-chain — the two only differ when a gas fee is configured.
+  feeAmount: number; netAmount: number;
   status: string; tx_hash: string | null; reject_reason: string | null;
   addressVerified: boolean; created_at: string;
 };

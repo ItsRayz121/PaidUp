@@ -713,6 +713,14 @@ const MIGRATIONS = `
     address       TEXT NOT NULL,
     -- micro-USDT, held by a ledger debit written in the same transaction.
     amount        BIGINT NOT NULL CHECK (amount > 0),
+    -- Gas-cost fee (micro-USDT), snapshotted from app_settings at request
+    -- time -- same reason withdrawal_requests.fee_points is snapshotted: a
+    -- later Admin change must not alter an in-flight request. amount above
+    -- is still what gets DEBITED from the user (the full amount they asked
+    -- for leaves their deposit balance); this is subtracted only from what
+    -- actually gets SENT -- see fee_micro's use in autoRefund.ts and the
+    -- staff "mark paid" panel.
+    fee_micro     BIGINT NOT NULL DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending','paid','rejected')),
     -- Snapshotted at request time for the same reason withdrawal_requests
@@ -736,6 +744,7 @@ const MIGRATIONS = `
   -- passing on a fresh one — same reason the CHECK constraint below is
   -- re-granted explicitly instead of relying on CREATE TABLE IF NOT EXISTS.
   ALTER TABLE usdt_refund_requests DROP CONSTRAINT IF EXISTS usdt_refund_requests_reviewed_by_fkey;
+  ALTER TABLE usdt_refund_requests ADD COLUMN IF NOT EXISTS fee_micro BIGINT NOT NULL DEFAULT 0;
 
   -- One claimed deposit. Credit is posted ONLY when a staff member confirms.
   CREATE TABLE IF NOT EXISTS usdt_topups (
@@ -1438,6 +1447,21 @@ export async function initDb(): Promise<void> {
   // by default so no user is surprised by a deduction until Admin sets one.
   await sql.run(
     "INSERT INTO app_settings (key, value, updated_at) VALUES ('withdrawal_fee_points','0',?) ON CONFLICT (key) DO NOTHING",
+    now(),
+  );
+  // Gas-cost fee (founder, 2026-08-08): sending USDT on BEP20 costs the
+  // platform real gas, and neither a refund nor a withdrawal recovered any of
+  // it before this. Percent + a fixed floor, same shape as the founder's own
+  // example (5% + $0.01 on a $1 request) — a pure percentage alone would
+  // undercharge on the smallest requests, where the fixed gas cost is a
+  // bigger share of the total. Off (0/0) by default, same reasoning as the
+  // withdrawal fee above. See getGasFee() in fees.ts.
+  await sql.run(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES ('gas_fee_percent','0',?) ON CONFLICT (key) DO NOTHING",
+    now(),
+  );
+  await sql.run(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES ('gas_fee_fixed_micro','0',?) ON CONFLICT (key) DO NOTHING",
     now(),
   );
 }

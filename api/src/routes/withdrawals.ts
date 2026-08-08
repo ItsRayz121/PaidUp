@@ -10,6 +10,7 @@ import { checkWithdrawalVelocity, requestedLast24hPoints } from "../velocity.ts"
 import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 import { tryAutoSettle } from "../autoWithdraw.ts";
+import { getGasFeeRate, gasFeePoints } from "../fees.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -175,7 +176,16 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // Snapshot the current withdrawal fee onto the request, so a later Admin
     // change can't alter an in-flight payout. The user must have more than the
     // fee, or the net USDT would be zero/negative.
-    const fee = Math.max(0, Number(await getSetting("withdrawal_fee_points", "0")) || 0);
+    //
+    // Two components, added together: the pre-existing flat fee (unchanged),
+    // and the gas-cost fee (founder, 2026-08-08) — percent of the amount plus
+    // a fixed floor, the same recovery this codebase now also applies to
+    // refunds (routes/mining.ts). Both are stored in the ONE fee_points
+    // column so every existing net/display/payout path (autoWithdraw.ts,
+    // staff.ts) already does the right thing with no further changes.
+    const flatFee = Math.max(0, Number(await getSetting("withdrawal_fee_points", "0")) || 0);
+    const gasRate = await getGasFeeRate();
+    const fee = flatFee + gasFeePoints(amountPoints, gasRate);
     if (amountPoints <= fee) {
       return reply.code(400).send({ error: `The withdrawal fee is ${fee} points. Ask for more than that.` });
     }

@@ -29,7 +29,8 @@
     "test:store": "tsx src/tests/store.e2e.ts",
     "test:profile": "tsx src/tests/profile.e2e.ts",
     "test:usdt": "tsx src/tests/usdt.e2e.ts",
-    "test:wallet": "tsx src/tests/wallet.e2e.ts"
+    "test:wallet": "tsx src/tests/wallet.e2e.ts",
+    "test:fees": "tsx src/tests/fees.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

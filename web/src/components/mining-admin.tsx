@@ -785,9 +785,13 @@ function RefundPanel() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function pay(id: string, amount: number, address: string) {
+  // ⚠️ SENDS netAmount, NOT amount. `amount` is what was debited from the
+  // user; the gas fee (founder, 2026-08-08) comes out of what actually gets
+  // sent, so sending the gross figure here would give the fee back to the
+  // user for free instead of recovering the platform's gas cost.
+  async function pay(id: string, netAmount: number, address: string) {
     const txHash = window.prompt(
-      `Send ${amount} USDT to:\n\n${address}\n\n` +
+      `Send ${netAmount} USDT to:\n\n${address}\n\n` +
       "Do that FIRST, from the treasury wallet. Then paste the transaction hash here " +
       "as proof — the user will see it.",
     );
@@ -795,7 +799,7 @@ function RefundPanel() {
     setBusy(id);
     try {
       await payRefund(id, txHash.trim());
-      setMsg(`Recorded ${amount} USDT as sent.`);
+      setMsg(`Recorded ${netAmount} USDT as sent.`);
       refunds.reload();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -834,7 +838,7 @@ function RefundPanel() {
         <div className="mt-2 overflow-x-auto">
           <table className="w-full min-w-[640px] text-xs">
             <thead className="text-left uppercase text-muted">
-              <tr><th className="py-1">User</th><th>Amount</th><th>Send to</th><th>When</th><th></th></tr>
+              <tr><th className="py-1">User</th><th>Requested</th><th>Send</th><th>Send to</th><th>When</th><th></th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
@@ -843,6 +847,14 @@ function RefundPanel() {
                     <div className="font-semibold text-brand-ink">{r.username ? `@${r.username}` : r.email}</div>
                   </td>
                   <td className="font-mono">{r.amount} USDT</td>
+                  <td className="font-mono font-semibold text-brand-ink">
+                    {r.netAmount} USDT
+                    {/* Only show the fee line when there is one — most requests
+                        today have gasFeePercent/gasFeeFixedMicro at 0. */}
+                    {r.feeAmount > 0 && (
+                      <div className="font-sans text-[10px] text-muted">− {r.feeAmount} gas fee</div>
+                    )}
+                  </td>
                   <td className="max-w-[220px] break-all font-mono text-[10px]">
                     {r.address}
                     <div className="mt-0.5 font-sans text-[10px]">
@@ -856,7 +868,7 @@ function RefundPanel() {
                   </td>
                   <td className="text-muted">{timeAgo(r.created_at)}</td>
                   <td className="whitespace-nowrap">
-                    <button disabled={busy === r.id} onClick={() => pay(r.id, r.amount, r.address)}
+                    <button disabled={busy === r.id} onClick={() => pay(r.id, r.netAmount, r.address)}
                       className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
                       Sent
                     </button>
