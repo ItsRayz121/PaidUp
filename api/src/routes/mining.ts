@@ -19,6 +19,7 @@ import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { custodyEnabled } from "../custody.ts";
 import { tryAutoSettleRefund } from "../autoRefund.ts";
 import { getGasFeeRate, gasFeeMicro } from "../fees.ts";
+import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -509,6 +510,15 @@ export async function miningRoutes(app: FastifyInstance) {
       userId,
     );
     const gasFeeRate = await getGasFeeRate();
+    // The user's own gas wallet (founder, 2026-08-08, second pass): when the
+    // relay can sign from the user's own derived address, the refund screen
+    // needs to show its LIVE BNB balance, not just the USDT one — that is
+    // now the thing standing between "Get my money back" and it actually
+    // going through. null on any chain where the relay isn't wired up
+    // (nothing changes there; the old direct-treasury fallback pays its own
+    // gas, same as always).
+    const relayReady = enabled && relayAvailable(s.usdtTreasuryChain);
+    const gas = relayReady ? await hasEnoughGas(userId, s.usdtTreasuryChain as "bep20") : null;
     return {
       enabled,
       balanceMicro: await usdtBalanceMicroOf(userId),
@@ -516,13 +526,18 @@ export async function miningRoutes(app: FastifyInstance) {
       // switched off while people still hold a balance, and that is exactly when
       // being unable to ask for it back would be worst.
       refundMinMicro: 1_000_000,
-      // The gas fee (founder, 2026-08-08) — percent + a fixed floor, deducted
-      // from what gets SENT back, never from what gets debited. Exposed here
-      // so the refund screen can preview it before the user submits; the
-      // actual fee charged is re-computed and snapshotted server-side at
-      // request time (see POST /usdt/refunds), never trusted from the client.
-      gasFeePercent: gasFeeRate.percent,
-      gasFeeFixedMicro: gasFeeRate.fixedMicro,
+      // The gas fee (founder, 2026-08-08; DROPPED same day, second pass when
+      // the relay is available — see gasReady below). Kept here, unchanged,
+      // for the direct-treasury fallback path, where treasury really is
+      // paying real gas and really does recover it this way.
+      gasFeePercent: relayReady ? 0 : gasFeeRate.percent,
+      gasFeeFixedMicro: relayReady ? 0 : gasFeeRate.fixedMicro,
+      // Present only when the relay is wired up for this chain — the refund
+      // screen uses this to show "you need BNB" BEFORE the user submits,
+      // instead of only finding out from a 400 after tapping the button.
+      personalGasWei: gas ? gas.balanceWei.toString() : null,
+      personalGasRequiredWei: gas ? gas.requiredWei.toString() : null,
+      personalGasReady: gas ? gas.ok : null,
       refunds: refunds.map((r) => ({
         id: r.id, chain: r.chain, address: r.address, amountMicro: Number(r.amount),
         feeMicro: Number(r.fee_micro ?? 0), status: r.status, txHash: r.tx_hash,
@@ -663,13 +678,36 @@ export async function miningRoutes(app: FastifyInstance) {
       throw { statusCode: 400, message: "The smallest amount we can send back is 1 USDT." };
     }
 
+    // GAS IS THE USER'S OWN RESPONSIBILITY (founder, 2026-08-08, second
+    // pass). A refund signs from the user's own derived address — that
+    // address must hold enough BNB BEFORE anything else happens, or nothing
+    // gets held. This is the exact check that would have caught the
+    // production bug: three refund requests debited money the platform then
+    // had no way to send, because the address funding gas (treasury) had
+    // none — checking the RIGHT address, up front, closes it.
+    if (relayAvailable(chain)) {
+      const gas = await hasEnoughGas(userId, chain as "bep20");
+      if (!gas.ok) {
+        throw {
+          statusCode: 400,
+          message: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+          gasRequired: true,
+          walletAddress: gas.address,
+        };
+      }
+    }
+
     // Snapshot the gas fee onto the request, same reason withdrawal_requests
     // snapshots fee_points: a later Admin change must not alter an in-flight
     // request. `micro` above is still what gets DEBITED — the user's full ask
     // leaves their deposit balance; the fee only reduces what actually gets
     // SENT (see the auto-settle and staff "mark paid" paths below).
+    //
+    // The gas-cost fee (founder, 2026-08-08; DROPPED same day, second pass)
+    // does not apply when the relay is available — the user's own BNB (just
+    // checked above) is what actually pays gas now, not a USDT surcharge.
     const gasRate = await getGasFeeRate();
-    const feeMicro = gasFeeMicro(micro, gasRate);
+    const feeMicro = relayAvailable(chain) ? 0 : gasFeeMicro(micro, gasRate);
     if (feeMicro >= micro) {
       throw { statusCode: 400, message: "The fee would take all of this amount. Ask for more than that." };
     }

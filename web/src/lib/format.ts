@@ -86,6 +86,31 @@ export function formatUsdtMicro(micro: number): string {
   }).format(usdtFromMicro(micro))} USDT`;
 }
 
+// ---- BNB (native gas) -------------------------------------------------------
+//
+// The user's own gas balance (founder, 2026-08-08, second pass: gas is the
+// user's own responsibility, not a treasury top-up or a USDT surcharge).
+// Wei arrives as a decimal STRING — BNB has 18 decimals, far past what a JS
+// number can hold exactly, so this only ever does string/BigInt math, never
+// Number() on the wei value itself.
+// BigInt() calls, not literal `123n` suffixes — this project's web tsconfig
+// targets ES2017, which does not support BigInt literal syntax even though
+// the BigInt runtime itself is available.
+const WEI_PER_BNB = BigInt("1000000000000000000");
+
+export function formatBnbWei(wei: string | null | undefined): string {
+  if (!wei) return "0 BNB";
+  let big: bigint;
+  try { big = BigInt(wei); } catch { return "0 BNB"; }
+  // Four decimals: BNB gas amounts here are a few ten-thousandths (the
+  // constant this checks against, evmSweepGasAmountWei, is 0.0003) — two
+  // decimals would round a real balance down to "0.00" and read as empty.
+  const whole = big / WEI_PER_BNB;
+  const fraction = big % WEI_PER_BNB;
+  const fractionStr = (fraction * BigInt(10000) / WEI_PER_BNB).toString().padStart(4, "0");
+  return `${whole}.${fractionStr} BNB`;
+}
+
 // ---- ROZI ------------------------------------------------------------------
 //
 // The API sends every ROZI amount as MICRO-ROZI: an integer count of millionths.

@@ -11,6 +11,7 @@ import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 import { tryAutoSettle } from "../autoWithdraw.ts";
 import { getGasFeeRate, gasFeePoints } from "../fees.ts";
+import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -173,19 +174,38 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     if (!addrCheck.ok) return reply.code(400).send({ error: addrCheck.error });
     const address = addressRaw.trim();
 
+    // GAS IS THE USER'S OWN RESPONSIBILITY (founder, 2026-08-08, second pass).
+    // When the relay can sign from the user's own derived address, that
+    // address must hold enough BNB BEFORE anything else happens — no debit,
+    // no request row, no fallback to treasury or a manual queue. This is
+    // checked here, not just inside the relay job later, because the whole
+    // point is that nothing gets held while the user cannot actually be paid.
+    if (relayAvailable(chain)) {
+      const gas = await hasEnoughGas(userId, chain as "bep20");
+      if (!gas.ok) {
+        return reply.code(400).send({
+          error: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+          gasRequired: true,
+          walletAddress: gas.address,
+        });
+      }
+    }
+
     // Snapshot the current withdrawal fee onto the request, so a later Admin
     // change can't alter an in-flight payout. The user must have more than the
     // fee, or the net USDT would be zero/negative.
     //
-    // Two components, added together: the pre-existing flat fee (unchanged),
-    // and the gas-cost fee (founder, 2026-08-08) — percent of the amount plus
-    // a fixed floor, the same recovery this codebase now also applies to
-    // refunds (routes/mining.ts). Both are stored in the ONE fee_points
-    // column so every existing net/display/payout path (autoWithdraw.ts,
-    // staff.ts) already does the right thing with no further changes.
+    // The pre-existing flat fee (unchanged, a business decision) always
+    // applies. The gas-cost fee (founder, 2026-08-08; DROPPED same day,
+    // second pass) does NOT apply when the relay can sign from the user's
+    // own address — gas is now checked and paid for real, in BNB, by the
+    // user's own wallet (the gate above), not itemized as a USDT surcharge
+    // the platform used to add "because the platform pretends to provide
+    // gas." Only the direct-treasury fallback (relay unavailable) still
+    // recovers real treasury gas cost this way.
     const flatFee = Math.max(0, Number(await getSetting("withdrawal_fee_points", "0")) || 0);
     const gasRate = await getGasFeeRate();
-    const fee = flatFee + gasFeePoints(amountPoints, gasRate);
+    const fee = flatFee + (relayAvailable(chain) ? 0 : gasFeePoints(amountPoints, gasRate));
     if (amountPoints <= fee) {
       return reply.code(400).send({ error: `The withdrawal fee is ${fee} points. Ask for more than that.` });
     }

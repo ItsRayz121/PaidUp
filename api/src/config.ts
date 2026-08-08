@@ -344,8 +344,22 @@ export const config = {
   // § 2a prices a BEP20 sweep at ~$0.15-0.25. Micro-USDT.
   sweepDustFloorMicro: Number(process.env.SWEEP_DUST_FLOOR_MICRO ?? 500_000), // $0.50
   // Native gas (BNB, in wei-equivalent smallest unit as a decimal string) sent
-  // to a deposit address before it can send the token it holds out.
+  // to a deposit address before it can send the token it holds out. Used by
+  // the (off-by-default) treasury sweeper, AND reused by payoutRelay.ts's
+  // hasEnoughGas() as the "the user's own wallet must hold at least this much
+  // BNB before we start a withdrawal/refund" floor (founder, 2026-08-08,
+  // second pass: gas is the user's own responsibility, not a treasury top-up
+  // or a USDT surcharge) — one number for "what a BEP20 USDT transfer costs,
+  // with buffer" rather than two that could drift apart.
   evmSweepGasAmountWei: process.env.EVM_SWEEP_GAS_AMOUNT_WEI ?? "300000000000000", // 0.0003 BNB
+
+  // How many times payoutRelay.ts retries ONE job phase before giving up and
+  // marking it 'failed' instead of retrying forever. Ticks run every
+  // depositScanIntervalMs (20s default), so 15 surfaces a stuck job to staff
+  // within ~5 minutes — long enough to ride out a transient RPC blip, short
+  // enough that a genuinely unfundable job (e.g. an empty treasury) doesn't
+  // spin silently for hours the way it did before this existed.
+  relayMaxAttempts: Number(process.env.RELAY_MAX_ATTEMPTS ?? 15),
 
   // ---- Withdrawal abuse controls, now that there is no per-request human
   // approval below the auto-withdraw ceiling (docs/CUSTODY_SPEC.md § 3.3: "a

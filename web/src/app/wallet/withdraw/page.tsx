@@ -9,7 +9,7 @@ import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon 
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, createWithdrawal, ApiError } from "@/lib/api";
-import { formatMoney, pointsToUsdt, usdtToPoints } from "@/lib/format";
+import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei } from "@/lib/format";
 import { shortAddress } from "@/lib/wallet";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
@@ -78,7 +78,14 @@ export default function WithdrawPage() {
   const belowMin = amt < min;
   const overBalance = amt > balance;
   const addressOk = addressLooksValid(chain, address);
-  const invalid = belowMin || overBalance || !addressOk;
+  // Gas is the user's own responsibility (founder, 2026-08-08, second pass).
+  // null means "can't check yet" (relay not wired up for this chain) — the
+  // pre-existing direct-treasury fallback pays its own gas, nothing changes.
+  // false means the button must stay dead: the server would refuse this
+  // before holding any points anyway.
+  const gasReady = bal.data?.personalGasReady ?? null;
+  const gasBlocked = gasReady === false;
+  const invalid = belowMin || overBalance || !addressOk || gasBlocked;
   const trimmed = address.trim();
   const addressVerified = saved.data?.verified?.[chain];
 
@@ -254,6 +261,20 @@ export default function WithdrawPage() {
             where someone is actually staring at the disabled button. */}
         {!belowMin && !overBalance && !addressOk && (
           <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needWalletFirst")}</p>
+        )}
+        {gasReady !== null && (
+          <div
+            className={`mt-2 rounded-lg border p-2.5 text-sm ${
+              gasReady ? "border-line bg-card text-muted" : "border-danger/30 bg-danger-tint text-danger"
+            }`}
+          >
+            <p className="font-semibold">
+              {gasReady ? t("refund.gasReady") : t("refund.gasNotReady")}
+            </p>
+            <p className="num mt-1 text-xs opacity-80">
+              {t("refund.gasBalance", { balance: formatBnbWei(bal.data?.personalGasWei ?? null) })}
+            </p>
+          </div>
         )}
       </div>
 

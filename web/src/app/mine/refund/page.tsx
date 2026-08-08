@@ -23,7 +23,7 @@ import { ArrowRightIcon, CheckIcon, InfoIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchUsdt, fetchPayoutAddresses, requestUsdtRefund } from "@/lib/api";
-import { formatUsdtMicro, formatUsdtAmount, timeAgo } from "@/lib/format";
+import { formatUsdtMicro, formatUsdtAmount, formatBnbWei, timeAgo } from "@/lib/format";
 
 export default function RefundPage() {
   const { ready } = useRequireAuth();
@@ -77,7 +77,14 @@ export default function RefundPage() {
   const effectiveAmt = amount.trim() !== "" && Number.isFinite(typedUsdt) ? typedUsdt : min;
   const belowMin = effectiveAmt < min;
   const overBalance = effectiveAmt > balance;
-  const canSubmit = addr.trim().length > 0 && !belowMin && !overBalance;
+  // Gas is the user's own responsibility (founder, 2026-08-08, second pass).
+  // `personalGasReady` is null when this can't be checked (relay not wired
+  // up for this chain) — in that case nothing changes, the direct-treasury
+  // fallback pays its own gas exactly like before. false means the button
+  // must stay disabled: the server would refuse this before debiting
+  // anything anyway, so there is no reason to let the tap happen first.
+  const gasBlocked = s.personalGasReady === false;
+  const canSubmit = addr.trim().length > 0 && !belowMin && !overBalance && !gasBlocked;
 
   // PREVIEW ONLY — mirrors the server's exact formula (gasFeeMicro in
   // api/src/fees.ts) so this never shows a number the request will then
@@ -209,6 +216,26 @@ export default function RefundPage() {
               </p>
             )}
           </div>
+
+          {/* Gas is the user's own responsibility (founder, 2026-08-08,
+              second pass) — shown before the address field so a user who
+              cannot actually be paid right now finds out before typing an
+              address, not after tapping submit. Absent (null) when this
+              can't be checked; nothing changes there. */}
+          {s.personalGasReady !== null && (
+            <div
+              className={`rounded-xl border p-3 text-sm ${
+                s.personalGasReady ? "border-line bg-card text-muted" : "border-danger/30 bg-danger-tint text-danger"
+              }`}
+            >
+              <p className="font-semibold">
+                {s.personalGasReady ? t("refund.gasReady") : t("refund.gasNotReady")}
+              </p>
+              <p className="num mt-1 text-xs opacity-80">
+                {t("refund.gasBalance", { balance: formatBnbWei(s.personalGasWei) })}
+              </p>
+            </div>
+          )}
 
           <div>
             <label htmlFor="addr" className="mb-2 block px-1 font-semibold text-brand-ink">

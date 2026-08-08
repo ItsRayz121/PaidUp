@@ -20,7 +20,7 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { HDKey } from "@scure/bip32";
-import { initDb, sql, now, newId, postLedger, postUsdt, usdtBalanceMicroOf } from "../db.ts";
+import { initDb, sql, now, newId, postLedger, postUsdt, usdtBalanceMicroOf, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { withdrawalRoutes } from "../routes/withdrawals.ts";
 import { staffRoutes } from "../routes/staff.ts";
@@ -29,7 +29,7 @@ import { staffMiningRoutes } from "../routes/staffMining.ts";
 import { toChecksumAddress } from "../wallet.ts";
 import { encryptSecret as encryptTreasurySecret } from "../signer.ts";
 import { encryptSecret as encryptWith, parseAesKeyHex } from "../crypto/aesSecret.ts";
-import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
+import { relayAvailable, createRelayJob, gasCheckHook, type GasCheckResult } from "../payoutRelay.ts";
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -121,6 +121,19 @@ function fullyConfigureSigning() {
 clearGate();
 config.kycRequiredForWithdrawal = false;
 config.stepUpMinPoints = Infinity; // a separate concern (withdrawControls.e2e.ts) — not what this suite tests
+
+// Gas is the user's own responsibility (founder, 2026-08-08, second pass) —
+// routes/withdrawals.ts and routes/mining.ts now check the user's own
+// derived address's BNB balance BEFORE any debit. That check reaches the
+// real chain over the network, which this suite deliberately never does
+// (see the header comment) — a freshly-generated test address could never
+// hold real BNB anyway. Default every existing test in this file to "yes,
+// enough gas" so tests written to prove OTHER behaviour keep proving it; the
+// dedicated "gas gate" section below overrides this to `ok: false` and
+// resets it afterward to prove the refusal path specifically.
+const ALWAYS_READY = async (): Promise<GasCheckResult> =>
+  ({ ok: true, address: testAddress(), balanceWei: 10n ** 18n, requiredWei: 1n });
+gasCheckHook.override = ALWAYS_READY;
 
 console.log("\n-- relayAvailable(): gating logic, no network involved --");
 
@@ -402,7 +415,116 @@ console.log("\n-- refund staff 'paid' action, relay unavailable (manual mode): p
     (await usdtBalanceMicroOf(u)) === 3_000_000, `${await usdtBalanceMicroOf(u)}`);
 }
 
+console.log("\n-- GAS IS THE USER'S OWN RESPONSIBILITY: refused BEFORE any debit --");
+
+// The exact production bug, closed at the source: a request used to be
+// debited and queued even though nothing could ever actually pay it (the
+// treasury had 0 BNB). Now the check happens BEFORE the debit, on the
+// address that actually needs to hold the gas, and nothing is held if it
+// can't.
+{
+  fullyConfigureSigning();
+  config.payoutMode = "onchain";
+  const NOT_READY = async (): Promise<GasCheckResult> =>
+    ({ ok: false, address: testAddress(), balanceWei: 0n, requiredWei: 10n ** 15n });
+
+  {
+    const u = await mkUser("gaswd1");
+    await fundPoints(u, 10_000);
+    gasCheckHook.override = NOT_READY;
+    const r = await app.inject({
+      method: "POST", url: "/withdrawals", headers: tok(u),
+      payload: { amountPoints: 2000, chain: "bep20", address: testAddress() },
+    });
+    gasCheckHook.override = ALWAYS_READY;
+    check("withdrawal refused (400) when the user's own address has no gas", r.statusCode === 400, r.body);
+    check("...and says so in plain language", /BNB/.test(r.json().error ?? ""), r.body);
+    check("no withdrawal_requests row was created at all — nothing was held",
+      (await withdrawalStatus(u)) === undefined);
+    const ledgerRows = await sql.get<{ n: string | number }>(
+      "SELECT COUNT(*) AS n FROM ledger_entries WHERE user_id = ? AND source_type = 'withdrawal'", u,
+    );
+    check("no points were ever debited", Number(ledgerRows?.n) === 0, JSON.stringify(ledgerRows));
+  }
+
+  {
+    const u = await mkUser("gasrf1");
+    await fundUsdt(u, 5_000_000);
+    const before = await usdtBalanceMicroOf(u);
+    gasCheckHook.override = NOT_READY;
+    const r = await app.inject({
+      method: "POST", url: "/usdt/refunds", headers: tok(u),
+      payload: { amount: 2, address: testAddress() },
+    });
+    gasCheckHook.override = ALWAYS_READY;
+    check("refund refused (400) when the user's own address has no gas", r.statusCode === 400, r.body);
+    check("...and says so in plain language", /BNB/.test(r.json().error ?? ""), r.body);
+    const refundRows = await sql.get<{ n: string | number }>(
+      "SELECT COUNT(*) AS n FROM usdt_refund_requests WHERE user_id = ?", u,
+    );
+    check("no usdt_refund_requests row was created", Number(refundRows?.n) === 0, JSON.stringify(refundRows));
+    check("deposit balance is untouched — nothing was debited",
+      (await usdtBalanceMicroOf(u)) === before, `${await usdtBalanceMicroOf(u)}`);
+  }
+
+  clearGate();
+}
+
+console.log("\n-- NO MORE FAKE USDT GAS FEE ON THE RELAY PATH --");
+
+// The founder's own words: "Do not subtract 0.05 USDT for gas... the
+// platform is pretending to provide gas." Once the relay signs from the
+// user's own address, the platform pays zero gas on a refund and only its
+// own fixed prefund cost on a withdrawal — neither is a USDT amount to take
+// from the user. The admin-set gas_fee_percent/fixed must be IGNORED on this
+// path, even though it is still honoured on the direct-treasury fallback
+// (proven by fees.e2e.ts, which never configures the relay at all).
+{
+  fullyConfigureSigning();
+  config.payoutMode = "onchain";
+  await setSetting("gas_fee_percent", "5");
+  await setSetting("gas_fee_fixed_micro", "10000"); // $0.01 — the founder's own example
+
+  {
+    const u = await mkUser("nofeewd1");
+    await fundPoints(u, 10_000);
+    const r = await app.inject({
+      method: "POST", url: "/withdrawals", headers: tok(u),
+      payload: { amountPoints: 2000, chain: "bep20", address: testAddress() },
+    });
+    check("withdrawal still succeeds", r.statusCode === 200, r.body);
+    const row = await sql.get<{ id: string; fee_points: string }>(
+      "SELECT id, fee_points FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", u,
+    );
+    check("fee_points is 0 — the gas-fee rate was NOT applied on the relay path",
+      Number(row?.fee_points) === 0, JSON.stringify(row));
+  }
+
+  {
+    const u = await mkUser("nofeerf1");
+    await fundUsdt(u, 5_000_000);
+    const r = await app.inject({
+      method: "POST", url: "/usdt/refunds", headers: tok(u),
+      payload: { amount: 2, address: testAddress() },
+    });
+    check("refund still succeeds", r.statusCode === 200, r.body);
+    const refundId = r.json().id as string;
+    const row = await sql.get<{ fee_micro: string }>(
+      "SELECT fee_micro FROM usdt_refund_requests WHERE id = ?", refundId,
+    );
+    check("fee_micro is 0 — the gas-fee rate was NOT applied on the relay path",
+      Number(row?.fee_micro) === 0, JSON.stringify(row));
+    check("the response itself agrees (netMicro === the full requested amount)",
+      r.json().netMicro === 2_000_000, r.body);
+  }
+
+  await setSetting("gas_fee_percent", "0");
+  await setSetting("gas_fee_fixed_micro", "0");
+  clearGate();
+}
+
 clearGate();
+gasCheckHook.override = null;
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

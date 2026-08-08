@@ -17,7 +17,7 @@ import {
   type LedgerEntry, type RoziEntry,
 } from "@/lib/api";
 import {
-  formatRozi, usdtFromMicro, pointsToRoziMicro, timeAgo,
+  formatRozi, usdtFromMicro, pointsToRoziMicro, timeAgo, formatBnbWei,
 } from "@/lib/format";
 
 // The money screen, and now the ONLY one (founder, 2026-07-30). Home no longer
@@ -144,11 +144,19 @@ export default function WalletPage() {
           it, with each token's REAL logo (tokenIcons.tsx) rather than a generic
           app icon — a wallet showing the wrong mark for USDT/BNB is the kind of
           detail that makes people distrust the whole screen.
-          USDT is a real balance. ROZI and BNB are NOT shown as balances here:
-          ROZI is mined and not yet cashable (see /mine for the real number),
-          BNB is not held by this system at all — see wallet.token.bnb.sub in
-          lib/i18n.tsx. Both say "Coming soon" rather than a bare 0.00, which
-          would read as a bug or as missing money. */}
+          USDT is a real balance. ROZI is NOT shown as a balance here — it is
+          mined and not yet cashable (see /mine for the real number) — and
+          says "Coming soon" rather than a bare 0.00, which would read as a
+          bug or as missing money.
+          BNB WAS the same "not held by this system at all" case, and that
+          label is exactly what CLAUDE.md said to delete "when per-user
+          deposit wallets are built, [and] not quietly turn it into a
+          live-looking zero first" — 2026-08-08's per-user relay/custody work
+          is that build: every user's own derived address (custody.ts) can
+          now genuinely hold BNB, so this is a real balance now, gated the
+          same way USDT is (usdtOn) plus whether the relay is actually wired
+          up for this account (usdt.data?.personalGasWei !== null — null,
+          not a zero balance, on a deployment where it isn't configured). */}
       <section>
         <SectionTitle>{t("wallet.tokens.title")}</SectionTitle>
         <Card className="divide-y divide-line">
@@ -177,14 +185,24 @@ export default function WalletPage() {
               amount={usdtFromMicro(usdt.data?.balanceMicro ?? 0).toFixed(2)}
             />
           )}
-          <TokenRow
-            Icon={BnbLogo}
-            name={t("wallet.token.bnb.name")}
-            sub={t("wallet.token.bnb.sub")}
-            symbol="BNB"
-            amount={t("wallet.token.soon")}
-            muted
-          />
+          {usdtOn && usdt.data?.personalGasWei !== null && usdt.data?.personalGasWei !== undefined ? (
+            <TokenRow
+              Icon={BnbLogo}
+              name={t("wallet.token.bnb.name")}
+              sub={t("wallet.token.bnb.gasSub")}
+              symbol="BNB"
+              amount={formatBnbWei(usdt.data.personalGasWei).replace(" BNB", "")}
+            />
+          ) : (
+            <TokenRow
+              Icon={BnbLogo}
+              name={t("wallet.token.bnb.name")}
+              sub={t("wallet.token.bnb.sub")}
+              symbol="BNB"
+              amount={t("wallet.token.soon")}
+              muted
+            />
+          )}
         </Card>
       </section>
 

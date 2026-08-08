@@ -1,25 +1,40 @@
-// The per-user-wallet payout relay (founder, 2026-08-08) — routes a
-// withdrawal or refund's DESTINATION transaction through the user's own
-// derived deposit address (custody.ts) instead of sending it directly from
-// treasury. Two purposes, two different reasons for existing:
+// The per-user-wallet payout relay (founder, 2026-08-08; gas model rewritten
+// 2026-08-08 second pass) — routes a withdrawal or refund's DESTINATION
+// transaction through the user's own derived deposit address (custody.ts)
+// instead of sending it directly from treasury. Two purposes, two different
+// reasons for existing:
 //
 //   "refund"     — the user's own address genuinely already holds this USDT
 //                   (their own prior top-up deposit). Signing from that
 //                   address is real: it is the actual money, at the actual
-//                   place the user put it.
+//                   place the user put it. ZERO treasury involvement — the
+//                   user's own BNB pays for the forward transaction.
 //   "withdrawal" — task/referral earnings have NEVER existed as USDT at any
 //                   user's address; they only ever existed as a treasury
 //                   balance funded by ad-network revenue. So this is a
-//                   deliberate PASS-THROUGH: treasury funds gas AND the exact
-//                   net amount into the user's own address first, which then
-//                   forwards it to the destination. This is the founder's
-//                   informed choice, not an oversight — told plainly that it
-//                   costs 2-3 on-chain transactions instead of 1 and does NOT
-//                   reduce custody risk (the platform already holds one
-//                   master key, custodySeeds.ts, capable of signing for every
-//                   user address — the same key that made the old sweep-to-
-//                   treasury possible makes this pass-through possible too).
-//                   Chose it anyway; recorded here, not hidden.
+//                   deliberate PASS-THROUGH: treasury funds the exact net
+//                   USDT amount into the user's own address first (using
+//                   treasury's own BNB for that leg — unavoidable, that is
+//                   genuinely where the money comes from), which then
+//                   forwards it to the destination using the USER'S OWN BNB.
+//                   This is the founder's informed choice, not an oversight —
+//                   told plainly that it costs 2 on-chain transactions
+//                   instead of 1 and does NOT reduce custody risk (the
+//                   platform already holds one master key, custodySeeds.ts,
+//                   capable of signing for every user address — the same key
+//                   that made the old sweep-to-treasury possible makes this
+//                   pass-through possible too). Chose it anyway; recorded
+//                   here, not hidden.
+//
+// ⚠️ GAS IS THE USER'S OWN RESPONSIBILITY (founder, 2026-08-08, second pass).
+// The original version of this file had TREASURY fund BNB gas into the
+// user's derived address before either flow could do anything — which meant
+// an empty treasury (as happened in production the same day: 0 BNB, 0 USDT)
+// silently blocked REFUNDS TOO, even though a refund has nothing to do with
+// treasury's own money. hasEnoughGas() below is checked by the ROUTE, before
+// any debit (routes/withdrawals.ts, routes/mining.ts), and again here as a
+// defensive re-check immediately before signing the forward leg — BNB can be
+// spent out of the address in the gap between request and send.
 //
 // ⚠️ FAIL CLOSED. Every call site checks relayAvailable(chain) FIRST and
 // falls straight back to the pre-existing direct-treasury payout.ts path
@@ -30,24 +45,27 @@
 // same rpcCall/viem usage, same "never throw — record attempts/last_error,
 // retry next tick" posture). Every phase transition is a conditional
 // `UPDATE ... WHERE status = <expected>` so two ticks racing the same job
-// can never both broadcast the same step — new code, so unlike sweep.ts's
-// unguarded transitions this costs nothing extra to add.
+// can never both broadcast the same step.
 //
-//   refund:     pending -> gas_sent -> gas_confirmed -> prefund_confirmed
-//               (balance verified, not funded) -> forward_sent -> forward_confirmed
-//   withdrawal: pending -> gas_sent -> gas_confirmed -> prefund_sent ->
-//               prefund_confirmed -> forward_sent -> forward_confirmed
+//   refund:     pending -> forward_sent -> forward_confirmed
+//   withdrawal: pending -> prefund_sent -> prefund_confirmed ->
+//               forward_sent -> forward_confirmed
 //
 // 'failed' is terminal and NOT auto-retried (same convention as sweep_jobs)
 // — a genuine on-chain revert needs a human, not a loop that might resend
-// into the same failure. The underlying withdrawal_requests /
-// usdt_refund_requests row is left at 'sending' (visibly stuck, not silently
-// marked paid) so staff see it.
+// into the same failure. A job also moves to 'failed' once it hits
+// config.relayMaxAttempts (see advanceRelayJob) — WITHOUT this, a job that
+// can never succeed (e.g. insufficient gas discovered only on-chain) retries
+// silently forever, which is exactly the bug a production job hit: 65
+// attempts, same "treasury has 0 BNB" error every time, never surfaced to
+// staff. The underlying withdrawal_requests / usdt_refund_requests row is
+// left at 'sending' (visibly stuck, not silently marked paid) so staff see
+// it either way.
 import {
   createWalletClient, createPublicClient, http, fallback, parseUnits, erc20Abi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sql, now, newId, getOrCreateDepositWallet, type TxApi } from "./db.ts";
+import { sql, now, newId, getOrCreateDepositWallet, postLedger, postUsdt, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { ONCHAIN_CHAINS } from "./payout.ts";
 import { treasurySignerKey } from "./signer.ts";
@@ -72,6 +90,52 @@ export function relayAvailable(chain: string): boolean {
 // amount) reuses this instead of keeping a second copy that could drift.
 export function microToDecimalString(micro: number): string {
   return (micro / 1_000_000).toFixed(6);
+}
+
+// The user's own derived deposit address for `chain`, and its live native
+// balance (wei, as a bigint) — used by routes/withdrawals.ts and
+// routes/mining.ts to refuse a request BEFORE any debit when the user has
+// not funded their own wallet with gas. Also called defensively inside
+// advanceRelayJob immediately before signing the forward leg, since BNB can
+// be spent out of the address in the gap between "request accepted" and
+// "job actually runs".
+export async function userGasWallet(
+  userId: string, chain: "bep20",
+): Promise<{ address: string; addrIndex: number; balanceWei: bigint }> {
+  const wallet = await getOrCreateDepositWallet(userId, chain);
+  const raw = (await rpcCall(chain, "eth_getBalance", [wallet.address, "latest"])) as string;
+  return { address: wallet.address, addrIndex: wallet.addrIndex, balanceWei: BigInt(raw) };
+}
+
+// Required BNB balance floor for a single ERC-20 transfer, reusing
+// evmSweepGasAmountWei — see that config entry's comment for why one number
+// serves both purposes.
+export function requiredGasWei(): bigint {
+  return BigInt(config.evmSweepGasAmountWei);
+}
+
+export type GasCheckResult = { ok: boolean; address: string; balanceWei: bigint; requiredWei: bigint };
+
+// Test seam — same shape as this file's own `box` pattern below, not a new
+// idea. e2e suites (routes/withdrawals.ts, routes/mining.ts) hit
+// hasEnoughGas() through real HTTP requests, and this codebase's own
+// convention (see this file's header, and payoutRelay.e2e.ts's) is that
+// anything which actually reaches the chain over the network is deliberately
+// NOT exercised in the e2e suite — proving that needs BSC testnet, same as
+// deposits/sweep.ts always has. Tests set `gasCheckHook.override` to
+// exercise the DECISION (refuse before debit / proceed) without making a
+// real RPC call for a freshly-generated test address that could never hold
+// real BNB anyway. null (the default, and the ONLY thing production ever
+// sets) means "ask the chain for real."
+export const gasCheckHook: { override: ((userId: string, chain: "bep20") => Promise<GasCheckResult>) | null } = {
+  override: null,
+};
+
+export async function hasEnoughGas(userId: string, chain: "bep20"): Promise<GasCheckResult> {
+  if (gasCheckHook.override) return gasCheckHook.override(userId, chain);
+  const { address, balanceWei } = await userGasWallet(userId, chain);
+  const requiredWei = requiredGasWei();
+  return { ok: balanceWei >= requiredWei, address, balanceWei, requiredWei };
 }
 
 type CreateJobParams = {
@@ -105,6 +169,7 @@ type RelayJob = {
   from_address: string; addr_index: string | number; to_address: string; amount_micro: string | number;
   needs_prefund: number; status: string;
   gas_tx_hash: string | null; prefund_tx_hash: string | null; forward_tx_hash: string | null;
+  attempts: number; last_error: string | null;
 };
 
 const TERMINAL_STATUSES = ["forward_confirmed", "failed"];
@@ -134,6 +199,68 @@ async function markFailed(t: Pick<TxApi, "run">, id: string, error: string): Pro
     "UPDATE payout_relay_jobs SET status = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ? AND status <> 'failed'",
     error, id,
   );
+}
+
+// Marks the relay job failed AND, when it is SAFE to, automatically returns
+// the held money to the user — the founder's own required test case: "system
+// must mark withdrawal failed, release reserved USDT, restore available
+// balance ... no money disappears." Without this, a failed job left the
+// underlying request stuck at 'sending' forever with no user-visible
+// explanation, which is exactly the state two of the three requests in the
+// original bug report were rescued from only by a human clicking Reject.
+//
+// ⚠️ `safe` is NOT a formality — it is the one thing standing between this
+// and a double payment. It must be true ONLY when NO value has actually left
+// treasury for this job yet:
+//   - refund: always safe up to and including a broadcast-but-REVERTED
+//     forward tx (a revert moves zero tokens; the user's own gas was spent,
+//     but that is the user's own money, not ours to re-credit).
+//   - withdrawal: safe only while the job is still 'pending' (the prefund
+//     leg has not yet been broadcast) or the prefund tx itself reverted. Once
+//     prefund_confirmed, treasury's USDT genuinely sits at the user's own
+//     derived address — crediting points back NOW as well would double-pay
+//     (points back in the ledger AND real USDT already at an address this
+//     same custody system controls). Every call site below passes `safe`
+//     explicitly, computed from exactly this reasoning — do not default it.
+async function failJob(
+  t: TxApi, job: RelayJob, error: string, safe: boolean,
+): Promise<PendingPush | null> {
+  await markFailed(t, job.id, error);
+  if (!safe) return null; // leave the request at 'sending' — a human must check the chain first
+
+  if (job.purpose === "withdrawal") {
+    const w = await t.get<{ user_id: string; amount: number }>(
+      `UPDATE withdrawal_requests SET status = 'rejected', review_note = ?, reviewed_by = 'system:auto', reviewed_at = ?
+       WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+      `Could not send automatically: ${error}`, now(), job.request_id,
+    );
+    if (!w) return null; // already resolved by staff in the meantime — nothing to do
+    await postLedger({
+      userId: w.user_id, points: w.amount, direction: "credit",
+      sourceType: "admin_adjustment", sourceRefId: job.request_id,
+      note: "Withdrawal could not be sent automatically — points returned",
+    }, t);
+    return {
+      userId: w.user_id, title: "About your withdrawal",
+      body: "We could not send this one. Your points are back in your wallet.", url: "/wallet",
+    };
+  }
+
+  const r = await t.get<{ user_id: string; amount: string }>(
+    `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = 'system:auto', reviewed_at = ?
+     WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+    `Could not send automatically: ${error}`, now(), job.request_id,
+  );
+  if (!r) return null;
+  await postUsdt({
+    userId: r.user_id, micro: Number(r.amount), direction: "credit",
+    sourceType: "refund", sourceRefId: job.request_id,
+    note: "Could not send automatically — money returned to your balance",
+  }, t);
+  return {
+    userId: r.user_id, title: "About your refund",
+    body: "We could not send this automatically. Your money is back in your balance.", url: "/wallet",
+  };
 }
 
 type PendingPush = { userId: string; title: string; body: string; url: string };
@@ -209,6 +336,21 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
     let job = await t.get<RelayJob>("SELECT * FROM payout_relay_jobs WHERE id = ?", jobId);
     if (!job || TERMINAL_STATUSES.includes(job.status)) return;
 
+    // Give up rather than retry forever. Without this, a job that can never
+    // succeed (e.g. treasury has no BNB for a withdrawal's prefund leg)
+    // retries silently every tick, indefinitely — the exact bug found in
+    // production: 65 attempts, same error, never surfaced to staff.
+    if (job.attempts >= config.relayMaxAttempts) {
+      // Safe to auto-refund only if this job never got past 'pending' — see
+      // failJob's header comment for why that specific line is what matters,
+      // not the attempt count. This is exactly the shape the production bug
+      // had: 65 attempts, never left 'pending', nothing ever signed.
+      box.push = await failJob(
+        t, job, job.last_error ?? "Gave up after repeated failures.", job.status === "pending",
+      );
+      return;
+    }
+
     // Every job-CREATION call site checks payoutMode === "onchain" already —
     // relayAvailable() alone does not know about the mode. That matters here
     // too: without this check, flipping PAYOUT_MODE back to "manual" (the
@@ -217,12 +359,9 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
     if (config.payoutMode !== "onchain") return;
     const token = ONCHAIN_CHAINS[job.chain as keyof typeof ONCHAIN_CHAINS];
     if (!token) return;
-    const treasuryPk = treasurySignerKey();
-    if (!treasuryPk) return;
 
     const transport = fallback(config.payoutRpc[job.chain].map((url) => http(url)));
     const publicClient = createPublicClient({ chain: token.viemChain, transport });
-    const treasuryAccount = privateKeyToAccount(treasuryPk);
 
     try {
       // The decrypted child key. Local for the rest of this call only — never
@@ -233,73 +372,103 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
         // Should be unreachable (both derive from the same account key, same
         // path, as custodySeeds.ts guarantees) — refuse rather than sign from
         // an address that doesn't match what the job says it's paying from.
-        await markFailed(t, job.id, "Derived signing key does not match the job's recorded address.");
+        box.push = await failJob(
+          t, job, "Derived signing key does not match the job's recorded address.", job.status === "pending",
+        );
         return;
       }
 
-      if (job.status === "pending") {
+      // GAS IS THE USER'S OWN RESPONSIBILITY — no more treasury BNB funding
+      // hop here. routes/withdrawals.ts and routes/mining.ts already refused
+      // the request before any debit if this address didn't hold enough BNB;
+      // this is a defensive RE-check immediately before signing the forward
+      // leg, since BNB can be spent out of the address in the gap between
+      // "request accepted" and "this tick actually runs". `safe` follows
+      // failJob's rule: true from the refund/pending call site (nothing has
+      // moved yet), false from the withdrawal/prefund_confirmed call site
+      // (treasury's USDT already genuinely sits at this address).
+      async function requireGasOrFail(safe: boolean): Promise<boolean> {
+        const raw = (await rpcCall(job!.chain, "eth_getBalance", [childAccount.address, "latest"])) as string;
+        if (BigInt(raw) >= requiredGasWei()) return true;
+        box.push = await failJob(
+          t, job!,
+          `Address ${childAccount.address} no longer holds enough BNB for gas. It held enough when this was requested, but does not now.`,
+          safe,
+        );
+        return false;
+      }
+
+      if (job.status === "pending" && job.needs_prefund) {
+        // Withdrawal pass-through: treasury sends the earned USDT amount into
+        // the user's own address, using TREASURY's own BNB for this leg —
+        // that money only ever existed at treasury, so this hop is
+        // unavoidable (founder decision, 2026-08-08).
+        const treasuryPk = treasurySignerKey();
+        if (!treasuryPk) return; // no treasury signer configured — next tick checks again
+        const treasuryAccount = privateKeyToAccount(treasuryPk);
+        const amount = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
         const treasuryClient = createWalletClient({ account: treasuryAccount, chain: token.viemChain, transport });
-        const gasTx = await treasuryClient.sendTransaction({
-          to: childAccount.address,
-          value: BigInt(config.evmSweepGasAmountWei),
+        const prefundTx = await treasuryClient.writeContract({
+          address: token.usdt, abi: erc20Abi, functionName: "transfer",
+          args: [childAccount.address, amount],
         });
-        if (await transition(t, job.id, "pending", "gas_sent", { gas_tx_hash: gasTx })) {
-          job = { ...job, status: "gas_sent", gas_tx_hash: gasTx };
+        if (await transition(t, job.id, "pending", "prefund_sent", { prefund_tx_hash: prefundTx })) {
+          job = { ...job, status: "prefund_sent", prefund_tx_hash: prefundTx };
         } else return;
-      }
-
-      if (job.status === "gas_sent") {
-        const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.gas_tx_hash])) as
-          { status: string } | null;
-        if (!receipt) return; // not mined yet — next tick checks again
-        if (receipt.status !== "0x1") { await markFailed(t, job.id, `Gas funding tx ${job.gas_tx_hash} reverted.`); return; }
-        if (await transition(t, job.id, "gas_sent", "gas_confirmed")) {
-          job = { ...job, status: "gas_confirmed" };
-        } else return;
-      }
-
-      if (job.status === "gas_confirmed") {
-        if (job.needs_prefund) {
-          const amount = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
-          const treasuryClient = createWalletClient({ account: treasuryAccount, chain: token.viemChain, transport });
-          const prefundTx = await treasuryClient.writeContract({
-            address: token.usdt, abi: erc20Abi, functionName: "transfer",
-            args: [childAccount.address, amount],
-          });
-          if (await transition(t, job.id, "gas_confirmed", "prefund_sent", { prefund_tx_hash: prefundTx })) {
-            job = { ...job, status: "prefund_sent", prefund_tx_hash: prefundTx };
-          } else return;
-        } else {
-          // Refund: the money should already be here (the user's own prior
-          // deposit) — verify on-chain before ever signing, never trust the row.
-          const rawBalance = (await publicClient.readContract({
-            address: token.usdt, abi: erc20Abi, functionName: "balanceOf", args: [childAccount.address],
-          })) as bigint;
-          const needed = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
-          if (rawBalance < needed) {
-            await markFailed(
-              t, job.id,
-              `Address ${childAccount.address} holds less than the refund amount — cannot sign a refund it can't back.`,
-            );
-            return;
-          }
-          if (await transition(t, job.id, "gas_confirmed", "prefund_confirmed")) {
-            job = { ...job, status: "prefund_confirmed" };
-          } else return;
+      } else if (job.status === "pending") {
+        // Refund: ZERO treasury involvement. The money should already be
+        // here (the user's own prior deposit) — verify on-chain before ever
+        // signing, never trust the row — and the user's own BNB pays to
+        // forward it. If either check fails, refuse; nothing has been signed.
+        const rawBalance = (await publicClient.readContract({
+          address: token.usdt, abi: erc20Abi, functionName: "balanceOf", args: [childAccount.address],
+        })) as bigint;
+        const needed = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
+        if (rawBalance < needed) {
+          // Safe: nothing has been signed for this job — this is the ONLY
+          // check that runs before anything else in the refund path.
+          box.push = await failJob(
+            t, job,
+            `Address ${childAccount.address} holds less than the refund amount — cannot sign a refund it can't back.`,
+            true,
+          );
+          return;
         }
+        if (!(await requireGasOrFail(true))) return;
+
+        const childClient = createWalletClient({ account: childAccount, chain: token.viemChain, transport });
+        const forwardTx = await childClient.writeContract({
+          address: token.usdt, abi: erc20Abi, functionName: "transfer",
+          args: [job.to_address as `0x${string}`, needed],
+        });
+        if (await transition(t, job.id, "pending", "forward_sent", { forward_tx_hash: forwardTx })) {
+          job = { ...job, status: "forward_sent", forward_tx_hash: forwardTx };
+        } else return;
       }
 
       if (job.status === "prefund_sent") {
         const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.prefund_tx_hash])) as
           { status: string } | null;
         if (!receipt) return;
-        if (receipt.status !== "0x1") { await markFailed(t, job.id, `Prefund tx ${job.prefund_tx_hash} reverted.`); return; }
+        if (receipt.status !== "0x1") {
+          // Safe: a reverted ERC-20 transfer moves zero tokens — treasury's
+          // USDT never actually reached the user's address, so returning the
+          // user's points cannot double-pay.
+          box.push = await failJob(t, job, `Prefund tx ${job.prefund_tx_hash} reverted.`, true);
+          return;
+        }
         if (await transition(t, job.id, "prefund_sent", "prefund_confirmed")) {
           job = { ...job, status: "prefund_confirmed" };
         } else return;
       }
 
       if (job.status === "prefund_confirmed") {
+        // NOT safe: the prefund tx already confirmed — treasury's USDT
+        // genuinely sits at the user's own derived address right now. Do not
+        // auto-refund points here; that would double-pay. Staff must look at
+        // the chain, not this code, if this is where a job gets stuck.
+        if (!(await requireGasOrFail(false))) return;
+
         const amount = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
         const childClient = createWalletClient({ account: childAccount, chain: token.viemChain, transport });
         const forwardTx = await childClient.writeContract({
@@ -315,7 +484,16 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
         const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.forward_tx_hash])) as
           { status: string } | null;
         if (!receipt) return;
-        if (receipt.status !== "0x1") { await markFailed(t, job.id, `Forward tx ${job.forward_tx_hash} reverted.`); return; }
+        if (receipt.status !== "0x1") {
+          // Safe ONLY for a refund: a reverted forward moves zero tokens, and
+          // a refund never had a prefund leg, so nothing has moved anywhere —
+          // the deposit balance is exactly restorable. NOT safe for a
+          // withdrawal: the prefund already put real USDT at the user's own
+          // address for real; crediting points back on top of that would
+          // double-pay. Staff must check the chain for that case.
+          box.push = await failJob(t, job, `Forward tx ${job.forward_tx_hash} reverted.`, job.purpose === "refund");
+          return;
+        }
         const moved = await transition(t, job.id, "forward_sent", "forward_confirmed", { completed_at: now() });
         if (moved) box.push = await completeRequest(t, job);
       }

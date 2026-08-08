@@ -6,6 +6,7 @@ import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import { getGasFeeRate } from "../fees.ts";
+import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -133,18 +134,32 @@ export async function appRoutes(app: FastifyInstance) {
   // withdrawal fee (points) so the withdraw screen can show fee + net.
   app.get("/wallet/balance", guard(async (userId) => {
     const gasFeeRate = await getGasFeeRate();
+    // "ONE CHAIN IN, ONE CHAIN OUT" — bep20 is the only chain ever offered
+    // (chains.ts), so this preview endpoint can check it directly without
+    // waiting for the user to pick one.
+    const relayReady = relayAvailable("bep20");
+    const gas = relayReady ? await hasEnoughGas(userId, "bep20") : null;
     return {
       points: await balanceOf(userId),
       minWithdrawPoints: config.minWithdrawPoints,
       withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
-      // The gas fee (founder, 2026-08-08) — percent + a fixed floor, sent as
-      // RATES rather than a pre-computed points figure because the amount it
-      // is charged on is whatever the user is about to type, which the server
-      // does not know yet. The web computes a PREVIEW from these; the amount
-      // actually charged is re-computed and snapshotted server-side at
-      // request time (see POST /withdrawals), never trusted from the client.
-      gasFeePercent: gasFeeRate.percent,
-      gasFeeFixedMicro: gasFeeRate.fixedMicro,
+      // The gas fee (founder, 2026-08-08; DROPPED same day, second pass, when
+      // the relay can sign from the user's own address — see personalGasWei
+      // below). Percent + a fixed floor, sent as RATES rather than a
+      // pre-computed points figure because the amount it is charged on is
+      // whatever the user is about to type, which the server does not know
+      // yet. The web computes a PREVIEW from these; the amount actually
+      // charged is re-computed and snapshotted server-side at request time
+      // (see POST /withdrawals), never trusted from the client.
+      gasFeePercent: relayReady ? 0 : gasFeeRate.percent,
+      gasFeeFixedMicro: relayReady ? 0 : gasFeeRate.fixedMicro,
+      // The user's own gas wallet — present only when the relay is wired up.
+      // Null means "can't check yet", not "no BNB" — the withdraw screen
+      // must not show a false warning on a deployment where this isn't
+      // configured at all (the direct-treasury fallback pays its own gas).
+      personalGasWei: gas ? gas.balanceWei.toString() : null,
+      personalGasRequiredWei: gas ? gas.requiredWei.toString() : null,
+      personalGasReady: gas ? gas.ok : null,
     };
   }));
 

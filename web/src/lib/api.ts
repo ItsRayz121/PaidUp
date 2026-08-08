@@ -231,6 +231,11 @@ export const fetchBalance = () =>
   apiFetch<{
     points: number; minWithdrawPoints: number; withdrawalFeePoints: number;
     gasFeePercent: number; gasFeeFixedMicro: number;
+    // The user's own gas wallet (founder, 2026-08-08, second pass) — see
+    // UsdtState's identical fields for the full explanation.
+    personalGasWei: string | null;
+    personalGasRequiredWei: string | null;
+    personalGasReady: boolean | null;
   }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
@@ -645,6 +650,15 @@ export type UsdtState = {
   // snapshotted server-side at request time, never trusted from the client.
   gasFeePercent: number;
   gasFeeFixedMicro: number;
+  // The user's own gas wallet (founder, 2026-08-08, second pass). Present
+  // only when the relay can sign from the user's own derived address — that
+  // address must hold enough BNB before a refund/withdrawal can go through,
+  // and the screen needs to say so BEFORE the user submits, not just relay a
+  // 400 after the fact. Wei, as decimal strings (BNB has 18 decimals — too
+  // large to round-trip through a JS number safely).
+  personalGasWei: string | null;
+  personalGasRequiredWei: string | null;
+  personalGasReady: boolean | null;
   refunds: UsdtRefund[];
 };
 export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");

@@ -506,6 +506,10 @@ const copy: Record<string, string> = {
   // the amount column should hold a dash, which promises nothing at all.
   "wallet.token.bnb.name": "BNB",
   "wallet.token.bnb.sub": "BNB Smart Chain · not open yet",
+  // Shown instead of the line above once the user's own wallet address can
+  // genuinely hold BNB (2026-08-08, second pass) — this is real gas money,
+  // not the "we hold none of this" case the line above still is elsewhere.
+  "wallet.token.bnb.gasSub": "For sending USDT — your own wallet",
   "wallet.token.soon": "—",
   "withdraw.saveAddress": "Save this address",
   "withdraw.addressSaved": "Address saved",
@@ -889,6 +893,14 @@ const copy: Record<string, string> = {
   // / withdraw.notEnough do on the withdraw screen.
   "refund.needAtLeast": "You need at least {min} to ask for it back.",
   "refund.notEnough": "You do not have that much to give back.",
+  // Gas is the user's own responsibility (founder, 2026-08-08, second pass):
+  // sending USDT costs a small network fee, paid in BNB, from the user's own
+  // wallet — not a USDT amount we subtract. Shown before submit whenever we
+  // can check it, so nothing is held if the send cannot actually go through.
+  "refund.gasLabel": "Network fee wallet",
+  "refund.gasReady": "You have enough BNB to send this.",
+  "refund.gasNotReady": "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+  "refund.gasBalance": "Your BNB balance: {balance}",
   // The gas fee (founder, 2026-08-08) — only shown when Admin has actually
   // set one (percent or fixed > 0). Most deployments show none of these.
   "refund.feeLabel": "Network fee",
