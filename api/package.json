@@ -39,7 +39,8 @@
     "test:taskbudget": "tsx src/tests/taskBudget.e2e.ts",
     "test:stage5": "tsx src/tests/stage5.e2e.ts",
     "test:stage6": "tsx src/tests/stage6.e2e.ts",
-    "test:stage7": "tsx src/tests/stage7.e2e.ts"
+    "test:stage7": "tsx src/tests/stage7.e2e.ts",
+    "test:taskmarketplace": "tsx src/tests/taskMarketplace.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
@@ -52,6 +53,7 @@
     "fastify": "^5.2.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0",
+    "sharp": "^0.34.3",
     "tsx": "^4.19.2",
     "viem": "^2.55.11",
     "web-push": "^3.6.7",

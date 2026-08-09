@@ -11,12 +11,16 @@
 // COURTESY. The earner form marks a field required and validates as you type;
 // none of that survives a curl. Everything that matters — required, length,
 // shape, and the URL scheme in particular — is re-decided in `validateAnswers`.
+import { createHash } from "node:crypto";
+import { isAddress } from "viem";
 import { sql } from "./db.ts";
 
 /** The closed list. A kind decides how an answer is CHECKED, so an unknown kind
  *  would mean an unchecked answer — which is why it is refused at the admin
  *  boundary and again here, and why the DB has a CHECK constraint too. */
-export const FIELD_KINDS = ["text", "longtext", "number", "email", "url", "phone", "choice"] as const;
+export const FIELD_KINDS = [
+  "text", "longtext", "number", "email", "url", "phone", "choice", "username", "crypto_address",
+] as const;
 export type FieldKind = (typeof FIELD_KINDS)[number];
 
 /** More than this and nobody finishes the form. A hard stop rather than advice:
@@ -26,6 +30,7 @@ export const MAX_FIELDS_PER_TASK = 8;
 
 const DEFAULT_MAX_LEN: Record<FieldKind, number> = {
   text: 200, longtext: 2000, number: 24, email: 160, url: 500, phone: 32, choice: 120,
+  username: 120, crypto_address: 128,
 };
 
 export type TaskField = {
@@ -37,6 +42,7 @@ export type TaskField = {
   placeholder: string | null;
   help: string | null;
   options: string | null;
+  validation: string | null;
   max_len: number | null;
   sort_order: number;
 };
@@ -46,6 +52,7 @@ export type TaskField = {
 export type PublicField = {
   id: string; label: string; kind: FieldKind; required: boolean;
   placeholder?: string; help?: string; options?: string[]; maxLen: number;
+  validation?: "evm" | "tron" | "solana" | "generic";
 };
 
 export const publicField = (f: TaskField): PublicField => ({
@@ -57,6 +64,9 @@ export const publicField = (f: TaskField): PublicField => ({
   help: f.help ?? undefined,
   options: f.kind === "choice" ? splitOptions(f.options) : undefined,
   maxLen: f.max_len ?? DEFAULT_MAX_LEN[f.kind],
+  validation: f.kind === "crypto_address"
+    ? (f.validation as PublicField["validation"] ?? "generic")
+    : undefined,
 });
 
 /** One option per line. Newlines rather than JSON so an Admin types a list and
@@ -67,7 +77,7 @@ export const splitOptions = (raw: string | null): string[] =>
 
 export async function fieldsForTask(taskId: string): Promise<TaskField[]> {
   return sql.all<TaskField>(
-    `SELECT id, task_id, label, kind, required, placeholder, help, options, max_len, sort_order
+    `SELECT id, task_id, label, kind, required, placeholder, help, options, validation, max_len, sort_order
      FROM task_fields WHERE task_id = ? ORDER BY sort_order, created_at`,
     taskId,
   );
@@ -76,7 +86,10 @@ export async function fieldsForTask(taskId: string): Promise<TaskField[]> {
 /** One answer as stored. The LABEL AND KIND ARE SNAPSHOTTED alongside the value
  *  — see the column note in db.ts. An Admin who later renames the question must
  *  not be able to relabel evidence a reviewer has already read. */
-export type StoredAnswer = { fieldId: string; label: string; kind: FieldKind; value: string };
+export type StoredAnswer = {
+  fieldId: string; label: string; kind: FieldKind; value: string;
+  validation?: "evm" | "tron" | "solana" | "generic";
+};
 
 export type AnswerResult =
   | { ok: true; answers: StoredAnswer[]; text: string }
@@ -86,6 +99,44 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // Deliberately loose: our markets write numbers with spaces, dashes and country
 // codes in whatever order, and a strict pattern here rejects real people.
 const PHONE_CHARS = /^[0-9+\-()\s]+$/;
+const USERNAME = /^@?[A-Za-z0-9][A-Za-z0-9._-]{1,118}$/;
+const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function decodeBase58(value: string): Uint8Array | null {
+  let n = 0n;
+  for (const ch of value) {
+    const d = BASE58.indexOf(ch);
+    if (d < 0) return null;
+    n = n * 58n + BigInt(d);
+  }
+  const out: number[] = [];
+  while (n > 0n) { out.push(Number(n & 255n)); n >>= 8n; }
+  for (const ch of value) { if (ch !== "1") break; out.push(0); }
+  return Uint8Array.from(out.reverse());
+}
+
+function validTron(value: string): boolean {
+  const raw = decodeBase58(value);
+  if (!raw || raw.length !== 25 || raw[0] !== 0x41) return false;
+  const body = raw.slice(0, 21);
+  const once = createHash("sha256").update(body).digest();
+  const check = createHash("sha256").update(once).digest().subarray(0, 4);
+  return raw.slice(21).every((b, i) => b === check[i]);
+}
+
+function validCryptoAddress(value: string, validation: string | null): boolean {
+  if (validation === "evm") return isAddress(value, { strict: true });
+  if (validation === "tron") return validTron(value);
+  if (validation === "solana") return decodeBase58(value)?.length === 32;
+  return value.length >= 8 && value.length <= 128 && !/\s/.test(value);
+}
+
+function cryptoError(label: string, validation: string | null): string {
+  if (validation === "evm") return `“${label}” must be a valid BNB Smart Chain or Ethereum address starting with 0x.`;
+  if (validation === "tron") return `“${label}” must be a valid TRON address with a correct checksum.`;
+  if (validation === "solana") return `“${label}” must be a valid Solana wallet address.`;
+  return `“${label}” must be a wallet address without spaces.`;
+}
 
 /**
  * Check a submitted map of fieldId -> value against the task's CURRENT fields.
@@ -138,6 +189,16 @@ export function validateAnswers(fields: TaskField[], input: Record<string, unkno
           return { ok: false, error: `“${f.label}” must be a phone number.` };
         }
         break;
+      case "username":
+        if (!USERNAME.test(value)) {
+          return { ok: false, error: `“${f.label}” must be a valid username.` };
+        }
+        break;
+      case "crypto_address":
+        if (!validCryptoAddress(value, f.validation)) {
+          return { ok: false, error: cryptoError(f.label, f.validation) };
+        }
+        break;
       case "choice": {
         const opts = splitOptions(f.options);
         // No options configured = nothing is a valid answer, so say that rather
@@ -151,7 +212,12 @@ export function validateAnswers(fields: TaskField[], input: Record<string, unkno
       default:
         break;
     }
-    answers.push({ fieldId: f.id, label: f.label, kind: f.kind, value });
+    answers.push({
+      fieldId: f.id, label: f.label, kind: f.kind, value,
+      validation: f.kind === "crypto_address"
+        ? (f.validation as StoredAnswer["validation"] ?? "generic")
+        : undefined,
+    });
   }
   return { ok: true, answers, text: renderAnswers(answers) };
 }

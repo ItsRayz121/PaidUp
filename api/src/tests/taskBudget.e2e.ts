@@ -172,7 +172,7 @@ console.log("\n-- CONCURRENCY: the cap holds when postbacks arrive together --")
   // at the end of its own statement and protects nothing.
   check("...inside the same transaction as the completion insert",
     lockAt > src.indexOf("const verdict = await sql.tx")
-    && lockAt < src.indexOf("INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at, verified_at)"));
+    && lockAt < src.indexOf("INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, usdt_micro,"));
 }
 
 // ---------------------------------------------------------------------------

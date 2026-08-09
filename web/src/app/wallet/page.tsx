@@ -14,7 +14,7 @@ import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
-  fetchWithdrawals, fetchBnbWithdrawals,
+  fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards,
 } from "@/lib/api";
 import { usdtFromMicro, formatUsdtMicro, formatBnbWei, formatRozi } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
@@ -38,6 +38,7 @@ export default function WalletPage() {
   const mining = useApi(fetchMiningState, []);
   const withdrawals = useApi(fetchWithdrawals, []);
   const bnbWithdrawals = useApi(fetchBnbWithdrawals, []);
+  const taskUsdt = useApi(fetchUsdtTaskRewards, []);
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
   const [showAll, setShowAll] = useState(false);
@@ -73,6 +74,7 @@ export default function WalletPage() {
     topups: usdt.data?.topups ?? [],
     refunds: usdt.data?.refunds ?? [],
     bnb: bnbWithdrawals.data?.requests ?? [],
+    taskUsdt: taskUsdt.data?.rewards ?? [],
     t,
   });
   const historyLoading = led.loading || rozi.loading;

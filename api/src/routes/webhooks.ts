@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { sql, now, newId, postLedger } from "../db.ts";
 import { getAdapter } from "../adapters/index.ts";
 import { creditCompletion, type NetworkRow } from "../credit.ts";
+import { campaignState } from "../taskLifecycle.ts";
 
 // Inbound ad-network postbacks. Together with staff approval of a custom-task
 // proof, this is the only way task points are ever credited (guardrail #1). The
@@ -109,11 +110,17 @@ export async function webhookRoutes(app: FastifyInstance) {
     // and capped; there is no task row for an ad-hoc survey.
     let rewardPoints: number;
     let rewardType: string;
+    let rewardUsdtMicro = 0;
+    let rewardKind: "points" | "usdt" | "both" = "points";
     if (taskId) {
       // Read the status rather than filtering on it, so the two reasons a task
       // is not creditable can be answered differently below.
-      const task = await sql.get<{ id: string; type: string; points: number; status: string }>(
-        "SELECT id, type, points, status FROM tasks WHERE id = ? AND status IN ('active','exhausted')", taskId,
+      const task = await sql.get<{
+        id: string; type: string; points: number; status: string; reward_usdt_micro: string | number;
+        reward_type: "points" | "usdt" | "both"; starts_at: string | null; ends_at: string | null;
+      }>(
+        `SELECT id, type, points, status, reward_usdt_micro, reward_type, starts_at, ends_at
+         FROM tasks WHERE id = ?`, taskId,
       );
       if (!task) {
         await logPostback(true, "unknown_task", externalId);
@@ -125,11 +132,14 @@ export async function webhookRoutes(app: FastifyInstance) {
       // "we are not paying for this" and every one after it got an error the
       // network would retry, for days, against a campaign that had simply
       // finished. The task is not unknown; it is done.
-      if (task.status === "exhausted") {
-        await logPostback(true, "budget_exhausted", externalId);
-        return reply.send({ ok: true, credited: 0, paused: "budget" });
+      const state = campaignState(task);
+      if (state !== "active") {
+        await logPostback(true, state === "exhausted" ? "budget_exhausted" : `campaign_${state}`, externalId);
+        return reply.send({ ok: true, credited: 0, paused: state });
       }
       rewardPoints = task.points;
+      rewardUsdtMicro = Number(task.reward_usdt_micro ?? 0);
+      rewardKind = task.reward_type;
       rewardType = task.type;
     } else if (signedPoints && signedPoints > 0) {
       rewardPoints = signedPoints;
@@ -141,7 +151,8 @@ export async function webhookRoutes(app: FastifyInstance) {
 
     // ---- 4. Credit — the shared path (../credit.ts) --------------------------
     const outcome = await creditCompletion({
-      userId, network, externalId, taskId, points: rewardPoints, offerType: rewardType,
+      userId, network, externalId, taskId, points: rewardPoints, usdtMicro: rewardUsdtMicro,
+      rewardType: rewardKind, offerType: rewardType,
       payload: input,
       reportedCountry: input.country ?? input.country_code ?? input.geo,
       net,
@@ -179,7 +190,7 @@ export async function webhookRoutes(app: FastifyInstance) {
 
       case "credited":
         await logPostback(true, "credited", externalId);
-        return reply.send({ ok: true, credited: outcome.points });
+        return reply.send({ ok: true, credited: outcome.points, creditedUsdtMicro: outcome.usdtMicro });
     }
   });
 }

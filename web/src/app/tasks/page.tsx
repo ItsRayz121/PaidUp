@@ -1,19 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { TaskFlow } from "@/components/TaskFlow";
-import { Card } from "@/components/ui";
+import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { InfoIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchTasks, TASK_CATEGORY_LABELS } from "@/lib/api";
+import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView } from "@/lib/api";
 
 export default function TasksPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
-  const tasks = useApi(fetchTasks, []);
+  const view = useSyncExternalStore(
+    (notify) => { window.addEventListener("popstate", notify); return () => window.removeEventListener("popstate", notify); },
+    readTaskView,
+    () => "available" as TaskView,
+  );
+  const [limit, setLimit] = useState(12);
+  const tasks = useApi(() => fetchTasks(view, 0, limit), [view, limit]);
   const [category, setCategory] = useState("");
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
@@ -24,6 +30,17 @@ export default function TasksPage() {
   // that is most of them.
   const present = [...new Set(all.map((x) => x.category).filter(Boolean))] as string[];
   const list = category ? all.filter((x) => x.category === category) : all;
+  const switchView = (next: TaskView) => {
+    setLimit(next === "history" ? 20 : 12); setCategory("");
+    const url = next === "available" ? "/tasks" : `/tasks?view=${next}`;
+    window.history.replaceState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const empty = view === "mine"
+    ? { title: "No tasks in progress", body: "Choose an available task to start earning." }
+    : view === "history"
+      ? { title: "No task history yet", body: "Your completed tasks will appear here." }
+      : { title: t("tasks.empty.title"), body: t("tasks.empty.body") };
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -34,14 +51,23 @@ export default function TasksPage() {
         </div>
       </header>
 
-      <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
+      <nav aria-label="Task views" className="grid grid-cols-3 rounded-xl bg-brand-tint p-1">
+        {(["available", "mine", "history"] as TaskView[]).map((item) => (
+          <button key={item} onClick={() => switchView(item)} aria-current={view === item ? "page" : undefined}
+            className={`min-h-11 rounded-lg px-2 text-sm font-semibold ${view === item ? "bg-card text-brand shadow-sm" : "text-muted"}`}>
+            {item === "available" ? "Available" : item === "mine" ? "My tasks" : "History"}
+          </button>
+        ))}
+      </nav>
+
+      {view === "available" && <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
         <InfoIcon size={18} className="mt-0.5 shrink-0 text-brand" />
         {t("tasks.disclosure")}
-      </p>
+      </p>}
 
       {/* Surveys (CPX) are the live earner — they pay real points today, while
           the task catalog below may be empty. Lead with them, don't bury them. */}
-      <Link href="/surveys" className="block">
+      {view === "available" && <Link href="/surveys" className="block">
         <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-4">
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand text-white">
             <StarIcon size={24} />
@@ -52,7 +78,7 @@ export default function TasksPage() {
           </div>
           <ArrowRightIcon size={22} className="text-brand" />
         </Card>
-      </Link>
+      </Link>}
 
       {present.length > 1 && (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
@@ -69,12 +95,24 @@ export default function TasksPage() {
       ) : tasks.error ? (
         <ErrorState message={tasks.error} onRetry={tasks.reload} />
       ) : list.length === 0 ? (
-        <EmptyState title={t("tasks.empty.title")} body={t("tasks.empty.body")} />
+        <EmptyState title={empty.title} body={empty.body} />
       ) : (
-        <TaskFlow tasks={list} />
+        <>
+          <TaskFlow tasks={list} />
+          {tasks.data?.nextCursor !== null && !category && (
+            <div className="mt-4"><Button variant="ghost" size="md" onClick={() => setLimit((n) => n + 12)}>
+              Load more tasks
+            </Button></div>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+function readTaskView(): TaskView {
+  const requested = new URLSearchParams(window.location.search).get("view");
+  return requested === "mine" || requested === "history" ? requested : "available";
 }
 
 function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {

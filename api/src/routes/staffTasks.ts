@@ -13,6 +13,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
+import sharp from "sharp";
 import { sql, now, newId, logAudit } from "../db.ts";
 import { config } from "../config.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
@@ -22,6 +23,7 @@ import {
   FIELD_KINDS, MAX_FIELDS_PER_TASK, fieldsForTask, publicField, parseAnswers,
 } from "../taskFields.ts";
 import { packCountries, unpackCountries } from "../taskTargeting.ts";
+import { campaignState } from "../taskLifecycle.ts";
 
 function staffGuard(
   perm: Permission,
@@ -38,6 +40,13 @@ function staffGuard(
 }
 
 const CUSTOM_NETWORK = "custom";
+
+function imageMime(bytes: Buffer): "image/png" | "image/jpeg" | "image/webp" | null {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
 
 // The one-line form of a country list, written to the older `tasks.country`
 // column so the staff panel and every query that predates targeting still have
@@ -72,10 +81,14 @@ export const TASK_CATEGORIES = ["social", "signup", "app", "survey", "video", "s
 
 const upsertSchema = z.object({
   title: z.string().min(3).max(120),
-  points: z.number().int().positive().max(1_000_000),
+  points: z.number().int().min(0).max(1_000_000),
+  rewardType: z.enum(["points", "usdt", "both"]).default("points"),
+  rewardUsdtMicro: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   verifyMode: z.enum(["proof", "postback"]),
   instructions: z.string().max(2000).optional(),
   proofLabel: z.string().max(120).optional(),
+  proofHeading: z.string().max(120).optional(),
+  proofHelp: z.string().max(500).optional(),
   // Ask the user to type evidence? Only meaningful for verifyMode 'proof'.
   // False still routes the claim through the staff queue — see the column note
   // in db.ts. Defaults to true so an older client that never sends it keeps the
@@ -99,6 +112,7 @@ const upsertSchema = z.object({
     .refine((u) => { try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; } },
       { message: "The link must start with http:// or https://" })
     .optional().or(z.literal("")),
+  buttonLabel: z.string().trim().max(40).optional(),
   minutes: z.number().int().min(0).max(600).default(1),
   country: z.string().max(60).default("Pakistan"),
   // ⚠️ 'exhausted' IS ACCEPTED SO AN ADMIN CAN SEE IT, BUT ONLY THE CREDIT PATH
@@ -106,13 +120,21 @@ const upsertSchema = z.object({
   // when it did not; the two states an Admin owns are active and disabled.
   // Reactivating an exhausted campaign whose budget was not raised simply
   // exhausts it again on the next completion, which is the correct outcome.
-  status: z.enum(["active", "disabled"]).default("active"),
+  // Older API clients created immediately-live campaigns and never sent a
+  // status. Keep that contract; the new staff form explicitly sends `draft`.
+  status: z.enum(["draft", "scheduled", "active", "paused", "disabled", "ended"]).default("active"),
   icon: z.enum(TASK_ICONS).optional().or(z.literal("")),
+  logoAssetId: z.string().max(64).nullable().optional(),
+  startsAt: z.string().datetime().nullable().optional(),
+  endsAt: z.string().datetime().nullable().optional(),
+  featured: z.boolean().optional(),
+  priority: z.number().int().min(-1000).max(1000).optional(),
   // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
   // null clears a cap back to unlimited; undefined leaves it alone. Both are
   // needed: "no budget" is a real, common state and has to be settable.
   budgetConversions: z.number().int().positive().max(10_000_000).nullable().optional(),
   budgetPoints: z.number().int().positive().max(1_000_000_000).nullable().optional(),
+  budgetUsdtMicro: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   // What the partner pays US per conversion, in micro-USD. Entered as dollars
   // in the panel and converted there; stored as an integer so no campaign's
   // margin is computed from a float.
@@ -146,16 +168,78 @@ const fieldSchema = z.object({
   help: z.string().max(300).optional(),
   // One choice per line. Only meaningful for kind 'choice'.
   options: z.string().max(2000).optional(),
+  validation: z.enum(["evm", "tron", "solana", "generic"]).optional(),
   maxLen: z.number().int().min(1).max(4000).nullable().optional(),
 });
 
+function validateReward(rewardType: "points" | "usdt" | "both", points: number, usdtMicro: number) {
+  const ok = rewardType === "points" ? points > 0 && usdtMicro === 0
+    : rewardType === "usdt" ? points === 0 && usdtMicro > 0
+      : points > 0 && usdtMicro > 0;
+  if (!ok) throw Object.assign(new Error(
+    rewardType === "points" ? "A points reward needs points and no USDT."
+      : rewardType === "usdt" ? "A USDT reward needs USDT and no points."
+        : "A combined reward needs both points and USDT.",
+  ), { statusCode: 400 });
+}
+
+function validateSchedule(startsAt?: string | null, endsAt?: string | null) {
+  if (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) {
+    throw Object.assign(new Error("The end time must be after the start time."), { statusCode: 400 });
+  }
+}
+
 export async function staffTaskRoutes(app: FastifyInstance) {
+  // Owned, immutable task asset. Public because <img> cannot attach the app's
+  // bearer token; ids are opaque and the bytes are validated at upload.
+  app.get("/task-assets/:id", async (req, reply) => {
+    const id = z.string().max(64).parse((req.params as { id: string }).id);
+    const asset = await sql.get<{ mime_type: string; bytes: Buffer | Uint8Array }>(
+      "SELECT mime_type, bytes FROM task_assets WHERE id = ?", id,
+    );
+    if (!asset) return reply.code(404).send({ error: "not found" });
+    return reply.header("content-type", asset.mime_type)
+      .header("cache-control", "public, max-age=31536000, immutable")
+      .send(Buffer.from(asset.bytes));
+  });
+
+  app.post("/staff/task-assets", staffGuard("tasks.manage", async ({ userId, role }, req) => {
+    const { data } = z.object({ data: z.string().max(720_000) }).parse(req.body ?? {});
+    const match = /^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/.exec(data);
+    if (!match) return { ok: false, error: "Choose a PNG, JPEG or WebP image." };
+    const source = Buffer.from(match[2], "base64");
+    if (source.length === 0 || source.length > 524_288) {
+      return { ok: false, error: "The logo must be 512 KB or smaller." };
+    }
+    const mime = imageMime(source);
+    if (!mime || mime !== match[1]) return { ok: false, error: "The file contents do not match a supported image type." };
+    let bytes: Buffer;
+    try {
+      // Decoding is the second signature check. Re-encoding to WebP strips EXIF,
+      // ICC and other metadata and produces a predictable square card asset.
+      bytes = await sharp(source, { failOn: "warning" }).rotate()
+        .resize(256, 256, { fit: "cover", position: "centre" })
+        .webp({ quality: 84 }).toBuffer();
+    } catch {
+      return { ok: false, error: "That image could not be decoded safely." };
+    }
+    const id = newId();
+    await sql.run(
+      "INSERT INTO task_assets (id, mime_type, bytes, byte_size, created_by, created_at) VALUES (?,?,?,?,?,?)",
+      id, "image/webp", bytes, bytes.length, userId, now(),
+    );
+    await logAudit({ actorUserId: userId, actorRole: role, action: "custom_task_logo_upload", detail: `asset ${id} (${bytes.length} bytes)` });
+    return { ok: true, id, url: `/task-assets/${id}` };
+  }));
+
   // ---- List every custom task (admin) -------------------------------------
   app.get("/staff/tasks", staffGuard("tasks.view", async () => {
     const tasks = await sql.all<Record<string, unknown>>(
-      `SELECT t.id, t.title, t.points, t.type, t.verify_mode, t.instructions, t.proof_label,
+      `SELECT t.id, t.title, t.points, t.reward_type, t.reward_usdt_micro, t.type,
+              t.verify_mode, t.instructions, t.proof_label, t.proof_heading, t.proof_help,
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
-              t.budget_conversions, t.budget_points, t.revenue_per_conversion_micro,
+              t.button_label, t.logo_asset_id, t.starts_at, t.ends_at, t.featured, t.priority,
+              t.budget_conversions, t.budget_points, t.budget_usdt_micro, t.revenue_per_conversion_micro,
               t.budget_exhausted_at,
               t.category, t.target_countries, t.target_min_account_days,
               t.target_max_account_days, t.target_min_completed,
@@ -177,6 +261,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
         const used = m?.conversions ?? 0;
         return {
           ...t,
+          effectiveStatus: campaignState(t as { status: string; starts_at?: string | null; ends_at?: string | null }),
           // The Admin-facing form of the stored comma-wrapped list. Served
           // unpacked so the panel never has to know the storage shape — the
           // one place that does is taskTargeting.ts.
@@ -187,6 +272,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
           // works out for itself is a second definition waiting to disagree.
           spentConversions: used,
           spentPoints: m?.points ?? 0,
+          spentUsdtMicro: m?.usdtMicro ?? 0,
           referralPointsPaid: m?.referralPoints ?? 0,
           revenueMicro: m?.revenueMicro ?? 0,
           marginMicro: m?.marginMicro ?? 0,
@@ -202,6 +288,12 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- Create a custom task -----------------------------------------------
   app.post("/staff/tasks", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const b = upsertSchema.parse(req.body ?? {});
+    validateReward(b.rewardType, b.points, b.rewardUsdtMicro);
+    validateSchedule(b.startsAt, b.endsAt);
+    if (b.logoAssetId) {
+      const asset = await sql.get<{ id: string }>("SELECT id FROM task_assets WHERE id = ?", b.logoAssetId);
+      if (!asset) return { ok: false, error: "The uploaded logo could not be found." };
+    }
     const id = newId();
     // A postback task needs a secret so a partner can sign; a proof task never
     // has one (there is no server to hand it to), which also means it can't be
@@ -224,8 +316,10 @@ export async function staffTaskRoutes(app: FastifyInstance) {
          source, verify_mode, instructions, proof_label, proof_required, action_url, icon,
          postback_secret, budget_conversions, budget_points, revenue_per_conversion_micro,
          category, target_countries, target_min_account_days, target_max_account_days,
-         target_min_completed, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         target_min_completed, reward_type, reward_usdt_micro, budget_usdt_micro,
+         proof_heading, proof_help, button_label, logo_asset_id, starts_at, ends_at,
+         featured, priority, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
       b.instructions ?? null, countryLabel, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
@@ -236,12 +330,15 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       b.revenuePerConversionMicro ?? 0,
       b.category && b.category.length > 0 ? b.category : null,
       packed, b.targetMinAccountDays ?? null, b.targetMaxAccountDays ?? null,
-      b.targetMinCompleted ?? null, now(),
+      b.targetMinCompleted ?? null, b.rewardType, b.rewardUsdtMicro,
+      b.budgetUsdtMicro ?? null, b.proofHeading || null, b.proofHelp || null,
+      b.buttonLabel || null, b.logoAssetId ?? null, b.startsAt ?? null, b.endsAt ?? null,
+      b.featured ? 1 : 0, b.priority ?? 0, now(),
     );
 
     await logAudit({
       actorUserId: userId, actorRole: role, action: "custom_task_create",
-      detail: `${b.title} (${b.verifyMode}, ${b.points} pts)`,
+      detail: `${b.title} (${b.verifyMode}, ${b.points} pts, ${b.rewardUsdtMicro} micro-USDT)`,
     });
     return { ok: true, id };
   }));
@@ -251,10 +348,25 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const id = (req.params as { id: string }).id;
     const b = upsertSchema.partial().parse(req.body ?? {});
 
-    const existing = await sql.get<{ verify_mode: string; postback_secret: string | null }>(
-      "SELECT verify_mode, postback_secret FROM tasks WHERE id = ? AND source = 'custom'", id,
+    const existing = await sql.get<{
+      verify_mode: string; postback_secret: string | null; reward_type: "points" | "usdt" | "both";
+      points: number; reward_usdt_micro: string | number; starts_at: string | null; ends_at: string | null;
+    }>(
+      `SELECT verify_mode, postback_secret, reward_type, points, reward_usdt_micro, starts_at, ends_at
+       FROM tasks WHERE id = ? AND source = 'custom'`, id,
     );
     if (!existing) return { ok: false, error: "not found" };
+
+    const nextRewardType = b.rewardType ?? existing.reward_type;
+    const nextPoints = b.points ?? existing.points;
+    const nextUsdt = b.rewardUsdtMicro ?? Number(existing.reward_usdt_micro);
+    validateReward(nextRewardType, nextPoints, nextUsdt);
+    validateSchedule(b.startsAt === undefined ? existing.starts_at : b.startsAt,
+      b.endsAt === undefined ? existing.ends_at : b.endsAt);
+    if (b.logoAssetId) {
+      const asset = await sql.get<{ id: string }>("SELECT id FROM task_assets WHERE id = ?", b.logoAssetId);
+      if (!asset) return { ok: false, error: "The uploaded logo could not be found." };
+    }
 
     const nextMode = b.verifyMode ?? existing.verify_mode;
     // Switching TO postback mints a secret if there wasn't one; switching to
@@ -268,6 +380,8 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const set = (col: string, v: unknown) => { sets.push(`${col} = ?`); vals.push(v); };
     if (b.title !== undefined) set("title", b.title);
     if (b.points !== undefined) set("points", b.points);
+    if (b.rewardType !== undefined) set("reward_type", b.rewardType);
+    if (b.rewardUsdtMicro !== undefined) set("reward_usdt_micro", b.rewardUsdtMicro);
     if (b.minutes !== undefined) set("minutes", b.minutes);
     if (b.status !== undefined) set("status", b.status);
     // ⚠️ THE TWO COUNTRY COLUMNS MOVE TOGETHER OR NOT AT ALL — see the note on
@@ -285,12 +399,21 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (b.targetMinCompleted !== undefined) set("target_min_completed", b.targetMinCompleted);
     if (b.instructions !== undefined) { set("instructions", b.instructions); set("requirement", b.instructions); }
     if (b.proofLabel !== undefined) set("proof_label", b.proofLabel);
+    if (b.proofHeading !== undefined) set("proof_heading", b.proofHeading || null);
+    if (b.proofHelp !== undefined) set("proof_help", b.proofHelp || null);
     if (b.proofRequired !== undefined) set("proof_required", b.proofRequired ? 1 : 0);
     if (b.actionUrl !== undefined) set("action_url", b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null);
     if (b.icon !== undefined) set("icon", b.icon && b.icon.length > 0 ? b.icon : null);
+    if (b.logoAssetId !== undefined) set("logo_asset_id", b.logoAssetId);
+    if (b.buttonLabel !== undefined) set("button_label", b.buttonLabel || null);
+    if (b.startsAt !== undefined) set("starts_at", b.startsAt);
+    if (b.endsAt !== undefined) set("ends_at", b.endsAt);
+    if (b.featured !== undefined) set("featured", b.featured ? 1 : 0);
+    if (b.priority !== undefined) set("priority", b.priority);
     // Budgets: `null` clears the cap, a number sets it, absent leaves it.
     if (b.budgetConversions !== undefined) set("budget_conversions", b.budgetConversions);
     if (b.budgetPoints !== undefined) set("budget_points", b.budgetPoints);
+    if (b.budgetUsdtMicro !== undefined) set("budget_usdt_micro", b.budgetUsdtMicro);
     if (b.revenuePerConversionMicro !== undefined) {
       set("revenue_per_conversion_micro", b.revenuePerConversionMicro);
     }
@@ -299,7 +422,8 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     // paused, and the Admin has to know to also flip the status back. The stamp
     // stays, so the record that it ran out once is not erased. If the new budget
     // is still under what has been spent, the next completion pauses it again.
-    if (b.status === undefined && (b.budgetConversions !== undefined || b.budgetPoints !== undefined)) {
+    if (b.status === undefined && (b.budgetConversions !== undefined || b.budgetPoints !== undefined
+        || b.budgetUsdtMicro !== undefined)) {
       const cur = await sql.get<{ status: string }>("SELECT status FROM tasks WHERE id = ?", id);
       if (cur?.status === EXHAUSTED) set("status", "active");
     }
@@ -314,6 +438,24 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       detail: `task ${id}: ${sets.map((s) => s.split(" = ")[0]).join(", ")}`,
     });
     return { ok: true };
+  }));
+
+  app.post("/staff/tasks/:id/lifecycle", staffGuard("tasks.manage", async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const { action } = z.object({ action: z.enum(["pause", "resume", "end"]) }).parse(req.body ?? {});
+    const task = await sql.get<{ status: string; starts_at: string | null; ends_at: string | null }>(
+      "SELECT status, starts_at, ends_at FROM tasks WHERE id = ? AND source = 'custom'", id,
+    );
+    if (!task) return { ok: false, error: "not found" };
+    let status: string;
+    if (action === "pause") status = "paused";
+    else if (action === "end") status = "ended";
+    else if (task.ends_at && Date.parse(task.ends_at) <= Date.now()) {
+      return { ok: false, error: "This task has already reached its end time. Change the schedule before resuming it." };
+    } else status = task.starts_at && Date.parse(task.starts_at) > Date.now() ? "scheduled" : "active";
+    await sql.run("UPDATE tasks SET status = ? WHERE id = ?", status, id);
+    await logAudit({ actorUserId: userId, actorRole: role, action: `custom_task_${action}`, detail: `task ${id}: ${task.status} -> ${status}` });
+    return { ok: true, status };
   }));
 
   // ---- A task's input fields (Stage 7) ------------------------------------
@@ -346,6 +488,9 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       if (f.kind === "choice" && (f.options ?? "").split("\n").filter((s) => s.trim()).length === 0) {
         return { ok: false, error: `“${f.label}” is a choice question with no choices. Add one per line.` };
       }
+      if (f.kind === "crypto_address" && !f.validation) {
+        return { ok: false, error: `Choose a wallet network for “${f.label}”.` };
+      }
     }
 
     const existing = await fieldsForTask(id);
@@ -363,17 +508,19 @@ export async function staffTaskRoutes(app: FastifyInstance) {
         if (f.id && existing.some((e) => e.id === f.id)) {
           await tx.run(
             `UPDATE task_fields SET label = ?, kind = ?, required = ?, placeholder = ?, help = ?,
-                                    options = ?, max_len = ?, sort_order = ? WHERE id = ?`,
+                                    options = ?, validation = ?, max_len = ?, sort_order = ? WHERE id = ?`,
             f.label, f.kind, f.required ? 1 : 0, f.placeholder ?? null, f.help ?? null,
-            opts, f.maxLen ?? null, i, f.id,
+            opts, f.kind === "crypto_address" ? f.validation ?? "generic" : null,
+            f.maxLen ?? null, i, f.id,
           );
         } else {
           await tx.run(
             `INSERT INTO task_fields (id, task_id, label, kind, required, placeholder, help,
-                                      options, max_len, sort_order, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+                                      options, validation, max_len, sort_order, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
             newId(), id, f.label, f.kind, f.required ? 1 : 0, f.placeholder ?? null,
-            f.help ?? null, opts, f.maxLen ?? null, i, now(),
+            f.help ?? null, opts, f.kind === "crypto_address" ? f.validation ?? "generic" : null,
+            f.maxLen ?? null, i, now(),
           );
         }
       }
@@ -441,7 +588,11 @@ export async function staffTaskRoutes(app: FastifyInstance) {
               p.created_at, p.reviewed_at,
               u.email AS user_email, u.username AS user_handle, u.country AS user_country,
               u.created_at AS user_joined,
-              t.title AS task_title, t.points AS task_points, t.proof_label, t.category,
+              COALESCE(p.task_title_snapshot, t.title) AS task_title,
+              COALESCE(p.reward_points, t.points) AS task_points,
+              COALESCE(p.reward_usdt_micro, t.reward_usdt_micro) AS task_usdt_micro,
+              t.proof_label, t.category,
+              COALESCE(p.task_logo_asset_snapshot, t.logo_asset_id) AS task_logo_asset_id,
               r.email AS reviewer_email
        FROM task_proofs p
        JOIN users u ON u.id = p.user_id
@@ -530,17 +681,18 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       note: z.string().max(500).optional(),
     }).parse(req.body ?? {});
 
-    const results: { id: string; ok: boolean; error?: string; credited?: number }[] = [];
+    const results: { id: string; ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number }[] = [];
     for (const id of [...new Set(b.ids)]) {
       const r = await decideProof(app, { userId, role }, id, b.action, b.note) as
-        { ok: boolean; error?: string; credited?: number };
-      results.push({ id, ok: r.ok, error: r.error, credited: r.credited });
+        { ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number };
+      results.push({ id, ok: r.ok, error: r.error, credited: r.credited, creditedUsdtMicro: r.creditedUsdtMicro });
     }
     return {
       ok: true,
       done: results.filter((r) => r.ok).length,
       failed: results.filter((r) => !r.ok).length,
       creditedPoints: results.reduce((s, r) => s + (r.credited ?? 0), 0),
+      creditedUsdtMicro: results.reduce((s, r) => s + (r.creditedUsdtMicro ?? 0), 0),
       results,
     };
   }));
@@ -561,7 +713,9 @@ async function decideProof(
 
     const proof = await sql.get<{
       id: string; task_id: string; user_id: string; status: string;
-    }>("SELECT id, task_id, user_id, status FROM task_proofs WHERE id = ?", proofId);
+      reward_points: number | null; reward_usdt_micro: string | number | null;
+    }>(`SELECT id, task_id, user_id, status, reward_points, reward_usdt_micro
+         FROM task_proofs WHERE id = ?`, proofId);
     if (!proof) return { ok: false, error: "not found" };
     if (proof.status !== "pending") return { ok: false, error: "already reviewed" };
 
@@ -580,11 +734,16 @@ async function decideProof(
     // APPROVE. Read the task's reward + this source's referral config, then run
     // the SHARED credit path. externalId ties the credit to the proof, so a
     // re-submission after this can't double-pay (idempotency on network+external_id).
-    const task = await sql.get<{ points: number; status: string }>(
-      "SELECT points, status FROM tasks WHERE id = ? AND source = 'custom'", proof.task_id,
+    const task = await sql.get<{
+      points: number; reward_usdt_micro: string | number; reward_type: "points" | "usdt" | "both";
+    }>(
+      "SELECT points, reward_usdt_micro, reward_type FROM tasks WHERE id = ? AND source = 'custom'", proof.task_id,
     );
     if (!task) return { ok: false, error: "task missing" };
-    if (task.status !== "active") return { ok: false, error: "task is disabled" };
+    const rewardPoints = proof.reward_points ?? task.points;
+    const rewardUsdtMicro = Number(proof.reward_usdt_micro ?? task.reward_usdt_micro ?? 0);
+    const rewardType = rewardPoints > 0 && rewardUsdtMicro > 0 ? "both"
+      : rewardUsdtMicro > 0 ? "usdt" : "points";
 
     const net = await sql.get<NetworkRow>(
       `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
@@ -593,7 +752,8 @@ async function decideProof(
 
     const outcome = await creditCompletion({
       userId: proof.user_id, network: CUSTOM_NETWORK, externalId: `proof:${proofId}`,
-      taskId: proof.task_id, points: task.points, offerType: "custom",
+      taskId: proof.task_id, points: rewardPoints, usdtMicro: rewardUsdtMicro,
+      rewardType, offerType: "custom",
       payload: { proofId, approvedBy: userId },
       net,
       // A proof must NOT burn the external_id on a velocity block — see the field
@@ -614,7 +774,7 @@ async function decideProof(
       return {
         ok: false,
         error: `This campaign's budget is used up (${outcome.used} of ${outcome.cap} `
-          + `${outcome.reason === "points" ? "points" : "conversions"}), so it has paused itself. `
+          + `${outcome.reason === "points" ? "points" : outcome.reason === "usdt" ? "micro-USDT" : "conversions"}), so it has paused itself. `
           + "Raise its budget in Our own tasks to approve this.",
       };
     }
@@ -635,8 +795,9 @@ async function decideProof(
     );
     await logAudit({
       actorUserId: userId, actorRole: role, action: "task_proof_approve",
-      targetUserId: proof.user_id, detail: `proof ${proofId} → ${outcome.points} pts`,
+      targetUserId: proof.user_id,
+      detail: `proof ${proofId} -> ${outcome.points} pts + ${outcome.usdtMicro} micro-USDT`,
     });
-    return { ok: true, status: "approved", credited: outcome.points };
+    return { ok: true, status: "approved", credited: outcome.points, creditedUsdtMicro: outcome.usdtMicro };
   }
 }

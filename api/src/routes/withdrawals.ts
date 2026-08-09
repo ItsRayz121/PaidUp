@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { parseEther } from "viem";
-import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger, getSetting, earnedUsdtBalanceMicroOf, postEarnedUsdt } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser, issueCode, consumeCode } from "../auth.ts";
 import { validateAddress, chainIsOffered, chainById, type ChainId } from "../chains.ts";
@@ -78,13 +78,14 @@ function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyRepl
 }
 
 const createSchema = z.object({
-  amountPoints: z.number().int().positive(),
+  amountPoints: z.number().int().positive().optional(),
+  amountUsdtMicro: z.number().int().positive().optional(),
   chain: z.enum(["bep20", "base", "aptos"]),
   address: z.string().min(1).max(120),
   // Only required once amountPoints >= config.stepUpMinPoints — see the check
   // below. A 6-digit code from POST /withdrawals/request-step-up.
   stepUpCode: z.string().trim().optional(),
-});
+}).refine((v) => Number(Boolean(v.amountPoints)) + Number(Boolean(v.amountUsdtMicro)) === 1);
 
 const addressSchema = z.object({
   chain: z.enum(["bep20", "base", "aptos"]),
@@ -102,7 +103,14 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     await requireFeature("usdt_withdrawals");
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount, network, and wallet address." });
-    const { amountPoints, chain, address: addressRaw, stepUpCode } = parsed.data;
+    const { chain, address: addressRaw, stepUpCode } = parsed.data;
+    const sourceKind = parsed.data.amountUsdtMicro ? "earned_usdt" : "points";
+    const earnedAmountMicro = parsed.data.amountUsdtMicro ?? 0;
+    // Risk thresholds and staff approval limits remain denominated in the
+    // platform's internal points unit. The actual earned-USDT payout below is
+    // never rounded through this equivalent.
+    const amountPoints = parsed.data.amountPoints
+      ?? Math.ceil((earnedAmountMicro * config.pointsPerUsdt) / 1_000_000);
 
     // Read from settings, not straight from config: an Admin can tune this in
     // /staff, and the wallet screen reads the SAME helper. If the two ever
@@ -248,19 +256,27 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         // is held until this transaction commits, so the second request waits
         // and then sees the balance the first one already reduced.
         await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
-        if (amountPoints > (await balanceOf(userId, t))) {
+        if (sourceKind === "points" && amountPoints > (await balanceOf(userId, t)))
           throw { statusCode: 400, message: "You do not have that many points yet." };
-        }
+        if (sourceKind === "earned_usdt" && earnedAmountMicro > (await earnedUsdtBalanceMicroOf(userId, t)))
+          throw { statusCode: 400, message: "You do not have that much task USDT yet." };
         await t.run(
-          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified, status, created_at)
-           VALUES (?,?,?,?,?,?,?, 'pending', ?)`,
-          id, userId, amountPoints, chain, address, fee, addressVerified, now(),
+          `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
+             source_kind, earned_usdt_micro, status, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?, 'pending', ?)`,
+          id, userId, amountPoints, chain, address, fee, addressVerified,
+          sourceKind, earnedAmountMicro, now(),
         );
         // Hold the funds.
-        await postLedger({
-          userId, points: amountPoints, direction: "debit",
-          sourceType: "withdrawal", sourceRefId: id, note: `Withdrawal (USDT ${chain})`,
-        }, t);
+        if (sourceKind === "earned_usdt") {
+          await postEarnedUsdt({ userId, micro: earnedAmountMicro, direction: "debit",
+            sourceType: "withdrawal", sourceRefId: id, note: `Task USDT withdrawal (${chain})` }, t);
+        } else {
+          await postLedger({
+            userId, points: amountPoints, direction: "debit",
+            sourceType: "withdrawal", sourceRefId: id, note: `Withdrawal (USDT ${chain})`,
+          }, t);
+        }
       });
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
@@ -282,7 +298,9 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // on tryAutoSettle. Below the auto ceiling and the account isn't held?
     // The user gets "paid" back immediately. Otherwise this is a no-op and
     // the request sits in the same manual queue as always.
-    const auto = await tryAutoSettle(id);
+    // The legacy auto-settler converts points to USDT. Direct task-USDT is kept
+    // exact and therefore enters the normal reviewed queue for now.
+    const auto = sourceKind === "points" ? await tryAutoSettle(id) : { settled: false as const };
     if (auto.settled === true) {
       // autoWithdraw.ts sends its own "paid" push — sending a second
       // "submitted" one here would be a redundant notification for money
@@ -301,7 +319,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     void sendPushToUser(userId, {
       title: "Withdrawal submitted", body: "We got your request and will send it soon.", url: "/wallet",
     });
-    return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
+    return { request: { id, amount: amountPoints, amountUsdtMicro: earnedAmountMicro, sourceKind, chain, address, status: "pending" } };
   }));
 
   // Send a step-up code for a large withdrawal (see stepUpMinPoints above).

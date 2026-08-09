@@ -18,9 +18,9 @@
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
-  fetchTaskProofs, decideTaskProof, decideTaskProofsBulk, type TaskProof,
+  fetchTaskProofs, decideTaskProof, decideTaskProofsBulk, taskAssetUrl, type TaskProof,
 } from "@/lib/api";
-import { formatPoints, timeAgo } from "@/lib/format";
+import { formatPoints, formatUsdtMicro, timeAgo } from "@/lib/format";
 
 export function ProofQueue() {
   const [status, setStatus] = useState<"pending" | "approved" | "rejected">("pending");
@@ -43,7 +43,9 @@ export function ProofQueue() {
     try {
       const res = await decideTaskProof(id, action, note);
       if (!res.ok) { setMsg(res.error ?? "Could not save."); return; }
-      setMsg(action === "approve" && res.credited ? `Approved — ${res.credited} pts credited.` : "Done.");
+      setMsg(action === "approve"
+        ? `Approved — ${res.credited ?? 0} pts${res.creditedUsdtMicro ? ` + ${formatUsdtMicro(res.creditedUsdtMicro)}` : ""} credited.`
+        : "Done.");
       refresh();
     } catch (e) { setMsg((e as Error).message); }
   }
@@ -65,6 +67,7 @@ export function ProofQueue() {
       setMsg(
         `${res.done} done, ${res.failed} not done`
         + (res.creditedPoints ? ` — ${formatPoints(res.creditedPoints)} pts credited` : "")
+        + (res.creditedUsdtMicro ? ` + ${formatUsdtMicro(res.creditedUsdtMicro)}` : "")
         + (failures.length ? `. First problem: ${failures[0].error}` : "."),
       );
       refresh();
@@ -148,10 +151,18 @@ export function ProofQueue() {
                           onChange={() => toggle(p.id)} aria-label="Pick this proof" />
                       )}
                       <div className="min-w-0">
-                        <p className="font-semibold text-brand-ink">{p.task_title}</p>
+                        <div className="flex items-center gap-2">
+                          {p.task_logo_asset_id && <img src={taskAssetUrl(p.task_logo_asset_id)} alt=""
+                            className="h-8 w-8 rounded-md border border-line object-cover" />}
+                          <p className="font-semibold text-brand-ink">{p.task_title}</p>
+                        </div>
                         <p className="text-xs text-muted">
                           {p.user_handle ? `@${p.user_handle} · ` : ""}{p.user_email} ·{" "}
-                          <span className="num text-brand">{formatPoints(p.task_points)} pts</span> ·{" "}
+                          <span className="num text-brand">
+                            {p.task_points > 0 ? `${formatPoints(p.task_points)} pts` : ""}
+                            {p.task_points > 0 && Number(p.task_usdt_micro) > 0 ? " + " : ""}
+                            {Number(p.task_usdt_micro) > 0 ? formatUsdtMicro(Number(p.task_usdt_micro)) : ""}
+                          </span> ·{" "}
                           {timeAgo(p.created_at)}
                           {p.user_country ? ` · ${p.user_country}` : ""}
                         </p>
@@ -234,6 +245,13 @@ function ProofBody({ proof }: { proof: TaskProof }) {
               // clicking it.
               <a href={a.value} target="_blank" rel="noreferrer noopener"
                 className="break-all font-mono text-xs text-brand underline">{a.value}</a>
+            ) : a.kind === "crypto_address" ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase text-muted">{a.validation ?? "wallet"}</span>
+                <code className="break-all text-xs">{a.value}</code>
+                <button onClick={() => navigator.clipboard?.writeText(a.value)}
+                  className="rounded bg-card px-2 py-1 text-[10px] font-semibold text-brand">Copy</button>
+              </span>
             ) : (
               <span className="whitespace-pre-line break-words">{a.value}</span>
             )}

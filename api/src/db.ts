@@ -1319,6 +1319,101 @@ const MIGRATIONS = `
   -- expensive campaigns, counted from CREDITED completions only — a pending
   -- claim is not evidence of anything.
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_min_completed INTEGER;
+
+  -- ---- TASK MARKETPLACE: REWARDS, LIFECYCLE, SCHEDULE AND ASSETS ---------
+  -- Existing rows are points-only and active. New columns deliberately default
+  -- to that exact behaviour so deploying the migration cannot alter a live
+  -- campaign's promise or visibility.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reward_type TEXT NOT NULL DEFAULT 'points';
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reward_usdt_micro BIGINT NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS budget_usdt_micro BIGINT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_heading TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_help TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS button_label TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS starts_at TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ends_at TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS featured INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS logo_asset_id TEXT;
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_type_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_reward_type_check
+    CHECK (reward_type IN ('points','usdt','both'));
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_amounts_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_reward_amounts_check CHECK (
+    (reward_type = 'points' AND points > 0 AND reward_usdt_micro = 0) OR
+    (reward_type = 'usdt' AND points = 0 AND reward_usdt_micro > 0) OR
+    (reward_type = 'both' AND points > 0 AND reward_usdt_micro > 0)
+  );
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+    CHECK (status IN ('draft','scheduled','active','paused','disabled','exhausted','ended'));
+
+  -- Owned task images. Keeping the bytes in Postgres makes this deployment-safe
+  -- on Railway/Vercel without trusting a remote tracking URL or writing to an
+  -- ephemeral serverless filesystem. The public API exposes only the opaque id.
+  CREATE TABLE IF NOT EXISTS task_assets (
+    id            TEXT PRIMARY KEY,
+    mime_type     TEXT NOT NULL CHECK (mime_type IN ('image/png','image/jpeg','image/webp')),
+    bytes         BYTEA NOT NULL,
+    byte_size     INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 524288),
+    created_by    TEXT REFERENCES users(id),
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_assets_created ON task_assets(created_at);
+
+  -- A participation row records a user's intentional start. Proofs/completions
+  -- remain the authorities for submitted/paid states; this only fills the gap
+  -- between opening an offer and filing evidence.
+  CREATE TABLE IF NOT EXISTS task_participation (
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    task_id       TEXT NOT NULL REFERENCES tasks(id),
+    started_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (user_id, task_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_participation_user
+    ON task_participation(user_id, updated_at);
+
+  -- Promised rewards are snapshotted when proof is submitted. A later campaign
+  -- edit cannot change what an already-waiting user receives.
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS reward_points INTEGER;
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS reward_usdt_micro BIGINT;
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS task_title_snapshot TEXT;
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS task_icon_snapshot TEXT;
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS task_logo_asset_snapshot TEXT;
+
+  -- Credited completions carry both reward magnitudes for budget reporting,
+  -- history and replay-safe combined payouts.
+  ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS usdt_micro BIGINT NOT NULL DEFAULT 0;
+  ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS reward_type TEXT NOT NULL DEFAULT 'points';
+
+  -- Optional closed validator configuration for structured proof fields. For a
+  -- crypto_address field this is evm, tron, solana or generic.
+  ALTER TABLE task_fields ADD COLUMN IF NOT EXISTS validation TEXT;
+  ALTER TABLE task_fields DROP CONSTRAINT IF EXISTS task_fields_kind_check;
+  ALTER TABLE task_fields ADD CONSTRAINT task_fields_kind_check
+    CHECK (kind IN ('text','longtext','number','email','url','phone','choice','username','crypto_address'));
+
+  -- Earned task USDT must never be mixed with refundable deposit USDT. Deposit
+  -- funds have a deliberately deposit-bounded refund path; task earnings are a
+  -- separate liability with their own append-only history.
+  CREATE TABLE IF NOT EXISTS earned_usdt_ledger (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id),
+    amount        BIGINT NOT NULL,
+    direction     TEXT NOT NULL CHECK (direction IN ('credit','debit')),
+    source_type   TEXT NOT NULL CHECK (source_type IN ('task_reward','withdrawal','withdrawal_return','admin_adjustment')),
+    source_ref_id TEXT,
+    note          TEXT,
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_earned_usdt_user ON earned_usdt_ledger(user_id, created_at);
+
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'points';
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS earned_usdt_micro BIGINT NOT NULL DEFAULT 0;
+  ALTER TABLE withdrawal_requests DROP CONSTRAINT IF EXISTS withdrawal_requests_source_kind_check;
+  ALTER TABLE withdrawal_requests ADD CONSTRAINT withdrawal_requests_source_kind_check
+    CHECK (source_kind IN ('points','earned_usdt'));
 `;
 
 // ---------------------------------------------------------------------------
@@ -2076,6 +2171,40 @@ export async function usdtBalanceMicroOf(
   const row = await t.get<{ bal: string | number }>(
     "SELECT COALESCE(SUM(amount), 0) AS bal FROM usdt_ledger WHERE user_id = ?",
     userId,
+  );
+  return Number(row?.bal ?? 0);
+}
+
+export type EarnedUsdtSource = "task_reward" | "withdrawal" | "withdrawal_return" | "admin_adjustment";
+
+export async function postEarnedUsdt(
+  params: {
+    userId: string;
+    micro: number;
+    direction: "credit" | "debit";
+    sourceType: EarnedUsdtSource;
+    sourceRefId?: string;
+    note?: string;
+  },
+  t: Pick<TxApi, "run"> = sql,
+): Promise<string> {
+  const magnitude = Math.abs(Math.trunc(params.micro));
+  const id = newId();
+  await t.run(
+    `INSERT INTO earned_usdt_ledger (id,user_id,amount,direction,source_type,source_ref_id,note,created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    id, params.userId, params.direction === "credit" ? magnitude : -magnitude,
+    params.direction, params.sourceType, params.sourceRefId ?? null, params.note ?? null, now(),
+  );
+  return id;
+}
+
+export async function earnedUsdtBalanceMicroOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: string | number }>(
+    "SELECT COALESCE(SUM(amount),0) AS bal FROM earned_usdt_ledger WHERE user_id = ?", userId,
   );
   return Number(row?.bal ?? 0);
 }

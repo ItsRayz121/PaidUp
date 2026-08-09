@@ -15,14 +15,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Card, PointsPill, Button, SponsoredTag } from "@/components/ui";
+import { Card, RewardPill, Button, SponsoredTag } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import {
   offerIcon, taskIcon, ClockIcon, LockIcon, ArrowRightIcon, InfoIcon, CheckIcon,
 } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import {
-  fetchTask, submitTaskProof, TASK_CATEGORY_LABELS, type TaskField,
+  fetchTask, submitTaskProof, taskAssetUrl, TASK_CATEGORY_LABELS, type TaskField,
 } from "@/lib/api";
 
 export default function TaskDetailPage() {
@@ -74,9 +74,9 @@ function TaskDetail({ task, fields, onSent }: {
     <>
       <Card className="p-4">
         <div className="flex items-start gap-3">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-            <Icon size={24} />
-          </span>
+          {task.logoAssetId ? <img src={taskAssetUrl(task.logoAssetId)} alt=""
+            className="h-12 w-12 shrink-0 rounded-xl border border-line object-cover" />
+            : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><Icon size={24} /></span>}
           <div className="min-w-0 flex-1">
             <h1 className="font-bold leading-snug text-brand-ink">{task.title}</h1>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
@@ -84,7 +84,7 @@ function TaskDetail({ task, fields, onSent }: {
               {category && <span className="rounded-full bg-brand-tint px-2 py-0.5 font-semibold text-brand">{category}</span>}
             </p>
           </div>
-          <PointsPill points={task.points} />
+          <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
         </div>
 
         {task.instructions && (
@@ -139,7 +139,7 @@ function TaskDetail({ task, fields, onSent }: {
         <ProofForm task={task} fields={fields} onSent={onSent} />
       ) : (
         <Card className="p-4 text-sm text-muted">
-          We check this one for you. Finish it and your ROZI is added by itself.
+          We check this one for you. Finish it and your reward is added after confirmation.
         </Card>
       )}
     </>
@@ -166,6 +166,12 @@ function ProofForm({ task, fields, onSent }: {
     setError(null);
     const missing = fields.find((f) => f.required && (values[f.id] ?? "").trim().length === 0);
     if (missing) { setError(`Please fill in “${missing.label}”.`); return; }
+    const badAddress = fields.find((f) => f.kind === "crypto_address"
+      && !looksLikeAddress(values[f.id] ?? "", f.validation ?? "generic"));
+    if (badAddress) {
+      const network = badAddress.validation === "evm" ? "BNB Smart Chain or Ethereum" : badAddress.validation ?? "crypto";
+      setError(`Enter a valid ${network} address.`); return;
+    }
     if (asksForText && proof.trim().length === 0) { setError("Please write your proof first."); return; }
 
     setBusy(true);
@@ -181,7 +187,7 @@ function ProofForm({ task, fields, onSent }: {
     return (
       <Card className="flex gap-3 border-success/30 bg-success-tint/60 p-4">
         <CheckIcon size={20} className="mt-0.5 shrink-0 text-success" />
-        <p className="text-sm text-success">You finished this task and your ROZI was added. Thank you!</p>
+        <p className="text-sm text-success">You finished this task and your reward was added. Thank you!</p>
       </Card>
     );
   }
@@ -190,7 +196,7 @@ function ProofForm({ task, fields, onSent }: {
       <Card className="border-pending/30 bg-pending-tint/50 p-4">
         <p className="font-semibold text-brand-ink">We got your answer.</p>
         <p className="mt-1 text-sm text-muted">
-          Our team will check it and add your ROZI. This can take a little time.
+          Our team will check it and add your reward. This can take a little time.
         </p>
       </Card>
     );
@@ -199,7 +205,7 @@ function ProofForm({ task, fields, onSent }: {
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2">
-        <PointsPill points={task.points} />
+        <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
         <span className="text-sm text-muted">when we check your answer</span>
       </div>
 
@@ -207,6 +213,13 @@ function ProofForm({ task, fields, onSent }: {
         <p className="mt-3 rounded-xl bg-danger-tint p-3 text-sm text-danger">
           Last time: {task.proofNote}. Please fix it and send again.
         </p>
+      )}
+
+      {(fields.length > 0 || asksForText) && (
+        <div className="mt-4">
+          <h2 className="font-bold text-brand-ink">{task.proofHeading || "Submit your proof"}</h2>
+          {task.proofHelp && <p className="mt-1 text-sm text-muted">{task.proofHelp}</p>}
+        </div>
       )}
 
       {fields.length > 0 ? (
@@ -230,7 +243,7 @@ function ProofForm({ task, fields, onSent }: {
       ) : (
         // Must not pretend the ROZI is instant: this still goes to a person.
         <p className="mt-4 rounded-xl bg-brand-tint/50 p-3 text-sm text-brand-ink">
-          Finished it? Tell us, and our team will check and add your ROZI.
+          Finished it? Tell us, and our team will check and add your reward.
         </p>
       )}
 
@@ -245,6 +258,14 @@ function ProofForm({ task, fields, onSent }: {
   );
 }
 
+function looksLikeAddress(value: string, network: string): boolean {
+  const v = value.trim();
+  if (network === "evm") return /^0x[0-9a-fA-F]{40}$/.test(v);
+  if (network === "tron") return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(v);
+  if (network === "solana") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
+  return v.length >= 8 && !/\s/.test(v);
+}
+
 function FieldInput({ field, value, onChange }: {
   field: TaskField; value: string; onChange: (v: string) => void;
 }) {
@@ -254,7 +275,7 @@ function FieldInput({ field, value, onChange }: {
   // and one they abandon.
   const inputType = ({
     number: "text", email: "email", url: "url", phone: "tel", text: "text",
-    longtext: "text", choice: "text",
+    longtext: "text", choice: "text", username: "text", crypto_address: "text",
   } as const)[field.kind];
   const inputMode = field.kind === "number" ? "decimal" : field.kind === "phone" ? "tel" : undefined;
 

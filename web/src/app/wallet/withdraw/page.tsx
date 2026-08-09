@@ -8,8 +8,8 @@ import { NotificationsCard } from "@/components/NotificationsCard";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchPayoutAddresses, createWithdrawal, ApiError } from "@/lib/api";
-import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei } from "@/lib/format";
+import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, ApiError } from "@/lib/api";
+import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
 import { shortAddress } from "@/lib/wallet";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
@@ -33,6 +33,7 @@ export default function WithdrawPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [source, setSource] = useState<"points" | "earned_usdt">("points");
   // Set when the server refuses the withdrawal because the user has not verified
   // their ID yet. Drives the "Verify your ID" card below instead of a dead error.
   const [needsKyc, setNeedsKyc] = useState(false);
@@ -58,6 +59,7 @@ export default function WithdrawPage() {
   if (bal.error) return <div className="p-4 pt-6"><ErrorState message={bal.error} onRetry={bal.reload} /></div>;
 
   const balance = bal.data?.points ?? 0;
+  const earnedUsdtMicro = bal.data?.earnedUsdtMicro ?? 0;
   const min = bal.data?.minWithdrawPoints ?? 1000;
   const flatFee = bal.data?.withdrawalFeePoints ?? 0;
   const gasFeePercent = bal.data?.gasFeePercent ?? 0;
@@ -76,7 +78,8 @@ export default function WithdrawPage() {
   const fee = flatFee + gasFee;
   const net = Math.max(0, amt - fee); // points actually converted to USDT
   const belowMin = amt < min;
-  const overBalance = amt > balance;
+  const amountUsdtMicro = Math.round((usdtInput.trim() === "" ? pointsToUsdt(min) : typedUsdt) * 1_000_000);
+  const overBalance = source === "earned_usdt" ? amountUsdtMicro > earnedUsdtMicro : amt > balance;
   const addressOk = addressLooksValid(chain, address);
   // Gas is the user's own responsibility (founder, 2026-08-08, second pass).
   // null means "can't check yet" (relay not wired up for this chain) — the
@@ -94,7 +97,8 @@ export default function WithdrawPage() {
   async function submit() {
     setBusy(true); setError(null); setNeedsKyc(false);
     try {
-      await createWithdrawal(amt, chain, address.trim());
+      if (source === "earned_usdt") await createEarnedUsdtWithdrawal(amountUsdtMicro, chain, address.trim());
+      else await createWithdrawal(amt, chain, address.trim());
       setDone(true);
     } catch (e) {
       // The server sends a `kycRequired` flag, not just a sentence. Show them the
@@ -145,6 +149,24 @@ export default function WithdrawPage() {
         <p className="num text-2xl font-bold text-brand-ink">{formatMoney(balance)}</p>
         <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
       </Card>
+
+      {earnedUsdtMicro > 0 && (
+        <div>
+          <p className="mb-2 px-1 font-semibold text-brand-ink">Pay from</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setSource("points")}
+              className={`rounded-xl border p-3 text-left ${source === "points" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
+              <span className="block font-semibold">Points balance</span>
+              <span className="text-xs text-muted">{formatMoney(balance)}</span>
+            </button>
+            <button type="button" onClick={() => setSource("earned_usdt")}
+              className={`rounded-xl border p-3 text-left ${source === "earned_usdt" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
+              <span className="block font-semibold">Task USDT</span>
+              <span className="text-xs text-muted">{formatUsdtMicro(earnedUsdtMicro)}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Network picker — or, while we pay out on exactly one chain, a statement.
           A row of radio buttons containing a single option is not a choice; it

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, getSetting, usdtBalanceMicroOf, usdtToMicro } from "../db.ts";
+import { sql, now, newId, balanceOf, getSetting, usdtBalanceMicroOf, earnedUsdtBalanceMicroOf, usdtToMicro } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
@@ -13,6 +13,7 @@ import { minWithdrawPointsNow } from "../settingsRuntime.ts";
 import { loadLeaderboard, maskName } from "../leaderboard.ts";
 import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
+import { campaignState, unavailableMessage } from "../taskLifecycle.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -43,7 +44,12 @@ export async function appRoutes(app: FastifyInstance) {
   app.get("/features", guard(async () => ({ features: await allFlags() })));
 
   // Offer feed for the user's country
-  app.get("/tasks", guard(async (userId) => {
+  app.get("/tasks", guard(async (userId, req) => {
+    const q = z.object({
+      view: z.enum(["available", "mine", "history"]).catch("available"),
+      cursor: z.coerce.number().int().min(0).catch(0),
+      limit: z.coerce.number().int().min(1).max(100).catch(12),
+    }).parse(req.query ?? {});
     // Feature flag (flags.ts). Returning an EMPTY LIST rather than a 403: the
     // task screen is a normal part of the app and a hard error there reads as a
     // broken app, whereas an empty feed with the usual "nothing right now"
@@ -63,8 +69,8 @@ export async function appRoutes(app: FastifyInstance) {
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT t.* FROM tasks t
        LEFT JOIN networks n ON n.id = t.network
-       WHERE t.status = 'active' AND (n.status IS NULL OR n.status = 'active')
-       ORDER BY t.points DESC`,
+       WHERE (n.status IS NULL OR n.status = 'active')
+       ORDER BY t.featured DESC, t.priority DESC, t.created_at DESC, t.id DESC`,
     );
     const ctx = await userContext(userId);
     // For our own 'proof' tasks, tell the user where they stand: have they
@@ -75,6 +81,13 @@ export async function appRoutes(app: FastifyInstance) {
       userId,
     );
     const proofByTask = new Map(proofRows.map((p) => [p.task_id, p]));
+    const completed = new Set((await sql.all<{ task_id: string }>(
+      "SELECT DISTINCT task_id FROM task_completions WHERE user_id = ? AND status = 'credited' AND task_id IS NOT NULL",
+      userId,
+    )).map((r) => r.task_id));
+    const started = new Set((await sql.all<{ task_id: string }>(
+      "SELECT task_id FROM task_participation WHERE user_id = ?", userId,
+    )).map((r) => r.task_id));
 
     // How many input fields each custom task asks for. One query, not one per
     // task — the card needs it only to say "3 questions" before you tap in.
@@ -83,16 +96,23 @@ export async function appRoutes(app: FastifyInstance) {
       "SELECT task_id, COUNT(*) AS n FROM task_fields GROUP BY task_id",
     )) fieldCounts.set(r.task_id, Number(r.n));
 
-    return {
-      tasks: rows.flatMap((t) => {
+    const visible = rows.flatMap((t) => {
+        const lifecycle = campaignState(t as { status: string; starts_at?: string | null; ends_at?: string | null });
         const gate = eligibility(t as unknown as TargetingRow, ctx);
         // Never qualifies => not shown at all. Can qualify later => shown with
         // the reason, so the rule is something to work towards rather than a
         // task that silently appears one day. See taskTargeting.ts.
         if (!gate.ok && gate.hide) return [];
         const proof = proofByTask.get(t.id as string);
+        const isDone = completed.has(t.id as string) || proof?.status === "approved";
+        const isMine = started.has(t.id as string) || proof?.status === "pending" || proof?.status === "rejected";
+        if (q.view === "available" && (lifecycle !== "active" || isDone || proof?.status === "pending")) return [];
+        if (q.view === "mine" && (!isMine || isDone)) return [];
+        if (q.view === "history" && !isDone && !(lifecycle === "ended" && isMine)) return [];
         return [{
           id: t.id, type: t.type, title: t.title, points: t.points,
+          rewardType: t.reward_type ?? "points",
+          rewardUsdtMicro: Number(t.reward_usdt_micro ?? 0),
           network: t.network, advertiser: t.advertiser, minutes: t.minutes,
           requirement: t.requirement ?? undefined,
           // Custom-task fields (undefined for ordinary network tasks).
@@ -106,6 +126,15 @@ export async function appRoutes(app: FastifyInstance) {
           proofRequired: t.proof_required !== 0,
           actionUrl: t.action_url ?? undefined,
           icon: t.icon ?? undefined,
+          logoAssetId: t.logo_asset_id ?? undefined,
+          buttonLabel: t.button_label ?? undefined,
+          proofHeading: t.proof_heading ?? undefined,
+          proofHelp: t.proof_help ?? undefined,
+          startsAt: t.starts_at ?? undefined,
+          endsAt: t.ends_at ?? undefined,
+          campaignStatus: lifecycle,
+          userState: isDone ? "completed" : proof?.status === "pending" ? "pending_review"
+            : proof?.status === "rejected" ? "rejected_retryable" : isMine ? "started" : "not_started",
           proofStatus: proof?.status ?? undefined,
           proofNote: proof?.review_note ?? undefined,
           // ---- Stage 7 ----------------------------------------------------
@@ -115,8 +144,30 @@ export async function appRoutes(app: FastifyInstance) {
           // card renders locked and the detail page refuses to submit.
           lockedReason: gate.ok ? undefined : gate.reason,
         }];
-      }),
-    };
+      });
+    const page = visible.slice(q.cursor, q.cursor + q.limit);
+    const nextCursor = q.cursor + page.length < visible.length ? q.cursor + page.length : null;
+    return { tasks: page, nextCursor, total: visible.length, view: q.view };
+  }));
+
+  // Record an intentional start so unfinished work can live under My tasks.
+  // This never credits a reward and is idempotent per user/task.
+  app.post("/tasks/:id/start", guard(async (userId, req) => {
+    await requireFeature("tasks");
+    const taskId = (req.params as { id: string }).id;
+    const task = await sql.get<Record<string, unknown>>("SELECT * FROM tasks WHERE id = ?", taskId);
+    if (!task) return { ok: false, error: "This task is not available." };
+    const state = campaignState(task as { status: string; starts_at?: string | null; ends_at?: string | null });
+    if (state !== "active") return { ok: false, error: unavailableMessage(state) };
+    const gate = eligibility(task as unknown as TargetingRow, await userContext(userId));
+    if (!gate.ok) return { ok: false, error: gate.reason };
+    const at = now();
+    await sql.run(
+      `INSERT INTO task_participation (user_id, task_id, started_at, updated_at) VALUES (?,?,?,?)
+       ON CONFLICT (user_id, task_id) DO UPDATE SET updated_at = EXCLUDED.updated_at`,
+      userId, taskId, at, at,
+    );
+    return { ok: true, status: "started" };
   }));
 
   // ---- One task, with its input fields (Stage 7) ---------------------------
@@ -134,15 +185,15 @@ export async function appRoutes(app: FastifyInstance) {
        WHERE t.id = ? AND (n.status IS NULL OR n.status = 'active')`, id,
     );
     if (!t || !(await flagEnabled("tasks"))) return { ok: false, error: "This task is not available." };
-    if (t.status !== "active") {
+    const lifecycle = campaignState(t as { status: string; starts_at?: string | null; ends_at?: string | null });
+    if (lifecycle !== "active") {
       // 'exhausted' is a real, common state (a campaign that hit its budget) and
       // it deserves better than "not available": the user did nothing wrong and
       // the task may well come back.
       return {
         ok: false,
-        error: t.status === "exhausted"
-          ? "This task is full for now. Please try another one."
-          : "This task is not available.",
+        error: unavailableMessage(lifecycle),
+        campaignStatus: lifecycle,
       };
     }
 
@@ -152,15 +203,21 @@ export async function appRoutes(app: FastifyInstance) {
     // renders it anyway is exactly the hole this route would otherwise open.
     if (!gate.ok && gate.hide) return { ok: false, error: gate.reason };
 
-    const proof = await sql.get<{ status: string; review_note: string | null; created_at: string }>(
-      `SELECT status, review_note, created_at FROM task_proofs
+    const proof = await sql.get<{
+      status: string; review_note: string | null; created_at: string;
+      reward_points: number | null; reward_usdt_micro: string | number | null;
+    }>(
+      `SELECT status, review_note, created_at, reward_points, reward_usdt_micro FROM task_proofs
        WHERE task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1`, id, userId,
     );
 
     return {
       ok: true,
       task: {
-        id: t.id, type: t.type, title: t.title, points: t.points,
+        id: t.id, type: t.type, title: t.title,
+        points: proof?.reward_points ?? t.points,
+        rewardType: t.reward_type ?? "points",
+        rewardUsdtMicro: Number(proof?.reward_usdt_micro ?? t.reward_usdt_micro ?? 0),
         network: t.network, advertiser: t.advertiser, minutes: t.minutes,
         requirement: t.requirement ?? undefined,
         source: t.source ?? "network",
@@ -170,6 +227,13 @@ export async function appRoutes(app: FastifyInstance) {
         proofRequired: t.proof_required !== 0,
         actionUrl: t.action_url ?? undefined,
         icon: t.icon ?? undefined,
+        logoAssetId: t.logo_asset_id ?? undefined,
+        buttonLabel: t.button_label ?? undefined,
+        proofHeading: t.proof_heading ?? undefined,
+        proofHelp: t.proof_help ?? undefined,
+        startsAt: t.starts_at ?? undefined,
+        endsAt: t.ends_at ?? undefined,
+        campaignStatus: lifecycle,
         category: t.category ?? undefined,
         proofStatus: proof?.status ?? undefined,
         proofNote: proof?.review_note ?? undefined,
@@ -203,9 +267,11 @@ export async function appRoutes(app: FastifyInstance) {
     const task = await sql.get<Record<string, unknown>>(
       "SELECT * FROM tasks WHERE id = ?", taskId,
     );
-    if (!task || task.source !== "custom" || task.status !== "active") {
+    if (!task || task.source !== "custom") {
       return { ok: false, error: "This task is not available." };
     }
+    const lifecycle = campaignState(task as { status: string; starts_at?: string | null; ends_at?: string | null });
+    if (lifecycle !== "active") return { ok: false, error: unavailableMessage(lifecycle) };
     if (task.verify_mode !== "proof") {
       return { ok: false, error: "This task is checked automatically — you do not need to send proof." };
     }
@@ -248,15 +314,27 @@ export async function appRoutes(app: FastifyInstance) {
 
     // Replace any earlier pending/rejected attempt so the queue holds one row
     // per user per task. The partial unique index enforces one pending row.
-    await sql.run(
-      "DELETE FROM task_proofs WHERE task_id = ? AND user_id = ? AND status IN ('pending','rejected')",
-      taskId, userId,
-    );
-    await sql.run(
-      `INSERT INTO task_proofs (id, task_id, user_id, proof_text, answers, status, created_at)
-       VALUES (?,?,?,?,?, 'pending', ?)`,
-      newId(), taskId, userId, proofText, answersJson, now(),
-    );
+    await sql.tx(async (tx) => {
+      await tx.run(
+        "DELETE FROM task_proofs WHERE task_id = ? AND user_id = ? AND status IN ('pending','rejected')",
+        taskId, userId,
+      );
+      const at = now();
+      await tx.run(
+        `INSERT INTO task_proofs
+          (id, task_id, user_id, proof_text, answers, status, reward_points, reward_usdt_micro,
+           task_title_snapshot, task_icon_snapshot, task_logo_asset_snapshot, created_at)
+         VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?)`,
+        newId(), taskId, userId, proofText, answersJson,
+        Number(task.points ?? 0), Number(task.reward_usdt_micro ?? 0), String(task.title ?? "Task"),
+        task.icon ?? null, task.logo_asset_id ?? null, at,
+      );
+      await tx.run(
+        `INSERT INTO task_participation (user_id, task_id, started_at, updated_at) VALUES (?,?,?,?)
+         ON CONFLICT (user_id, task_id) DO UPDATE SET updated_at = EXCLUDED.updated_at`,
+        userId, taskId, at, at,
+      );
+    });
     return { ok: true, status: "pending" };
   }));
 
@@ -287,10 +365,12 @@ export async function appRoutes(app: FastifyInstance) {
     const minWithdraw = await minWithdrawPointsNow();
     const canWithdrawNow = points >= minWithdraw;
     const depositUsdtMicro = await usdtBalanceMicroOf(userId);
-    const usdtAvailableMicro = depositUsdtMicro + (canWithdrawNow ? pointsAsUsdtMicro : 0);
+    const earnedUsdtMicro = await earnedUsdtBalanceMicroOf(userId);
+    const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro + (canWithdrawNow ? pointsAsUsdtMicro : 0);
     const usdtLockedMicro = canWithdrawNow ? 0 : pointsAsUsdtMicro;
     return {
       points,
+      earnedUsdtMicro,
       usdtAvailableMicro,
       usdtLockedMicro,
       usdtTotalMicro: usdtAvailableMicro + usdtLockedMicro,
@@ -338,6 +418,25 @@ export async function appRoutes(app: FastifyInstance) {
         at: e.created_at,
       })),
     };
+  }));
+
+  app.get("/wallet/usdt-task-rewards", guard(async (userId) => {
+    const rows = await sql.all<{
+      id: string; amount: string | number; source_ref_id: string | null; note: string | null;
+      created_at: string; task_title: string | null;
+    }>(
+      `SELECT u.id, u.amount, u.source_ref_id, u.note, u.created_at, t.title AS task_title
+       FROM earned_usdt_ledger u
+       LEFT JOIN task_completions c ON c.id = u.source_ref_id
+       LEFT JOIN tasks t ON t.id = c.task_id
+       WHERE u.user_id = ? AND u.source_type = 'task_reward'
+       ORDER BY u.created_at DESC`, userId,
+    );
+    return { rewards: rows.map((r) => ({
+      id: r.id, amountMicro: Number(r.amount), completionId: r.source_ref_id,
+      label: r.task_title ? `Task reward — ${r.task_title}` : r.note ?? "Task reward",
+      at: r.created_at,
+    })) };
   }));
 
   // Referral earnings kept SEPARATE from task earnings (user story).

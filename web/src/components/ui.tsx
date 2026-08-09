@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
-import { formatPointsAsRozi } from "@/lib/format";
+import { formatPoints, formatPointsAsRozi, formatUsdtMicro } from "@/lib/format";
 
 // Matches the backend's ledger row status (see @/lib/api LedgerEntry), plus
 // "refunded" — a frontend-only status (see walletHistory.ts) for a rejected
@@ -73,6 +73,19 @@ export function PointsPill({ points }: { points: number }) {
     <span className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2.5 py-1 text-accent-ink font-semibold text-sm whitespace-nowrap">
       <StarIcon size={15} />
       <span className="num">+{formatPointsAsRozi(points)}</span>
+    </span>
+  );
+}
+
+export function RewardPill({ points = 0, usdtMicro = 0 }: { points?: number; usdtMicro?: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2.5 py-1 text-accent-ink font-semibold text-sm whitespace-nowrap">
+      <StarIcon size={15} />
+      <span className="num">
+        +{points > 0 ? `${formatPoints(points)} points` : ""}
+        {points > 0 && usdtMicro > 0 ? " + " : ""}
+        {usdtMicro > 0 ? formatUsdtMicro(usdtMicro) : ""}
+      </span>
     </span>
   );
 }

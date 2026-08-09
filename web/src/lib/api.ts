@@ -147,11 +147,15 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
 export type Task = {
   id: string; type: "install" | "survey" | "video" | "custom"; title: string;
   points: number; network: string; advertiser: string; minutes: number; requirement?: string;
+  rewardType?: "points" | "usdt" | "both";
+  rewardUsdtMicro?: number;
   // Present only on our OWN tasks (source === "custom").
   source?: "network" | "custom";
   verifyMode?: "proof" | "postback";
   instructions?: string;
   proofLabel?: string;
+  proofHeading?: string;
+  proofHelp?: string;
   // Whether this task asks the user to TYPE evidence. False = a single "I did
   // it" confirmation. Either way the claim lands in the staff queue and a human
   // approves it before any points move (guardrail #1). Optional so an older API
@@ -161,6 +165,12 @@ export type Task = {
   // Which logo the card shows — a key into `taskIcon` (components/icons.tsx),
   // never a URL. Absent => the icon for the task's type.
   icon?: string;
+  logoAssetId?: string;
+  buttonLabel?: string;
+  startsAt?: string;
+  endsAt?: string;
+  campaignStatus?: "draft" | "scheduled" | "active" | "paused" | "exhausted" | "ended";
+  userState?: "not_started" | "started" | "pending_review" | "rejected_retryable" | "completed";
   // The current user's standing on a 'proof' task, if they've submitted.
   proofStatus?: "pending" | "approved" | "rejected";
   proofNote?: string;
@@ -177,10 +187,11 @@ export type Task = {
 };
 
 // ---- A task's configurable input fields (Stage 7) -------------------------
-export type TaskFieldKind = "text" | "longtext" | "number" | "email" | "url" | "phone" | "choice";
+export type TaskFieldKind = "text" | "longtext" | "number" | "email" | "url" | "phone" | "choice" | "username" | "crypto_address";
 export type TaskField = {
   id: string; label: string; kind: TaskFieldKind; required: boolean;
   placeholder?: string; help?: string; options?: string[]; maxLen: number;
+  validation?: "evm" | "tron" | "solana" | "generic";
 };
 export const fetchTask = (id: string) =>
   apiFetch<{ ok: boolean; error?: string; task?: Task; fields?: TaskField[] }>(`/tasks/${id}`);
@@ -290,6 +301,7 @@ export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 export const fetchBalance = () =>
   apiFetch<{
     points: number; minWithdrawPoints: number; withdrawalFeePoints: number;
+    earnedUsdtMicro: number;
     gasFeePercent: number; gasFeeFixedMicro: number;
     // The user's own gas wallet (founder, 2026-08-08, second pass) — see
     // UsdtState's identical fields for the full explanation.
@@ -309,7 +321,15 @@ export const fetchBalance = () =>
     usdtTotalMicro: number;
   }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
-export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
+export type UsdtTaskReward = { id: string; amountMicro: number; completionId: string | null; label: string; at: string };
+export const fetchUsdtTaskRewards = () => apiFetch<{ rewards: UsdtTaskReward[] }>("/wallet/usdt-task-rewards");
+export type TaskView = "available" | "mine" | "history";
+export const fetchTasks = (view: TaskView = "available", cursor = 0, limit = 12) =>
+  apiFetch<{ tasks: Task[]; nextCursor: number | null; total: number; view: TaskView }>(
+    `/tasks?view=${view}&cursor=${cursor}&limit=${limit}`);
+export const startTask = (taskId: string) =>
+  apiFetch<{ ok: boolean; error?: string; status?: string }>(`/tasks/${taskId}/start`, { method: "POST" });
+export const taskAssetUrl = (id?: string | null) => id ? `${API_BASE}/task-assets/${encodeURIComponent(id)}` : "";
 // `proof` is empty for a task whose Admin switched evidence off. The server
 // decides whether that is allowed — it re-reads the task's own setting.
 // `answers` is fieldId -> what they typed, for a task with configured fields.
@@ -652,14 +672,19 @@ export const updateAllNetworkReferrals = (patch: {
 // ---- Admin: our own custom tasks -----------------------------------------
 export type CustomTask = {
   id: string; title: string; points: number; type: string;
+  reward_type: "points" | "usdt" | "both"; reward_usdt_micro: number;
   verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
+  proof_heading: string | null; proof_help: string | null;
   // Postgres INTEGER: 1 = ask the user for evidence, 0 = a tap-to-confirm task.
   proof_required: number;
   action_url: string | null; icon: string | null; minutes: number; country: string;
+  button_label: string | null; logo_asset_id: string | null;
+  starts_at: string | null; ends_at: string | null; featured: number; priority: number;
   // 'active' | 'disabled' | 'exhausted'. ⚠️ `exhausted` is set BY THE SERVER when
   // a campaign hits its budget — an Admin never picks it, which is why the input
   // type below does not offer it.
   status: string;
+  effectiveStatus: "draft" | "scheduled" | "active" | "paused" | "exhausted" | "ended";
   created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
   // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
   // null on either cap = unlimited. Every figure below is computed server-side
@@ -668,10 +693,12 @@ export type CustomTask = {
   // spend, and it will eventually disagree with the ledger.
   budget_conversions: number | null;
   budget_points: number | null;
+  budget_usdt_micro: number | null;
   revenue_per_conversion_micro: number;
   budget_exhausted_at: string | null;
   spentConversions: number;
   spentPoints: number;
+  spentUsdtMicro: number;
   /** Referral commission these completions paid. Real spend, counted in margin,
    *  deliberately NOT charged against the budget — see db.ts. */
   referralPointsPaid: number;
@@ -693,12 +720,15 @@ export type CustomTask = {
 };
 export type CustomTaskInput = {
   title: string; points: number; verifyMode: "proof" | "postback";
-  instructions?: string; proofLabel?: string; proofRequired?: boolean;
-  actionUrl?: string; icon?: string;
-  minutes?: number; country?: string; status?: "active" | "disabled";
+  rewardType: "points" | "usdt" | "both"; rewardUsdtMicro: number;
+  instructions?: string; proofLabel?: string; proofHeading?: string; proofHelp?: string; proofRequired?: boolean;
+  actionUrl?: string; buttonLabel?: string; icon?: string; logoAssetId?: string | null;
+  minutes?: number; country?: string; status?: "draft" | "scheduled" | "active" | "paused" | "disabled" | "ended";
+  startsAt?: string | null; endsAt?: string | null; featured?: boolean; priority?: number;
   // null clears a cap back to unlimited; omitted leaves it untouched.
   budgetConversions?: number | null;
   budgetPoints?: number | null;
+  budgetUsdtMicro?: number | null;
   revenuePerConversionMicro?: number;
   // ---- Category + targeting (Stage 7). null clears a rule; omitted leaves it.
   category?: string;
@@ -723,12 +753,25 @@ export const updateCustomTask = (id: string, patch: Partial<CustomTaskInput>) =>
 export const fetchTaskPostback = (id: string) =>
   apiFetch<{ ok: boolean; error?: string; taskId?: string; secret?: string; path?: string; signature?: string; params?: string[] }>(
     `/staff/tasks/${id}/postback`);
+export const updateTaskLifecycle = (id: string, action: "pause" | "resume" | "end") =>
+  apiFetch<{ ok: boolean; error?: string; status?: string }>(`/staff/tasks/${id}/lifecycle`, {
+    method: "POST", body: JSON.stringify({ action }),
+  });
+export const createEarnedUsdtWithdrawal = (amountUsdtMicro: number, chain: string, address: string) =>
+  apiFetch<{ request: Withdrawal }>("/withdrawals", {
+    method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address }),
+  });
+export const uploadTaskLogo = (data: string) =>
+  apiFetch<{ ok: boolean; error?: string; id?: string; url?: string }>("/staff/task-assets", {
+    method: "POST", body: JSON.stringify({ data }),
+  });
 
 // Admin: a task's input fields. Sent as a WHOLE LIST — order is a property of
 // the list, not of any one row, so there is no per-field endpoint.
 export type StaffTaskFieldInput = {
   id?: string; label: string; kind: TaskFieldKind; required: boolean;
   placeholder?: string; help?: string; options?: string; maxLen?: number | null;
+  validation?: "evm" | "tron" | "solana" | "generic";
 };
 export const fetchTaskFields = (taskId: string) =>
   apiFetch<{ fields: TaskField[] }>(`/staff/tasks/${taskId}/fields`);
@@ -738,13 +781,17 @@ export const saveTaskFields = (taskId: string, fields: StaffTaskFieldInput[]) =>
 
 /** One stored answer. The label and kind are SNAPSHOTTED at submit time, so a
  *  question renamed afterwards never relabels evidence already reviewed. */
-export type ProofAnswer = { fieldId: string; label: string; kind: TaskFieldKind; value: string };
+export type ProofAnswer = {
+  fieldId: string; label: string; kind: TaskFieldKind; value: string;
+  validation?: "evm" | "tron" | "solana" | "generic";
+};
 export type TaskProof = {
   id: string; task_id: string; user_id: string; proof_text: string; status: string;
   review_note: string | null; created_at: string; reviewed_at: string | null;
   user_email: string; user_handle: string | null; user_country: string | null;
   user_joined: string | null; reviewer_email: string | null;
-  task_title: string; task_points: number; proof_label: string | null; category: string | null;
+  task_title: string; task_points: number; task_usdt_micro: number;
+  task_logo_asset_id: string | null; proof_label: string | null; category: string | null;
   /** Empty for tasks with no configured fields — those fall back to proof_text,
    *  which every row still carries. */
   answers: ProofAnswer[];
@@ -764,12 +811,12 @@ export const fetchTaskProofs = (status = "pending", taskId = "", q = "") =>
     `/staff/task-proofs?status=${encodeURIComponent(status)}`
     + `&taskId=${encodeURIComponent(taskId)}&q=${encodeURIComponent(q)}`);
 export const decideTaskProof = (id: string, action: "approve" | "reject", note?: string) =>
-  apiFetch<{ ok: boolean; error?: string; credited?: number; status?: string }>(
+  apiFetch<{ ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number; status?: string }>(
     `/staff/task-proofs/${id}/decision`, { method: "POST", body: JSON.stringify({ action, note }) });
 export const decideTaskProofsBulk = (ids: string[], action: "approve" | "reject", note?: string) =>
   apiFetch<{
-    ok: boolean; done: number; failed: number; creditedPoints: number;
-    results: { id: string; ok: boolean; error?: string; credited?: number }[];
+    ok: boolean; done: number; failed: number; creditedPoints: number; creditedUsdtMicro: number;
+    results: { id: string; ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number }[];
   }>("/staff/task-proofs/bulk", { method: "POST", body: JSON.stringify({ ids, action, note }) });
 
 // ---- Manager: KPI dashboard ----------------------------------------------

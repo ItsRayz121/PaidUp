@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
-  postLedger, logAudit, getSetting, setSetting,
+  postLedger, postEarnedUsdt, logAudit, getSetting, setSetting,
 } from "../db.ts";
 import { config } from "../config.ts";
 import { requirePermission, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
@@ -106,7 +106,11 @@ export async function staffRoutes(app: FastifyInstance) {
         // and the platform pays the fee it just charged, on every withdrawal.
         // The refund queue already states its net for exactly this reason.
         feePoints: Number(r.fee_points ?? 0),
-        netUsdt: pointsToUsdt(Number(r.amount) - Number(r.fee_points ?? 0)),
+        sourceKind: r.source_kind ?? "points",
+        earnedUsdtMicro: Number(r.earned_usdt_micro ?? 0),
+        netUsdt: r.source_kind === "earned_usdt"
+          ? ((Math.max(0, Number(r.earned_usdt_micro) - Math.round(Number(r.fee_points ?? 0) * 1_000_000 / config.pointsPerUsdt))) / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+          : pointsToUsdt(Number(r.amount) - Number(r.fee_points ?? 0)),
         chain: r.payout_rail, address: r.payout_address ?? null,
         // Did the user PROVE this exact address is theirs, by signing for it
         // with the wallet? Snapshotted at request time (see routes/withdrawals
@@ -152,7 +156,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const notify: { job: { userId: string; note: Parameters<typeof sendPushToUser>[1] } | null } = { job: null };
 
     const outcome = await sql.tx(async (t) => {
-      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string; fee_points: number }>(
+      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string; fee_points: number; source_kind: "points" | "earned_usdt"; earned_usdt_micro: string | number }>(
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
       if (!w) throw { statusCode: 404, message: "Request not found." };
@@ -190,7 +194,10 @@ export async function staffRoutes(app: FastifyInstance) {
       if (action === "reject") {
         // Return the held points to the user (compensating credit — the ledger
         // stays append-only; we never delete the original debit).
-        await postLedger({
+        if (w.source_kind === "earned_usdt") {
+          await postEarnedUsdt({ userId: w.user_id, micro: Number(w.earned_usdt_micro), direction: "credit",
+            sourceType: "withdrawal_return", sourceRefId: id, note: "Withdrawal not approved — task USDT returned" }, t);
+        } else await postLedger({
           userId: w.user_id, points: w.amount, direction: "credit",
           sourceType: "admin_adjustment", sourceRefId: id,
           note: "Withdrawal not approved — points returned",
@@ -201,7 +208,9 @@ export async function staffRoutes(app: FastifyInstance) {
           userId: w.user_id,
           note: {
             title: "About your withdrawal",
-            body: "We could not send this one. Your points are back in your wallet.",
+            body: w.source_kind === "earned_usdt"
+              ? "We could not send this one. Your task USDT is back in your wallet."
+              : "We could not send this one. Your points are back in your wallet.",
             url: "/wallet",
           },
         };
@@ -218,7 +227,11 @@ export async function staffRoutes(app: FastifyInstance) {
       // The USDT amount is on the NET (amount minus the fee snapshotted at
       // request time), derived from one conversion rule.
       const net = Math.max(0, w.amount - (w.fee_points ?? 0));
-      const usdt = pointsToUsdt(net);
+      const earnedFeeMicro = Math.round((w.fee_points ?? 0) * 1_000_000 / config.pointsPerUsdt);
+      const netEarnedMicro = Math.max(0, Number(w.earned_usdt_micro ?? 0) - earnedFeeMicro);
+      const usdt = w.source_kind === "earned_usdt"
+        ? (netEarnedMicro / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+        : pointsToUsdt(net);
 
       // Only in onchain mode — payoutMode is the founder's manual/automatic
       // switch, and relayAvailable() alone does NOT respect it (it only
@@ -231,7 +244,7 @@ export async function staffRoutes(app: FastifyInstance) {
         // operation and not a pasted hash.
         await createRelayJob("withdrawal", w.id, {
           chain: "bep20", userId: w.user_id, toAddress: w.payout_address,
-          amountMicro: Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+          amountMicro: w.source_kind === "earned_usdt" ? netEarnedMicro : Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
         }, t);
         const s = stampSql("sending");
         await t.run(s.text, ...s.vals);

@@ -11,7 +11,7 @@
 // It is only ever called from something that has ALREADY verified the completion
 // — a signed network postback, or a staff member approving a proof (a real human
 // decision, audit-logged, never the user's own click).
-import { sql, now, newId, postLedger } from "./db.ts";
+import { sql, now, newId, postLedger, postEarnedUsdt } from "./db.ts";
 import { config } from "./config.ts";
 import {
   lockCampaign, campaignSpend, overBudget, markExhausted,
@@ -40,6 +40,9 @@ export type CreditRequest = {
   externalId: string;
   taskId?: string | null;
   points: number;
+  /** Direct task reward in micro-USDT, kept separate from deposited USDT. */
+  usdtMicro?: number;
+  rewardType?: "points" | "usdt" | "both";
   offerType: string;
   /** Stored on the completion so an Agent can resolve a dispute later. */
   payload: unknown;
@@ -68,8 +71,8 @@ export type CreditOutcome =
   // The campaign has paid out everything it was bought for (taskBudget.ts).
   // A refusal, not a deferral: the campaign is now paused and this completion
   // will not become creditable by waiting.
-  | { status: "budget_exhausted"; reason: "conversions" | "points"; used: number; cap: number }
-  | { status: "credited"; completionId: string; points: number };
+  | { status: "budget_exhausted"; reason: "conversions" | "points" | "usdt"; used: number; cap: number }
+  | { status: "credited"; completionId: string; points: number; usdtMicro: number };
 
 // A credited task boosts the user's mining hashrate for a while. Accrue first so
 // the seconds already mined this session are paid at the OLD rate — the boost
@@ -83,6 +86,8 @@ async function grantTaskBoost(userId: string, completionId: string): Promise<voi
 
 export async function creditCompletion(req: CreditRequest, log: Logger): Promise<CreditOutcome> {
   const { userId, network, externalId, taskId, points, offerType, payload, net } = req;
+  const usdtMicro = Math.max(0, Math.trunc(req.usdtMicro ?? 0));
+  const rewardType = req.rewardType ?? (usdtMicro > 0 ? (points > 0 ? "both" : "usdt") : "points");
 
   // ---- Idempotency — already processed this completion? Don't re-credit.
   const dup = await sql.get<{ status: string }>(
@@ -155,10 +160,10 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     if (taskId) {
       await lockCampaign(t, taskId);
       const budget = await t.get<BudgetRow>(
-        "SELECT budget_conversions, budget_points FROM tasks WHERE id = ?", taskId,
+        "SELECT budget_conversions, budget_points, budget_usdt_micro FROM tasks WHERE id = ?", taskId,
       );
       if (budget) {
-        const v = overBudget(budget, await campaignSpend(t, taskId), points);
+        const v = overBudget(budget, await campaignSpend(t, taskId), points, usdtMicro);
         if (!v.ok) {
           // Auto-pause: the whole point of a budget. It stops being offered and
           // stops crediting without anyone having to notice a number climbing.
@@ -180,16 +185,25 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     }
 
     await t.run(
-      `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at, verified_at)
-       VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?)`,
-      completionId, userId, taskId ?? null, network, externalId, points, offerType,
+      `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, usdt_micro,
+                                    reward_type, offer_type, postback_payload, created_at, verified_at)
+       VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?,?,?)`,
+      completionId, userId, taskId ?? null, network, externalId, points, usdtMicro, rewardType, offerType,
       JSON.stringify(payload), now(), now(),
     );
 
-    await postLedger({
-      userId, points, direction: "credit",
-      sourceType: "task_completion", sourceRefId: completionId, note: "Task reward",
-    }, t);
+    if (points > 0) {
+      await postLedger({
+        userId, points, direction: "credit",
+        sourceType: "task_completion", sourceRefId: completionId, note: "Task reward",
+      }, t);
+    }
+    if (usdtMicro > 0) {
+      await postEarnedUsdt({
+        userId, micro: usdtMicro, direction: "credit",
+        sourceType: "task_reward", sourceRefId: completionId, note: "Task reward",
+      }, t);
+    }
 
     // Referral commission (2-level): the inviter (L1) and the inviter's inviter
     // (L2) each earn a share of this user's task points. Shares are the network's
@@ -318,5 +332,5 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     log.error({ err, userId, completionId }, "Failed to grant mining boost for a credited task");
   }
 
-  return { status: "credited", completionId, points };
+  return { status: "credited", completionId, points, usdtMicro };
 }

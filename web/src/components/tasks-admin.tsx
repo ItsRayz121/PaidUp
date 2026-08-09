@@ -15,29 +15,41 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, fetchTaskPostback,
-  fetchTaskFields, saveTaskFields,
+  fetchTaskFields, saveTaskFields, uploadTaskLogo, updateTaskLifecycle, taskAssetUrl,
   TASK_ICON_CHOICES, TASK_CATEGORY_CHOICES, TASK_CATEGORY_LABELS,
   type CustomTask, type CustomTaskInput, type StaffTaskFieldInput, type TaskFieldKind,
 } from "@/lib/api";
-import { formatPoints, timeAgo } from "@/lib/format";
+import { formatPoints, formatUsdtMicro, timeAgo } from "@/lib/format";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
 
 const empty: CustomTaskInput = {
-  title: "", points: 100, verifyMode: "proof",
-  instructions: "", proofLabel: "", proofRequired: true,
-  actionUrl: "", icon: "", minutes: 1, country: "Pakistan", status: "active",
+  title: "", points: 100, rewardType: "points", rewardUsdtMicro: 0, verifyMode: "proof",
+  instructions: "", proofLabel: "", proofHeading: "Submit your proof", proofHelp: "", proofRequired: true,
+  actionUrl: "", buttonLabel: "Open task", icon: "", logoAssetId: null,
+  minutes: 1, country: "Pakistan", status: "draft", startsAt: null, endsAt: null,
+  featured: false, priority: 0,
   // null = no cap. A new campaign is uncapped unless somebody says otherwise —
   // the same default every existing task row has, so adding the feature changed
   // nothing about what is already running.
-  budgetConversions: null, budgetPoints: null, revenuePerConversionMicro: 0,
+  budgetConversions: null, budgetPoints: null, budgetUsdtMicro: null, revenuePerConversionMicro: 0,
   // Uncategorised, offered everywhere, no targeting — the state every task row
   // that predates Stage 7 is in, so a new task behaves like the existing ones
   // until someone deliberately narrows it.
   category: "", countries: ["ALL"],
   targetMinAccountDays: null, targetMaxAccountDays: null, targetMinCompleted: null,
 };
+
+function toLocalInput(value?: string | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return "";
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+const fromLocalInput = (value: string): string | null => value ? new Date(value).toISOString() : null;
 
 export function TasksPanel() {
   const tasks = useApi(fetchCustomTasks, []);
@@ -59,18 +71,24 @@ export function TasksPanel() {
   function startEdit(t: CustomTask) {
     setEditId(t.id);
     setForm({
-      title: t.title, points: t.points, verifyMode: t.verify_mode,
+      title: t.title, points: t.points, rewardType: t.reward_type,
+      rewardUsdtMicro: Number(t.reward_usdt_micro), verifyMode: t.verify_mode,
       instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
+      proofHeading: t.proof_heading ?? "Submit your proof", proofHelp: t.proof_help ?? "",
       proofRequired: t.proof_required !== 0,
-      actionUrl: t.action_url ?? "", icon: t.icon ?? "", minutes: t.minutes, country: t.country,
+      actionUrl: t.action_url ?? "", buttonLabel: t.button_label ?? "Open task",
+      icon: t.icon ?? "", logoAssetId: t.logo_asset_id,
+      minutes: t.minutes, country: t.country, startsAt: t.starts_at, endsAt: t.ends_at,
+      featured: t.featured !== 0, priority: t.priority,
       // ⚠️ AN EXHAUSTED CAMPAIGN EDITS AS 'active'. `status` on the input is the
       // two states an Admin owns, and sending 'exhausted' back would be the
       // panel asserting a budget verdict it does not compute. Saving a raised
       // budget reopens it server-side; saving without one exhausts it again on
       // the next completion, which is correct either way.
-      status: t.status === "disabled" ? "disabled" : "active",
+      status: t.status === "exhausted" ? "active" : t.status as CustomTaskInput["status"],
       budgetConversions: t.budget_conversions,
       budgetPoints: t.budget_points,
+      budgetUsdtMicro: t.budget_usdt_micro,
       revenuePerConversionMicro: t.revenue_per_conversion_micro,
       category: t.category ?? "",
       countries: t.countries.length > 0 ? t.countries : ["ALL"],
@@ -80,9 +98,9 @@ export function TasksPanel() {
     });
   }
 
-  async function toggle(t: CustomTask) {
+  async function lifecycle(t: CustomTask, action: "pause" | "resume" | "end") {
     try {
-      await updateCustomTask(t.id, { status: t.status === "active" ? "disabled" : "active" });
+      await updateTaskLifecycle(t.id, action);
       tasks.reload();
     } catch (e) { setMsg((e as Error).message); }
   }
@@ -121,7 +139,8 @@ export function TasksPanel() {
         ) : (
           <div className="space-y-2">
             {tasks.data!.tasks.map((t) => (
-              <TaskCard key={t.id} t={t} onEdit={() => startEdit(t)} onToggle={() => toggle(t)} />
+              <TaskCard key={t.id} t={t} onEdit={() => startEdit(t)}
+                onLifecycle={(action) => lifecycle(t, action)} />
             ))}
           </div>
         )}
@@ -136,6 +155,27 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
   const set = <K extends keyof CustomTaskInput>(k: K, v: CustomTaskInput[K]) => onChange({ ...value, [k]: v });
   const L = "block text-[11px] font-semibold uppercase text-muted";
   const I = "mt-1 w-full rounded-md border border-line bg-card px-2 py-1.5 text-sm outline-none";
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+
+  async function chooseLogo(file?: File) {
+    if (!file) return;
+    setLogoError(null);
+    if (file.size > 524_288) { setLogoError("Logo must be 512 KB or smaller."); return; }
+    setLogoBusy(true);
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Could not read that image."));
+        reader.readAsDataURL(file);
+      });
+      const uploaded = await uploadTaskLogo(data);
+      if (!uploaded.ok || !uploaded.id) throw new Error(uploaded.error ?? "Could not upload the logo.");
+      set("logoAssetId", uploaded.id);
+    } catch (e) { setLogoError((e as Error).message); }
+    finally { setLogoBusy(false); }
+  }
 
   return (
     <div className="mb-3 rounded-lg border border-brand/30 bg-brand-tint/30 p-3">
@@ -143,9 +183,33 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
       <div className="mt-2 grid gap-3 sm:grid-cols-2">
         <label className="sm:col-span-2"><span className={L}>Title (what the user sees)</span>
           <input className={I} value={value.title} onChange={(e) => set("title", e.target.value)} /></label>
-        <label><span className={L}>Points</span>
-          <input type="number" className={I} value={value.points}
-            onChange={(e) => set("points", Number(e.target.value))} /></label>
+        <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
+          <p className="text-[11px] font-semibold uppercase text-muted">Reward</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label><span className={L}>Reward type</span>
+              <select className={I} value={value.rewardType} onChange={(e) => {
+                const kind = e.target.value as CustomTaskInput["rewardType"];
+                onChange({ ...value, rewardType: kind,
+                  points: kind === "usdt" ? 0 : Math.max(1, value.points),
+                  rewardUsdtMicro: kind === "points" ? 0 : Math.max(1, value.rewardUsdtMicro) });
+              }}>
+                <option value="points">Points only</option><option value="usdt">USDT only</option>
+                <option value="both">Points + USDT</option>
+              </select></label>
+            {value.rewardType !== "usdt" && <label><span className={L}>Points</span>
+              <input type="number" min={1} className={I} value={value.points}
+                onChange={(e) => set("points", Number(e.target.value))} /></label>}
+            {value.rewardType !== "points" && <label><span className={L}>USDT</span>
+              <input type="number" min="0.000001" step="0.000001" className={I}
+                value={(value.rewardUsdtMicro / 1_000_000).toString()}
+                onChange={(e) => set("rewardUsdtMicro", Math.round(Number(e.target.value) * 1_000_000))} /></label>}
+          </div>
+          <p className="mt-2 text-xs font-semibold text-brand-ink">
+            User receives {value.points > 0 ? `${formatPoints(value.points)} points` : ""}
+            {value.points > 0 && value.rewardUsdtMicro > 0 ? " + " : ""}
+            {value.rewardUsdtMicro > 0 ? formatUsdtMicro(value.rewardUsdtMicro) : ""}
+          </p>
+        </div>
         <label><span className={L}>How it&rsquo;s checked</span>
           <select className={I} value={value.verifyMode}
             onChange={(e) => set("verifyMode", e.target.value as "proof" | "postback")}>
@@ -161,13 +225,31 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
         <label className="sm:col-span-2"><span className={L}>Link / button URL (optional)</span>
           <input className={I} placeholder="https://…" value={value.actionUrl}
             onChange={(e) => set("actionUrl", e.target.value)} /></label>
-        <label><span className={L}>Logo on the card</span>
-          <select className={I} value={value.icon ?? ""}
-            onChange={(e) => set("icon", e.target.value)}>
-            {TASK_ICON_CHOICES.map((c) => (
-              <option key={c} value={c}>{c === "" ? "Default (by task type)" : c}</option>
-            ))}
-          </select></label>
+        <label><span className={L}>Button label</span>
+          <input className={I} maxLength={40} value={value.buttonLabel ?? ""}
+            onChange={(e) => set("buttonLabel", e.target.value)} /></label>
+        <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
+          <p className={L}>Task logo</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            {value.logoAssetId && <img src={taskAssetUrl(value.logoAssetId)} alt="Task logo preview"
+              className="h-14 w-14 rounded-xl border border-line object-cover" />}
+            <label className="cursor-pointer rounded-md bg-brand px-3 py-2 text-xs font-semibold text-white">
+              {logoBusy ? "Uploading…" : "Upload PNG, JPEG or WebP"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
+                disabled={logoBusy} onChange={(e) => chooseLogo(e.target.files?.[0])} />
+            </label>
+            {value.logoAssetId && <button type="button" onClick={() => set("logoAssetId", null)}
+              className="rounded-md bg-brand-tint px-3 py-2 text-xs font-semibold text-brand">Remove upload</button>}
+          </div>
+          {logoError && <p className="mt-2 text-xs text-danger">{logoError}</p>}
+          <label className="mt-3 block"><span className={L}>Built-in fallback</span>
+            <select className={I} value={value.icon ?? ""} onChange={(e) => set("icon", e.target.value)}>
+              {TASK_ICON_CHOICES.map((c) => (
+                <option key={c} value={c}>{c === "" ? "Default (by task type)" : c}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         {/* ASKING FOR PROOF IS OPTIONAL (founder, 2026-08-01). "Send us your
             username" is worth typing; "join our WhatsApp channel" is not, and
             demanding a sentence there loses people at the last step.
@@ -193,9 +275,18 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
           </label>
         )}
         {value.verifyMode === "proof" && value.proofRequired !== false && (
-          <label className="sm:col-span-2"><span className={L}>Proof label — what to ask them for (optional)</span>
-            <input className={I} placeholder="e.g. Your username" value={value.proofLabel}
-              onChange={(e) => set("proofLabel", e.target.value)} /></label>
+          <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
+            <p className={L}>Proof collection</p>
+            <label className="mt-2 block"><span className={L}>Section heading</span>
+              <input className={I} placeholder="Submit your proof" value={value.proofHeading ?? ""}
+                onChange={(e) => set("proofHeading", e.target.value)} /></label>
+            <label className="mt-2 block"><span className={L}>Help text</span>
+              <textarea className={I} rows={2} value={value.proofHelp ?? ""}
+                onChange={(e) => set("proofHelp", e.target.value)} /></label>
+            <label className="mt-2 block"><span className={L}>Fallback single-question label</span>
+              <input className={I} placeholder="e.g. Your username" value={value.proofLabel}
+                onChange={(e) => set("proofLabel", e.target.value)} /></label>
+          </div>
         )}
         <label><span className={L}>About how many minutes</span>
           <input type="number" className={I} value={value.minutes}
@@ -207,6 +298,29 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
               <option key={c} value={c}>{c === "" ? "None" : TASK_CATEGORY_LABELS[c] ?? c}</option>
             ))}
           </select></label>
+
+        <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
+          <p className={L}>Schedule and status</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label><span className={L}>Initial status</span><select className={I} value={value.status}
+              onChange={(e) => set("status", e.target.value as CustomTaskInput["status"])}>
+              <option value="draft">Draft</option><option value="scheduled">Scheduled</option>
+              <option value="active">Active</option><option value="paused">Paused</option>
+              <option value="ended">Ended</option>
+            </select></label>
+            <label><span className={L}>Starts at</span><input type="datetime-local" className={I}
+              value={toLocalInput(value.startsAt)} onChange={(e) => set("startsAt", fromLocalInput(e.target.value))} /></label>
+            <label><span className={L}>Ends at</span><input type="datetime-local" className={I}
+              value={toLocalInput(value.endsAt)} onChange={(e) => set("endsAt", fromLocalInput(e.target.value))} /></label>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={value.featured ?? false}
+              onChange={(e) => set("featured", e.target.checked)} /> Featured</label>
+            <label className="flex items-center gap-2 text-xs">Priority
+              <input type="number" className="w-24 rounded-md border border-line px-2 py-1" value={value.priority ?? 0}
+                onChange={(e) => set("priority", Number(e.target.value))} /></label>
+          </div>
+        </div>
 
         {/* ---- Targeting (Stage 7) ----------------------------------------
             ⚠️ EVERY RULE HERE IS ENFORCED ON THE SUBMIT PATH TOO, not only on
@@ -253,7 +367,7 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
             When a cap is reached the campaign pauses itself — it stops showing to users and
             stops paying out. Leave a box empty for no limit.
           </p>
-          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <div className="mt-2 grid gap-3 sm:grid-cols-4">
             <label><span className={L}>Max conversions</span>
               <input type="number" min={1} className={I} placeholder="no limit"
                 value={value.budgetConversions ?? ""}
@@ -264,6 +378,11 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
                 value={value.budgetPoints ?? ""}
                 onChange={(e) => set("budgetPoints",
                   e.target.value === "" ? null : Number(e.target.value))} /></label>
+            <label><span className={L}>Max USDT to pay</span>
+              <input type="number" min="0.000001" step="0.000001" className={I} placeholder="no limit"
+                value={value.budgetUsdtMicro ? value.budgetUsdtMicro / 1e6 : ""}
+                onChange={(e) => set("budgetUsdtMicro",
+                  e.target.value === "" ? null : Math.round(Number(e.target.value) * 1e6))} /></label>
             {/* Entered in dollars, stored in micro-USD — an integer, so no
                 campaign's margin is ever computed from a float. */}
             <label><span className={L}>They pay us / conversion ($)</span>
@@ -291,7 +410,7 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
 // how much of its budget is gone. Every figure comes from the API already
 // computed (api/src/taskBudget.ts) — this component formats, it never derives.
 function CampaignBudget({ t }: { t: CustomTask }) {
-  const capped = t.budget_conversions !== null || t.budget_points !== null;
+  const capped = t.budget_conversions !== null || t.budget_points !== null || t.budget_usdt_micro !== null;
   const hasRevenue = t.revenue_per_conversion_micro > 0;
   if (!capped && !hasRevenue && t.spentConversions === 0) return null;
 
@@ -317,6 +436,10 @@ function CampaignBudget({ t }: { t: CustomTask }) {
             <span className="num font-semibold text-brand-ink">{formatPoints(t.spentPoints)}</span>
             {" / "}<span className="num">{formatPoints(t.budget_points)}</span> pts
           </span>
+        )}
+        {t.budget_usdt_micro !== null && (
+          <span><span className="num font-semibold text-brand-ink">{formatUsdtMicro(t.spentUsdtMicro)}</span>
+            {" / "}<span className="num">{formatUsdtMicro(t.budget_usdt_micro)}</span></span>
         )}
         {hasRevenue && (
           <>
@@ -362,7 +485,10 @@ function CampaignBudget({ t }: { t: CustomTask }) {
   );
 }
 
-function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; onToggle: () => void }) {
+function TaskCard({ t, onEdit, onLifecycle }: {
+  t: CustomTask; onEdit: () => void;
+  onLifecycle: (action: "pause" | "resume" | "end") => void;
+}) {
   const [pb, setPb] = useState<{ url: string; secret: string; signature: string } | null>(null);
   const [pbErr, setPbErr] = useState<string | null>(null);
 
@@ -379,10 +505,17 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
   return (
     <div className="rounded-lg border border-line bg-card p-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="flex min-w-0 gap-2.5">
+          {t.logo_asset_id && <img src={taskAssetUrl(t.logo_asset_id)} alt=""
+            className="h-10 w-10 shrink-0 rounded-lg border border-line object-cover" />}
+          <div className="min-w-0">
           <p className="font-semibold text-brand-ink">{t.title}</p>
           <p className="mt-0.5 text-xs text-muted">
-            <span className="num font-semibold text-brand">{formatPoints(t.points)} pts</span> ·{" "}
+            <span className="num font-semibold text-brand">
+              {t.points > 0 ? `${formatPoints(t.points)} pts` : ""}
+              {t.points > 0 && Number(t.reward_usdt_micro) > 0 ? " + " : ""}
+              {Number(t.reward_usdt_micro) > 0 ? formatUsdtMicro(Number(t.reward_usdt_micro)) : ""}
+            </span> ·{" "}
             {t.verify_mode === "proof"
               ? t.fieldCount > 0 ? `staff approve · ${t.fieldCount} question(s)`
                 : t.proof_required === 0 ? "staff approve (no proof asked)" : "staff approve proof"
@@ -391,6 +524,8 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
             {t.credited_count} credited
             {t.pending_proofs > 0 && <span className="text-pending"> · {t.pending_proofs} proof(s) waiting</span>}
           </p>
+          {t.ends_at && <p className="mt-0.5 text-[11px] text-muted">Ends {new Date(t.ends_at).toLocaleString()}</p>}
+          </div>
         </div>
         <div className="flex shrink-0 gap-1.5">
           <button onClick={onEdit} className="rounded bg-brand-tint px-2 py-1 text-[10px] font-semibold text-brand">Edit</button>
@@ -398,16 +533,24 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
               state an Admin sets, and clicking it would read as "un-exhaust
               this" — which is not what it would do. Raising the budget in Edit
               is what reopens the campaign. */}
-          {t.status === "exhausted" ? (
+          {t.effectiveStatus === "exhausted" ? (
             <span className="rounded bg-pending-tint px-2 py-1 text-[10px] font-semibold text-pending">
               budget used up
             </span>
           ) : (
-            <button onClick={onToggle}
-              className={`rounded px-2 py-1 text-[10px] font-semibold ${
-                t.status === "active" ? "bg-success-tint text-success" : "bg-danger-tint text-danger"}`}>
-              {t.status}
-            </button>
+            <>
+              <span className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                t.effectiveStatus === "active" ? "bg-success-tint text-success" : "bg-pending-tint text-pending"}`}>
+                {t.effectiveStatus}
+              </span>
+              {t.effectiveStatus === "active" ? <button onClick={() => onLifecycle("pause")}
+                className="rounded bg-pending-tint px-2 py-1 text-[10px] font-semibold text-pending">Pause</button>
+                : t.effectiveStatus !== "ended" && <button onClick={() => onLifecycle("resume")}
+                  className="rounded bg-success-tint px-2 py-1 text-[10px] font-semibold text-success">Resume</button>}
+              {t.effectiveStatus !== "ended" && <button onClick={() => {
+                if (window.confirm("End this task? Users will no longer be able to start or submit it.")) onLifecycle("end");
+              }} className="rounded bg-danger-tint px-2 py-1 text-[10px] font-semibold text-danger">End</button>}
+            </>
           )}
         </div>
       </div>
@@ -502,6 +645,7 @@ function TargetingSummary({ t }: { t: CustomTask }) {
 const KIND_LABELS: Record<TaskFieldKind, string> = {
   text: "Short text", longtext: "Long text", number: "Number",
   email: "Email", url: "Link", phone: "Phone", choice: "Pick one",
+  username: "Username", crypto_address: "Crypto wallet address",
 };
 
 function FieldEditor({ task }: { task: CustomTask }) {
@@ -517,7 +661,7 @@ function FieldEditor({ task }: { task: CustomTask }) {
       setFields(r.fields.map((f) => ({
         id: f.id, label: f.label, kind: f.kind, required: f.required,
         placeholder: f.placeholder ?? "", help: f.help ?? "",
-        options: (f.options ?? []).join("\n"), maxLen: null,
+        options: (f.options ?? []).join("\n"), validation: f.validation, maxLen: null,
       })));
     } catch (e) { setMsg((e as Error).message); }
   }
@@ -535,7 +679,7 @@ function FieldEditor({ task }: { task: CustomTask }) {
         setFields(r.fields.map((f) => ({
           id: f.id, label: f.label, kind: f.kind, required: f.required,
           placeholder: f.placeholder ?? "", help: f.help ?? "",
-          options: (f.options ?? []).join("\n"), maxLen: null,
+          options: (f.options ?? []).join("\n"), validation: f.validation, maxLen: null,
         })));
       }
     } catch (e) { setMsg((e as Error).message); }
@@ -610,6 +754,15 @@ function FieldEditor({ task }: { task: CustomTask }) {
                     <label className="sm:col-span-4"><span className={L}>Choices — one per line</span>
                       <textarea className={I} rows={3} value={f.options ?? ""}
                         onChange={(e) => upd(i, { options: e.target.value })} /></label>
+                  )}
+                  {f.kind === "crypto_address" && (
+                    <label className="sm:col-span-2"><span className={L}>Wallet network</span>
+                      <select className={I} value={f.validation ?? ""}
+                        onChange={(e) => upd(i, { validation: e.target.value as StaffTaskFieldInput["validation"] })}>
+                        <option value="">Choose network</option><option value="evm">BNB Smart Chain / Ethereum (EVM)</option>
+                        <option value="tron">TRON</option><option value="solana">Solana</option>
+                        <option value="generic">Generic (basic validation only)</option>
+                      </select></label>
                   )}
                 </div>
                 <div className="mt-1.5 flex gap-1.5">

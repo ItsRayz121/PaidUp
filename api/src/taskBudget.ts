@@ -33,11 +33,12 @@ export const EXHAUSTED = "exhausted";
 export type BudgetRow = {
   budget_conversions: number | null;
   budget_points: number | null;
+  budget_usdt_micro?: number | null;
 };
 
 export type BudgetVerdict =
   | { ok: true }
-  | { ok: false; reason: "conversions" | "points"; used: number; cap: number };
+  | { ok: false; reason: "conversions" | "points" | "usdt"; used: number; cap: number };
 
 /**
  * Serialize every budget decision for ONE campaign.
@@ -59,13 +60,14 @@ export function lockCampaign(t: Pick<TxApi, "run">, taskId: string) {
  */
 export async function campaignSpend(
   t: Pick<TxApi, "get">, taskId: string,
-): Promise<{ conversions: number; points: number }> {
-  const row = await t.get<{ n: number; pts: number }>(
-    `SELECT COUNT(*)::int AS n, COALESCE(SUM(points), 0)::int AS pts
+): Promise<{ conversions: number; points: number; usdtMicro: number }> {
+  const row = await t.get<{ n: number; pts: number; usdt: string | number }>(
+    `SELECT COUNT(*)::int AS n, COALESCE(SUM(points), 0)::int AS pts,
+            COALESCE(SUM(usdt_micro), 0) AS usdt
        FROM task_completions WHERE task_id = ? AND status = 'credited'`,
     taskId,
   );
-  return { conversions: row?.n ?? 0, points: row?.pts ?? 0 };
+  return { conversions: row?.n ?? 0, points: row?.pts ?? 0, usdtMicro: Number(row?.usdt ?? 0) };
 }
 
 /**
@@ -79,7 +81,8 @@ export async function campaignSpend(
  * exactly one more.
  */
 export function overBudget(
-  budget: BudgetRow, spend: { conversions: number; points: number }, points: number,
+  budget: BudgetRow, spend: { conversions: number; points: number; usdtMicro?: number },
+  points: number, usdtMicro = 0,
 ): BudgetVerdict {
   if (budget.budget_conversions !== null && budget.budget_conversions !== undefined
       && spend.conversions >= budget.budget_conversions) {
@@ -88,6 +91,10 @@ export function overBudget(
   if (budget.budget_points !== null && budget.budget_points !== undefined
       && spend.points + points > budget.budget_points) {
     return { ok: false, reason: "points", used: spend.points, cap: budget.budget_points };
+  }
+  if (budget.budget_usdt_micro !== null && budget.budget_usdt_micro !== undefined
+      && (spend.usdtMicro ?? 0) + usdtMicro > budget.budget_usdt_micro) {
+    return { ok: false, reason: "usdt", used: spend.usdtMicro ?? 0, cap: budget.budget_usdt_micro };
   }
   return { ok: true };
 }
@@ -121,6 +128,7 @@ export type CampaignMoney = {
   taskId: string;
   conversions: number;
   points: number;
+  usdtMicro: number;
   referralPoints: number;
   revenueMicro: number;
   /** Revenue minus everything paid out, in micro-USD. Negative = losing money. */
@@ -132,11 +140,12 @@ export async function campaignMoney(pointsPerUsdt: number): Promise<Map<string, 
   // completions triggered (they are joined by ledger source_ref_id = completion
   // id, which is how credit.ts writes them).
   const rows = await sql.all<{
-    task_id: string; n: number; pts: number; ref_pts: number; rev: string | number;
+    task_id: string; n: number; pts: number; usdt: string | number; ref_pts: number; rev: string | number;
   }>(
     `SELECT c.task_id,
             COUNT(*)::int AS n,
             COALESCE(SUM(c.points), 0)::int AS pts,
+            COALESCE(SUM(c.usdt_micro), 0) AS usdt,
             COALESCE((
               SELECT SUM(l.amount) FROM ledger_entries l
                WHERE l.source_type = 'referral_bonus'
@@ -158,11 +167,13 @@ export async function campaignMoney(pointsPerUsdt: number): Promise<Map<string, 
     // Points -> micro-USD at the SAME rate a payout uses. Not a new rate: the
     // margin has to be in the money we actually pay in, or it is a number that
     // agrees with nothing else in the app.
-    const costMicro = Math.round(((r.pts + r.ref_pts) / pointsPerUsdt) * 1e6);
+    const directUsdtMicro = Number(r.usdt ?? 0);
+    const costMicro = Math.round(((r.pts + r.ref_pts) / pointsPerUsdt) * 1e6) + directUsdtMicro;
     out.set(r.task_id, {
       taskId: r.task_id,
       conversions: r.n,
       points: r.pts,
+      usdtMicro: directUsdtMicro,
       referralPoints: r.ref_pts,
       revenueMicro,
       marginMicro: revenueMicro - costMicro,

@@ -13,6 +13,7 @@ import {
 } from "@/components/icons";
 import {
   type LedgerEntry, type RoziEntry, type Withdrawal, type BnbWithdrawal, type UsdtTopup, type UsdtRefund,
+  type UsdtTaskReward,
 } from "@/lib/api";
 import { formatRozi, usdtFromMicro, pointsToRoziMicro, pointsToUsdt, formatBnbWei } from "@/lib/format";
 
@@ -70,9 +71,10 @@ export function unifyHistory(args: {
   topups: UsdtTopup[];
   refunds: UsdtRefund[];
   bnb: BnbWithdrawal[];
+  taskUsdt?: UsdtTaskReward[];
   t: (key: string, vars?: Record<string, string>) => string;
 }): Row[] {
-  const { ledger, rozi, withdrawals, topups, refunds, bnb, t } = args;
+  const { ledger, rozi, withdrawals, topups, refunds, bnb, taskUsdt = [], t } = args;
 
   const roziIcon: Record<string, IconComp> = {
     mining: MineIcon, rig_purchase: ChipIcon, transfer_in: ReceiveIcon,
@@ -171,6 +173,15 @@ export function unifyHistory(args: {
     };
   });
 
-  return [...points, ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows]
+  const taskUsdtRows: Row[] = taskUsdt.map((r) => {
+    const amountText = `+${usdtFromMicro(r.amountMicro).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")} USDT`;
+    return {
+      key: `tr:${r.id}`, label: r.label, at: r.at, token: "USDT" as const, kind: "reward" as const,
+      amountText, credit: true, status: "paid" as const, Icon: StarIcon,
+      detail: { amountText, statusText: "Completed" },
+    };
+  });
+
+  return [...points, ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows, ...taskUsdtRows]
     .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
 }

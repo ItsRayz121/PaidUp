@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, PointsPill, SponsoredTag, Button } from "./ui";
+import { Card, RewardPill, SponsoredTag, Button } from "./ui";
 import { BottomSheet, useDialogBehaviour } from "./BottomSheet";
 import {
   offerIcon, taskIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon, LockIcon,
 } from "./icons";
-import { formatPointsAsRozi } from "@/lib/format";
-import { type Task } from "@/lib/api";
+import { formatPoints, formatUsdtMicro } from "@/lib/format";
+import { startTask, taskAssetUrl, type Task } from "@/lib/api";
 
 // Renders the task list + the two interactive steps that build trust:
 //   1. Sponsored disclosure sheet (guardrail #3) shown BEFORE a task starts.
@@ -39,7 +39,8 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
           <li key={task.id}>
             <Card className={`p-3.5 ${task.lockedReason ? "opacity-70" : ""}`}>
               {task.source === "custom" ? (
-                <Link href={`/tasks/${task.id}`} className="flex w-full items-center gap-3 text-left">
+                <Link href={`/tasks/${task.id}`} onClick={() => { void startTask(task.id); }}
+                  className="flex w-full items-center gap-3 text-left">
                   <TaskRowBody task={task} />
                 </Link>
               ) : task.lockedReason ? (
@@ -62,6 +63,17 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
                   {task.lockedReason}
                 </p>
               )}
+              {task.campaignStatus === "paused" && (
+                <p className="mt-2.5 flex gap-2 rounded-lg bg-pending-tint/60 p-2 text-xs text-pending">
+                  <ClockIcon size={14} className="mt-0.5 shrink-0" />
+                  This task is temporarily paused. Your progress is saved.
+                </p>
+              )}
+              {task.campaignStatus === "ended" && (
+                <p className="mt-2.5 flex gap-2 rounded-lg bg-brand-tint p-2 text-xs text-muted">
+                  <XIcon size={14} className="mt-0.5 shrink-0" /> This task has ended.
+                </p>
+              )}
               <TaskCardFooter task={task} />
             </Card>
           </li>
@@ -72,8 +84,9 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
         <DisclosureSheet
           task={openTask}
           onClose={() => setOpenTask(null)}
-          onStart={() => {
-            const t = openTask;
+           onStart={() => {
+             const t = openTask;
+             void startTask(t.id);
             setOpenTask(null);
             setStarted(t);
           }}
@@ -100,9 +113,11 @@ function TaskRowBody({ task }: { task: Task }) {
   const Icon = (task.icon && taskIcon[task.icon]) || offerIcon[task.type];
   return (
     <>
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-        <Icon size={22} />
-      </span>
+      {task.logoAssetId ? (
+        <img src={taskAssetUrl(task.logoAssetId)} alt="" className="h-11 w-11 shrink-0 rounded-xl border border-line object-cover" />
+      ) : (
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><Icon size={22} /></span>
+      )}
       <span className="min-w-0 flex-1">
         <span className="block font-semibold text-brand-ink leading-snug">
           {task.title}
@@ -113,7 +128,7 @@ function TaskRowBody({ task }: { task: Task }) {
         </span>
       </span>
       <span className="flex flex-col items-end gap-1.5">
-        <PointsPill points={task.points} />
+        <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
         {task.lockedReason ? <LockIcon size={16} className="text-pending" />
           : task.proofStatus ? <ProofBadge status={task.proofStatus} />
           : <ArrowRightIcon size={18} className="text-muted" />}
@@ -184,7 +199,7 @@ function DisclosureSheet({
         <h2 id="sheet-title" className="pe-10 text-lg font-bold text-brand-ink">{task.title}</h2>
 
         <div className="mt-3 flex items-center gap-2">
-          <PointsPill points={task.points} />
+          <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
           <span className="text-sm text-muted">for finishing this</span>
         </div>
 
@@ -199,7 +214,7 @@ function DisclosureSheet({
         <p className="mt-4 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
           This is a sponsored offer. Your reward comes from{" "}
           <span className="font-semibold text-brand-ink">{task.advertiser}</span>{" "}
-          through {task.network}. You get your ROZI after they confirm you finished.
+          through {task.network}. You get your reward after they confirm you finished.
         </p>
 
         <div className="mt-5 space-y-2.5">
@@ -237,7 +252,11 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
       <p className="animate-rise mt-6 text-lg font-bold text-white">Task started</p>
       <p className="animate-rise mt-2 flex items-center gap-2 text-white/90">
         <StarIcon size={20} className="text-accent" />
-        <span>You will get <span className="num font-bold">{formatPointsAsRozi(task.points)}</span></span>
+        <span>You will get <span className="num font-bold">
+          {task.points > 0 ? `${formatPoints(task.points)} points` : ""}
+          {task.points > 0 && (task.rewardUsdtMicro ?? 0) > 0 ? " + " : ""}
+          {(task.rewardUsdtMicro ?? 0) > 0 ? formatUsdtMicro(task.rewardUsdtMicro ?? 0) : ""}
+        </span></span>
       </p>
 
       <div className="animate-rise mt-6 w-full max-w-xs space-y-2.5 text-left">
@@ -247,7 +266,7 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
         </div>
         <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3 text-white/90">
           <ClockIcon size={18} className="shrink-0 text-accent" />
-          <span className="text-sm">We add your ROZI after the partner confirms. This can take a little time.</span>
+          <span className="text-sm">We add your reward after the partner confirms. This can take a little time.</span>
         </div>
       </div>
 
