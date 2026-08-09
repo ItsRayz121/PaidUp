@@ -10,6 +10,7 @@ import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 import { pointsToUsdt } from "../payout.ts";
 import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
 import { minWithdrawPointsNow } from "../settingsRuntime.ts";
+import { loadLeaderboard, maskName } from "../leaderboard.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -415,48 +416,6 @@ export async function appRoutes(app: FastifyInstance) {
   }));
 }
 
-// ---- Leaderboard data (cached) ---------------------------------------------
-// These two aggregates scan the whole ledger, and the leaderboard is a page
-// every user opens. Recomputing it per request is per-user cost for a board
-// that is identical for everyone — so the RAW rows are cached for a minute
-// (the personal isMe flag is applied per request, never cached). A stale
-// leaderboard is harmless; a ledger scan per view is not.
-type EarnerRow = { id: string; email: string; earned: number };
-type ReferrerRow = { id: string; email: string; ref_points: number; invites: number };
-const LEADERBOARD_TTL_MS = 60_000;
-let leaderboardCache: { at: number; earners: EarnerRow[]; referrers: ReferrerRow[] } | null = null;
-
-async function loadLeaderboard(): Promise<{ earners: EarnerRow[]; referrers: ReferrerRow[] }> {
-  if (leaderboardCache && Date.now() - leaderboardCache.at < LEADERBOARD_TTL_MS) {
-    return leaderboardCache;
-  }
-  const LIMIT = 20;
-  const earners = await sql.all<EarnerRow>(
-    `SELECT u.id, u.email,
-              COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                                 AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
-       FROM users u JOIN ledger_entries le ON le.user_id = u.id
-       WHERE u.email_verified = 1
-       GROUP BY u.id, u.email
-       HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                        AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
-       ORDER BY earned DESC, u.created_at ASC
-       LIMIT ${LIMIT}`,
-  );
-  const referrers = await sql.all<ReferrerRow>(
-    `SELECT u.id, u.email,
-              COALESCE(SUM(le.amount),0)::int AS ref_points,
-              (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
-       FROM users u JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
-       GROUP BY u.id, u.email
-       HAVING SUM(le.amount) > 0
-       ORDER BY ref_points DESC, u.created_at ASC
-       LIMIT ${LIMIT}`,
-  );
-  leaderboardCache = { at: Date.now(), earners, referrers };
-  return leaderboardCache;
-}
-
 // Display status for a ledger row. Withdrawals track their request; everything
 // else is a settled credit ("earned").
 function statusFor(source: string, withdrawalStatus: string | null): string {
@@ -485,10 +444,3 @@ function kindFor(source: string): string {
   return "task";
 }
 
-// Mask an email into a public leaderboard handle: first 2 chars of the local
-// part + dots (e.g. "fa•••"). Never exposes the full address or the domain.
-function maskName(email: string): string {
-  const local = (email.split("@")[0] || "user").trim();
-  if (local.length <= 2) return `${local[0] ?? "u"}•••`;
-  return `${local.slice(0, 2)}•••`;
-}

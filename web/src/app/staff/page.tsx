@@ -23,6 +23,7 @@ import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
+import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -45,7 +46,7 @@ const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "reje
 // Manager — and every new role would need this file edited before it could see
 // anything. Now a role's sections fall out of what it may do.
 type SectionId =
-  | "dashboard" | "money" | "users" | "tasks" | "mining" | "support"
+  | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "support"
   | "audit" | "settings" | "team";
 const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
@@ -65,6 +66,12 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // The read-only mining numbers belong on the Dashboard, which is where
   // `mining.view` is actually spent (GET /staff/mining/stats).
   { id: "mining", label: "Mining (ROZI)", needs: ["mining.manage", "machines.manage"] },
+  // Referral rates and the leaderboard sit together because they are one job:
+  // the board exists to make people invite friends, and the rates decide
+  // whether inviting is worth doing. This is the section the `marketing` role
+  // was created for — before it, that role held two permissions with nowhere to
+  // spend them, which is the same defect Finance had in stage 4.
+  { id: "growth", label: "Growth", needs: ["referrals.manage", "leaderboard.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
   { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage"] },
@@ -242,6 +249,13 @@ export default function StaffPage() {
                 <MiningPanel />
               </section>
             </Panel>
+          )}
+
+          {section === "growth" && (
+            <>
+              {may("referrals.manage") && <Panel title="Referrals"><ReferralPanel /></Panel>}
+              {may("leaderboard.manage") && <Panel title="Leaderboard"><LeaderboardPanel /></Panel>}
+            </>
           )}
 
           {section === "support" && may("support.view") && (

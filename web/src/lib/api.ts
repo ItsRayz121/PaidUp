@@ -1060,10 +1060,72 @@ export type AdminRig = {
   base_power: number; power_growth: number; max_level: number; sort: number; status: string;
   // Whole USDT, or null for "ROZI only" — which is every rig by default.
   base_cost_usdt: number | null;
+  // What this machine actually DID (brief part 38). Derived from user_rigs and
+  // the two ledgers' own rig_purchase rows — there is no stored counter.
+  owners: number; levelsSold: number; roziBurned: number; usdtSpent: number;
 };
 export const fetchAdminRigs = () => apiFetch<{ rigs: AdminRig[] }>("/staff/mining/rigs");
 export const updateAdminRig = (id: string, patch: Record<string, unknown>) =>
   apiFetch<{ ok: true }>(`/staff/mining/rigs/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// Points-priced boosters. Separate from the earner-facing `Booster` type above:
+// this one carries the sales figures and the on/off switch, which a user must
+// never see.
+export type AdminBooster = {
+  id: string; name: string; price_points: number; multiplier_pct: number;
+  hours: number; status: string; purchases: number; pointsSpent: number;
+};
+export const fetchAdminBoosters = () =>
+  apiFetch<{ boosters: AdminBooster[] }>("/staff/mining/boosters");
+export const createAdminBooster = (b: Record<string, unknown>) =>
+  apiFetch<{ ok: true; id: string }>("/staff/mining/boosters", { method: "POST", body: JSON.stringify(b) });
+export const updateAdminBooster = (id: string, patch: Record<string, unknown>) =>
+  apiFetch<{ ok: true }>(`/staff/mining/boosters/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- Growth: referrals + leaderboard (brief parts 41/42) --------------------
+export type ReferralNetwork = {
+  id: string; name: string; status: string;
+  commissionSplitPct: number; marginPct: number;
+  referralBonusPct: number; referralBonusPctL2: number;
+  referralFirstTaskBonus: number; referralBonusDays: number;
+  // margin − (L1 + L2). Negative means every referred task loses money.
+  headroomPct: number;
+};
+export type ReferralAdmin = {
+  enabled: boolean;
+  // What the invite screens PROMISE: the minimum across active networks.
+  advertised: { l1: number; l2: number; firstTaskBonus: number; windowDays: number };
+  // Which active networks are holding that minimum down.
+  pinning: string[];
+  networks: ReferralNetwork[];
+  totals: {
+    paidAll: number; paid30d: number; referredUsers: number;
+    activatedUsers: number; payingReferrers: number; activationPct: number;
+  };
+  topReferrers: {
+    id: string; email: string; status: string; points: number;
+    invites: number; activeInvites: number; openFlags: number;
+  }[];
+};
+export const fetchReferralAdmin = () => apiFetch<ReferralAdmin>("/staff/referrals");
+export const setReferralRatesForAll = (patch: Record<string, number>) =>
+  apiFetch<{ ok: true; updated: number }>("/staff/networks/referrals/all", {
+    method: "PATCH", body: JSON.stringify(patch),
+  });
+
+export type LeaderboardAdmin = {
+  enabled: boolean;
+  topEarners: { rank: number; id: string; email: string; points: number }[];
+  topReferrers: { rank: number; id: string; email: string; points: number; invites: number }[];
+  exclusions: { userId: string; email: string; reason: string; at: string }[];
+};
+export const fetchLeaderboardAdmin = () => apiFetch<LeaderboardAdmin>("/staff/leaderboard");
+export const excludeFromLeaderboard = (userId: string, reason: string) =>
+  apiFetch<{ ok: true }>("/staff/leaderboard/exclusions", {
+    method: "POST", body: JSON.stringify({ userId, reason }),
+  });
+export const unexcludeFromLeaderboard = (userId: string) =>
+  apiFetch<{ ok: true }>(`/staff/leaderboard/exclusions/${userId}`, { method: "DELETE" });
 
 // ---- USDT top-up review queue (staff) ---------------------------------------
 export type AdminTopup = {

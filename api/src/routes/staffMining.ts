@@ -279,16 +279,67 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   }));
 
   // ---- Rigs (CRUD) ---------------------------------------------------------
-  app.get("/staff/mining/rigs", staffGuard("machines.manage", async () => ({
-    rigs: (await sql.all<Record<string, unknown>>("SELECT * FROM rigs ORDER BY sort, base_cost"))
-      .map((r) => ({
-        ...r,
-        base_cost: Number(r.base_cost),
-        // Whole USDT for the panel (an Admin types "10", not "10000000"), null
-        // when this rig cannot be bought with money at all.
-        base_cost_usdt: r.base_cost_usdt == null ? null : usdtFromMicro(Number(r.base_cost_usdt)),
-      })),
-  })));
+  //
+  // ⚠️ EVERY ROW CARRIES WHAT IT ACTUALLY DID (brief part 38). A machine
+  // catalogue that shows only prices answers "what did I set?" and nothing
+  // about whether it worked. The rig tree is the app's ONLY permanent ROZI
+  // sink, so the question that matters is "how much ROZI has this burned" —
+  // and the honest answer to "should I reprice this?" is usually "nobody has
+  // bought one", which no amount of staring at cost_growth will tell you.
+  //
+  // All of it is DERIVED (analytics.ts's rule): owners come from user_rigs,
+  // burn comes from the ledger's own rig_purchase rows. There is no counter to
+  // drift out of step with what was really spent.
+  app.get("/staff/mining/rigs", staffGuard("machines.manage", async () => {
+    const rows = await sql.all<Record<string, unknown>>("SELECT * FROM rigs ORDER BY sort, base_cost");
+
+    // Ownership, per rig. `level > 0` because user_rigs can hold a level-0 row
+    // for a rig someone looked at but never bought, and counting those as
+    // owners would report a sink that never ran as a working one.
+    const owned = await sql.all<{ rig_id: string; owners: number; levels: number }>(
+      `SELECT rig_id, COUNT(*)::int AS owners, COALESCE(SUM(level),0)::int AS levels
+       FROM user_rigs WHERE level > 0 GROUP BY rig_id`,
+    );
+    // What was really spent on each. source_ref_id is the rig id on both
+    // ledgers (routes/mining.ts's buy handler writes it), so this is the actual
+    // burn, not the catalogue price multiplied by a guess at how many levels.
+    const burned = await sql.all<{ source_ref_id: string; micro: string }>(
+      `SELECT source_ref_id, COALESCE(SUM(amount),0) AS micro FROM rozi_ledger
+       WHERE source_type = 'rig_purchase' AND direction = 'debit' AND source_ref_id IS NOT NULL
+       GROUP BY source_ref_id`,
+    );
+    const spentUsdt = await sql.all<{ source_ref_id: string; micro: string }>(
+      `SELECT source_ref_id, COALESCE(SUM(amount),0) AS micro FROM usdt_ledger
+       WHERE source_type = 'rig_purchase' AND direction = 'debit' AND source_ref_id IS NOT NULL
+       GROUP BY source_ref_id`,
+    );
+    // The ledgers store a DEBIT as a negative amount, so these sums are
+    // negative. Report the magnitude — "burned −1,400 ROZI" reads as a refund.
+    const mag = (v: unknown) => Math.abs(Number(v ?? 0));
+    const byRig = <T extends { source_ref_id: string; micro: string }>(list: T[]) =>
+      new Map(list.map((x) => [x.source_ref_id, mag(x.micro)]));
+    const roziBurn = byRig(burned);
+    const usdtSpend = byRig(spentUsdt);
+    const ownership = new Map(owned.map((o) => [o.rig_id, o]));
+
+    return {
+      rigs: rows.map((r) => {
+        const own = ownership.get(String(r.id));
+        return {
+          ...r,
+          base_cost: Number(r.base_cost),
+          // Whole USDT for the panel (an Admin types "10", not "10000000"), null
+          // when this rig cannot be bought with money at all.
+          base_cost_usdt: r.base_cost_usdt == null ? null : usdtFromMicro(Number(r.base_cost_usdt)),
+          owners: own?.owners ?? 0,
+          levelsSold: own?.levels ?? 0,
+          // Whole ROZI, matching the rest of this panel's units (see the header).
+          roziBurned: fromMicro(roziBurn.get(String(r.id)) ?? 0),
+          usdtSpent: usdtFromMicro(usdtSpend.get(String(r.id)) ?? 0),
+        };
+      }),
+    };
+  }));
 
   const rigSchema = z.object({
     name: z.string().min(1).max(60),
@@ -636,9 +687,33 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   }));
 
   // ---- Boosters (CRUD) — priced in POINTS ----------------------------------
-  app.get("/staff/mining/boosters", staffGuard("machines.manage", async () => ({
-    boosters: await sql.all("SELECT * FROM boosters ORDER BY price_points"),
-  })));
+  //
+  // Same treatment as the rigs above, and here the numbers matter MORE: a
+  // booster is a sink for the CASH currency, so every point spent on one is a
+  // point that will not be withdrawn from the treasury. "Points spent" is the
+  // closest thing this app has to a revenue line for mining, which is exactly
+  // why it should not have to be worked out by hand from the ledger.
+  app.get("/staff/mining/boosters", staffGuard("machines.manage", async () => {
+    const boosters = await sql.all<Record<string, unknown>>(
+      "SELECT * FROM boosters ORDER BY price_points");
+    // ledger_entries.source_ref_id is the booster id (routes/mining.ts writes it
+    // on purchase), so this is what was really paid at the price of the day —
+    // not today's price times a count, which would silently restate history
+    // every time an Admin edits one.
+    const sold = await sql.all<{ source_ref_id: string; n: number; points: number }>(
+      `SELECT source_ref_id, COUNT(*)::int AS n, COALESCE(SUM(ABS(amount)),0)::int AS points
+       FROM ledger_entries
+       WHERE source_type = 'booster_purchase' AND source_ref_id IS NOT NULL
+       GROUP BY source_ref_id`,
+    );
+    const byId = new Map(sold.map((s) => [s.source_ref_id, s]));
+    return {
+      boosters: boosters.map((b) => {
+        const s = byId.get(String(b.id));
+        return { ...b, purchases: s?.n ?? 0, pointsSpent: s?.points ?? 0 };
+      }),
+    };
+  }));
 
   const boosterSchema = z.object({
     name: z.string().min(1).max(60),

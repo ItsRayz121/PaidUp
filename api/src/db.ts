@@ -412,6 +412,26 @@ const MIGRATIONS = `
   );
   CREATE INDEX IF NOT EXISTS idx_activity_day ON user_activity_days(day);
 
+  -- ---- LEADERBOARD EXCLUSIONS (brief part 42) ------------------------------
+  -- Who must NOT appear on the public boards. Two real cases, and both of them
+  -- happen before the first real user does:
+  --   • our own staff and test accounts, which are seeded with balances and
+  --     would otherwise sit at rank 1 on a board whose entire job is social
+  --     proof — the one place a fake number does the most damage;
+  --   • an account under fraud review, which must not be held up as an example
+  --     of what honest work earns while we are deciding whether to claw it back.
+  --
+  -- A row here is a SUPPRESSION, never a punishment: it hides the user from two
+  -- read-only boards and touches no balance, no ledger and no ability to earn.
+  -- That is why it is a separate table rather than a column on users — nothing
+  -- about the account changes, only what one page draws.
+  CREATE TABLE IF NOT EXISTS leaderboard_exclusions (
+    user_id     TEXT PRIMARY KEY REFERENCES users(id),
+    reason      TEXT NOT NULL,
+    excluded_by TEXT,
+    created_at  TEXT NOT NULL
+  );
+
   -- ---- STAFF ROLES & AUDIT ------------------------------------------------
   -- Roles are job-shaped now, not a three-rung ladder (see permissions.ts for
   -- why a ladder cannot express "Finance but not campaigns"). The three old

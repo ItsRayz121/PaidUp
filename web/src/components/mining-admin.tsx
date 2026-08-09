@@ -8,7 +8,9 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchMiningSettings, updateMiningSettings, fetchMiningStats, settleMining,
-  fetchAdminRigs, updateAdminRig, fetchConversion, openConversionWindow,
+  fetchAdminRigs, updateAdminRig,
+  fetchAdminBoosters, createAdminBooster, updateAdminBooster,
+  fetchConversion, openConversionWindow,
   settleConversionWindow, fetchStoreAdmin, createStoreItem, updateStoreItem,
   fetchRedemptions, decideRedemption,
   fetchAdminTopups, confirmTopup, rejectTopup,
@@ -175,6 +177,8 @@ export function MiningPanel() {
       <StorePanel />
 
       <RigPanel />
+
+      <BoosterPanel />
 
       {/* ⚠️ TopupPanel / RefundPanel USED TO RENDER HERE AND MUST NOT COME BACK.
           They are USDT deposits and deposit refunds — money in and money out —
@@ -730,7 +734,11 @@ function RigPanel() {
           <thead className="text-left uppercase text-muted">
             <tr>
               <th className="py-1">Rig</th><th>Base cost</th><th>Cost ×</th>
-              <th>Base power</th><th>Power ×</th><th>Max lvl</th><th>USDT</th><th></th>
+              <th>Base power</th><th>Power ×</th><th>Max lvl</th>
+              {/* What it actually did. A price column alone answers "what did I
+                  set?" and says nothing about whether the sink ever ran. */}
+              <th>Owners</th><th>Levels</th><th>ROZI burned</th>
+              <th>USDT</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -742,6 +750,14 @@ function RigPanel() {
                 <td className="font-mono">{n(r.base_power)}</td>
                 <td className="font-mono">{(r.power_growth / 100).toFixed(2)}</td>
                 <td className="font-mono">{r.max_level}</td>
+                {/* Zero owners on an active rig is the finding, not a gap in the
+                    data — so it is dimmed rather than hidden. */}
+                <td className={`font-mono ${r.owners === 0 ? "text-muted" : "text-brand-ink"}`}>{n(r.owners)}</td>
+                <td className="font-mono text-muted">{n(r.levelsSold)}</td>
+                <td className="font-mono text-brand-ink">
+                  {n(r.roziBurned)}
+                  {r.usdtSpent > 0 && <span className="ms-1 text-[10px] text-muted">+${n(r.usdtSpent)}</span>}
+                </td>
                 <td>
                   <input
                     type="number" min={0} step={0.5}
@@ -768,6 +784,157 @@ function RigPanel() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// Points-priced boosters (brief part 38).
+//
+// ⚠️ THESE ENDPOINTS SHIPPED WITH NO SCREEN AT ALL. `POST/PATCH
+// /staff/mining/boosters` have existed and been permission-gated since the
+// mining build; nothing in the panel ever called them, so the only way to price
+// a booster was a hand-written request. A feature nobody can reach is a feature
+// that does not exist.
+//
+// WHY THIS ONE MATTERS MORE THAN THE RIG TABLE ABOVE IT: a booster is a sink for
+// the CASH currency. Every point spent here is a point that will not be
+// withdrawn from a treasury we have to fund, so "points spent" is the closest
+// thing mining has to a revenue line.
+//
+// Ships DISABLED by default, deliberately — a booster with a price nobody chose
+// is a price we did not mean to publish.
+function BoosterPanel() {
+  const boosters = useApi(fetchAdminBoosters, []);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name: "", pricePoints: "", multiplierPct: "", hours: "" });
+
+  async function toggle(id: string, status: string) {
+    try {
+      await updateAdminBooster(id, { status: status === "active" ? "disabled" : "active" });
+      boosters.reload();
+      setMsg(null);
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  async function edit(id: string, patch: Record<string, unknown>) {
+    try {
+      await updateAdminBooster(id, patch);
+      boosters.reload();
+      setMsg(null);
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  async function create() {
+    try {
+      await createAdminBooster({
+        name: form.name.trim(),
+        pricePoints: Number(form.pricePoints),
+        multiplierPct: Number(form.multiplierPct),
+        hours: Number(form.hours),
+        // Always off on creation. Whoever set the numbers should look at them
+        // once more before users can buy it.
+        status: "disabled",
+      });
+      setForm({ name: "", pricePoints: "", multiplierPct: "", hours: "" });
+      setAdding(false);
+      boosters.reload();
+      setMsg("Added, switched OFF. Turn it on when the price is right.");
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  if (boosters.loading || !boosters.data) return null;
+  const rows = boosters.data.boosters;
+
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-bold text-brand-ink">Boosters (the POINTS sink)</h3>
+        <button onClick={() => setAdding((v) => !v)}
+          className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white">
+          {adding ? "Cancel" : "Add booster"}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-muted">
+        Bought with <strong>points</strong>, not ROZI — so every sale is money that will not be
+        withdrawn from the treasury. A booster multiplies mining speed for a fixed number of hours.
+      </p>
+      {msg && <p className="mt-2 rounded-md border border-line p-2 text-xs text-brand-ink">{msg}</p>}
+
+      {adding && (
+        <div className="mt-3 grid gap-2 rounded-lg border border-brand bg-brand-tint/30 p-2.5 sm:grid-cols-4">
+          {([
+            ["name", "Name", "text"],
+            ["pricePoints", "Price (points)", "number"],
+            ["multiplierPct", "Boost % (100 = ×2)", "number"],
+            ["hours", "Lasts (hours)", "number"],
+          ] as const).map(([key, label, type]) => (
+            <label key={key} className="text-xs">
+              <span className="text-muted">{label}</span>
+              <input type={type} value={form[key]}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1 font-mono" />
+            </label>
+          ))}
+          <div className="sm:col-span-4">
+            <button onClick={create}
+              disabled={!form.name.trim() || !form.pricePoints || !form.multiplierPct || !form.hours}
+              className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+              Create (switched off)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">
+          No boosters yet. Until one exists and is switched on, points have no mining sink at all.
+        </p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead className="text-left uppercase text-muted">
+              <tr>
+                <th className="py-1">Booster</th><th>Price</th><th>Boost</th><th>Hours</th>
+                <th>Sold</th><th>Points taken</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.id} className="border-t border-line">
+                  <td className="py-1.5 font-semibold text-brand-ink">{b.name}</td>
+                  {/* Editable in place: repricing is the whole job here, and a
+                      modal for one number is friction on the common case. */}
+                  {([
+                    ["pricePoints", b.price_points],
+                    ["multiplierPct", b.multiplier_pct],
+                    ["hours", b.hours],
+                  ] as const).map(([key, value]) => (
+                    <td key={key}>
+                      <input type="number" defaultValue={value}
+                        onBlur={(e) => {
+                          const next = Number(e.target.value);
+                          if (next !== value && next > 0) edit(b.id, { [key]: next });
+                        }}
+                        className="w-20 rounded border border-line bg-card px-1.5 py-0.5 font-mono" />
+                    </td>
+                  ))}
+                  <td className="font-mono text-muted">{n(b.purchases)}</td>
+                  <td className="font-mono text-brand-ink">{formatPoints(b.pointsSpent)}</td>
+                  <td>
+                    <button onClick={() => toggle(b.id, b.status)}
+                      className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
+                        b.status === "active" ? "bg-success-tint text-success" : "bg-danger-tint text-danger"
+                      }`}>
+                      {b.status}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
