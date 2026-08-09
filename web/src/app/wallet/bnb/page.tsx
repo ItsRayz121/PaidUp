@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, Button, SectionTitle } from "@/components/ui";
+import { Card, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { ArrowRightIcon, CopyIcon, CheckIcon } from "@/components/icons";
 import { BnbLogo } from "@/components/tokenIcons";
@@ -11,7 +11,7 @@ import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchMiningState, fetchUsdt, fetchBnbWithdrawals, createBnbWithdrawal, ApiError } from "@/lib/api";
+import { fetchMiningState, fetchUsdt, fetchBnbWithdrawals } from "@/lib/api";
 import { formatBnbWei } from "@/lib/format";
 import { chainLabel } from "@/lib/chains";
 import { unifyHistory, type Row } from "@/lib/walletHistory";
@@ -30,23 +30,12 @@ export default function BnbWalletPage() {
   const bnbWithdrawals = useApi(fetchBnbWithdrawals, []);
   const [copied, setCopied] = useState(false);
   const [openTx, setOpenTx] = useState<Row | null>(null);
-  const [showWithdraw, setShowWithdraw] = useState(false);
-  const [address, setAddress] = useState("");
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
   const gasWei = usdt.data?.personalGasWei ?? null;
-  const requiredWei = usdt.data?.personalGasRequiredWei ?? null;
-  const gasReady = usdt.data?.personalGasReady ?? null;
   const depositAddress = usdt.data?.personalAddress ?? null;
   const chain = usdt.data?.treasuryChain ?? "bep20";
-
-  const addressOk = /^0x[0-9a-fA-F]{40}$/.test(address.trim());
-  const amountOk = Number(amount) > 0 && Number.isFinite(Number(amount));
 
   const rows = unifyHistory({
     ledger: [], rozi: [], withdrawals: [], topups: [], refunds: [],
@@ -59,19 +48,6 @@ export default function BnbWalletPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }
-
-  async function submit() {
-    setBusy(true); setError(null);
-    try {
-      await createBnbWithdrawal(address.trim(), amount.trim());
-      setDone(true);
-      bnbWithdrawals.reload();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong.");
-    } finally {
-      setBusy(false);
-    }
   }
 
   return (
@@ -108,45 +84,6 @@ export default function BnbWalletPage() {
             </button>
           </Card>
         </section>
-      )}
-
-      {!showWithdraw ? (
-        <Button onClick={() => setShowWithdraw(true)} variant="primary" disabled={gasReady === null}>
-          {t("wallet.withdraw")}
-        </Button>
-      ) : done ? (
-        <Card className="p-4 text-center space-y-2">
-          <CheckIcon size={32} className="mx-auto text-success" />
-          <p className="font-bold text-brand-ink">{t("wallet.bnb.submitted")}</p>
-          <Button onClick={() => { setDone(false); setShowWithdraw(false); setAmount(""); setAddress(""); }} variant="ghost">
-            {t("common.close")}
-          </Button>
-        </Card>
-      ) : (
-        <Card className="p-4 space-y-3">
-          {error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}
-          {gasReady === false && (
-            <p className="rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("wallet.bnb.notEnough")}</p>
-          )}
-          <div>
-            <label htmlFor="bnb-addr" className="mb-1.5 block text-sm font-semibold text-brand-ink">{t("withdraw.yourWalletAddress")}</label>
-            <input id="bnb-addr" value={address} onChange={(e) => setAddress(e.target.value)}
-              placeholder={t("withdraw.addrPlaceholderEvm")}
-              className="w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none break-all" />
-          </div>
-          <div>
-            <label htmlFor="bnb-amt" className="mb-1.5 block text-sm font-semibold text-brand-ink">{t("wallet.bnb.amount")}</label>
-            <input id="bnb-amt" type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.001"
-              className="num w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none" />
-          </div>
-          {requiredWei !== null && (
-            <p className="text-xs text-muted">{t("wallet.bnb.feeNote", { fee: formatBnbWei(requiredWei) })}</p>
-          )}
-          <Button onClick={submit} disabled={!addressOk || !amountOk || busy} variant="accent">
-            {busy ? t("withdraw.sending") : t("wallet.withdraw")}
-          </Button>
-        </Card>
       )}
 
       <section>

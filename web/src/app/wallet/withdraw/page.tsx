@@ -10,7 +10,6 @@ import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, ApiError } from "@/lib/api";
 import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
-import { shortAddress } from "@/lib/wallet";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 
 // Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
@@ -33,6 +32,7 @@ export default function WithdrawPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [resultStatus, setResultStatus] = useState<"paid" | "sending" | "pending">("pending");
   const [source, setSource] = useState<"points" | "earned_usdt">("points");
   // Set when the server refuses the withdrawal because the user has not verified
   // their ID yet. Drives the "Verify your ID" card below instead of a dead error.
@@ -90,15 +90,17 @@ export default function WithdrawPage() {
   const gasBlocked = gasReady === false;
   const invalid = belowMin || overBalance || !addressOk || gasBlocked;
   const trimmed = address.trim();
-  const addressVerified = saved.data?.verified?.[chain];
 
-  if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} />;
+  if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} status={resultStatus} />;
 
   async function submit() {
     setBusy(true); setError(null); setNeedsKyc(false);
     try {
-      if (source === "earned_usdt") await createEarnedUsdtWithdrawal(amountUsdtMicro, chain, address.trim());
-      else await createWithdrawal(amt, chain, address.trim());
+      const response = source === "earned_usdt"
+        ? await createEarnedUsdtWithdrawal(amountUsdtMicro, chain, address.trim())
+        : await createWithdrawal(amt, chain, address.trim());
+      const status = response.request.status;
+      setResultStatus(status === "paid" ? "paid" : status === "sending" ? "sending" : "pending");
       setDone(true);
     } catch (e) {
       // The server sends a `kycRequired` flag, not just a sentence. Show them the
@@ -209,38 +211,30 @@ export default function WithdrawPage() {
           This card shows what's already saved and links there to change it;
           it never collects an address itself, which is what made the old
           version of this screen feel like a second, competing setup flow. */}
-      {trimmed ? (
-        <Card className="p-4">
-          <p className="flex items-center gap-2 font-bold text-brand-ink">
-            <WalletIcon size={20} className="shrink-0 text-brand" />
-            {t("withdraw.sendingTo")}
+      <Card className="p-4">
+        <label htmlFor="withdraw-address" className="flex items-center gap-2 font-bold text-brand-ink">
+          <WalletIcon size={20} className="shrink-0 text-brand" />
+          {t("withdraw.bep20WalletAddress")}
+        </label>
+        <p className="mt-1 text-sm text-muted">{t("withdraw.addressHelp")}</p>
+        <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
+          autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          placeholder={t("withdraw.addrPlaceholderEvm")}
+          className="num mt-3 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand" />
+        {trimmed && addressOk && (
+          <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-success">
+            <CheckIcon size={16} />
+            {savedAddresses[chain]?.toLowerCase() === trimmed.toLowerCase()
+              ? t("withdraw.savedAddressReady") : t("withdraw.newAddressReady")}
           </p>
-          <p className="num mt-1 break-all font-semibold text-brand-ink">{shortAddress(trimmed)}</p>
-          {addressVerified ? (
-            <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold text-success">
-              <CheckIcon size={16} /> {t("connect.isYours")}
-            </p>
-          ) : (
-            <p className="mt-1.5 flex items-start gap-1.5 text-sm text-muted">
-              <InfoIcon size={16} className="mt-0.5 shrink-0" /> {t("connect.typedIn")}
-            </p>
-          )}
-          <Link href="/profile/settings" className="mt-3 inline-block text-sm font-semibold text-brand underline-offset-2 hover:underline">
-            {t("withdraw.changeWallet")}
-          </Link>
-        </Card>
-      ) : (
-        <Card className="border-pending/30 bg-pending-tint p-4">
-          <p className="flex items-center gap-2 font-bold text-pending">
-            <WalletIcon size={20} className="shrink-0" />
-            {t("withdraw.noWallet.title")}
-          </p>
-          <p className="mt-1 text-sm text-brand-ink">{t("withdraw.noWallet.body")}</p>
-          <div className="mt-3">
-            <Button href="/profile/settings" full>{t("withdraw.noWallet.cta")}</Button>
-          </div>
-        </Card>
-      )}
+        )}
+        {trimmed && !addressOk && (
+          <p className="mt-2 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
+        )}
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
+          <InfoIcon size={15} className="mt-0.5 shrink-0" /> {t("withdraw.addressAutoSave")}
+        </p>
+      </Card>
 
       {/* Amount */}
       <div>
@@ -310,13 +304,15 @@ export default function WithdrawPage() {
   );
 }
 
-function SentConfirmation({ amount, chainLabel, address }: { amount: number; chainLabel: string; address: string }) {
+function SentConfirmation({ amount, chainLabel, address, status }: { amount: number; chainLabel: string; address: string; status: "paid" | "sending" | "pending" }) {
   const { t } = useI18n();
   const shortAddr = address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
   return (
     <div className="flex min-h-[80dvh] flex-col items-center justify-center px-6 text-center">
       <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-success text-white"><CheckIcon size={52} /></div>
-      <h1 className="animate-rise mt-6 text-2xl font-bold text-brand-ink">{t("withdraw.gotRequest")}</h1>
+      <h1 className="animate-rise mt-6 text-2xl font-bold text-brand-ink">
+        {status === "paid" ? "Your USDT was sent" : status === "sending" ? "Your USDT is being sent" : t("withdraw.gotRequest")}
+      </h1>
       <p className="animate-rise mt-2 text-lg font-semibold text-brand-ink">
         {t("withdraw.onTheWay", { points: formatMoney(amount) })}
       </p>
@@ -328,12 +324,15 @@ function SentConfirmation({ amount, chainLabel, address }: { amount: number; cha
           <p className="num break-all text-sm text-brand-ink">{shortAddr}</p>
         </div>
         <div className="flex items-center gap-3 rounded-xl bg-success-tint p-3 text-success">
-          <CheckIcon size={20} className="shrink-0" /><span className="text-sm font-medium">{t("withdraw.requestReceived")}</span>
+          <CheckIcon size={20} className="shrink-0" /><span className="text-sm font-medium">
+            {status === "paid" ? "Completed automatically" : status === "sending" ? "Automatic transfer started" : t("withdraw.requestReceived")}
+          </span>
         </div>
-        <div className="flex items-center gap-3 rounded-xl bg-pending-tint p-3 text-pending">
-          <ClockIcon size={20} className="shrink-0" />
-          <span className="text-sm font-medium">{t("withdraw.slaNote")}</span>
-        </div>
+        {status === "pending" && (
+          <div className="flex items-center gap-3 rounded-xl bg-pending-tint p-3 text-pending">
+            <ClockIcon size={20} className="shrink-0" /><span className="text-sm font-medium">{t("withdraw.slaNote")}</span>
+          </div>
+        )}
         {/* The moment they most want to hear "your money is sent" — offer to
             tell them. Renders nothing if push is off or unsupported. */}
         <NotificationsCard compact />

@@ -38,7 +38,7 @@ export const BnbLogo = ({ size = 24, ...props }: LogoProps) => (
 // two real logos do (see the comment on the ROZI row in wallet/page.tsx).
 export const RoziMark = ({ size = 24, ...props }: LogoProps) => (
   <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden focusable={false} {...props}>
-    <circle cx="16" cy="16" r="15" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3 3" />
-    <path d="M16 10.5v11M12 13.5h5.2a2.3 2.3 0 0 1 0 4.6H12M14.5 18.1l3.5 3.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="16" cy="16" r="16" fill="#EAF7F5" />
+    <image href="/icon.png" x="4" y="4" width="24" height="24" preserveAspectRatio="xMidYMid meet" />
   </svg>
 );

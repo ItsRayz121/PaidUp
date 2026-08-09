@@ -118,10 +118,9 @@ export const config = {
   // or under this settles the instant it's made, no staff step at all. Above
   // it, or if the account is held (users.withdrawal_hold_reason), it drops
   // into the same manual queue every withdrawal used to go through — nothing
-  // about the manual path changed. Defaulted to match agentApprovalMaxPoints
-  // (the founder deferred a real number for this; it needs revisiting once
-  // real withdrawal volume exists — see CUSTODY_SPEC.md § 3).
-  autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 5000),
+  // about the manual path changed. The default is 50 USDT (50,000 internal
+  // points), and an Admin can tune it without a deploy.
+  autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 50000),
   // The same automatic-settlement idea, applied to a refund of a user's OWN
   // USDT deposit (routes/mining.ts POST /usdt/refunds) instead of a points
   // withdrawal (founder, 2026-08-06: "money he deposited, he can withdraw it
@@ -368,7 +367,7 @@ export const config = {
   // autoWithdrawMaxPoints ceiling above — closes "many requests just under the
   // limit". A request that would push the user's own trailing-24h auto-paid
   // total over this falls back to the manual queue, same as any other refusal.
-  autoWithdrawMaxPointsPer24h: Number(process.env.AUTO_WITHDRAW_MAX_POINTS_PER_24H ?? 15000),
+  autoWithdrawMaxPointsPer24h: Number(process.env.AUTO_WITHDRAW_MAX_POINTS_PER_24H ?? 50000),
   // Soft flag (never blocks): this many withdrawal REQUESTS from one user in
   // 24h gets a staff-review flag, regardless of amount or auto/manual outcome.
   withdrawalVelocityFlagCount: Number(process.env.WITHDRAWAL_VELOCITY_FLAG_COUNT ?? 4),

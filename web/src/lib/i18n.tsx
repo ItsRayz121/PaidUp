@@ -19,6 +19,15 @@
 import { createContext, useCallback, useContext } from "react";
 
 const copy: Record<string, string> = {
+  "wallet.chooser.usdt.withdrawSub": "Withdraw your available USDT",
+  "wallet.chooser.bnb.withdrawSub": "Send BNB to your wallet address",
+  "withdraw.bep20WalletAddress": "Your BNB Chain USDT wallet address",
+  "withdraw.addressHelp": "Paste the BEP20 address where you want to receive USDT.",
+  "withdraw.savedAddressReady": "Saved address ready",
+  "withdraw.newAddressReady": "New address ready",
+  "withdraw.addressAutoSave": "A valid new address is saved automatically after you withdraw.",
+  "profile.member": "RoziPay member",
+  "profile.accountEmail": "Account email",
   // nav + common
   //
   // ONE MONEY WORD IN THE WHOLE APP: USDT (founder, 2026-07-29). The word
@@ -86,7 +95,7 @@ const copy: Record<string, string> = {
   "settings.name": "Your name",
   "settings.namePlaceholder": "What should we call you?",
   "settings.nameHint": "You can change this any time.",
-  "settings.username": "Your @handle",
+  "settings.username": "Your username",
   "settings.usernamePlaceholder": "yourname",
   "settings.usernameHint":
     "Friends use this to send you ROZI. Once you set it, you can change it once every {days} days — so pick carefully.",

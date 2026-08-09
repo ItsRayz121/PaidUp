@@ -44,6 +44,7 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
     const req = await sql.get<{
       id: string; user_id: string; amount: number; payout_rail: string;
       payout_address: string; fee_points: number; status: string;
+      source_kind: string; earned_usdt_micro: number;
     }>("SELECT * FROM withdrawal_requests WHERE id = ?", requestId);
     if (!req || req.status !== "pending") return { settled: false, reason: "not pending" };
 
@@ -60,7 +61,11 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
     }
 
     const net = Math.max(0, req.amount - (req.fee_points ?? 0));
-    const usdt = pointsToUsdt(net);
+    const earnedFeeMicro = Math.round(((req.fee_points ?? 0) * 1_000_000) / config.pointsPerUsdt);
+    const exactMicro = Math.max(0, Number(req.earned_usdt_micro ?? 0) - earnedFeeMicro);
+    const usdt = req.source_kind === "earned_usdt"
+      ? (exactMicro / 1_000_000).toFixed(6).replace(/\.?0+$/, "")
+      : pointsToUsdt(net);
 
     const outcome = await sql.tx(async (t: TxApi) => {
       // GUARDRAIL #8, applied to an AGGREGATE read, not just a balance: two
@@ -97,7 +102,7 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
         // instead of settling synchronously here — see payoutRelay.ts.
         await createRelayJob("withdrawal", req.id, {
           chain: "bep20", userId: req.user_id, toAddress: req.payout_address,
-          amountMicro: Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+          amountMicro: req.source_kind === "earned_usdt" ? exactMicro : Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
         }, t);
         await t.run(
           `UPDATE withdrawal_requests

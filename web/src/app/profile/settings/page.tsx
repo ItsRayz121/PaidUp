@@ -75,7 +75,7 @@ export default function ProfileSettingsPage() {
   const payoutChain = CHAINS[0].id;
   const payout = useApi(fetchPayoutAddresses, []);
   const [payoutAddress, setPayoutAddress] = useState("");
-  const [payoutTyping, setPayoutTyping] = useState(false);
+  const [payoutTyping, setPayoutTyping] = useState(true);
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSaved, setPayoutSaved] = useState(false);
   const [payoutError, setPayoutError] = useState<string | null>(null);

@@ -250,17 +250,11 @@ export default function WalletPage() {
             href="/mine/send" disabled={!mining.data?.transfersEnabled} reason={t("wallet.sendOff")}
           />
           <ChooserRow
-            Icon={UsdtLogo} title={t("wallet.chooser.usdt.cashout.title")} sub={t("wallet.chooser.usdt.cashout.sub")}
+            Icon={UsdtLogo} title={t("wallet.token.usdt.name")} sub={t("wallet.chooser.usdt.withdrawSub")}
             href="/wallet/withdraw"
           />
-          {usdtOn && (usdt.data?.balanceMicro ?? 0) > 0 && (
-            <ChooserRow
-              Icon={UsdtLogo} title={t("wallet.chooser.usdt.refund.title")} sub={t("wallet.chooser.usdt.refund.sub")}
-              href="/mine/refund"
-            />
-          )}
           <ChooserRow
-            Icon={BnbLogo} title={t("wallet.chooser.bnb.title")} sub={t("wallet.chooser.bnb.sub")} href="/wallet/bnb"
+            Icon={BnbLogo} title={t("wallet.chooser.bnb.title")} sub={t("wallet.chooser.bnb.withdrawSub")} href="/wallet/bnb/withdraw"
           />
         </ChooserSheet>
       )}
@@ -274,13 +268,13 @@ export default function WalletPage() {
           {usdtOn && (
             <ChooserRow
               Icon={UsdtLogo} title={t("wallet.chooser.usdt.deposit.title")} sub={t("wallet.chooser.usdt.deposit.sub")}
-              href="/mine/topup"
+              href="/wallet/usdt"
             />
           )}
           {usdtOn && (
             <ChooserRow
               Icon={BnbLogo} title={t("wallet.chooser.bnb.title")} sub={t("wallet.chooser.bnb.depositSub")}
-              href="/wallet/bnb"
+              href="/wallet/bnb?action=deposit"
             />
           )}
         </ChooserSheet>

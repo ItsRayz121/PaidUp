@@ -298,9 +298,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // on tryAutoSettle. Below the auto ceiling and the account isn't held?
     // The user gets "paid" back immediately. Otherwise this is a no-op and
     // the request sits in the same manual queue as always.
-    // The legacy auto-settler converts points to USDT. Direct task-USDT is kept
-    // exact and therefore enters the normal reviewed queue for now.
-    const auto = sourceKind === "points" ? await tryAutoSettle(id) : { settled: false as const };
+    const auto = await tryAutoSettle(id);
     if (auto.settled === true) {
       // autoWithdraw.ts sends its own "paid" push — sending a second
       // "submitted" one here would be a redundant notification for money

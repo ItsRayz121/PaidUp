@@ -72,11 +72,7 @@ export default function ProfilePage() {
               account's stored address is a synthetic placeholder, so it is never
               shown. */}
           <p className="truncate text-sm text-muted">
-            {user?.username
-              ? `@${user.username}`
-              : user?.hasEmail === false
-                ? t("profile.telegramAccount")
-                : user?.email}
+            {user?.username ? `@${user.username}` : t("profile.member")}
           </p>
         </div>
       </header>
@@ -145,6 +141,13 @@ export default function ProfilePage() {
           hint={t("profile.helpHint")}
         />
       </div>
+
+      {user?.hasEmail !== false && user?.email && (
+        <Card className="p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("profile.accountEmail")}</p>
+          <p className="mt-1 break-all font-semibold text-brand-ink">{user.email}</p>
+        </Card>
+      )}
 
       {/* Same account through both doors: Telegram-first users add an email
           (works on the website), email-first users connect Telegram. Each

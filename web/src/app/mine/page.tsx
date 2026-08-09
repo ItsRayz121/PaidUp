@@ -15,7 +15,7 @@ import {
 } from "@/lib/api";
 import { formatRozi, formatPointsAsRozi } from "@/lib/format";
 import {
-  ensureVignette, ensureBanner, ensureRewarded, showRewarded, openAdTab, showGateAd,
+  ensureRewarded, showRewarded, openAdTab, showGateAd,
 } from "@/lib/ads";
 import { useInsideTelegram } from "@/lib/telegram";
 
@@ -52,21 +52,9 @@ export default function MinePage() {
   // with a full-screen ad on its own schedule, so loading it HERE, only when
   // there is a Start button to tap, is what scopes the ads to mining. It cannot
   // prove a watch, so the gate ad grants no boost (see lib/ads.ts).
-  useEffect(() => {
-    if (s && !s.session.active && s.ads.gateOnStart && s.ads.monetagZoneId) {
-      ensureVignette(s.ads.monetagZoneId);
-    }
-  }, [s]);
-
   // The banner (in-page push) is not tied to the session — it monetises the
   // whole time on this screen. Only here: this is the screen people idle on,
   // and the one whose users chose an ad-supported feature.
-  useEffect(() => {
-    if (s && s.ads.enabled && s.ads.monetagBannerZone) {
-      ensureBanner(s.ads.monetagBannerZone);
-    }
-  }, [s]);
-
   // Tick once a second while a claim is pending so its countdown moves.
   const [, tick] = useState(0);
   useEffect(() => {
