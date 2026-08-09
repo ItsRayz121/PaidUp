@@ -376,9 +376,12 @@ export type StaffWithdrawal = {
 };
 // Treasury (hot wallet) address per chain — where payouts are sent FROM.
 export type TreasuryAddresses = { bep20: string; base: string; aptos: string };
+// ⚠️ NULL ON THE `paid` AND `rejected` TABS, deliberately. The panel renders
+// this as "to send", which is only true while the money is still owed — on a
+// paid tab it would be an instruction to fund a payout that already left.
 export type PendingTotal = { count: number; points: number; usdt: string };
 export const fetchStaffQueue = (status = "pending") =>
-  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses; pendingTotal?: PendingTotal }>(
+  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses; pendingTotal?: PendingTotal | null }>(
     `/staff/withdrawals?status=${encodeURIComponent(status)}`,
   );
 export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
@@ -404,7 +407,11 @@ export type StaffUserDetail = {
   withdrawals: Record<string, unknown>[];
   paidSummary: { count: number; totalPoints: number };
   invitedBy: { id: string; email: string; referral_code: string } | null;
+  // ⚠️ `invitees` IS CAPPED AT 50 ROWS; `inviteeCount` IS THE REAL TOTAL. Never
+  // show `invitees.length` as "how many did they invite" — that is the number a
+  // referral-ring review turns on, and the list is a page, not the answer.
   invitees: Record<string, unknown>[];
+  inviteeCount: number;
   tickets: Record<string, unknown>[];
 };
 export const fetchStaffUser = (id: string) =>

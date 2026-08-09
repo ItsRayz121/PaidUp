@@ -786,7 +786,12 @@ function RigPanel() {
 //
 // So: send the USDT first, then click Sent. Clicking Sent before sending means
 // a user is told their money is on the way when it is not.
-export function RefundPanel() {
+//
+// ⚠️ `canDecide` IS A REAL GATE, NOT A HINT. Manager and Operations hold
+// `refunds.view` but not `refunds.decide` (api/src/permissions.ts), so they can
+// read this queue and must not be shown buttons that 403. The server is still
+// the authority — this only stops offering an action that cannot succeed.
+export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
   const refunds = useApi(() => fetchAdminRefunds("pending"), []);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -825,6 +830,16 @@ export function RefundPanel() {
     finally { setBusy(null); }
   }
 
+  // ⚠️ AN ERROR IS NOT AN EMPTY QUEUE. Returning null on failure made the whole
+  // section vanish, which reads as "nothing waiting" — and this is now the
+  // Finance role's main screen, where "nothing waiting" is a decision.
+  if (refunds.error) {
+    return (
+      <div className="rounded-lg border border-danger/30 bg-danger-tint/40 p-3 text-xs text-danger">
+        Could not load the refund queue: {refunds.error}
+      </div>
+    );
+  }
   if (refunds.loading || !refunds.data) return null;
   const rows = refunds.data.refunds;
 
@@ -874,14 +889,20 @@ export function RefundPanel() {
                   </td>
                   <td className="text-muted">{timeAgo(r.created_at)}</td>
                   <td className="whitespace-nowrap">
-                    <button disabled={busy === r.id} onClick={() => pay(r.id, r.netAmount, r.address)}
-                      className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
-                      Sent
-                    </button>
-                    <button disabled={busy === r.id} onClick={() => decline(r.id)}
-                      className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
-                      Reject
-                    </button>
+                    {canDecide ? (
+                      <>
+                        <button disabled={busy === r.id} onClick={() => pay(r.id, r.netAmount, r.address)}
+                          className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
+                          Sent
+                        </button>
+                        <button disabled={busy === r.id} onClick={() => decline(r.id)}
+                          className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
+                          Reject
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-muted">view only</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -900,7 +921,10 @@ export function RefundPanel() {
 // read off the chain — never the amount the user claimed. That distinction is
 // the entire reason this screen exists: without it a user sends $1, claims $500,
 // and the review step is a rubber stamp on a number nobody checked.
-export function TopupPanel() {
+//
+// ⚠️ `canDecide` IS A REAL GATE — see the note on RefundPanel above. Manager and
+// Operations read this queue without holding `deposits.decide`.
+export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
   const topups = useApi(() => fetchAdminTopups("pending"), []);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -935,6 +959,14 @@ export function TopupPanel() {
     finally { setBusy(null); }
   }
 
+  // An error is not an empty queue — same reason as RefundPanel above.
+  if (topups.error) {
+    return (
+      <div className="rounded-lg border border-danger/30 bg-danger-tint/40 p-3 text-xs text-danger">
+        Could not load the deposit queue: {topups.error}
+      </div>
+    );
+  }
   if (topups.loading || !topups.data) return null;
   const { treasuryAddress, treasuryChain, topups: rows } = topups.data;
 
@@ -949,10 +981,16 @@ export function TopupPanel() {
           exists AND landed at that address, then type the amount you saw.
         </p>
       ) : (
+        // ⚠️ THIS PANEL NO LONGER SITS UNDER THE MINING SETTINGS FORM, so it
+        // must NAME where the setting lives instead of saying "above". It moved
+        // to Money & payouts because deposits are money, not mining — and the
+        // roles that can reach it here may not be able to reach that form at
+        // all, which is exactly what the sentence has to tell them.
         <p className="mt-1 rounded bg-pending-tint p-1.5 text-xs text-pending">
-          No treasury address is set, so top-ups are off. Set{" "}
+          No treasury address is set, so top-ups are off. An admin sets{" "}
           <span className="font-mono">usdtTreasuryChain</span> and{" "}
-          <span className="font-mono">usdtTreasuryAddress</span> above first.
+          <span className="font-mono">usdtTreasuryAddress</span> under{" "}
+          <strong>Mining (ROZI) → settings</strong>.
         </p>
       )}
       {msg && <p className="mt-2 text-xs text-brand-ink">{msg}</p>}
@@ -975,14 +1013,20 @@ export function TopupPanel() {
                   <td className="max-w-[220px] break-all font-mono text-[10px]">{r.tx_hash}</td>
                   <td className="text-muted">{timeAgo(r.created_at)}</td>
                   <td className="whitespace-nowrap">
-                    <button disabled={busy === r.id} onClick={() => confirm(r.id, r.amount)}
-                      className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
-                      Confirm
-                    </button>
-                    <button disabled={busy === r.id} onClick={() => reject(r.id)}
-                      className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
-                      Reject
-                    </button>
+                    {canDecide ? (
+                      <>
+                        <button disabled={busy === r.id} onClick={() => confirm(r.id, r.amount)}
+                          className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
+                          Confirm
+                        </button>
+                        <button disabled={busy === r.id} onClick={() => reject(r.id)}
+                          className="ml-1.5 rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger disabled:opacity-50">
+                          Reject
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-muted">view only</span>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -211,6 +211,54 @@ console.log("\n-- part 36: the withdrawal queue serves the NET, not just the gro
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- cross-check: a 'to send' total only exists where money is OWED --");
+// Found reviewing this stage. The queue takes a status filter and the panel
+// renders the total as "to send" — but it was computed for EVERY filter, so the
+// `paid` tab told whoever funds the treasury to send money that had already
+// left, and `rejected` told them to send money nobody is owed.
+{
+  const doneUser = await mkUser("donerows");
+  for (const st of ["paid", "rejected"]) {
+    await sql.run(
+      `INSERT INTO withdrawal_requests (id, user_id, amount, fee_points, payout_rail, status, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+      newId(), doneUser, 4000, 0, "bep20", st, now(),
+    );
+  }
+  for (const st of ["paid", "rejected"]) {
+    const r = (await app.inject({
+      method: "GET", url: `/staff/withdrawals?status=${st}`, headers: authOf(admin),
+    })).json();
+    check(`the ${st} tab still lists its rows`, r.requests.length > 0, String(r.requests.length));
+    check(`...but serves NO 'to send' total`, r.pendingTotal === null, JSON.stringify(r.pendingTotal));
+  }
+  for (const st of ["pending", "agent_approved", "manager_approved"]) {
+    const r = (await app.inject({
+      method: "GET", url: `/staff/withdrawals?status=${st}`, headers: authOf(admin),
+    })).json();
+    check(`${st} is still owed, so the total is served`, r.pendingTotal !== null
+      && typeof r.pendingTotal.usdt === "string", JSON.stringify(r.pendingTotal));
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- cross-check: the invite COUNT is not the page size --");
+// Also found reviewing this stage. `invitees` is capped at 50 rows, and the
+// header read "invited {invitees.length}" — so an account with 300 invites, the
+// exact shape a referral ring makes, displayed as 50. That number is the one a
+// fraud reviewer acts on.
+{
+  const ring = await mkUser("ringleader");
+  for (let i = 0; i < 55; i++) await mkUser(`ring${i}`, ring);
+  const d = (await app.inject({ method: "GET", url: `/staff/users/${ring}`, headers: authOf(admin) })).json();
+  check("the list is still capped at 50", d.invitees.length === 50, String(d.invitees.length));
+  check("the COUNT is the real total, not the page size",
+    d.inviteeCount === 55, String(d.inviteeCount));
+  check("a user with no invites counts zero, not null",
+    (await app.inject({ method: "GET", url: `/staff/users/${invitee}`, headers: authOf(admin) })).json().inviteeCount === 0);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- part 35: Finance can actually reach the money-in queues --");
 // The defect this stage fixed lived in the web sidebar, but its shape is a
 // permission mismatch, and THAT is checkable here. If these ever disagree with

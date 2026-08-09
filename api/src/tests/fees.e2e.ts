@@ -257,4 +257,10 @@ console.log("\n-- refunds: a fee that would consume the whole request is refused
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// ⚠️ ALWAYS EXIT EXPLICITLY, ON SUCCESS TOO. PGlite and the Fastify instance
+// both keep the event loop alive, so `if (fail > 0) process.exit(1)` — which is
+// what this was — printed "24 passed" and then hung forever. It looked green to
+// whoever ran it and left a node process holding the PGlite directory behind on
+// every single run; six had piled up before anyone noticed. Every other suite
+// in this directory ends this way, and push.e2e.ts says why in its own comment.
+process.exit(fail > 0 ? 1 : 0);

@@ -34,6 +34,10 @@ function staffGuard(
 }
 
 const READY = ["agent_approved", "manager_approved"];
+// The statuses where the treasury still owes the money. `paid` has already left
+// and `rejected` never will, so a "to send" total over either is a wrong
+// instruction to whoever funds the wallet. See pendingTotal below.
+const OWED_STATUSES = ["pending", ...READY];
 const decisionSchema = z.object({
   action: z.enum(["approve", "reject", "pay"]),
   note: z.string().max(500).optional(),
@@ -81,11 +85,18 @@ export async function staffRoutes(app: FastifyInstance) {
       // What this queue will cost the treasury if every row is paid. Whoever
       // funds the wallet is otherwise adding up a column by hand, and NET is
       // the figure that matters — see netUsdt on each row below.
-      pendingTotal: {
+      //
+      // ⚠️ ONLY FOR STATUSES THAT ARE STILL OWED. This endpoint takes a status
+      // filter and the panel renders the figure as "to send" — so on the `paid`
+      // tab it read as an instruction to fund money that has already left, and
+      // on `rejected` as an instruction to send money nobody is owed. A total
+      // is only a funding number while the rows are unpaid; served as null
+      // otherwise so there is nothing for the panel to mislabel.
+      pendingTotal: OWED_STATUSES.includes(status) ? {
         count: rows.length,
         points: rows.reduce((a, r) => a + Number(r.amount), 0),
         usdt: pointsToUsdt(rows.reduce((a, r) => a + (Number(r.amount) - Number(r.fee_points ?? 0)), 0)),
-      },
+      } : null,
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
         // ⚠️ THE FEE, AND WHAT IS ACTUALLY SENT. Both are snapshotted on the
@@ -325,6 +336,16 @@ export async function staffRoutes(app: FastifyInstance) {
       `SELECT id, email, status, created_at FROM users
          WHERE referred_by = ? ORDER BY created_at DESC LIMIT 50`, id,
     );
+    // ⚠️ COUNTED SEPARATELY, BECAUSE THE LIST IS CAPPED AT 50 AND THE COUNT IS
+    // THE FRAUD SIGNAL. "How many people did this account invite" is the whole
+    // question a referral-ring flag asks, and reading it off `invitees.length`
+    // answers "312 invites" with "50" — the one number a reviewer would have
+    // acted on, silently clamped to the page size.
+    const inviteeCount = Number(
+      (await sql.get<{ n: string | number }>(
+        "SELECT COUNT(*) AS n FROM users WHERE referred_by = ?", id,
+      ))?.n ?? 0,
+    );
 
     const tickets = await sql.all(
       "SELECT id, subject, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
@@ -346,6 +367,7 @@ export async function staffRoutes(app: FastifyInstance) {
       paidSummary: { count: Number(paid?.n ?? 0), totalPoints: Number(paid?.total ?? 0) },
       invitedBy: invitedBy ?? null,
       invitees,
+      inviteeCount,
       tickets,
     };
   }));

@@ -189,10 +189,20 @@ export default function StaffPage() {
               {/* Money IN. Confirming a pasted tx hash credits real USDT, so it
                   is gated on `deposits.view` and the buttons inside on
                   `deposits.decide` — a read-only role sees the queue and cannot
-                  act on it. */}
-              {may("deposits.view") && <Panel title="USDT deposits"><TopupPanel /></Panel>}
+                  act on it.
+                  ⚠️ `canDecide` IS NOT DECORATION. Manager and Operations hold
+                  `deposits.view`/`refunds.view` but NOT the matching `.decide`
+                  (permissions.ts), and moving these panels here is what first
+                  showed them to those roles. Without the prop they render live
+                  Confirm/Reject buttons that 403 on click — a staff member told
+                  they can act on real money, then refused after clicking. */}
+              {may("deposits.view") && (
+                <Panel title="USDT deposits"><TopupPanel canDecide={may("deposits.decide")} /></Panel>
+              )}
               {/* Money back OUT: a user's own unspent deposit, returned. */}
-              {may("refunds.view") && <Panel title="USDT refunds"><RefundPanel /></Panel>}
+              {may("refunds.view") && (
+                <Panel title="USDT refunds"><RefundPanel canDecide={may("refunds.decide")} /></Panel>
+              )}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
               {may("treasury.view") && <Panel title="Treasury wallet"><TreasuryPanel /></Panel>}
               {may("settings.manage") && <Panel title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
@@ -286,9 +296,14 @@ function WithdrawalQueue(
       // off the row — and the row showed the GROSS. The refund queue has
       // always stated its net here; this is the same fix on the payout side.
       const row = queue.data?.requests.find((x) => x.id === id);
-      const amount = row?.netUsdt ?? (row ? formatMoney(row.amount) : "the amount shown");
+      // ⚠️ netUsdt or NOTHING — never fall back to the gross. The whole defect
+      // this fixed was a human sending the gross and the platform eating the
+      // fee, so a fallback that quietly prints the gross recreates it on any
+      // build where the field is missing (an older API, mid-deploy). Say the
+      // figure is unknown instead; a blank is a question, a wrong number is not.
+      const amount = row?.netUsdt ? `${row.netUsdt} USDT` : "the NET amount shown on the row";
       const hash = window.prompt(
-        `Send ${amount} USDT to:\n\n${row?.address ?? "(no address on this request)"}\n\n` +
+        `Send ${amount} to:\n\n${row?.address ?? "(no address on this request)"}\n\n` +
         "Send the payment FIRST, then paste the transaction hash (0x…) here.",
       );
       if (hash === null) return; // cancelled
@@ -515,7 +530,9 @@ function UserHeader({ d }: { d: StaffUserDetail }) {
         Paid out: <span className="num font-semibold text-brand-ink">{formatPoints(d.paidSummary.totalPoints)}</span> pts
         across {d.paidSummary.count} withdrawal{d.paidSummary.count === 1 ? "" : "s"}
         {d.invitedBy && <> · invited by <span className="font-semibold text-brand-ink">{d.invitedBy.email}</span></>}
-        {d.invitees.length > 0 && <> · invited {d.invitees.length}</>}
+        {/* ⚠️ inviteeCount, NOT invitees.length — the list is capped at 50 and
+            this number is what a referral-ring review acts on. */}
+        {d.inviteeCount > 0 && <> · invited <span className="font-semibold text-brand-ink">{d.inviteeCount}</span></>}
       </p>
     </div>
   );
@@ -656,7 +673,9 @@ function UserLookup({ target }: { target: string | null }) {
           {res.data.invitees.length > 0 && (
             <div className="mt-3">
               <p className="mb-1 text-xs font-semibold uppercase text-muted">
-                Invited {res.data.invitees.length} user(s)
+                Invited {res.data.inviteeCount} user(s)
+                {res.data.inviteeCount > res.data.invitees.length
+                  && ` — showing the newest ${res.data.invitees.length}`}
               </p>
               <div className="flex flex-wrap gap-1">
                 {res.data.invitees.map((r, i) => (
