@@ -65,11 +65,17 @@ export function TopBar() {
           >
             {/* Waits for BOTH calls: showing the mined half first would let the
                 number visibly jump a moment later, which reads as a glitch on
-                every screen in the app rather than just one. */}
+                every screen in the app rather than just one.
+                A failed call is NOT the same as a slow one, and used to look
+                identical — the dash simply sat there forever, on every screen,
+                with nothing saying why. Now it says so, and the pill still
+                leads to /wallet, which has the retry. */}
             <span className="num text-sm font-bold leading-none text-brand">
               {balance.data && mining.data
                 ? `${formatRozi(totalRoziMicro(mining.data.roziMicro, balance.data.points))} ROZI`
-                : "—"}
+                : balance.error || mining.error
+                  ? t("topbar.unavailable")
+                  : "—"}
             </span>
           </Link>
         </div>

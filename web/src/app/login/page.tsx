@@ -46,11 +46,36 @@ function TelegramLoginButton({ refCode }: { refCode?: string }) {
 
 // useSearchParams needs a Suspense boundary above it for the static prerender,
 // so the page is a thin wrapper around the real form.
+//
+// The fallback is NOT null. This is the first screen anyone ever sees, and on a
+// slow phone `fallback={null}` is a white page with nothing on it — no brand, no
+// hint that anything is coming — which the design brief rules out outright and
+// which reads as an app that failed to open.
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<LoginSkeleton />}>
       <LoginForm />
     </Suspense>
+  );
+}
+
+function LoginSkeleton() {
+  const { t } = useI18n();
+  return (
+    <div className="flex min-h-[100dvh] flex-col px-5 pt-10 pb-8" aria-busy="true">
+      <div className="mb-8">
+        <LogoLockup tagline={t("login.tagline")} />
+      </div>
+      <span className="sr-only">{t("common.loading")}</span>
+      {/* Shaped like the form that replaces it, so nothing jumps when it does. */}
+      <div className="space-y-4" aria-hidden>
+        <div className="h-8 w-2/3 animate-pulse rounded-lg bg-brand-tint/60" />
+        <div className="h-5 w-1/2 animate-pulse rounded-lg bg-brand-tint/40" />
+        <div className="h-14 animate-pulse rounded-xl bg-brand-tint/60" />
+        <div className="h-14 animate-pulse rounded-xl bg-brand-tint/60" />
+        <div className="h-[52px] animate-pulse rounded-xl bg-brand-tint/60" />
+      </div>
+    </div>
   );
 }
 
@@ -121,8 +146,17 @@ function LoginForm() {
         <LogoLockup tagline={t("login.tagline")} />
       </div>
 
-      {error && <p className="mb-4 rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>}
-      {info && <p className="mb-4 rounded-xl bg-accent-tint p-3 text-sm text-accent-ink">{info}</p>}
+      {/* ANNOUNCED, not just coloured. Both of these appear ABOVE the form, so a
+          user who has just tapped a button at the bottom of the screen may not
+          even have them in view — and a screen reader was told nothing at all.
+          role="alert" interrupts for a failure; role="status" waits its turn for
+          the softer "we sent you a code" line. */}
+      {error && (
+        <p role="alert" className="mb-4 rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
+      )}
+      {info && (
+        <p role="status" className="mb-4 rounded-xl bg-accent-tint p-3 text-sm text-accent-ink">{info}</p>
+      )}
 
       {/* ---- LOG IN ---- */}
       {mode === "login" && (

@@ -69,12 +69,18 @@ export default function HomePage() {
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
-      <header className="flex items-center justify-between">
-        <div>
+      {/* `break-all` used to sit on the name, which splits an ordinary word
+          wherever the line happens to end — "Muhamm / ad". `break-words` only
+          breaks a word that would otherwise overflow, so a normal name wraps
+          normally and a 40-character handle still cannot push the badge off
+          screen. min-w-0 is what lets it wrap at all inside a flex row; the
+          badge is shrink-0 because squeezing it just wraps its own two words. */}
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-sm text-muted">{t("home.hello")}</p>
-          <h1 className="text-xl font-bold text-brand-ink break-all">{name}</h1>
+          <h1 className="text-xl font-bold text-brand-ink break-words">{name}</h1>
         </div>
-        <span className="flex items-center gap-1 rounded-full bg-success-tint px-2.5 py-1 text-xs font-semibold text-success">
+        <span className="flex shrink-0 items-center gap-1 rounded-full bg-success-tint px-2.5 py-1 text-xs font-semibold text-success">
           <ShieldIcon size={14} /> {t("home.wePayCash")}
         </span>
       </header>
@@ -102,7 +108,13 @@ export default function HomePage() {
               <MineIcon size={16} /> {t("home.rozi.label")}
               <ArrowRightIcon size={16} className="ml-auto shrink-0 text-white/70" />
             </p>
-            <p className="num mt-1 text-5xl font-extrabold">
+            {/* Scales with the screen instead of a flat 48px. A 320–360px
+                phone is the common case in this market, and there the card has
+                ~250px of usable width — enough for "1,234.5678 ROZI" to wrap
+                mid-balance, which makes the app's single most important number
+                look broken. clamp() keeps the full 48px on a normal phone and
+                shrinks it only where it would not fit. */}
+            <p className="num mt-1 text-[clamp(2.25rem,11vw,3rem)] font-extrabold leading-tight">
               {formatRozi(totalRoziMicro(minedMicro, points), HERO_DECIMALS)}{" "}
               <span className="text-2xl font-bold text-white/70">ROZI</span>
             </p>

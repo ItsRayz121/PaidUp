@@ -6,6 +6,7 @@
 // network, from/to, hash, date) is already on hand by the time a row exists.
 import { useState } from "react";
 import { Button } from "@/components/ui";
+import { BottomSheet } from "@/components/BottomSheet";
 import { CopyIcon, CheckIcon } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
 import { chainLabel } from "@/lib/chains";
@@ -28,20 +29,14 @@ export function TxDetailSheet({ row, onClose }: { row: Row; onClose: () => void 
     : null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center">
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/40" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="animate-rise relative w-full max-w-[480px] rounded-t-3xl bg-card p-5 pb-7 space-y-3"
-      >
-        <div className="mx-auto mb-1 h-1.5 w-10 rounded-full bg-line" />
-        <div className="flex items-center gap-3">
+    <BottomSheet labelledBy="tx-detail-title" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 pe-10">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
             <row.Icon size={22} />
           </span>
-          <div>
-            <h2 className="text-lg font-bold text-brand-ink">{row.label}</h2>
+          <div className="min-w-0">
+            <h2 id="tx-detail-title" className="text-lg font-bold text-brand-ink">{row.label}</h2>
             <p className="text-xs text-muted">{new Date(row.at).toLocaleString()}</p>
           </div>
         </div>
@@ -72,7 +67,7 @@ export function TxDetailSheet({ row, onClose }: { row: Row; onClose: () => void 
         )}
         <Button onClick={onClose} variant="ghost">{t("common.close")}</Button>
       </div>
-    </div>
+    </BottomSheet>
   );
 }
 

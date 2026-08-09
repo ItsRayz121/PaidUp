@@ -46,6 +46,11 @@ const copy: Record<string, string> = {
   "common.getMyMoney": "Get my money",
   "common.cancel": "Cancel",
   "common.close": "Close",
+  "common.loading": "Loading…",
+  // Shown in the top bar when the balance could not be fetched. A dash there
+  // means "still coming"; leaving the dash after a failed call tells the user
+  // nothing at all about a number they care about more than any other.
+  "topbar.unavailable": "Not available",
   // install (PWA add-to-home-screen). Say plainly that nothing is downloaded —
   // "install" makes people expect an APK, and we must not over-promise.
   "install.title": "Put RoziPay on your phone",

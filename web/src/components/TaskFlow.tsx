@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Card, PointsPill, SponsoredTag, Button } from "./ui";
+import { BottomSheet, useDialogBehaviour } from "./BottomSheet";
 import {
   offerIcon, taskIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon, LockIcon,
 } from "./icons";
@@ -178,16 +179,9 @@ function DisclosureSheet({
   task, onClose, onStart,
 }: { task: Task; onClose: () => void; onStart: () => void }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center">
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/40" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="sheet-title"
-        className="animate-rise relative w-full max-w-[480px] rounded-t-3xl bg-card p-5 pb-7"
-      >
-        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-line" />
-        <h2 id="sheet-title" className="text-lg font-bold text-brand-ink">{task.title}</h2>
+    <BottomSheet labelledBy="sheet-title" onClose={onClose}>
+      <div>
+        <h2 id="sheet-title" className="pe-10 text-lg font-bold text-brand-ink">{task.title}</h2>
 
         <div className="mt-3 flex items-center gap-2">
           <PointsPill points={task.points} />
@@ -215,7 +209,7 @@ function DisclosureSheet({
           <Button variant="ghost" onClick={onClose}>Not now</Button>
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }
 
@@ -223,12 +217,18 @@ function DisclosureSheet({
 // arrive only after the ad network confirms (verified postback, guardrail #1).
 // The real "points added" moment fires when the wallet balance goes up.
 function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
+  // Same focus/Escape/scroll handling as the sheets. This panel is opaque and
+  // covers the whole screen, so without it a keyboard user tabs straight into
+  // the task list underneath and operates controls they cannot see.
+  const { panel } = useDialogBehaviour(onDone);
   return (
     <div
+      ref={panel}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-label="Task started"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-brand-ink px-6 text-center"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-brand-ink px-6 text-center outline-none"
     >
       <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-brand-tint">
         <ArrowRightIcon size={48} className="text-brand" />

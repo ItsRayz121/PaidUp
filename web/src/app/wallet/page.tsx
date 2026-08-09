@@ -8,6 +8,7 @@ import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { WalletIcon, SendIcon, ReceiveIcon, ArrowRightIcon } from "@/components/icons";
 import { UsdtLogo, BnbLogo, RoziMark } from "@/components/tokenIcons";
 import { TxDetailSheet, FilterChip } from "@/components/TxDetailSheet";
+import { BottomSheet } from "@/components/BottomSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -55,6 +56,15 @@ export default function WalletPage() {
   const usdtAvailableMicro = bal.data?.usdtAvailableMicro ?? 0;
   const usdtLockedMicro = bal.data?.usdtLockedMicro ?? 0;
   const usdtTotalMicro = bal.data?.usdtTotalMicro ?? 0;
+  // ⚠️ NO NUMBER ON THIS SCREEN MAY BE A FALLBACK ZERO. Every figure above is
+  // `?? 0`, which is correct arithmetic and a terrible thing to render: while
+  // the request is in flight — or after it fails — it puts "0.00 USDT" in front
+  // of someone who has money, on the one screen whose entire job is telling
+  // them how much they have. A user reads that as their balance disappearing,
+  // and support hears about it. So each figure waits for its own call, and an
+  // unknown amount says so with a dash.
+  const balKnown = !bal.loading && !bal.error;
+  const miningKnown = !mining.loading && !mining.error;
 
   const entries = unifyHistory({
     ledger: led.data?.entries ?? [],
@@ -85,16 +95,22 @@ export default function WalletPage() {
           number — see the file header. Available/Locked only appears once
           there is anything actually locked, so a user already above the
           withdrawal minimum sees exactly what they saw before this shipped. */}
-      <Card className="p-4">
-        <p className="text-sm text-muted">{t("wallet.totalBalance")}</p>
-        <p className="num text-3xl font-bold text-brand-ink">{formatUsdtMicro(usdtTotalMicro)}</p>
-        {usdtLockedMicro > 0 && (
-          <div className="mt-2 flex gap-4 text-sm">
-            <span className="text-success font-semibold">{t("wallet.available")}: {formatUsdtMicro(usdtAvailableMicro)}</span>
-            <span className="text-pending font-semibold">{t("wallet.locked")}: {formatUsdtMicro(usdtLockedMicro)}</span>
-          </div>
-        )}
-      </Card>
+      {bal.loading ? (
+        <Loading lines={1} />
+      ) : bal.error ? (
+        <ErrorState message={bal.error} onRetry={bal.reload} />
+      ) : (
+        <Card className="p-4">
+          <p className="text-sm text-muted">{t("wallet.totalBalance")}</p>
+          <p className="num text-3xl font-bold text-brand-ink">{formatUsdtMicro(usdtTotalMicro)}</p>
+          {usdtLockedMicro > 0 && (
+            <div className="mt-2 flex gap-4 text-sm">
+              <span className="text-success font-semibold">{t("wallet.available")}: {formatUsdtMicro(usdtAvailableMicro)}</span>
+              <span className="text-pending font-semibold">{t("wallet.locked")}: {formatUsdtMicro(usdtLockedMicro)}</span>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-2.5">
         <Button onClick={() => setReceiveOpen(true)} variant="ghost">
@@ -128,7 +144,8 @@ export default function WalletPage() {
             ) : (
               <TokenRow
                 Icon={UsdtLogo} name={t("wallet.token.usdt.name")} sub={t("wallet.token.usdt.sub")}
-                symbol="USDT" amount={usdtFromMicro(usdtTotalMicro).toFixed(2)}
+                symbol="USDT" muted={!balKnown}
+                amount={balKnown ? usdtFromMicro(usdtTotalMicro).toFixed(2) : "—"}
               />
             )}
           </Link>
@@ -153,19 +170,21 @@ export default function WalletPage() {
           <Link href="/wallet/rozi" className="block active:bg-brand-tint/40">
             <TokenRow
               Icon={RoziMark} name={t("wallet.token.rozi.name")} sub={t("wallet.token.rozi.sub")}
-              symbol="ROZI" amount={formatRozi(mining.data?.roziMicro ?? 0)}
+              symbol="ROZI" muted={!miningKnown}
+              amount={miningKnown ? formatRozi(mining.data?.roziMicro ?? 0) : "—"}
             />
           </Link>
         </Card>
       </section>
 
-      {bal.error ? (
-        <ErrorState message={bal.error} onRetry={bal.reload} />
-      ) : canWithdraw ? (
+      {/* The balance's own failure state now lives with the balance card above,
+          where the wrong number would otherwise be. This is only the cash-out
+          shortcut, which simply does not appear until we know it applies. */}
+      {canWithdraw && (
         <Button href="/wallet/withdraw" variant="primary">
           <WalletIcon size={20} /> {t("common.getMyMoney")}
         </Button>
-      ) : null}
+      )}
 
       <section>
         <SectionTitle>{t("wallet.history")}</SectionTitle>
@@ -271,25 +290,18 @@ export default function WalletPage() {
 }
 
 // ---- Send / Receive token chooser ------------------------------------------
+// Chrome, focus handling and Escape all come from BottomSheet — see the note
+// at the top of that file for what these sheets used to get wrong.
 function ChooserSheet({
   titleId, title, onClose, children,
 }: { titleId: string; title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center">
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/40" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="animate-rise relative w-full max-w-[480px] rounded-t-3xl bg-card p-5 pb-7"
-      >
-        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-line" />
-        <h2 id={titleId} className="mb-3 text-lg font-bold text-brand-ink">{title}</h2>
-        <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-          {children}
-        </div>
+    <BottomSheet labelledBy={titleId} onClose={onClose}>
+      <h2 id={titleId} className="mb-3 pe-10 text-lg font-bold text-brand-ink">{title}</h2>
+      <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+        {children}
       </div>
-    </div>
+    </BottomSheet>
   );
 }
 
