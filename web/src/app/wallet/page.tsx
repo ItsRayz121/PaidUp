@@ -16,7 +16,7 @@ import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
   fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards,
 } from "@/lib/api";
-import { usdtFromMicro, formatUsdtMicro, formatBnbWei, formatRozi } from "@/lib/format";
+import { usdtFromMicro, formatUsdtMicro, formatBnbWei } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
 
 // The money screen. Wallet overhaul (founder): the headline is USDT again —
@@ -65,7 +65,6 @@ export default function WalletPage() {
   // and support hears about it. So each figure waits for its own call, and an
   // unknown amount says so with a dash.
   const balKnown = !bal.loading && !bal.error;
-  const miningKnown = !mining.loading && !mining.error;
 
   const entries = unifyHistory({
     ledger: led.data?.entries ?? [],
@@ -172,8 +171,8 @@ export default function WalletPage() {
           <Link href="/wallet/rozi" className="block active:bg-brand-tint/40">
             <TokenRow
               Icon={RoziMark} name={t("wallet.token.rozi.name")} sub={t("wallet.token.rozi.sub")}
-              symbol="ROZI" muted={!miningKnown}
-              amount={miningKnown ? formatRozi(mining.data?.roziMicro ?? 0) : "—"}
+              symbol="" muted
+              amount={t("wallet.token.comingSoon")}
             />
           </Link>
         </Card>

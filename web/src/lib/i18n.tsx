@@ -44,7 +44,8 @@ const copy: Record<string, string> = {
   // this balance is not cash while screen-reader users were told it is. The
   // accessibility path must never leak the one claim the visible copy works
   // hardest to avoid. Same words in both places, always.
-  "topbar.balanceLabel": "Your RoziPay balance. Tap to open your wallet.",
+  "topbar.balanceLabel": "ROZI tokens coming soon. Tap to open your wallet.",
+  "topbar.roziComingSoon": "ROZI · Coming soon",
 
   "nav.home": "Home",
   "nav.tasks": "Tasks",
@@ -519,7 +520,7 @@ const copy: Record<string, string> = {
   // half has nowhere else to appear. On /wallet the points half is ALREADY in
   // the Total Balance above, as USDT. Showing the combined figure here would
   // count the same earnings twice on one screen.
-  "wallet.token.rozi.sub": "Transfers coming soon",
+  "wallet.token.rozi.sub": "Rosie tokens",
   "wallet.token.comingSoon": "Coming soon",
   "wallet.token.usdt.name": "USDT",
   "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",

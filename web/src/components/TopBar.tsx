@@ -12,15 +12,13 @@
 // part in layout and no page needs padding to avoid being covered by it.
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
-import { fetchBalance, fetchMiningState, fetchNotifications } from "@/lib/api";
-import { formatRozi, totalRoziMicro } from "@/lib/format";
+import { fetchNotifications } from "@/lib/api";
 import { LogoMark } from "./Logo";
 import { BellIcon } from "./icons";
 import { useI18n } from "@/lib/i18n";
 
 export function TopBar() {
   const { t } = useI18n();
-  const balance = useApi(fetchBalance, []);
   // The unread count (brief part 39). A message that lands in the inbox with
   // nothing on screen to say so is a message nobody reads — which is the whole
   // reason people reach for a push notification instead, and push is the thing
@@ -31,7 +29,6 @@ export function TopBar() {
   // load, and that is the cheap side of the trade: a top bar that says 2.20
   // while the card below it says 14.68 is a user working out which number the
   // app is lying with. One balance means one balance everywhere it appears.
-  const mining = useApi(fetchMiningState, []);
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-card/95 backdrop-blur">
@@ -60,7 +57,7 @@ export function TopBar() {
           {/* Tapping the balance goes to the wallet — the thing you'd want next. */}
           <Link
             href="/wallet"
-            className="flex items-center gap-1.5 rounded-full bg-brand-tint px-3 py-1.5"
+            className="flex items-center gap-1.5 rounded-full border border-brand/10 bg-brand-tint px-3 py-1.5"
             aria-label={t("topbar.balanceLabel")}
           >
             {/* Waits for BOTH calls: showing the mined half first would let the
@@ -70,12 +67,8 @@ export function TopBar() {
                 identical — the dash simply sat there forever, on every screen,
                 with nothing saying why. Now it says so, and the pill still
                 leads to /wallet, which has the retry. */}
-            <span className="num text-sm font-bold leading-none text-brand">
-              {balance.data && mining.data
-                ? `${formatRozi(totalRoziMicro(mining.data.roziMicro, balance.data.points))} ROZI`
-                : balance.error || mining.error
-                  ? t("topbar.unavailable")
-                  : "—"}
+            <span className="text-xs font-bold leading-none text-brand">
+              {t("topbar.roziComingSoon")}
             </span>
           </Link>
         </div>
