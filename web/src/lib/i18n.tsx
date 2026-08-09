@@ -520,7 +520,7 @@ const copy: Record<string, string> = {
   // half has nowhere else to appear. On /wallet the points half is ALREADY in
   // the Total Balance above, as USDT. Showing the combined figure here would
   // count the same earnings twice on one screen.
-  "wallet.token.rozi.sub": "Rosie tokens",
+  "wallet.token.rozi.sub": "ROZI tokens",
   "wallet.token.comingSoon": "Coming soon",
   "wallet.token.usdt.name": "USDT",
   "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",
@@ -988,7 +988,7 @@ const copy: Record<string, string> = {
   // can check it, so nothing is held if the send cannot actually go through.
   "refund.gasLabel": "Network fee wallet",
   "refund.gasReady": "You have enough BNB to send this.",
-  "refund.gasNotReady": "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+  "refund.gasNotReady": "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RoziPay wallet before withdrawing USDT.",
   "refund.gasBalance": "Your BNB balance: {balance}",
   // The gas fee (founder, 2026-08-08) — only shown when Admin has actually
   // set one (percent or fixed > 0). Most deployments show none of these.

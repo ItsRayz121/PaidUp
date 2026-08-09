@@ -701,7 +701,7 @@ export async function miningRoutes(app: FastifyInstance) {
       if (!gas.ok) {
         throw {
           statusCode: 400,
-          message: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+          message: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RoziPay wallet before withdrawing USDT.",
           gasRequired: true,
           walletAddress: gas.address,
         };

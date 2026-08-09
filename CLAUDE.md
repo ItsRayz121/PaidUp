@@ -1122,7 +1122,7 @@ These override convenience or speed at every step:
     work landed. The refund/withdraw screens show the live gas-wallet status
     before submit, with the founder's own copy for "not enough": *"You need
     BNB in your wallet to pay the network fee. Please deposit BNB to your
-    RosiPay wallet before withdrawing USDT."*
+    RoziPay wallet before withdrawing USDT."*
   - **Confirmed live, post-deploy:** the stuck request auto-resolved on its
     own next tick — `payout_relay_jobs` flipped to `failed` (286 accumulated
     attempts crossed the new cap), `usdt_refund_requests` flipped to

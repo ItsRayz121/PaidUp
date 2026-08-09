@@ -204,7 +204,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       const gas = await hasEnoughGas(userId, chain as "bep20");
       if (!gas.ok) {
         return reply.code(400).send({
-          error: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RosiPay wallet before withdrawing USDT.",
+          error: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RoziPay wallet before withdrawing USDT.",
           gasRequired: true,
           walletAddress: gas.address,
         });
