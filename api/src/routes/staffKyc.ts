@@ -9,17 +9,17 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { sql, now, logAudit } from "../db.ts";
-import { requireStaff, type Role } from "../roles.ts";
+import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { decryptImage } from "../kyc.ts";
 import { sendPushToUser } from "../push.ts";
 
 function staffGuard(
-  allowed: Role[],
+  perm: Permission,
   handler: (ctx: { userId: string; role: Role }, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
 ) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
-      return await handler(await requireStaff(req, allowed), req, reply);
+      return await handler(await requirePermission(req, perm), req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Something went wrong" });
@@ -31,7 +31,7 @@ export async function staffKycRoutes(app: FastifyInstance) {
   // The queue. Note what is NOT here: the photos. Listing them would mean
   // decrypting and shipping every pending ID card on every poll of the panel.
   // The list is metadata; the images are fetched one at a time, on purpose.
-  app.get("/staff/kyc", staffGuard(["admin"], async (_ctx, req) => {
+  app.get("/staff/kyc", staffGuard("kyc.view", async (_ctx, req) => {
     const q = z.object({
       status: z.enum(["pending", "approved", "rejected"]).default("pending"),
     }).parse(req.query ?? {});
@@ -54,7 +54,7 @@ export async function staffKycRoutes(app: FastifyInstance) {
   // browser cache or a CDN, and must never be interpreted as anything but an
   // image. The service worker is already navigation-only and never caches API
   // responses, so the door is shut on that side too.
-  app.get("/staff/kyc/:id/:which", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
+  app.get("/staff/kyc/:id/:which", staffGuard("kyc.view", async ({ userId, role }, req, reply) => {
     const p = z.object({
       id: z.string().min(1),
       which: z.enum(["selfie", "front", "back"]),
@@ -87,7 +87,7 @@ export async function staffKycRoutes(app: FastifyInstance) {
       .send(bytes);
   }));
 
-  app.post("/staff/kyc/:id/decide", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/kyc/:id/decide", staffGuard("kyc.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = z.object({
       decision: z.enum(["approved", "rejected"]),

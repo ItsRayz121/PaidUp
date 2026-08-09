@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRequireAuth, useApi } from "@/lib/hooks";
+import { useStaffSession, useApi } from "@/lib/hooks";
+import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
 import {
   fetchStaffQueue, decideWithdrawal, fetchFraud, fetchStaffUser,
@@ -19,6 +20,7 @@ import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
 import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
 import { KycPanel } from "@/components/kyc-admin";
+import { AuditPanel } from "@/components/audit-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -29,27 +31,42 @@ const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "reje
 // many"): one entry per job a staff member sits down to do, not one per widget.
 // Sections a role can't use are hidden, and only the ACTIVE section mounts, so
 // opening the panel no longer fires every panel's API calls at once.
-type SectionId = "dashboard" | "money" | "users" | "tasks" | "mining" | "support" | "team";
-const SECTIONS: { id: SectionId; label: string; min: "agent" | "manager" | "admin" }[] = [
-  { id: "dashboard", label: "Dashboard", min: "manager" },
-  { id: "money", label: "Money & payouts", min: "agent" },
-  { id: "users", label: "Users & IDs", min: "agent" },
-  { id: "tasks", label: "Tasks & networks", min: "agent" },
-  { id: "mining", label: "Mining (ROZI)", min: "admin" },
-  { id: "support", label: "Support tickets", min: "agent" },
-  { id: "team", label: "Staff & roles", min: "admin" },
+//
+// A section is visible when the user holds ANY of its permissions — the section
+// is a drawer, and it is worth opening if there is one thing inside. The panels
+// within it each gate themselves, so a Finance user opening "Users & IDs" sees
+// lookup and IDs but not the suspend controls.
+//
+// ⚠️ THIS LIST IS PERMISSIONS, NOT ROLES, AND THAT IS THE POINT. The old form
+// was `min: "manager"`, which only works while roles are a ladder. With nine
+// job-shaped roles there is no "minimum" — Finance is not above or below Task
+// Manager — and every new role would need this file edited before it could see
+// anything. Now a role's sections fall out of what it may do.
+type SectionId = "dashboard" | "money" | "users" | "tasks" | "mining" | "support" | "audit" | "team";
+const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
+  { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
+  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "treasury.view", "money.view", "settings.manage"] },
+  { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
+  { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
+  // ⚠️ `mining.view` is deliberately NOT here. MiningPanel is one large screen
+  // that fires the whole mining admin surface — settings, rigs, conversion — on
+  // mount, and every one of those needs `mining.manage`. Listing the read
+  // permission would show the section to a manager and then fill it with 403s.
+  // The read-only mining numbers belong on the Dashboard, which is where
+  // `mining.view` is actually spent (GET /staff/mining/stats).
+  { id: "mining", label: "Mining (ROZI)", needs: ["mining.manage", "machines.manage"] },
+  { id: "support", label: "Support tickets", needs: ["support.view"] },
+  { id: "audit", label: "Audit log", needs: ["audit.view"] },
+  { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
 ];
 
 export default function StaffPage() {
-  const { user, ready } = useRequireAuth();
+  const { user, ready } = useStaffSession();
   const [lookupTarget, setLookupTarget] = useState<string | null>(null);
-  const isManager = user?.role === "manager" || user?.role === "admin";
-  const isAdmin = user?.role === "admin";
+  const may = (p: UiPermission) => can(user, p);
 
-  // Which sections this role can see, in order.
-  const visible = SECTIONS.filter((s) =>
-    s.min === "agent" ? true : s.min === "manager" ? isManager : isAdmin,
-  );
+  // Which sections this user can see, in order.
+  const visible = SECTIONS.filter((s) => canAny(user, s.needs));
   const [section, setSection] = useState<SectionId | null>(null);
   // Restore the section from the URL hash so a reload (or a shared link) lands
   // on the same screen. Falls back to the first section the role can see.
@@ -84,6 +101,21 @@ export default function StaffPage() {
       </div>
     );
   }
+  // A staff role with nothing switched on. Says so, rather than rendering an
+  // empty shell that reads as a broken page — the fix is an admin's job, and
+  // this is the message that tells the user to go and ask for it.
+  if (user?.role && visible.length === 0) {
+    return (
+      <div className="mx-auto max-w-md p-8 text-center">
+        <h1 className="text-xl font-bold text-brand-ink">Nothing assigned yet</h1>
+        <p className="mt-2 text-muted">
+          Your role ({user.roleLabel ?? user.role}) does not have any sections turned on.
+          Ask an admin to update it.
+        </p>
+        <Link href="/" className="mt-4 inline-block font-semibold text-brand">Back to the app</Link>
+      </div>
+    );
+  }
 
   const nav = (
     <>
@@ -108,7 +140,8 @@ export default function StaffPage() {
             <LogoMark size={24} /> RoziPay — Staff
           </h1>
           <p className="break-all text-xs text-muted">
-            Signed in as {user?.email} · role: <span className="font-semibold uppercase">{user?.role}</span>
+            Signed in as {user?.email} · role:{" "}
+            <span className="font-semibold">{user?.roleLabel ?? user?.role}</span>
           </p>
         </div>
         <div className="shrink-0"><LogoutButton /></div>
@@ -122,7 +155,7 @@ export default function StaffPage() {
         <nav className="sticky top-20 hidden w-44 shrink-0 space-y-1 md:block">{nav}</nav>
 
         <main className="min-w-0 flex-1">
-          {section === "dashboard" && isManager && (
+          {section === "dashboard" && may("analytics.view") && (
             <Panel title="Dashboard">
               <section className="mb-8">
                 <h2 className="mb-2 font-bold text-brand-ink">Dashboard</h2>
@@ -133,41 +166,42 @@ export default function StaffPage() {
 
           {section === "money" && (
             <>
-              <Panel title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} /></Panel>
-              {/* The treasury (hot) wallet: where payouts are sent from — admin only */}
-              {isAdmin && <Panel title="Treasury wallet"><TreasuryPanel /></Panel>}
-              {isAdmin && <Panel title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
-              {/* What you owe users vs what you've paid — admin only */}
-              {isAdmin && <Panel title="Money"><MoneyPanel /></Panel>}
+              {may("withdrawals.view") && (
+                <Panel title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} canOpenLedger={may("users.view")} /></Panel>
+              )}
+              {/* The treasury (hot) wallet: where payouts are sent from. */}
+              {may("treasury.view") && <Panel title="Treasury wallet"><TreasuryPanel /></Panel>}
+              {may("settings.manage") && <Panel title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
+              {/* What you owe users vs what you've paid. */}
+              {may("money.view") && <Panel title="Money"><MoneyPanel /></Panel>}
             </>
           )}
 
           {section === "users" && (
             <>
-              {/* Find, pay, suspend a user — admin only */}
-              {isAdmin && <Panel title="Users"><UsersPanel /></Panel>}
-              {/* ID review. Admin only, deliberately narrower than the rest of the
-                  panel: nobody else needs to see a stranger's national ID card. */}
-              {isAdmin && <Panel title="Verify IDs"><KycPanel /></Panel>}
-              {/* Dispute lookup — all staff */}
-              <Panel title="Look up a user"><UserLookup target={lookupTarget} /></Panel>
-              {/* Fraud flags — managers/admins only */}
-              {isManager && <Panel title="Fraud flags"><FraudPanel /></Panel>}
+              {/* Find, pay, suspend a user. */}
+              {may("users.list") && <Panel title="Users"><UsersPanel /></Panel>}
+              {/* ID review. Deliberately narrower than the rest of the panel:
+                  nobody else needs to see a stranger's national ID card. */}
+              {may("kyc.view") && <Panel title="Verify IDs"><KycPanel /></Panel>}
+              {/* Dispute lookup. */}
+              {may("users.view") && <Panel title="Look up a user"><UserLookup target={lookupTarget} /></Panel>}
+              {may("fraud.view") && <Panel title="Fraud flags"><FraudPanel canResolve={may("fraud.resolve")} /></Panel>}
             </>
           )}
 
           {section === "tasks" && (
             <>
-              {/* Our own custom tasks — admin only */}
-              {isAdmin && <Panel title="Our own tasks"><TasksPanel /></Panel>}
-              {/* Task proof review — all staff */}
-              <Panel title="Task proofs"><ProofQueue /></Panel>
-              {/* Ad-network config — admin only */}
-              {isAdmin && <Panel title="Ad networks"><NetworkPanel /></Panel>}
+              {/* Our own custom tasks. */}
+              {may("tasks.view") && <Panel title="Our own tasks"><TasksPanel /></Panel>}
+              {/* Task proof review. */}
+              {may("tasks.review") && <Panel title="Task proofs"><ProofQueue /></Panel>}
+              {/* Ad-network config. */}
+              {may("networks.manage") && <Panel title="Ad networks"><NetworkPanel /></Panel>}
             </>
           )}
 
-          {section === "mining" && isAdmin && (
+          {section === "mining" && (
             <Panel title="Mining (ROZI)">
               <section className="mb-8">
                 <h2 className="mb-2 font-bold text-brand-ink">Mining (ROZI)</h2>
@@ -176,9 +210,15 @@ export default function StaffPage() {
             </Panel>
           )}
 
-          {section === "support" && <Panel title="Support tickets"><TicketQueue /></Panel>}
+          {section === "support" && may("support.view") && (
+            <Panel title="Support tickets"><TicketQueue /></Panel>
+          )}
 
-          {section === "team" && isAdmin && (
+          {section === "audit" && may("audit.view") && (
+            <Panel title="Audit log"><AuditPanel /></Panel>
+          )}
+
+          {section === "team" && may("staff.manage") && (
             <Panel title="Staff & roles"><StaffRolesPanel /></Panel>
           )}
         </main>
@@ -188,7 +228,9 @@ export default function StaffPage() {
 }
 
 // ---- Withdrawal queue -------------------------------------------------------
-function WithdrawalQueue({ onViewLedger }: { onViewLedger: (userId: string) => void }) {
+function WithdrawalQueue(
+  { onViewLedger, canOpenLedger }: { onViewLedger: (userId: string) => void; canOpenLedger: boolean },
+) {
   const [status, setStatus] = useState("pending");
   const queue = useApi(() => fetchStaffQueue(status), [status]);
   // Treasury wallet for the chains in the queue — so whoever pays sends from
@@ -272,7 +314,11 @@ function WithdrawalQueue({ onViewLedger }: { onViewLedger: (userId: string) => v
                 <tr key={r.id} className="border-t border-line">
                   <td className="p-2.5">
                     <div className="font-medium text-brand-ink">{r.userEmail}</div>
-                    <button onClick={() => onViewLedger(r.userId)} className="text-xs text-brand">view ledger</button>
+                    {/* Hidden rather than disabled: it jumps to a panel this
+                        role cannot open, so there is nothing to explain. */}
+                    {canOpenLedger && (
+                      <button onClick={() => onViewLedger(r.userId)} className="text-xs text-brand">view ledger</button>
+                    )}
                   </td>
                   <td className="p-2.5">
                     <div className="num font-semibold text-brand-ink">{formatPoints(r.amount)}</div>
@@ -436,7 +482,7 @@ function UserLookup({ target }: { target: string | null }) {
   );
 }
 
-function FraudPanel() {
+function FraudPanel({ canResolve }: { canResolve: boolean }) {
   const fraud = useApi(fetchFraud, []);
   return (
     <section>
@@ -459,7 +505,11 @@ function FraudPanel() {
                     <td className="p-2.5">{String(f.severity)}</td>
                     <td className="p-2.5 text-muted">{String(f.detail ?? "")}</td>
                     <td className="p-2.5 text-muted">{timeAgo(String(f.created_at))}</td>
-                    <td className="p-2.5"><ResolveFlagButton id={String(f.id)} onResolved={fraud.reload} /></td>
+                    <td className="p-2.5">
+                      {canResolve
+                        ? <ResolveFlagButton id={String(f.id)} onResolved={fraud.reload} />
+                        : <span className="text-xs text-muted">view only</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>

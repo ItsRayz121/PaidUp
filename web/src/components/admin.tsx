@@ -9,7 +9,7 @@ import {
   searchUsers, setUserStatus, adjustUserPoints,
   fetchStaffMembers, setStaffRole,
   fetchMoney, downloadExport,
-  type AdminUserRow,
+  type AdminUserRow, type StaffRole,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtAmount, timeAgo } from "@/lib/format";
 
@@ -139,14 +139,19 @@ function UserRow({ u, onChanged }: { u: AdminUserRow; onChanged: () => void }) {
 }
 
 // ---- Staff roles ---------------------------------------------------------
-const ROLES = ["agent", "manager", "admin", "none"] as const;
-type RoleOpt = (typeof ROLES)[number];
+// The role list is NOT a constant here — it comes from GET /staff/staff, which
+// builds it from the API's permissions.ts. A hardcoded list drifts the moment a
+// role is added, and drifts in the worst direction: the picker offers a role the
+// API then refuses, or hides one that exists. "none" is the only entry the
+// server does not send, because it is not a role — it is removal.
+type RoleOpt = StaffRole | "none";
 
 export function StaffRolesPanel() {
   const staff = useApi(fetchStaffMembers, []);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"agent" | "manager" | "admin">("agent");
+  const [role, setRole] = useState<StaffRole>("support");
   const [busy, setBusy] = useState(false);
+  const roles = staff.data?.roles ?? [];
 
   // The API keys on user id, so appointing by email means resolving it first.
   async function appoint(e: React.FormEvent) {
@@ -175,25 +180,44 @@ export function StaffRolesPanel() {
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Staff &amp; roles</h2>
       <p className="mb-2 text-xs text-muted">
-        Agent = withdrawals under the limit, plus tickets. Manager = any withdrawal, fraud, KPIs.
-        Admin = everything, including creating points by hand. The last admin cannot be demoted.
+        Give people the narrowest role that lets them do their job. The last account
+        that can appoint staff cannot be demoted or removed.
       </p>
 
       <form onSubmit={appoint} className="mb-2 flex flex-wrap gap-2">
         <input value={email} onChange={(e) => setEmail(e.target.value)}
           placeholder="email of an existing user"
           className="flex-1 rounded-md border border-line bg-card p-2 text-sm outline-none" />
-        <select value={role} onChange={(e) => setRole(e.target.value as typeof role)}
+        <select value={role} onChange={(e) => setRole(e.target.value as StaffRole)}
           className="rounded-md border border-line bg-card p-2 text-sm">
-          <option value="agent">agent</option>
-          <option value="manager">manager</option>
-          <option value="admin">admin</option>
+          {roles.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
         </select>
         <button disabled={busy}
           className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
           Appoint
         </button>
       </form>
+
+      {/* What each role can actually do, from the server's own permission map.
+          Without this the picker is nine words with no meaning, and whoever is
+          appointing has to guess — which is how everyone ends up an admin. */}
+      {roles.length > 0 && (
+        <details className="mb-3 rounded-lg border border-line bg-card p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-brand">
+            What can each role do?
+          </summary>
+          <div className="mt-2 space-y-2">
+            {roles.map((r) => (
+              <div key={r.id}>
+                <p className="text-sm font-semibold text-brand-ink">{r.label}</p>
+                <p className="text-xs text-muted">
+                  {r.permissions.length === 0 ? "nothing" : r.permissions.join(" · ")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {staff.loading ? <p className="text-sm text-muted">Loading…</p>
         : staff.error ? <p className="text-sm text-danger">{staff.error}</p> : (
@@ -206,12 +230,13 @@ export function StaffRolesPanel() {
                 {(staff.data?.staff ?? []).map((s) => (
                   <tr key={s.userId} className="border-t border-line">
                     <td className="p-2.5 font-semibold text-brand-ink">{s.email}</td>
-                    <td className="p-2.5 uppercase">{s.role}</td>
+                    <td className="p-2.5">{s.roleLabel ?? s.role}</td>
                     <td className="p-2.5 text-muted">{timeAgo(s.at)}</td>
                     <td className="p-2.5">
                       <select value={s.role} onChange={(e) => change(s.userId, e.target.value as RoleOpt)}
                         className="rounded-md border border-line bg-card p-1 text-xs">
-                        {ROLES.map((r) => <option key={r} value={r}>{r === "none" ? "remove access" : r}</option>)}
+                        {roles.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                        <option value="none">remove access</option>
                       </select>
                     </td>
                   </tr>

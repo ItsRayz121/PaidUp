@@ -13,9 +13,28 @@ import { getDeviceId } from "./device";
 const TOKEN_KEY = "rozipay_token";
 const USER_KEY = "rozipay_user";
 
+// Staff roles, mirroring the API's permissions.ts. `null` is a normal earner.
+export type StaffRole =
+  | "admin" | "manager" | "agent"
+  | "operations" | "task_manager" | "finance" | "support" | "marketing" | "analyst";
+
 export type SessionUser = {
   id: string; email: string; country: string;
-  referralCode: string; status: string; role: "agent" | "manager" | "admin" | null;
+  referralCode: string; status: string; role: StaffRole | null;
+  // What the role is called on screen. The panel never shows the raw key.
+  roleLabel?: string | null;
+  // What this account may DO. The staff panel gates every section on these
+  // rather than on `role === "admin"` — with nine roles, a role check has to be
+  // re-edited for each one added, and until it is, the new role sees an empty
+  // screen with no explanation.
+  //
+  // ⚠️ THIS IS FOR DRAWING THE SCREEN, NEVER FOR SECURITY. The API re-checks
+  // every route against the role it reads from the database; a tampered list in
+  // localStorage buys nothing but a panel full of buttons that all return 403.
+  // Optional: sessions stored before this field existed simply lack it, and
+  // `can()` treats a missing list as "nothing" for earners and falls back to
+  // the legacy ladder for the three old roles.
+  permissions?: string[];
   // Whether a Telegram account is connected (presence only, never the id).
   // Optional: sessions stored before this field existed simply lack it.
   hasTelegram?: boolean;
@@ -60,6 +79,12 @@ export function getStoredUser(): SessionUser | null {
 }
 export function setSession(token: string, user: SessionUser) {
   window.localStorage.setItem(TOKEN_KEY, token);
+  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+// Overwrite the stored user without touching the token. Used when a screen
+// re-reads /auth/me and finds something the stored copy predates — a role
+// change, or the permission list itself on the deploy that introduced it.
+export function storeUser(user: SessionUser) {
   window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 export function clearSession() {
@@ -376,12 +401,41 @@ export const adjustUserPoints = (id: string, points: number, reason: string) =>
     method: "POST", body: JSON.stringify({ points, reason }),
   });
 
-export type StaffMember = { userId: string; email: string; role: string; at: string };
-export const fetchStaffMembers = () => apiFetch<{ staff: StaffMember[] }>("/staff/staff");
-export const setStaffRole = (userId: string, role: "agent" | "manager" | "admin" | "none") =>
+export type StaffMember = {
+  userId: string; email: string; role: StaffRole; roleLabel: string; at: string;
+};
+export type RoleOption = { id: StaffRole; label: string; permissions: string[] };
+// The role list comes from the SERVER, not a constant here: a role added in the
+// API's permissions.ts then appears in the picker with no web deploy, and — the
+// part that matters — the picker can never offer a role the API would refuse.
+export const fetchStaffMembers = () =>
+  apiFetch<{ staff: StaffMember[]; roles: RoleOption[] }>("/staff/staff");
+export const setStaffRole = (userId: string, role: StaffRole | "none") =>
   apiFetch<{ ok: true; role: string }>(`/staff/staff/${userId}`, {
     method: "PUT", body: JSON.stringify({ role }),
   });
+
+// ---- Audit log (brief part 46) --------------------------------------------
+export type AuditEntry = {
+  id: string; at: string; action: string; actorRole: string;
+  actorEmail: string; actorUserId: string;
+  targetEmail: string | null; targetUserId: string | null;
+  detail: string | null;
+  // What the value was before and after. Null on actions with no before/after
+  // (an approval, a resolved flag) — most of the log, and not a gap.
+  previousValue: string | null; newValue: string | null;
+  ip: string | null;
+};
+export const fetchAudit = (q: {
+  actor?: string; action?: string; target?: string; since?: string; cursor?: string;
+} = {}) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) p.set(k, v);
+  return apiFetch<{ entries: AuditEntry[]; nextCursor: string | null }>(
+    `/staff/audit${p.toString() ? `?${p}` : ""}`);
+};
+export const fetchAuditActions = () =>
+  apiFetch<{ actions: { action: string; count: number }[] }>("/staff/audit/actions");
 
 export type MoneyView = {
   points: {

@@ -393,6 +393,29 @@ const MIGRATIONS = `
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_pct_l2 INTEGER NOT NULL DEFAULT 5;
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_first_task_bonus INTEGER NOT NULL DEFAULT 100;
 
+  -- ---- STAFF ROLES & AUDIT ------------------------------------------------
+  -- Roles are job-shaped now, not a three-rung ladder (see permissions.ts for
+  -- why a ladder cannot express "Finance but not campaigns"). The three old
+  -- strings stay legal and keep exactly the reach they had — live rows hold
+  -- them, and renaming them would be a migration that buys nothing.
+  ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
+  ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check
+    CHECK (role IN ('agent','manager','admin',
+                    'operations','task_manager','finance','support','marketing','analyst'));
+
+  -- An audit row now records WHAT CHANGED, not just that something did.
+  -- "Admin X changed the mining rate" is not answerable at 3am; "from 0.5 to
+  -- 50" is. Both are nullable: plenty of actions (approve, resolve) have no
+  -- before/after, and forcing a value there would only invite a fake one.
+  ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS previous_value TEXT;
+  ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS new_value TEXT;
+  -- Where the action came from. Kept coarse on purpose: enough to spot a
+  -- compromised staff account signing in from somewhere new, not a location
+  -- history of an employee.
+  ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS actor_ip TEXT;
+  CREATE INDEX IF NOT EXISTS idx_audit_action ON admin_audit_log(action, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_target ON admin_audit_log(target_user_id, created_at DESC);
+
   -- Dynamic-amount networks (real survey walls like CPX) have no fixed task row:
   -- the reward varies per survey and arrives in the SIGNED postback. So a
   -- completion now carries its own points + offer type, and task_id is optional.
@@ -1625,6 +1648,12 @@ export async function postLedger(
 // Balance is always derived — this is the ONLY way balance is computed.
 // ::int because Postgres returns SUM() of an integer column as bigint (a string).
 // Record a privileged staff action. Append-only, like the ledger.
+//
+// `previousValue` / `newValue` are what make a row answerable months later: an
+// action name alone tells you a rate was changed, not what it was changed FROM,
+// which is the only version of the question anyone actually asks. Both are free
+// text — a number, a status word, a small JSON blob — because the alternative is
+// a typed column per settings key.
 export async function logAudit(
   params: {
     actorUserId: string;
@@ -1632,15 +1661,23 @@ export async function logAudit(
     action: string;
     targetUserId?: string | null;
     detail?: string;
+    previousValue?: string | number | null;
+    newValue?: string | number | null;
+    actorIp?: string | null;
   },
   t: Pick<TxApi, "run"> = sql,
 ): Promise<string> {
   const id = newId();
+  const str = (v: string | number | null | undefined) =>
+    v === undefined || v === null ? null : String(v);
   await t.run(
-    `INSERT INTO admin_audit_log (id, actor_user_id, actor_role, action, target_user_id, detail, created_at)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO admin_audit_log
+       (id, actor_user_id, actor_role, action, target_user_id, detail,
+        previous_value, new_value, actor_ip, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     id, params.actorUserId, params.actorRole, params.action,
-    params.targetUserId ?? null, params.detail ?? null, now(),
+    params.targetUserId ?? null, params.detail ?? null,
+    str(params.previousValue), str(params.newValue), params.actorIp ?? null, now(),
   );
   return id;
 }

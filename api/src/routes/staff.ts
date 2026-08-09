@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { sql, now, newId, balanceOf, postLedger, logAudit, getSetting, setSetting } from "../db.ts";
 import { config } from "../config.ts";
-import { requireStaff, canApproveAmount, type Role } from "../roles.ts";
+import { requirePermission, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
+import { ROLES, ROLE_LABELS, ROLE_PERMISSIONS, isRole, permissionsOf } from "../permissions.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
@@ -10,13 +11,16 @@ import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
 
+// Gate a route on ONE named permission (see permissions.ts). The old form took
+// a list of roles; a permission is the same gate stated as what it protects
+// rather than who happens to hold it today, so adding a role never edits a route.
 function staffGuard(
-  allowed: Role[],
+  perm: Permission,
   handler: (ctx: { userId: string; role: Role }, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
 ) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
-      return await handler(await requireStaff(req, allowed), req, reply);
+      return await handler(await requirePermission(req, perm), req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Something went wrong" });
@@ -35,7 +39,7 @@ const decisionSchema = z.object({
 
 export async function staffRoutes(app: FastifyInstance) {
   // Withdrawal queue. Agents only see requests within their approval limit.
-  app.get("/staff/withdrawals", staffGuard(["agent", "manager", "admin"], async ({ role }, req) => {
+  app.get("/staff/withdrawals", staffGuard("withdrawals.view", async ({ role }, req) => {
     const status = (req.query as { status?: string }).status ?? "pending";
     // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay pass-through
     // routing THROUGH the user's own address — see payoutRelay.ts) shows its
@@ -52,7 +56,12 @@ export async function staffRoutes(app: FastifyInstance) {
       status,
     );
 
-    if (role === "agent") {
+    // A capped approver (agent, support) only sees what they could act on.
+    // Asked as a PERMISSION, not as `role === "agent"`: the cap belongs to
+    // whoever lacks `withdrawals.decide_any`, and hardcoding the one role that
+    // happened to lack it in 2026 is how a new role silently gets shown — and
+    // then allowed to approve — payouts above its limit.
+    if (!hasPermission(role, "withdrawals.decide_any")) {
       rows = rows.filter((r) => (r.amount as number) <= config.agentApprovalMaxPoints);
     }
     return {
@@ -85,7 +94,7 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // Approve / reject / mark paid. Enforces the Agent->Manager threshold chain.
-  app.post("/staff/withdrawals/:id/decision", staffGuard(["agent", "manager", "admin"], async ({ userId, role }, req, reply) => {
+  app.post("/staff/withdrawals/:id/decision", staffGuard("withdrawals.decide", async ({ userId, role }, req, reply) => {
     const parsed = decisionSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick approve, reject, or pay." });
     const { action, note, txHash } = parsed.data;
@@ -136,7 +145,11 @@ export async function staffRoutes(app: FastifyInstance) {
         if (!canApproveAmount(role, w.amount)) {
           throw { statusCode: 403, message: "This is above your limit. A Manager must approve it." };
         }
-        const status = role === "agent" ? "agent_approved" : "manager_approved";
+        // The two-step chain: a capped approver's yes is only the FIRST yes.
+        // Same reasoning as the queue filter above — it is the missing
+        // `decide_any` that makes an approval provisional, not the job title.
+        const status = hasPermission(role, "withdrawals.decide_any")
+          ? "manager_approved" : "agent_approved";
         const s = stampSql(status);
         await t.run(s.text, ...s.vals);
         return { ok: true, status };
@@ -224,7 +237,7 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.
-  app.get("/staff/users/:id", staffGuard(["agent", "manager", "admin"], async (_ctx, req, reply) => {
+  app.get("/staff/users/:id", staffGuard("users.view", async (_ctx, req, reply) => {
     const id = (req.params as { id: string }).id;
     const user = await sql.get<Record<string, unknown>>(
       "SELECT id, email, country, referral_code, status, created_at FROM users WHERE id = ?", id,
@@ -251,7 +264,7 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // Open fraud flags — managers/admins only.
-  app.get("/staff/fraud", staffGuard(["manager", "admin"], async () => {
+  app.get("/staff/fraud", staffGuard("fraud.view", async () => {
     const flags = await sql.all(
       `SELECT f.*, u.email AS user_email FROM fraud_flags f
        LEFT JOIN users u ON u.id = f.user_id WHERE f.resolved_by IS NULL ORDER BY f.created_at DESC`,
@@ -261,7 +274,7 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // Resolve a flag (managers/admins). Append-only spirit: we don't delete, we
   // stamp who cleared it and why, leaving the trail (docs/ARCHITECTURE.md).
-  app.post("/staff/fraud/:id/resolve", staffGuard(["manager", "admin"], async ({ userId }, req, reply) => {
+  app.post("/staff/fraud/:id/resolve", staffGuard("fraud.resolve", async ({ userId }, req, reply) => {
     const note = (req.body as { note?: string })?.note;
     const id = (req.params as { id: string }).id;
     const res = await sql.run(
@@ -288,7 +301,7 @@ export async function staffRoutes(app: FastifyInstance) {
     referralBonusDays: z.number().int().min(0).max(3650).optional(),
   });
 
-  app.get("/staff/networks", staffGuard(["admin"], async () => {
+  app.get("/staff/networks", staffGuard("networks.manage", async () => {
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT n.*,
          (SELECT COUNT(*)::int FROM tasks t WHERE t.network = n.id) AS task_count,
@@ -306,7 +319,7 @@ export async function staffRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.patch("/staff/networks/:id", staffGuard(["admin"], async (_ctx, req, reply) => {
+  app.patch("/staff/networks/:id", staffGuard("networks.manage", async (_ctx, req, reply) => {
     const parsed = networkPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid status or a split between 0 and 100." });
     const id = (req.params as { id: string }).id;
@@ -338,7 +351,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // Deliberately NOT touching commission_split_pct. That is the margin, it is
   // negotiated per network, and a bulk write is exactly how you would flatten
   // three different deals into one wrong number by accident.
-  app.patch("/staff/networks/referrals/all", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
+  app.patch("/staff/networks/referrals/all", staffGuard("referrals.manage", async ({ userId, role }, req, reply) => {
     const parsed = z.object({
       referralBonusPct: z.number().int().min(0).max(100).optional(),
       referralBonusPctL2: z.number().int().min(0).max(100).optional(),
@@ -392,7 +405,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // app_settings. Display/reference only — the API never holds a private key
   // for these addresses (on-chain auto-send has its own env-gated signer, see
   // payout.ts), so a leaked admin session cannot move treasury funds from here.
-  app.get("/staff/settings", staffGuard(["admin"], async () => ({
+  app.get("/staff/settings", staffGuard("settings.manage", async () => ({
     withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
     // The gas fee (founder, 2026-08-08): sending USDT on BEP20 costs real
     // gas, and this is what recovers it — on BOTH withdrawals (added on top
@@ -446,7 +459,7 @@ export async function staffRoutes(app: FastifyInstance) {
       aptos: z.string().trim().max(120).optional(),
     }).optional(),
   });
-  app.patch("/staff/settings", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
+  app.patch("/staff/settings", staffGuard("settings.manage", async ({ userId, role }, req, reply) => {
     const parsed = settingsSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Check the values and try again." });
 
@@ -466,6 +479,7 @@ export async function staffRoutes(app: FastifyInstance) {
       await setSetting("auto_refund_max_micro", String(parsed.data.autoRefundMaxMicro));
     }
     if (parsed.data.kycEnabled !== undefined) {
+      const wasKyc = await getSetting("kyc_enabled", "1");
       await setSetting("kyc_enabled", parsed.data.kycEnabled ? "1" : "0");
       // Audit-logged for the same reason a treasury change is: this switch
       // relaxes an identity requirement on every money path in the product, and
@@ -473,6 +487,9 @@ export async function staffRoutes(app: FastifyInstance) {
       await logAudit({
         actorUserId: userId, actorRole: role, action: "kyc_feature_toggle",
         detail: parsed.data.kycEnabled ? "on" : "off — ID check waived everywhere",
+        previousValue: wasKyc === "1" ? "on" : "off",
+        newValue: parsed.data.kycEnabled ? "on" : "off",
+        actorIp: req.ip,
       });
     }
     if (parsed.data.treasury) {
@@ -484,13 +501,20 @@ export async function staffRoutes(app: FastifyInstance) {
           const check = validateAddress(chain as ChainId, address);
           if (!check.ok) return reply.code(400).send({ error: `${chain}: ${check.error}` });
         }
+        // Read BEFORE the write: the whole point of the audit row is the
+        // address this replaced, and after setSetting it is gone for good.
+        const wasAddress = await getSetting(`treasury_address_${chain}`, "");
         await setSetting(`treasury_address_${chain}`, address);
         // A treasury address swap is exactly what an attacker with a stolen
         // admin session would do (payouts start flowing to THEIR wallet), so
-        // every change lands in the append-only audit log.
+        // every change lands in the append-only audit log — with the address it
+        // replaced, which is what makes the row actionable rather than merely
+        // alarming.
         await logAudit({
           actorUserId: userId, actorRole: role, action: "treasury_address_change",
-          detail: `${chain} -> ${address || "(cleared)"}`,
+          detail: chain,
+          previousValue: wasAddress || "(none)", newValue: address || "(cleared)",
+          actorIp: req.ip,
         });
       }
     }
@@ -498,7 +522,7 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // ---- Agent: support tickets --------------------------------------------
-  app.get("/staff/tickets", staffGuard(["agent", "manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/tickets", staffGuard("support.view", async (_ctx, req) => {
     const status = (req.query as { status?: string }).status ?? "open";
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT ti.*, u.email AS user_email,
@@ -515,7 +539,7 @@ export async function staffRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.get("/staff/tickets/:id", staffGuard(["agent", "manager", "admin"], async (_ctx, req, reply) => {
+  app.get("/staff/tickets/:id", staffGuard("support.view", async (_ctx, req, reply) => {
     const id = (req.params as { id: string }).id;
     const ticket = await sql.get<Record<string, unknown>>(
       `SELECT ti.*, u.email AS user_email FROM support_tickets ti
@@ -538,7 +562,7 @@ export async function staffRoutes(app: FastifyInstance) {
     message: z.string().min(1).max(2000),
     close: z.boolean().optional(),
   });
-  app.post("/staff/tickets/:id/reply", staffGuard(["agent", "manager", "admin"], async ({ userId }, req, reply) => {
+  app.post("/staff/tickets/:id/reply", staffGuard("support.reply", async ({ userId }, req, reply) => {
     const parsed = replySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Type a reply first." });
     const id = (req.params as { id: string }).id;
@@ -569,7 +593,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // ---- Manager: KPI dashboard --------------------------------------------
   // All figures derived from the ledger and request tables — no stored
   // aggregates to drift out of sync (guardrail #2 in spirit).
-  app.get("/staff/kpis", staffGuard(["manager", "admin"], async () => {
+  app.get("/staff/kpis", staffGuard("analytics.view", async () => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
 
@@ -625,7 +649,7 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // ---- Admin: find users --------------------------------------------------
   // Search by email or id. Balance is summed from the ledger, never stored.
-  app.get("/staff/users", staffGuard(["manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/users", staffGuard("users.list", async (_ctx, req) => {
     const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
     const limit = Math.min(Number((req.query as { limit?: string }).limit ?? 50) || 50, 200);
 
@@ -648,7 +672,7 @@ export async function staffRoutes(app: FastifyInstance) {
     status: z.enum(["active", "suspended"]),
     reason: z.string().trim().min(3, "Say why.").max(500),
   });
-  app.post("/staff/users/:id/status", staffGuard(["admin"], async ({ userId: actorId, role }, req, reply) => {
+  app.post("/staff/users/:id/status", staffGuard("users.status", async ({ userId: actorId, role }, req, reply) => {
     const parsed = statusSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick a status and give a reason." });
     const targetId = (req.params as { id: string }).id;
@@ -667,6 +691,8 @@ export async function staffRoutes(app: FastifyInstance) {
         actorUserId: actorId, actorRole: role,
         action: parsed.data.status === "suspended" ? "user_suspended" : "user_restored",
         targetUserId: targetId, detail: parsed.data.reason,
+        previousValue: target.status, newValue: parsed.data.status,
+        actorIp: req.ip,
       }, t);
     });
     return { ok: true, status: parsed.data.status };
@@ -691,7 +717,7 @@ export async function staffRoutes(app: FastifyInstance) {
     // db.ts's isWithdrawalHeld — nothing to sweep or expire on a schedule).
     until: z.string().datetime().nullable().optional(),
   });
-  app.post("/staff/users/:id/withdrawal-hold", staffGuard(["manager", "admin"], async ({ userId: actorId, role }, req, reply) => {
+  app.post("/staff/users/:id/withdrawal-hold", staffGuard("users.hold", async ({ userId: actorId, role }, req, reply) => {
     const parsed = holdSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Say why, or clear the hold." });
     const { reason, until } = parsed.data;
@@ -700,7 +726,9 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     const targetId = (req.params as { id: string }).id;
 
-    const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
+    const target = await sql.get<{ id: string; withdrawal_hold_reason: string | null }>(
+      "SELECT id, withdrawal_hold_reason FROM users WHERE id = ?", targetId,
+    );
     if (!target) return reply.code(404).send({ error: "User not found." });
 
     await sql.tx(async (t) => {
@@ -715,6 +743,9 @@ export async function staffRoutes(app: FastifyInstance) {
         actorUserId: actorId, actorRole: role,
         action: reason ? "withdrawal_held" : "withdrawal_hold_cleared",
         targetUserId: targetId, detail: reason ?? undefined,
+        previousValue: target.withdrawal_hold_reason ? "held" : "not held",
+        newValue: reason ? "held" : "not held",
+        actorIp: req.ip,
       }, t);
     });
     return { ok: true, held: reason !== null, reason, until: until ?? null };
@@ -735,7 +766,7 @@ export async function staffRoutes(app: FastifyInstance) {
     points: z.number().int().refine((n) => n !== 0, "Enter a non-zero amount."),
     reason: z.string().trim().min(3, "Say why.").max(500),
   });
-  app.post("/staff/users/:id/adjust", staffGuard(["admin"], async ({ userId: actorId, role }, req, reply) => {
+  app.post("/staff/users/:id/adjust", staffGuard("users.adjust", async ({ userId: actorId, role }, req, reply) => {
     const parsed = adjustSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Enter an amount (not zero) and a reason." });
@@ -766,10 +797,15 @@ export async function staffRoutes(app: FastifyInstance) {
         sourceType: "admin_adjustment",
         note: reason,
       }, t);
+      // previous/new are the BALANCE, not the delta — the delta is already in
+      // `detail`, and "they went from 400 to 1400" is the sentence anyone
+      // reviewing a minted-points row is actually trying to reconstruct.
       await logAudit({
         actorUserId: actorId, actorRole: role, action: "points_adjusted",
         targetUserId: targetId,
         detail: `${points > 0 ? "+" : ""}${points} points — ${reason}`,
+        previousValue: before, newValue: before + points,
+        actorIp: req.ip,
       }, t);
       return { entryId, before, after: before + points };
     });
@@ -777,37 +813,68 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // ---- Admin: appoint / remove staff --------------------------------------
-  app.get("/staff/staff", staffGuard(["admin"], async () => {
+  app.get("/staff/staff", staffGuard("staff.manage", async () => {
     const rows = await sql.all<{ user_id: string; email: string; role: Role; created_at: string }>(
       `SELECT a.user_id, u.email, a.role, a.created_at
        FROM admin_users a JOIN users u ON u.id = a.user_id
        ORDER BY a.created_at ASC`,
     );
-    return { staff: rows.map((r) => ({ userId: r.user_id, email: r.email, role: r.role, at: r.created_at })) };
+    return {
+      staff: rows.map((r) => ({
+        userId: r.user_id, email: r.email, role: r.role, at: r.created_at,
+        roleLabel: ROLE_LABELS[r.role] ?? r.role,
+      })),
+      // The picker's options come from the server, so a role added in
+      // permissions.ts appears in the panel without a web deploy — and, more to
+      // the point, the panel can never offer a role the API would then refuse.
+      roles: ROLES.map((id) => ({
+        id, label: ROLE_LABELS[id],
+        permissions: [...ROLE_PERMISSIONS[id]],
+      })),
+    };
   }));
 
-  const roleSchema = z.object({ role: z.enum(["agent", "manager", "admin", "none"]) });
-  app.put("/staff/staff/:id", staffGuard(["admin"], async ({ userId: actorId, role: actorRole }, req, reply) => {
+  // Every role permissions.ts knows about, plus "none" to strip access. Built
+  // from ROLES rather than typed out, so the two cannot disagree.
+  const roleSchema = z.object({
+    role: z.string().refine((r) => r === "none" || isRole(r), "Pick a role."),
+  });
+  app.put("/staff/staff/:id", staffGuard("staff.manage", async ({ userId: actorId, role: actorRole }, req, reply) => {
     const parsed = roleSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick a role." });
     const targetId = (req.params as { id: string }).id;
-    const next = parsed.data.role;
+    const next = parsed.data.role as Role | "none";
 
     const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
     if (!target) return reply.code(404).send({ error: "User not found." });
 
+    const previous = await sql.get<{ role: Role }>(
+      "SELECT role FROM admin_users WHERE user_id = ?", targetId,
+    );
+
     // Lockout protection: never let the last admin demote or remove themselves.
     // Without this, one click can leave the product with no one who can appoint
     // anyone — recoverable only by editing the database by hand.
-    if (next !== "admin") {
-      const admins = await sql.get<{ n: number }>(
-        "SELECT COUNT(*)::int AS n FROM admin_users WHERE role = 'admin'",
+    //
+    // ⚠️ THE TEST IS `staff.manage`, NOT the literal role 'admin'. With nine
+    // roles, "is there another admin?" is the wrong question — what must never
+    // reach zero is the number of accounts that can still HAND OUT ROLES. Any
+    // future role granting staff.manage counts, and counting only 'admin' would
+    // both refuse a legitimate demotion and, worse, allow the real last
+    // key-holder to be removed if they ever held that permission under another
+    // role name.
+    if (next === "none" || !permissionsOf(next).includes("staff.manage")) {
+      const keyHolders = ROLES.filter((r) => ROLE_PERMISSIONS[r].includes("staff.manage"));
+      const others = await sql.get<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM admin_users
+          WHERE user_id <> ? AND role = ANY(?)`,
+        targetId, keyHolders,
       );
-      const targetIsAdmin = await sql.get<{ role: Role }>(
-        "SELECT role FROM admin_users WHERE user_id = ?", targetId,
-      );
-      if (targetIsAdmin?.role === "admin" && (admins?.n ?? 0) <= 1) {
-        return reply.code(400).send({ error: "This is the last admin. Appoint another admin first." });
+      const targetHeldKeys = previous && permissionsOf(previous.role).includes("staff.manage");
+      if (targetHeldKeys && (others?.n ?? 0) === 0) {
+        return reply.code(400).send({
+          error: "This is the last account that can appoint staff. Appoint another one first.",
+        });
       }
     }
 
@@ -825,6 +892,8 @@ export async function staffRoutes(app: FastifyInstance) {
         actorUserId: actorId, actorRole,
         action: next === "none" ? "staff_removed" : "staff_role_set",
         targetUserId: targetId, detail: next,
+        previousValue: previous?.role ?? "none", newValue: next,
+        actorIp: req.ip,
       }, t);
     });
     return { ok: true, role: next };
@@ -834,7 +903,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // Every figure is derived from the ledger, so it cannot drift from reality.
   // `outstanding` is the liability that matters: points users hold that they can
   // still cash out. Compare it against the treasury before you spend.
-  app.get("/staff/money", staffGuard(["admin"], async () => {
+  app.get("/staff/money", staffGuard("money.view", async () => {
     const one = async (text: string, ...p: unknown[]) =>
       (await sql.get<{ v: number }>(text, ...p))?.v ?? 0;
 
@@ -890,7 +959,7 @@ export async function staffRoutes(app: FastifyInstance) {
     return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\n");
   };
 
-  app.get("/staff/export/:what", staffGuard(["admin"], async (_ctx, req, reply) => {
+  app.get("/staff/export/:what", staffGuard("export.data", async (_ctx, req, reply) => {
     const what = (req.params as { what: string }).what;
     let rows: Record<string, unknown>[];
 
@@ -910,7 +979,8 @@ export async function staffRoutes(app: FastifyInstance) {
     } else if (what === "audit") {
       rows = await sql.all(
         `SELECT a.created_at, actor.email AS actor, a.actor_role, a.action,
-                target.email AS target, a.detail
+                target.email AS target, a.detail,
+                a.previous_value, a.new_value, a.actor_ip
          FROM admin_audit_log a
          JOIN users actor ON actor.id = a.actor_user_id
          LEFT JOIN users target ON target.id = a.target_user_id
@@ -924,5 +994,71 @@ export async function staffRoutes(app: FastifyInstance) {
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="${what}.csv"`)
       .send(csv(rows));
+  }));
+
+  // ---- Audit log (brief part 46) -------------------------------------------
+  // The append-only record of every privileged action, readable in the panel
+  // rather than only as a CSV export. Filterable by who did it, what they did,
+  // and who it was done to — the three questions anyone actually arrives with.
+  //
+  // Deliberately readable by MANAGERS and analysts, not just admins: an audit
+  // log only one person can read is not an audit log, it is that person's diary.
+  app.get("/staff/audit", staffGuard("audit.view", async (_ctx, req) => {
+    const q = req.query as {
+      actor?: string; action?: string; target?: string;
+      since?: string; limit?: string; cursor?: string;
+    };
+    const where: string[] = [];
+    const args: unknown[] = [];
+    // Matched against the EMAIL, because that is what a person has in front of
+    // them; the ids are internal.
+    if (q.actor) { where.push("actor.email ILIKE ?"); args.push(`%${q.actor}%`); }
+    if (q.target) { where.push("target.email ILIKE ?"); args.push(`%${q.target}%`); }
+    if (q.action) { where.push("a.action = ?"); args.push(q.action); }
+    if (q.since) { where.push("a.created_at >= ?"); args.push(q.since); }
+    // Keyset pagination on created_at: an audit log only grows, and OFFSET on a
+    // growing table silently skips rows as new ones land at the top.
+    if (q.cursor) { where.push("a.created_at < ?"); args.push(q.cursor); }
+
+    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT a.id, a.created_at, a.action, a.actor_role, a.detail,
+              a.previous_value, a.new_value, a.actor_ip,
+              actor.email AS actor_email, a.actor_user_id,
+              target.email AS target_email, a.target_user_id
+         FROM admin_audit_log a
+         JOIN users actor ON actor.id = a.actor_user_id
+         LEFT JOIN users target ON target.id = a.target_user_id
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY a.created_at DESC
+        LIMIT ${limit + 1}`,
+      ...args,
+    );
+    const page = rows.slice(0, limit);
+    return {
+      entries: page.map((r) => ({
+        id: r.id, at: r.created_at, action: r.action, actorRole: r.actor_role,
+        actorEmail: r.actor_email, actorUserId: r.actor_user_id,
+        targetEmail: r.target_email ?? null, targetUserId: r.target_user_id ?? null,
+        detail: r.detail ?? null,
+        previousValue: r.previous_value ?? null,
+        newValue: r.new_value ?? null,
+        ip: r.actor_ip ?? null,
+      })),
+      // Null when this is the last page, so the panel knows to stop asking.
+      nextCursor: rows.length > limit ? String(page[page.length - 1].created_at) : null,
+    };
+  }));
+
+  // The distinct action names actually present, for the filter dropdown. Read
+  // from the DATA, not a hardcoded list — a new action shows up in the filter
+  // the first time it happens, and a list that has to be maintained by hand is
+  // one that quietly stops matching what the code writes.
+  app.get("/staff/audit/actions", staffGuard("audit.view", async () => {
+    const rows = await sql.all<{ action: string; n: number }>(
+      `SELECT action, COUNT(*)::int AS n FROM admin_audit_log
+        GROUP BY action ORDER BY action ASC`,
+    );
+    return { actions: rows.map((r) => ({ action: r.action, count: r.n })) };
   }));
 }

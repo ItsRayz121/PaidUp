@@ -14,16 +14,16 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { sql, now, newId, logAudit } from "../db.ts";
-import { requireStaff, type Role } from "../roles.ts";
+import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { creditCompletion, type NetworkRow } from "../credit.ts";
 
 function staffGuard(
-  allowed: Role[],
+  perm: Permission,
   handler: (ctx: { userId: string; role: Role }, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
 ) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
-      return await handler(await requireStaff(req, allowed), req, reply);
+      return await handler(await requirePermission(req, perm), req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Something went wrong" });
@@ -80,7 +80,7 @@ const upsertSchema = z.object({
 
 export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- List every custom task (admin) -------------------------------------
-  app.get("/staff/tasks", staffGuard(["admin"], async () => {
+  app.get("/staff/tasks", staffGuard("tasks.view", async () => {
     const tasks = await sql.all<Record<string, unknown>>(
       `SELECT t.id, t.title, t.points, t.type, t.verify_mode, t.instructions, t.proof_label,
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
@@ -93,7 +93,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 
   // ---- Create a custom task -----------------------------------------------
-  app.post("/staff/tasks", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/tasks", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const b = upsertSchema.parse(req.body ?? {});
     const id = newId();
     // A postback task needs a secret so a partner can sign; a proof task never
@@ -123,7 +123,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 
   // ---- Edit a custom task -------------------------------------------------
-  app.patch("/staff/tasks/:id", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.patch("/staff/tasks/:id", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = upsertSchema.partial().parse(req.body ?? {});
 
@@ -168,7 +168,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- Reveal the postback URL + secret for a task ------------------------
   // Separate endpoint (not in the list) so the secret is fetched deliberately,
   // and every reveal is audit-logged.
-  app.get("/staff/tasks/:id/postback", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.get("/staff/tasks/:id/postback", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const t = await sql.get<{ postback_secret: string | null; verify_mode: string }>(
       "SELECT postback_secret, verify_mode FROM tasks WHERE id = ? AND source = 'custom'", id,
@@ -193,7 +193,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 
   // ---- Proof review queue (any staff) -------------------------------------
-  app.get("/staff/task-proofs", staffGuard(["agent", "manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/task-proofs", staffGuard("tasks.review", async (_ctx, req) => {
     const status = z.enum(["pending", "approved", "rejected"]).catch("pending")
       .parse((req.query as { status?: string })?.status);
     const proofs = await sql.all<Record<string, unknown>>(
@@ -210,7 +210,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 
   // ---- Approve / reject a proof -------------------------------------------
-  app.post("/staff/task-proofs/:id/decision", staffGuard(["agent", "manager", "admin"], async ({ userId, role }, req) => {
+  app.post("/staff/task-proofs/:id/decision", staffGuard("tasks.review", async ({ userId, role }, req) => {
     const proofId = (req.params as { id: string }).id;
     const b = z.object({
       action: z.enum(["approve", "reject"]),

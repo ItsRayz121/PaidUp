@@ -7,6 +7,9 @@ import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
 import { sendLoginCode } from "./email.ts";
 import { recordDevice } from "./fraud.ts";
+// permissions.ts imports nothing, so pulling it in here cannot create the cycle
+// that roles.ts would (roles.ts imports from this file).
+import { type Role, isRole, permissionsOf, ROLE_LABELS } from "./permissions.ts";
 
 // The frontend computes a device fingerprint (no PII) and sends it here so the
 // fraud layer can spot one device farming many accounts (guardrail #5).
@@ -148,9 +151,12 @@ type UserRow = {
   display_name: string | null; username: string | null;
 };
 
-async function roleOf(userId: string): Promise<string | null> {
+// A local copy of roles.ts's roleOf, because roles.ts imports from THIS file
+// and the cycle would be worse than the four duplicated lines. Same fail-closed
+// rule though: a role string the code does not know about is not a role.
+async function roleOf(userId: string): Promise<Role | null> {
   const row = await sql.get<{ role: string }>("SELECT role FROM admin_users WHERE user_id = ?", userId);
-  return row?.role ?? null;
+  return row && isRole(row.role) ? row.role : null;
 }
 
 // Promote founder emails (config.adminEmails) to admin on login.
@@ -164,10 +170,23 @@ async function ensureAdminRole(userId: string, email: string): Promise<void> {
 }
 
 async function publicUser(u: UserRow) {
+  const role = await roleOf(u.id);
   return {
     id: u.id, email: u.email, country: u.country,
     referralCode: u.referral_code, status: u.status,
-    role: await roleOf(u.id), // null for normal earners; 'agent'|'manager'|'admin' for staff
+    role, // null for normal earners; one of permissions.ts's ROLES for staff
+    roleLabel: role ? ROLE_LABELS[role] : null,
+    // What this account may DO, resolved from the role. The staff panel gates
+    // every section on these rather than on the role name — the same reason the
+    // API does (permissions.ts): a panel that says `role === "admin"` has to be
+    // re-edited for every role added, and until it is, a new role sees a screen
+    // with nothing on it and no explanation.
+    //
+    // Empty for earners, so this costs them one `[]` on a response they already
+    // make. It is the ROLE'S permission set, never a per-user grant — the
+    // server re-checks on every route regardless, so this list is only ever
+    // used to decide what to draw.
+    permissions: role ? [...permissionsOf(role)] : [],
     // Presence only, never the id itself — the UI just needs "connected or not".
     hasTelegram: Boolean(u.telegram_id),
     // False for Telegram-created accounts still on their synthetic

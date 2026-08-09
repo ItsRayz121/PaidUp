@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getToken, getStoredUser, type SessionUser } from "./api";
+import { getToken, getStoredUser, storeUser, fetchMe, type SessionUser } from "./api";
+import { permissionsKnown } from "./permissions";
 
 // Redirect to /login if there's no session. Returns the stored user once known.
 export function useRequireAuth(): { user: SessionUser | null; ready: boolean } {
@@ -24,6 +25,47 @@ export function useRequireAuth(): { user: SessionUser | null; ready: boolean } {
   }, [router]);
 
   return { user, ready };
+}
+
+// The staff panel's session. Same as useRequireAuth, plus one thing: it
+// re-reads /auth/me when the stored copy predates the permission list, and
+// writes the fresh copy back.
+//
+// WHY THIS EXISTS. The stored user is written once, at sign-in, and never
+// refreshed. On the deploy that introduced permissions, every staff member
+// already signed in was holding a session with no `permissions` field — and the
+// panel now decides what to draw from exactly that field. Without this, they
+// would each have opened an empty panel until they happened to sign out and
+// back in. It also picks up a role CHANGE without a re-login, which is the same
+// problem a day later.
+//
+// `ready` stays false until the permissions are actually known, so the panel
+// shows its loading state rather than a wrong screen for one frame.
+export function useStaffSession(): { user: SessionUser | null; ready: boolean } {
+  const { user: stored, ready: storedReady } = useRequireAuth();
+  const [fresh, setFresh] = useState<SessionUser | null>(null);
+  const [refreshed, setRefreshed] = useState(false);
+
+  useEffect(() => {
+    if (!storedReady) return;
+    let live = true;
+    fetchMe()
+      .then(({ user }) => {
+        if (!live) return;
+        storeUser(user);
+        setFresh(user);
+      })
+      // A failed refresh is not fatal: fall back to whatever was stored. The
+      // API is the real gate either way, so the worst case is a section that
+      // renders and then 403s — far better than locking staff out of the panel
+      // because one request timed out.
+      .catch(() => {})
+      .finally(() => { if (live) setRefreshed(true); });
+    return () => { live = false; };
+  }, [storedReady]);
+
+  const user = fresh ?? stored;
+  return { user, ready: storedReady && (refreshed || permissionsKnown(user)) };
 }
 
 // Small data-fetching hook: loading / error / data + reload.

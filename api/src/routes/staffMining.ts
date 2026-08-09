@@ -16,7 +16,7 @@ import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
-import { requireStaff, type Role } from "../roles.ts";
+import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
   loadMiningSettings, setMiningSetting, isMiningKey, totalEmittedMicro, MINING_DEFAULTS,
@@ -36,12 +36,12 @@ import {
 // speaks micro, because there the decimals ARE the number.
 
 function staffGuard(
-  allowed: Role[],
+  perm: Permission,
   handler: (ctx: { userId: string; role: Role }, req: FastifyRequest, reply: FastifyReply) => Promise<unknown> | unknown,
 ) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
-      return await handler(await requireStaff(req, allowed), req, reply);
+      return await handler(await requirePermission(req, perm), req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Something went wrong" });
@@ -51,14 +51,20 @@ function staffGuard(
 
 export async function staffMiningRoutes(app: FastifyInstance) {
   // ---- Settings ------------------------------------------------------------
-  app.get("/staff/mining/settings", staffGuard(["admin"], async () => ({
+  app.get("/staff/mining/settings", staffGuard("mining.manage", async () => ({
     settings: await loadMiningSettings(),
     defaults: MINING_DEFAULTS,
   })));
 
-  app.patch("/staff/mining/settings", staffGuard(["admin"], async ({ userId, role }, req, reply) => {
+  app.patch("/staff/mining/settings", staffGuard("mining.manage", async ({ userId, role }, req, reply) => {
     const body = z.record(z.union([z.string(), z.number()])).parse(req.body);
     const applied: string[] = [];
+    // Read the whole settings object ONCE, before any write. A mining setting
+    // is a rate that decides what every user is paid, and "who changed the base
+    // rate, and what was it before?" is the only useful form of that question —
+    // after setMiningSetting the old value is gone.
+    const beforeAll = await loadMiningSettings();
+    const changes: string[] = [];
 
     for (const [k, v] of Object.entries(body)) {
       if (!isMiningKey(k)) {
@@ -132,19 +138,29 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         const check = validateAddress(chain.id, String(v));
         if (!check.ok) return reply.code(400).send({ error: check.error });
       }
+      const was = (beforeAll as Record<string, unknown>)[k];
       await setMiningSetting(k, v);
       applied.push(`${k}=${v}`);
+      // Only record keys that actually MOVED. The panel PATCHes every field on
+      // the form, so without this every save would log forty unchanged values
+      // and bury the one that mattered.
+      if (String(was) !== String(v)) changes.push(`${k}: ${was} -> ${v}`);
     }
 
     await logAudit({
       actorUserId: userId, actorRole: role, action: "mining_settings_update",
-      detail: applied.join(", "),
+      detail: changes.length ? changes.join(", ") : "no change",
+      previousValue: changes.length
+        ? changes.map((c) => c.split(" -> ")[0]).join(", ") : null,
+      newValue: changes.length
+        ? changes.map((c) => `${c.split(":")[0]}: ${c.split(" -> ")[1]}`).join(", ") : null,
+      actorIp: req.ip,
     });
     return { ok: true, settings: await loadMiningSettings() };
   }));
 
   // ---- Dashboard -----------------------------------------------------------
-  app.get("/staff/mining/stats", staffGuard(["manager", "admin"], async () => {
+  app.get("/staff/mining/stats", staffGuard("mining.view", async () => {
     const s = await loadMiningSettings();
     const epoch = epochOf();
 
@@ -250,7 +266,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
 
   // Force settlement now rather than waiting for the timer (support + testing).
   // Idempotent, so the worst an impatient click can do is nothing.
-  app.post("/staff/mining/settle", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/settle", staffGuard("mining.manage", async ({ userId, role }, req) => {
     const body = z.object({ epoch: z.number().int().optional() }).parse(req.body ?? {});
     const results = body.epoch != null
       ? [await settleEpoch(body.epoch)]
@@ -263,7 +279,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   }));
 
   // ---- Rigs (CRUD) ---------------------------------------------------------
-  app.get("/staff/mining/rigs", staffGuard(["admin"], async () => ({
+  app.get("/staff/mining/rigs", staffGuard("machines.manage", async () => ({
     rigs: (await sql.all<Record<string, unknown>>("SELECT * FROM rigs ORDER BY sort, base_cost"))
       .map((r) => ({
         ...r,
@@ -310,7 +326,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     }
   };
 
-  app.post("/staff/mining/rigs", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/rigs", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const b = rigSchema.parse(req.body);
     assertDeflationary(b.costGrowth, b.powerGrowth);
     const id = newId();
@@ -324,7 +340,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { ok: true, id };
   }));
 
-  app.patch("/staff/mining/rigs/:id", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.patch("/staff/mining/rigs/:id", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = rigSchema.partial().parse(req.body);
 
@@ -366,7 +382,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // private key in this system. Same shape as the payout side, which has been
   // manual since launch. The reviewer types the amount THEY saw on-chain, not
   // the one the user claimed — see below, it is the whole point of the screen.
-  app.get("/staff/mining/topups", staffGuard(["manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/mining/topups", staffGuard("deposits.view", async (_ctx, req) => {
     const q = z.object({ status: z.enum(["pending", "confirmed", "rejected"]).default("pending") })
       .parse((req.query as Record<string, unknown>) ?? {});
     const rows = await sql.all<Record<string, unknown>>(
@@ -383,7 +399,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.post("/staff/mining/topups/:id/confirm", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/topups/:id/confirm", staffGuard("deposits.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     // THE AMOUNT IS THE REVIEWER'S, NOT THE USER'S. The claim carries what the
     // user typed; this carries what the reviewer actually read off the chain.
@@ -424,7 +440,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return result;
   }));
 
-  app.post("/staff/mining/topups/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/topups/:id/reject", staffGuard("deposits.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = z.object({ reason: z.string().min(3).max(300) }).parse(req.body);
     const claimed = await sql.get<{ user_id: string }>(
@@ -454,7 +470,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   //
   // Getting that backwards in either direction is a double-debit or a free
   // top-up, so the two handlers below say which one they are doing out loud.
-  app.get("/staff/mining/refunds", staffGuard(["manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/mining/refunds", staffGuard("refunds.view", async (_ctx, req) => {
     const q = z.object({ status: z.enum(["pending", "sending", "paid", "rejected"]).default("pending") })
       .parse((req.query as Record<string, unknown>) ?? {});
     // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay signing
@@ -494,7 +510,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.post("/staff/mining/refunds/:id/paid", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/refunds/:id/paid", staffGuard("refunds.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     // Optional now: only in onchain mode WITHOUT a relay path does staff still
     // paste a hash after sending by hand. When the relay is available,
@@ -551,7 +567,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { ok: true, status: outcome.status };
   }));
 
-  app.post("/staff/mining/refunds/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/refunds/:id/reject", staffGuard("refunds.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = z.object({ reason: z.string().min(3).max(300) }).parse(req.body);
 
@@ -587,7 +603,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   //
   // Admin-only because it discloses the endpoint URLs, which may carry a paid
   // provider's API key in the path once one is configured.
-  app.get("/staff/mining/rpc", staffGuard(["admin"], async (_ctx, req) => {
+  app.get("/staff/mining/rpc", staffGuard("infra.view", async (_ctx, req) => {
     const q = z.object({ chain: z.string().min(1).max(20).default("bep20") })
       .parse((req.query as Record<string, unknown>) ?? {});
     const endpoints = endpointsFor(q.chain);
@@ -601,7 +617,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // unswept on-chain balance vs what the ledger says we owe, one row per
   // scheduled check. There is no paging in this codebase; this endpoint IS
   // the alerting — someone has to open it to see a mismatch.
-  app.get("/staff/mining/reconciliation", staffGuard(["manager", "admin"], async (_ctx, req) => {
+  app.get("/staff/mining/reconciliation", staffGuard("analytics.view", async (_ctx, req) => {
     const q = z.object({ chain: z.string().min(1).max(20).default("bep20"), limit: z.number().int().min(1).max(200).default(50) })
       .parse((req.query as Record<string, unknown>) ?? {});
     const rows = await sql.all<Record<string, unknown>>(
@@ -620,7 +636,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   }));
 
   // ---- Boosters (CRUD) — priced in POINTS ----------------------------------
-  app.get("/staff/mining/boosters", staffGuard(["admin"], async () => ({
+  app.get("/staff/mining/boosters", staffGuard("machines.manage", async () => ({
     boosters: await sql.all("SELECT * FROM boosters ORDER BY price_points"),
   })));
 
@@ -632,7 +648,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     status: z.enum(["active", "disabled"]).default("disabled"),
   });
 
-  app.post("/staff/mining/boosters", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/boosters", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const b = boosterSchema.parse(req.body);
     const id = newId();
     await sql.run(
@@ -643,7 +659,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { ok: true, id };
   }));
 
-  app.patch("/staff/mining/boosters/:id", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.patch("/staff/mining/boosters/:id", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = boosterSchema.partial().parse(req.body);
     const cols: Record<string, unknown> = {
@@ -661,7 +677,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   }));
 
   // ---- Conversion windows --------------------------------------------------
-  app.get("/staff/mining/conversion", staffGuard(["admin"], async () => {
+  app.get("/staff/mining/conversion", staffGuard("mining.manage", async () => {
     const s = await loadMiningSettings();
     const windows = await sql.all<Record<string, unknown>>(
       "SELECT * FROM conversion_windows ORDER BY opens_at DESC LIMIT 20");
@@ -697,7 +713,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.post("/staff/mining/conversion/open", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/conversion/open", staffGuard("mining.manage", async ({ userId, role }, req) => {
     const b = z.object({
       potPoints: z.number().int().positive(),
       hours: z.number().int().min(1).max(720).default(168), // a week
@@ -721,7 +737,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { ok: true, id };
   }));
 
-  app.post("/staff/mining/conversion/:id/settle", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/conversion/:id/settle", staffGuard("mining.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const result = await settleConversionWindow(id);
     await logAudit({
@@ -738,7 +754,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // Capped and audit-logged, exactly like the Points adjustment is. ROZI is not
   // directly redeemable, but it IS a claim on future conversion pots — so an
   // unbounded mint here still dilutes every honest miner.
-  app.post("/staff/mining/users/:id/adjust", staffGuard(["admin"], async ({ userId: actorId, role }, req) => {
+  app.post("/staff/mining/users/:id/adjust", staffGuard("mining.adjust", async ({ userId: actorId, role }, req) => {
     const targetId = (req.params as { id: string }).id;
     // Whole ROZI, and no longer .int(): ROZI is divisible, so an Admin correcting
     // a 0.104 mining payout has to be able to type 0.104.
@@ -779,7 +795,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // Admin owns this list at runtime. Prices are in WHOLE ROZI (this panel's unit
   // — see the note at the top of the file) and `stock` is the hard ceiling on
   // what the whole feature can ever cost the business.
-  app.get("/staff/mining/store", staffGuard(["admin", "manager"], async () => {
+  app.get("/staff/mining/store", staffGuard("store.view", async () => {
     const items = await sql.all<Record<string, unknown>>(
       "SELECT * FROM rozi_store_items ORDER BY sort, cost_rozi");
     return {
@@ -801,7 +817,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     sort: z.number().int().min(0).max(9999).optional(),
   });
 
-  app.post("/staff/mining/store", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/store", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const b = itemSchema.parse(req.body);
     const id = newId();
     await sql.run(
@@ -817,7 +833,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { ok: true, id };
   }));
 
-  app.patch("/staff/mining/store/:id", staffGuard(["admin"], async ({ userId, role }, req) => {
+  app.patch("/staff/mining/store/:id", staffGuard("machines.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = itemSchema.partial().parse(req.body);
     const map: [string, unknown][] = [
@@ -842,7 +858,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // A redemption is a human job, like a withdrawal. The ROZI was already taken
   // when the user asked, so the only two outcomes here are "done" and "give it
   // back" — there is no third state where we keep the ROZI and deliver nothing.
-  app.get("/staff/mining/redemptions", staffGuard(["admin", "manager", "agent"], async (_ctx, req) => {
+  app.get("/staff/mining/redemptions", staffGuard("store.redemptions.view", async (_ctx, req) => {
     const q = z.object({ status: z.enum(["pending", "fulfilled", "rejected"]).optional() })
       .parse(req.query ?? {});
     // Built conditionally rather than with a "(? IS NULL OR status = ?)" trick:
@@ -867,7 +883,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     };
   }));
 
-  app.post("/staff/mining/redemptions/:id", staffGuard(["admin", "manager"], async ({ userId, role }, req) => {
+  app.post("/staff/mining/redemptions/:id", staffGuard("store.redemptions.decide", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     const b = z.object({
       action: z.enum(["fulfil", "reject"]),
