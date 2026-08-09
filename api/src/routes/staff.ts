@@ -10,6 +10,7 @@ import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
+import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
 
 // Gate a route on ONE named permission (see permissions.ts). The old form took
 // a list of roles; a permission is the same gate stated as what it protects
@@ -432,6 +433,28 @@ export async function staffRoutes(app: FastifyInstance) {
       base: await getSetting("treasury_address_base", ""),
       aptos: await getSetting("treasury_address_aptos", ""),
     },
+    // ---- Global settings (brief part 45) ----------------------------------
+    // Only the ones with no home yet. Fees, treasury, mining rates, network
+    // config and referral rates all already have their own panels; restating
+    // them here would be a second control for the same value, which is the
+    // exact failure the feature-flag registry avoids (flags.ts).
+    //
+    // ⚠️ NOTHING SECRET LIVES HERE. Part 45 asks for "token contracts" and
+    // "network" on this screen; those stay in environment variables
+    // (config.ts, RPC_BEP20, the signer keys) precisely as the brief's own
+    // last line says they should. A contract address editable from a stolen
+    // admin session is a way to redirect every payout.
+    appName: await getSetting("app_name", "RoziPay"),
+    supportEmail: await getSetting("support_email", ""),
+    supportTelegram: await getSetting("support_telegram", ""),
+    // A minimum that can be tuned without a redeploy. Falls back to the
+    // env-configured value, so an untouched instance behaves exactly as before.
+    minWithdrawPoints: Number(await getSetting("min_withdraw_points", "")) || config.minWithdrawPoints,
+    // Maintenance mode: earners see a "back soon" screen and every earning or
+    // money route refuses. Staff routes are deliberately UNAFFECTED — the
+    // reason you turn this on is usually so staff can go and fix something.
+    maintenanceMode: (await getSetting("maintenance_mode", "0")) === "1",
+    maintenanceMessage: await getSetting("maintenance_message", ""),
   })));
 
   const settingsSchema = z.object({
@@ -452,6 +475,13 @@ export async function staffRoutes(app: FastifyInstance) {
     // requirement everywhere it is enforced — see kycFeatureEnabled() in kyc.ts
     // for why the alternative (hidden but still required) is a dead end.
     kycEnabled: z.boolean().optional(),
+    // ---- Global settings (brief part 45) ---------------------------------
+    appName: z.string().trim().min(1).max(40).optional(),
+    supportEmail: z.string().trim().max(120).optional(),
+    supportTelegram: z.string().trim().max(120).optional(),
+    minWithdrawPoints: z.number().int().min(1).max(10_000_000).optional(),
+    maintenanceMode: z.boolean().optional(),
+    maintenanceMessage: z.string().trim().max(300).optional(),
     // Treasury (hot wallet) address per chain. Empty string clears it.
     treasury: z.object({
       bep20: z.string().trim().max(120).optional(),
@@ -477,6 +507,43 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     if (parsed.data.autoRefundMaxMicro !== undefined) {
       await setSetting("auto_refund_max_micro", String(parsed.data.autoRefundMaxMicro));
+    }
+    if (parsed.data.appName !== undefined) {
+      await setSetting("app_name", parsed.data.appName);
+    }
+    if (parsed.data.supportEmail !== undefined) {
+      await setSetting("support_email", parsed.data.supportEmail);
+    }
+    if (parsed.data.supportTelegram !== undefined) {
+      await setSetting("support_telegram", parsed.data.supportTelegram);
+    }
+    if (parsed.data.minWithdrawPoints !== undefined) {
+      const wasMin = Number(await getSetting("min_withdraw_points", "")) || config.minWithdrawPoints;
+      await setSetting("min_withdraw_points", String(parsed.data.minWithdrawPoints));
+      // Guardrail #4 in the project memory: "never design a payout threshold to
+      // be effectively unreachable". Raising this is the one setting on this
+      // screen that can quietly make the whole product unusable for the people
+      // it is for, so it is on the record with its old value beside it.
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "min_withdraw_change",
+        detail: "minimum points needed to cash out",
+        previousValue: wasMin, newValue: parsed.data.minWithdrawPoints,
+        actorIp: req.ip,
+      });
+    }
+    if (parsed.data.maintenanceMessage !== undefined) {
+      await setSetting("maintenance_message", parsed.data.maintenanceMessage);
+    }
+    if (parsed.data.maintenanceMode !== undefined) {
+      const wasMaint = (await getSetting("maintenance_mode", "0")) === "1";
+      await setSetting("maintenance_mode", parsed.data.maintenanceMode ? "1" : "0");
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "maintenance_mode",
+        detail: parsed.data.maintenanceMode ? "app closed to earners" : "app reopened",
+        previousValue: wasMaint ? "on" : "off",
+        newValue: parsed.data.maintenanceMode ? "on" : "off",
+        actorIp: req.ip,
+      });
     }
     if (parsed.data.kycEnabled !== undefined) {
       const wasKyc = await getSetting("kyc_enabled", "1");
@@ -1048,6 +1115,46 @@ export async function staffRoutes(app: FastifyInstance) {
       // Null when this is the last page, so the panel knows to stop asking.
       nextCursor: rows.length > limit ? String(page[page.length - 1].created_at) : null,
     };
+  }));
+
+  // ---- Feature flags (brief part 44) --------------------------------------
+  // One screen to switch a feature off without a deploy. The panel shows what
+  // each flag actually DOES and where it is enforced, because a switch nobody
+  // can predict the effect of does not get used in the incident it was built for.
+  app.get("/staff/flags", staffGuard("flags.manage", async () => {
+    const state = await allFlags();
+    return {
+      flags: FLAG_IDS.map((id) => ({
+        id, enabled: state[id],
+        label: FLAGS[id].label,
+        effect: FLAGS[id].effect,
+        enforcedAt: FLAGS[id].enforcedAt,
+        // Honest about the one flag that only hides a screen: a BNB deposit is
+        // someone sending to an address on a public chain, and nothing we
+        // deploy can stop that.
+        displayOnly: Boolean(FLAGS[id].displayOnly),
+      })),
+    };
+  }));
+
+  app.patch("/staff/flags/:id", staffGuard("flags.manage", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!isFlagId(id)) return reply.code(404).send({ error: "Unknown feature." });
+    const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Send enabled: true or false." });
+
+    const was = await flagEnabled(id);
+    await setFlag(id, parsed.data.enabled);
+    // Switching a feature off is exactly the kind of change that gets
+    // discovered hours later by someone asking "why can nobody withdraw?".
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "feature_flag_toggle",
+      detail: `${id} — ${FLAGS[id].label}`,
+      previousValue: was ? "on" : "off",
+      newValue: parsed.data.enabled ? "on" : "off",
+      actorIp: req.ip,
+    });
+    return { ok: true, id, enabled: parsed.data.enabled };
   }));
 
   // The distinct action names actually present, for the filter dropdown. Read

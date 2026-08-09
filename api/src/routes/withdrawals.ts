@@ -14,6 +14,8 @@ import { tryAutoSettle } from "../autoWithdraw.ts";
 import { getGasFeeRate, gasFeePoints } from "../fees.ts";
 import { relayAvailable, hasEnoughGas, requiredGasWei } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
+import { requireFeature } from "../flags.ts";
+import { minWithdrawPointsNow } from "../settingsRuntime.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -94,13 +96,21 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   // points can't be withdrawn twice while the request is pending. A rejection
   // writes a compensating credit (see staff route).
   app.post("/withdrawals", guard(async (userId, req, reply) => {
+    // Feature flag (flags.ts). Only NEW requests are refused — anything already
+    // in the queue still pays out, because switching cash-out off must never
+    // strand money people are already owed and waiting on.
+    await requireFeature("usdt_withdrawals");
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount, network, and wallet address." });
     const { amountPoints, chain, address: addressRaw, stepUpCode } = parsed.data;
 
-    if (amountPoints < config.minWithdrawPoints) {
+    // Read from settings, not straight from config: an Admin can tune this in
+    // /staff, and the wallet screen reads the SAME helper. If the two ever
+    // disagree the app tells a user they can cash out and then refuses them.
+    const minWithdraw = await minWithdrawPointsNow();
+    if (amountPoints < minWithdraw) {
       return reply.code(400).send({
-        error: `You need at least ${config.minWithdrawPoints} points to get money.`,
+        error: `You need at least ${minWithdraw} points to get money.`,
       });
     }
 
@@ -494,6 +504,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   });
 
   app.post("/wallet/bnb/withdraw", guard(async (userId, req, reply) => {
+    await requireFeature("bnb_withdrawals");
     const parsed = bnbWithdrawSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount and wallet address." });
     const { address: addressRaw, amountBnb } = parsed.data;

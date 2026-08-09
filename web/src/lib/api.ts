@@ -582,6 +582,10 @@ export const fetchSettings = () =>
     withdrawalFeePoints: number; gasFeePercent: number; gasFeeFixedMicro: number;
     autoWithdrawMaxPoints: number; autoRefundMaxMicro: number; autoSendLive: boolean;
     kycEnabled: boolean; treasury: TreasuryAddresses;
+    // Global settings (brief part 45).
+    appName: string; supportEmail: string; supportTelegram: string;
+    minWithdrawPoints: number;
+    maintenanceMode: boolean; maintenanceMessage: string;
   }>("/staff/settings");
 export const updateSettings = (patch: {
   withdrawalFeePoints?: number;
@@ -591,8 +595,29 @@ export const updateSettings = (patch: {
   autoRefundMaxMicro?: number;
   kycEnabled?: boolean;
   treasury?: Partial<TreasuryAddresses>;
+  appName?: string;
+  supportEmail?: string;
+  supportTelegram?: string;
+  minWithdrawPoints?: number;
+  maintenanceMode?: boolean;
+  maintenanceMessage?: string;
 }) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- Admin: feature flags (brief part 44) --------------------------------
+export type FeatureFlag = {
+  id: string; enabled: boolean; label: string; effect: string;
+  enforcedAt: string;
+  // True when switching this off only HIDES the feature and does not make the
+  // underlying route refuse. Surfaced so nobody flips it in an incident and
+  // believes the door is shut.
+  displayOnly: boolean;
+};
+export const fetchFlags = () => apiFetch<{ flags: FeatureFlag[] }>("/staff/flags");
+export const setFlag = (id: string, enabled: boolean) =>
+  apiFetch<{ ok: true; id: string; enabled: boolean }>(`/staff/flags/${id}`, {
+    method: "PATCH", body: JSON.stringify({ enabled }),
+  });
 
 // ---- ROZI mining (docs/MINING_SPEC.md) ------------------------------------
 // ROZI is the MINED currency. It is a SEPARATE ledger from Points, it is not

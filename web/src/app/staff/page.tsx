@@ -21,6 +21,7 @@ import { LogoMark } from "@/components/Logo";
 import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
 import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
+import { FeatureFlagsPanel, GlobalSettingsPanel } from "@/components/settings-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -42,7 +43,9 @@ const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "reje
 // job-shaped roles there is no "minimum" — Finance is not above or below Task
 // Manager — and every new role would need this file edited before it could see
 // anything. Now a role's sections fall out of what it may do.
-type SectionId = "dashboard" | "money" | "users" | "tasks" | "mining" | "support" | "audit" | "team";
+type SectionId =
+  | "dashboard" | "money" | "users" | "tasks" | "mining" | "support"
+  | "audit" | "settings" | "team";
 const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
   { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "treasury.view", "money.view", "settings.manage"] },
@@ -57,6 +60,7 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "mining", label: "Mining (ROZI)", needs: ["mining.manage", "machines.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
+  { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage"] },
   { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
 ];
 
@@ -216,6 +220,13 @@ export default function StaffPage() {
 
           {section === "audit" && may("audit.view") && (
             <Panel title="Audit log"><AuditPanel /></Panel>
+          )}
+
+          {section === "settings" && (
+            <>
+              {may("flags.manage") && <Panel title="Features"><FeatureFlagsPanel /></Panel>}
+              {may("settings.manage") && <Panel title="Settings"><GlobalSettingsPanel /></Panel>}
+            </>
           )}
 
           {section === "team" && may("staff.manage") && (

@@ -10,6 +10,7 @@ import { recordDevice } from "./fraud.ts";
 // permissions.ts imports nothing, so pulling it in here cannot create the cycle
 // that roles.ts would (roles.ts imports from this file).
 import { type Role, isRole, permissionsOf, ROLE_LABELS } from "./permissions.ts";
+import { enabled as flagEnabled } from "./flags.ts";
 
 // The frontend computes a device fingerprint (no PII) and sends it here so the
 // fraud layer can spot one device farming many accounts (guardrail #5).
@@ -167,6 +168,14 @@ async function ensureAdminRole(userId: string, email: string): Promise<void> {
     "ON CONFLICT(user_id) DO UPDATE SET role = 'admin'",
     userId, now(),
   );
+}
+
+// Telegram is live only when a bot token is configured AND the feature flag is
+// on (flags.ts). Both checks live in one place so the login, mini-app and
+// account-linking routes cannot drift apart — a half-off Telegram, where
+// signing in works but linking 503s, is worse than either state.
+async function telegramLive(): Promise<boolean> {
+  return Boolean(config.telegramBotToken) && (await flagEnabled("telegram"));
 }
 
 async function publicUser(u: UserRow) {
@@ -400,7 +409,7 @@ export async function authRoutes(app: FastifyInstance) {
   // synthetic, never-emailed address (Telegram gives no email) and no password,
   // so they can only ever sign in through Telegram. Off unless a bot token is set.
   app.post("/auth/telegram", limited(30, "1 minute"), async (req, reply) => {
-    if (!config.telegramBotToken) {
+    if (!(await telegramLive())) {
       return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
     }
     const v = verifyWidgetPayload(req.body);
@@ -421,7 +430,7 @@ export async function authRoutes(app: FastifyInstance) {
   // rides in `start_param` (t.me/<bot>/<app>?startapp=<code>) — INSIDE the
   // signed set, so an invite code can't be tampered with after signing.
   app.post("/auth/telegram/miniapp", limited(30, "1 minute"), async (req, reply) => {
-    if (!config.telegramBotToken) {
+    if (!(await telegramLive())) {
       return reply.code(503).send({ error: "Telegram login is not set up yet. Please use email." });
     }
     const v = verifyMiniAppInitData(req.body);
@@ -450,7 +459,7 @@ export async function authRoutes(app: FastifyInstance) {
   // the bot username never has to be hand-copied into a web env var. Cached
   // after the first successful getMe; on failure it retries next call.
   app.get("/auth/telegram/config", async () => {
-    const enabled = Boolean(config.telegramBotToken);
+    const enabled = await telegramLive();
     if (enabled && !cachedBotUsername) {
       try {
         const r = await fetch(
@@ -469,7 +478,7 @@ export async function authRoutes(app: FastifyInstance) {
   // initData or the Login Widget's signed payload — both re-verified exactly as
   // at login; being signed in is never proof of owning a Telegram account.
   app.post("/auth/telegram/link", limited(30, "1 minute"), async (req, reply) => {
-    if (!config.telegramBotToken) {
+    if (!(await telegramLive())) {
       return reply.code(503).send({ error: "Telegram is not set up yet." });
     }
     let userId: string;
@@ -505,7 +514,7 @@ export async function authRoutes(app: FastifyInstance) {
   // client builds the URL (it knows the bot from /auth/telegram/config);
   // this endpoint only vouches for WHO the code belongs to.
   app.post("/auth/telegram/link-code", limited(10, "1 minute"), async (req, reply) => {
-    if (!config.telegramBotToken) {
+    if (!(await telegramLive())) {
       return reply.code(503).send({ error: "Telegram is not set up yet." });
     }
     let userId: string;

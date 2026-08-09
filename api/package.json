@@ -32,7 +32,8 @@
     "test:wallet": "tsx src/tests/wallet.e2e.ts",
     "test:fees": "tsx src/tests/fees.e2e.ts",
     "test:payoutrelay": "tsx src/tests/payoutRelay.e2e.ts",
-    "test:permissions": "tsx --test src/tests/permissions.test.ts"
+    "test:permissions": "tsx --test src/tests/permissions.test.ts",
+    "test:flags": "tsx --test src/tests/flags.test.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

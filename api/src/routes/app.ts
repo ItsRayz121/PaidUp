@@ -8,6 +8,8 @@ import { loadMiningSettings } from "../mining/settings.ts";
 import { getGasFeeRate } from "../fees.ts";
 import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 import { pointsToUsdt } from "../payout.ts";
+import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
+import { minWithdrawPointsNow } from "../settingsRuntime.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -28,8 +30,22 @@ function guard(
 type UserRow = { id: string; country: string; referral_code: string };
 
 export async function appRoutes(app: FastifyInstance) {
+  // Which features are switched on right now (flags.ts, brief part 44).
+  //
+  // The app reads this to HIDE what is off, so a user does not tap a button
+  // that then refuses. It is not the security boundary — every route enforces
+  // its own flag server-side, and this endpoint only saves the user a wasted
+  // tap. Deliberately unauthenticated-shaped (still behind `guard`, but the
+  // answer is the same for everyone): there is nothing per-user here.
+  app.get("/features", guard(async () => ({ features: await allFlags() })));
+
   // Offer feed for the user's country
   app.get("/tasks", guard(async (userId) => {
+    // Feature flag (flags.ts). Returning an EMPTY LIST rather than a 403: the
+    // task screen is a normal part of the app and a hard error there reads as a
+    // broken app, whereas an empty feed with the usual "nothing right now"
+    // state is exactly what a user sees on a quiet day anyway.
+    if (!(await flagEnabled("tasks"))) return { tasks: [] };
     const user = (await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId))!;
     // Hide offers from a network the Admin has disabled. A task whose network
     // has no row yet (predates the networks table) still shows — absence = active.
@@ -82,6 +98,10 @@ export async function appRoutes(app: FastifyInstance) {
   // anything (guardrail #1) — it only files evidence into the staff review
   // queue. A staff member approves it, and THAT credits the points.
   app.post("/tasks/:id/proof", guard(async (userId, req) => {
+    // The WRITE side does refuse outright — unlike the feed above, there is no
+    // sensible empty state for "submit", and silently accepting a proof that
+    // will never be reviewed would be worse than an error.
+    await requireFeature("tasks");
     const taskId = (req.params as { id: string }).id;
     // Optional at the schema level, then required (or not) against the TASK
     // below. It cannot be decided here: whether this task asks for evidence is a
@@ -155,7 +175,8 @@ export async function appRoutes(app: FastifyInstance) {
     // pure re-read on every request, so crossing the threshold "unlocks" it
     // with zero extra bookkeeping and no unlock event to miss.
     const pointsAsUsdtMicro = usdtToMicro(Number(pointsToUsdt(points)));
-    const canWithdrawNow = points >= config.minWithdrawPoints;
+    const minWithdraw = await minWithdrawPointsNow();
+    const canWithdrawNow = points >= minWithdraw;
     const depositUsdtMicro = await usdtBalanceMicroOf(userId);
     const usdtAvailableMicro = depositUsdtMicro + (canWithdrawNow ? pointsAsUsdtMicro : 0);
     const usdtLockedMicro = canWithdrawNow ? 0 : pointsAsUsdtMicro;
@@ -164,7 +185,7 @@ export async function appRoutes(app: FastifyInstance) {
       usdtAvailableMicro,
       usdtLockedMicro,
       usdtTotalMicro: usdtAvailableMicro + usdtLockedMicro,
-      minWithdrawPoints: config.minWithdrawPoints,
+      minWithdrawPoints: minWithdraw,
       withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
       // The gas fee (founder, 2026-08-08; DROPPED same day, second pass, when
       // the relay can sign from the user's own address — see personalGasWei
@@ -278,8 +299,13 @@ export async function appRoutes(app: FastifyInstance) {
   // to forge postbacks and drain the treasury. The browser only ever sees the
   // finished URL (which contains a hash valid for that one user).
   app.get("/surveys/cpx", guard(async (userId) => {
+    // Two independent off switches, and they mean different things: the network
+    // row is "this partner is disabled", the flag is "surveys are off". Either
+    // closes the wall. Postbacks for surveys already completed keep crediting
+    // in both cases — that money was earned, and CPX's reversal window runs for
+    // weeks after the fact.
     const net = await sql.get<{ status: string }>("SELECT status FROM networks WHERE id = 'cpx'");
-    if (net?.status === "disabled") {
+    if (net?.status === "disabled" || !(await flagEnabled("surveys"))) {
       return { enabled: false as const, url: null };
     }
     const user = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", userId);
@@ -304,6 +330,7 @@ export async function appRoutes(app: FastifyInstance) {
   // REFERRERS (most points earned from their invites). Names are masked for
   // privacy; the caller's own row is flagged so the UI can highlight it.
   app.get("/leaderboard", guard(async (userId) => {
+    if (!(await flagEnabled("leaderboard"))) return { topEarners: [], topReferrers: [] };
     const { earners, referrers } = await loadLeaderboard();
     return {
       topEarners: earners.map((r, i) => ({

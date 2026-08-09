@@ -28,6 +28,7 @@ import {
 import {
   rigUpgradeCost, rigPower, conversionPayout, conversionAllowanceMicro, toMicro, fromMicro,
 } from "../mining/core.ts";
+import { requireFeature } from "../flags.ts";
 
 // Every ROZI amount crossing this API is MICRO-ROZI, and every field carrying one
 // is named `...Micro`. The web formats it for display (web/src/lib/format.ts).
@@ -319,6 +320,11 @@ export async function miningRoutes(app: FastifyInstance) {
   // anyway. Refusing to start mining because an ad network was down would punish
   // the user for our supplier's outage and break a streak they had earned.
   app.post("/mining/start", guard(async (userId, req) => {
+    // Feature flag (flags.ts). Only STARTING is refused. A session already
+    // running still settles at the end of its epoch — cutting one off mid-way
+    // would destroy hours of accrual a user has already done, which is exactly
+    // the class of bug MINING_PLAN.md M9.5 exists to warn about.
+    await requireFeature("mining");
     const body = z.object({ adNonce: z.string().optional() }).parse(req.body ?? {});
 
     // Redeem BEFORE starting, so the boost is live for the whole session rather
@@ -407,6 +413,10 @@ export async function miningRoutes(app: FastifyInstance) {
   // gets the debit is identical, and splitting it would be two places to forget
   // the advisory lock.
   app.post("/mining/rigs/:id/upgrade", guard(async (userId, req) => {
+    // Rigs already owned keep working and keep their hashrate; only BUYING is
+    // closed. A rig was paid for with ROZI that is now burned, so revoking one
+    // would be taking something a user bought.
+    await requireFeature("machines");
     const rigId = (req.params as { id: string }).id;
     const body = z.object({
       pay: z.enum(["rozi", "usdt"]).optional(),

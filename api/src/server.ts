@@ -18,7 +18,7 @@ import { pushEnabled } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
 import { configureTelegramMenuButton } from "./telegram.ts";
-import { initDb, sql, usingRealPostgres } from "./db.ts";
+import { initDb, sql, usingRealPostgres, getSetting } from "./db.ts";
 import { tickDepositScan } from "./deposits/scanner.ts";
 import { tickSweep } from "./deposits/sweep.ts";
 import { tickReconcile } from "./deposits/reconcile.ts";
@@ -125,6 +125,33 @@ app.addContentTypeParser(
 );
 
 app.get("/health", async () => ({ ok: true, service: "rozipay-api" }));
+
+// ---- Maintenance mode (brief part 45) --------------------------------------
+// One switch that closes the app to earners. A global hook rather than a check
+// in each route's guard: there are five separate `guard()` helpers across the
+// route files, and a mode that half the endpoints honour is worse than none.
+//
+// WHAT STAYS OPEN, DELIBERATELY:
+//   /staff/*   — the reason you turn this on is usually so staff can go and fix
+//                something. Locking them out with it would be self-defeating.
+//   /auth/*    — a staff member has to be able to sign in to reach /staff.
+//   /health    — the platform's own probe; failing it would make Railway
+//                restart the API in a loop while it is deliberately closed.
+//   /webhooks/*— ad-network postbacks. These are OTHER PEOPLE'S servers
+//                reporting work a user has already done, most will not retry,
+//                and refusing them means users silently lose earnings they
+//                already earned. This is the important exception.
+//   /features  — so the app can read that maintenance is on and say so.
+const MAINTENANCE_OPEN = /^\/(health|auth|staff|webhooks|features)\b/;
+app.addHook("onRequest", async (req, reply) => {
+  if (MAINTENANCE_OPEN.test(req.url.split("?")[0])) return;
+  if ((await getSetting("maintenance_mode", "0")) !== "1") return;
+  const message = await getSetting("maintenance_message", "");
+  return reply.code(503).send({
+    error: message || "We are doing some work on the app. Please check back soon.",
+    maintenance: true,
+  });
+});
 
 await app.register(authRoutes);
 await app.register(appRoutes);

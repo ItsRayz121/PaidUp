@@ -16,6 +16,7 @@ import { config } from "./config.ts";
 import { checkGeoMismatch } from "./fraud.ts";
 import { accrue, grantBoost } from "./mining/engine.ts";
 import { loadMiningSettings } from "./mining/settings.ts";
+import { enabled as flagEnabled } from "./flags.ts";
 
 type Logger = { error: (obj: unknown, msg?: string) => void };
 
@@ -149,9 +150,16 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     // (L2) each earn a share of this user's task points. Shares are the network's
     // configured percentages (Admin-set, never hardcoded). Every referral payout
     // comes from margin; it NEVER reduces this user's reward.
+    //
+    // The referrals feature flag (flags.ts) is folded into `withinWindow` rather
+    // than wrapped around the block: switching referrals off stops NEW bonuses
+    // and nothing else. Bonuses already paid stay paid — they are ledger rows,
+    // and clawing them back from a switch would be taking money users have
+    // already been shown and may already have withdrawn.
+    const referralsOn = await flagEnabled("referrals");
     const windowDays = net ? net.referral_bonus_days : config.referralBonusDays;
     const inviteAgeDays = (Date.now() - new Date(user.created_at).getTime()) / 86400_000;
-    const withinWindow = windowDays <= 0 || inviteAgeDays <= windowDays;
+    const withinWindow = referralsOn && (windowDays <= 0 || inviteAgeDays <= windowDays);
 
     // KYC GATE (founder decision, 2026-07-13): an invitee earns their inviter
     // NOTHING until they are a verified, valid user.
