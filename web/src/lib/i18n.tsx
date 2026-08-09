@@ -333,6 +333,18 @@ const copy: Record<string, string> = {
   // No {link} here — Telegram's share screen attaches the link on its own.
   "refer.telegramShareText":
     "I earn real money on RoziPay, and I mine free ROZI every day. Join with my code {code} and we both get paid.",
+  // inbox — messages from us to the user (brief part 39).
+  //
+  // ⚠️ THE COPY HERE CANNOT PROMISE ANYTHING, because it wraps text a staff
+  // member typed and nobody reviewed. So the fixed strings stay strictly
+  // descriptive: this is where our messages are, that is all.
+  "inbox.title": "Messages",
+  "inbox.subtitle": "News and updates from us.",
+  "inbox.emptyTitle": "No messages yet",
+  "inbox.emptyBody": "When we have news for you, it shows up here.",
+  "inbox.markAllRead": "Mark all as read",
+  "inbox.new": "New",
+  "inbox.open": "Open",
   // help
   "help.title": "Help & support",
   "help.subtitle": "Tell us the problem. A real person will reply.",

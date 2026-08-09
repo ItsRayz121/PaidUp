@@ -12,14 +12,20 @@
 // part in layout and no page needs padding to avoid being covered by it.
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
-import { fetchBalance, fetchMiningState } from "@/lib/api";
+import { fetchBalance, fetchMiningState, fetchNotifications } from "@/lib/api";
 import { formatRozi, totalRoziMicro } from "@/lib/format";
 import { LogoMark } from "./Logo";
+import { BellIcon } from "./icons";
 import { useI18n } from "@/lib/i18n";
 
 export function TopBar() {
   const { t } = useI18n();
   const balance = useApi(fetchBalance, []);
+  // The unread count (brief part 39). A message that lands in the inbox with
+  // nothing on screen to say so is a message nobody reads — which is the whole
+  // reason people reach for a push notification instead, and push is the thing
+  // this design is protecting.
+  const inbox = useApi(fetchNotifications, []);
   // Mining state as well as the balance, because this bar shows the SAME
   // combined figure as home and /wallet. It costs one extra request per page
   // load, and that is the cheap side of the trade: a top bar that says 2.20
@@ -37,21 +43,36 @@ export function TopBar() {
           </span>
         </Link>
 
-        {/* Tapping the balance goes to the wallet — the thing you'd want next. */}
-        <Link
-          href="/wallet"
-          className="flex items-center gap-1.5 rounded-full bg-brand-tint px-3 py-1.5"
-          aria-label={t("topbar.balanceLabel")}
-        >
-          {/* Waits for BOTH calls: showing the mined half first would let the
-              number visibly jump a moment later, which reads as a glitch on
-              every screen in the app rather than just one. */}
-          <span className="num text-sm font-bold leading-none text-brand">
-            {balance.data && mining.data
-              ? `${formatRozi(totalRoziMicro(mining.data.roziMicro, balance.data.points))} ROZI`
-              : "—"}
-          </span>
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* The bell only appears once there is something unread. An always-on
+              bell with a permanent zero is furniture; one that shows up when a
+              message arrives is the signal. */}
+          {(inbox.data?.unread ?? 0) > 0 && (
+            <Link href="/notifications" aria-label={t("inbox.title")}
+              className="relative rounded-full bg-brand-tint p-2 text-brand">
+              <BellIcon size={18} />
+              <span className="num absolute -right-0.5 -top-0.5 min-w-[18px] rounded-full bg-brand px-1 text-center text-[10px] font-bold leading-[18px] text-white">
+                {Math.min(inbox.data!.unread, 99)}
+              </span>
+            </Link>
+          )}
+
+          {/* Tapping the balance goes to the wallet — the thing you'd want next. */}
+          <Link
+            href="/wallet"
+            className="flex items-center gap-1.5 rounded-full bg-brand-tint px-3 py-1.5"
+            aria-label={t("topbar.balanceLabel")}
+          >
+            {/* Waits for BOTH calls: showing the mined half first would let the
+                number visibly jump a moment later, which reads as a glitch on
+                every screen in the app rather than just one. */}
+            <span className="num text-sm font-bold leading-none text-brand">
+              {balance.data && mining.data
+                ? `${formatRozi(totalRoziMicro(mining.data.roziMicro, balance.data.points))} ROZI`
+                : "—"}
+            </span>
+          </Link>
+        </div>
       </div>
     </header>
   );

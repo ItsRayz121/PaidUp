@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { TaskPreview } from "@/components/TaskFlow";
+import { HomeContent } from "@/components/HomeContent";
 import { Loading, ErrorState } from "@/components/state";
 import {
   ArrowRightIcon, GiftIcon, ShieldIcon, MineIcon, TasksIcon, WalletIcon,
@@ -150,6 +151,13 @@ export default function HomePage() {
           the payout threshold. Both moved to /wallet (founder, 2026-07-30) — see
           the note at the top of this file. Do not restore a money figure to this
           screen without restoring the reason it was removed. */}
+
+      {/* Staff-written announcements (brief part 43). Deliberately BELOW the
+          balance: this screen's job is the balance and where to go next, and a
+          card an admin wrote this morning must not be the first thing between a
+          user and their own number. Renders nothing at all when there are
+          none — see HomeContent.tsx. */}
+      <HomeContent />
 
       {/* ---- Where to go next, in one row (founder, 2026-08-01) ----
           THIS REPLACED THREE FULL-WIDTH BLOCKS: a "Do a quick task now" card, a

@@ -24,6 +24,7 @@ import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
+import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -46,8 +47,8 @@ const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "reje
 // Manager — and every new role would need this file edited before it could see
 // anything. Now a role's sections fall out of what it may do.
 type SectionId =
-  | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "support"
-  | "audit" | "settings" | "team";
+  | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "messages"
+  | "support" | "audit" | "settings" | "team";
 const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
   // ⚠️ `deposits.view` / `refunds.view` are listed here and that is a FIX, not
@@ -72,6 +73,10 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // was created for — before it, that role held two permissions with nowhere to
   // spend them, which is the same defect Finance had in stage 4.
   { id: "growth", label: "Growth", needs: ["referrals.manage", "leaderboard.manage"] },
+  // Everything that puts WORDS in front of users, in one place: announcements
+  // to an inbox, and the cards on the home screen. Separate from Support,
+  // which is answering one person who asked.
+  { id: "messages", label: "Messages & content", needs: ["notifications.send", "content.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
   { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage"] },
@@ -255,6 +260,13 @@ export default function StaffPage() {
             <>
               {may("referrals.manage") && <Panel title="Referrals"><ReferralPanel /></Panel>}
               {may("leaderboard.manage") && <Panel title="Leaderboard"><LeaderboardPanel /></Panel>}
+            </>
+          )}
+
+          {section === "messages" && (
+            <>
+              {may("notifications.send") && <Panel title="Send a message"><BroadcastPanel /></Panel>}
+              {may("content.manage") && <Panel title="Home screen cards"><ContentPanel /></Panel>}
             </>
           )}
 

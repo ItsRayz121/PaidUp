@@ -4,9 +4,9 @@
 // (agent+), and ad-network config (admin). Density over friendliness — this is
 // an internal tool, so jargon is allowed here (DESIGN_BRIEF), unlike the earner app.
 import { useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, useStaffSession } from "@/lib/hooks";
 import {
-  fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket,
+  fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, resolveFraud, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
@@ -64,32 +64,70 @@ function Tile({ label, value, sub, warn }: { label: string; value: string; sub?:
   );
 }
 
-// ---- Support-ticket queue (agent+) ---------------------------------------
-const TICKET_STATUSES = ["open", "answered", "closed"];
+// ---- Support-ticket queue (agent+, brief part 40) -------------------------
+//
+// The queue serves counts per status over ALL tickets, so an empty list can be
+// told apart from the filter being on the wrong tab — which is the moment
+// people decide the panel is broken. "All" is a real tab for the same reason: a
+// ticket closed by mistake is invisible under every single-status view.
+const TICKET_STATUSES = ["open", "answered", "closed", "all"];
 
 export function TicketQueue() {
   const [status, setStatus] = useState("open");
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [mineOnly, setMineOnly] = useState(false);
+  const me = useStaffSession().user;
+  const queue = useApi(
+    () => fetchStaffTickets(status, query, mineOnly ? (me?.id ?? "") : ""),
+    [status, query, mineOnly, me?.id],
+  );
   const [openId, setOpenId] = useState<string | null>(null);
-  const queue = useApi(() => fetchStaffTickets(status), [status]);
+  const counts = queue.data?.counts ?? {};
 
   return (
     <section className="mb-8">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold text-brand-ink">Support tickets</h2>
         <div className="flex flex-wrap gap-1">
           {TICKET_STATUSES.map((s) => (
             <button key={s} onClick={() => setStatus(s)}
               className={`rounded-md px-2.5 py-1 text-xs font-semibold ${status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
               {s}
+              {/* The count is over every ticket, never the current filter — a
+                  per-filter count would always equal the list length and say
+                  nothing. */}
+              {s !== "all" && counts[s] !== undefined && (
+                <span className="ms-1 opacity-70">{counts[s]}</span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") setQuery(search.trim()); }}
+          placeholder="Search subject or email…"
+          className="min-w-0 flex-1 rounded-md border border-line bg-card px-2 py-1.5 text-sm outline-none" />
+        <button onClick={() => setQuery(search.trim())}
+          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">Search</button>
+        {query && (
+          <button onClick={() => { setSearch(""); setQuery(""); }}
+            className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand">Clear</button>
+        )}
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
+          Mine only
+        </label>
+      </div>
+
       {queue.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
         : queue.error ? <p className="p-4 text-sm text-danger">{queue.error}</p>
         : (queue.data?.tickets.length ?? 0) === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No {status} tickets.</p>
+          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">
+            No {status === "all" ? "" : status} tickets{query ? ` matching “${query}”` : ""}.
+          </p>
         ) : (
           <div className="space-y-2">
             {queue.data!.tickets.map((t: StaffTicket) => (
@@ -97,12 +135,25 @@ export function TicketQueue() {
                 <button onClick={() => setOpenId(openId === t.id ? null : t.id)}
                   className="flex w-full items-center justify-between gap-3 p-3 text-left">
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-brand-ink">{t.subject}</p>
-                    <p className="text-xs text-muted">{t.userEmail} · {t.messageCount} message(s) · {timeAgo(t.updatedAt)}</p>
+                    <p className="truncate font-medium text-brand-ink">
+                      {t.subject}
+                      {status === "all" && (
+                        <span className="ms-1.5 rounded bg-brand-tint px-1 text-[10px] uppercase text-brand">{t.status}</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {t.userEmail} · {t.messageCount} message(s) · {timeAgo(t.updatedAt)}
+                      {/* Who has picked it up. Without this, two agents answer
+                          the same person twice — and the second one contradicts
+                          the first. */}
+                      {t.assigneeEmail
+                        ? <> · <span className="font-semibold text-brand">{t.assigneeEmail}</span></>
+                        : <> · <span className="text-pending">unassigned</span></>}
+                    </p>
                   </div>
                   <span className="shrink-0 text-xs font-semibold uppercase text-brand">{openId === t.id ? "Close" : "Open"}</span>
                 </button>
-                {openId === t.id && <TicketThread id={t.id} onChange={queue.reload} />}
+                {openId === t.id && <TicketThread t={t} onChange={queue.reload} />}
               </div>
             ))}
           </div>
@@ -111,42 +162,106 @@ export function TicketQueue() {
   );
 }
 
-function TicketThread({ id, onChange }: { id: string; onChange: () => void }) {
+function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
+  const id = t.id;
   const thread = useApi(() => fetchStaffTicket(id), [id]);
   const [reply, setReply] = useState("");
+  const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function send(close: boolean) {
     setBusy(true); setErr(null);
-    try { await replyStaffTicket(id, reply.trim(), close); setReply(""); thread.reload(); onChange(); }
+    try {
+      await replyStaffTicket(id, reply.trim(), close, internal);
+      setReply(""); setInternal(false); thread.reload(); onChange();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function patch(p: { assignedTo?: string | null; status?: string }) {
+    setBusy(true); setErr(null);
+    try { await patchStaffTicket(id, p); thread.reload(); onChange(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
 
   if (thread.loading) return <p className="border-t border-line p-3 text-sm text-muted">Loading…</p>;
   if (thread.error) return <p className="border-t border-line p-3 text-sm text-danger">{thread.error}</p>;
+  const info = thread.data!.ticket as Record<string, unknown>;
 
   return (
-    <div className="border-t border-line p-3 space-y-3">
+    <div className="space-y-3 border-t border-line p-3">
+      {/* Who this person is, before you answer them. A support reply written
+          without knowing their ID status or country is where wrong answers
+          come from. */}
+      <p className="text-xs text-muted">
+        {String(info.userEmail)}
+        {info.country ? ` · ${String(info.country)}` : ""}
+        {` · id: ${String(info.kycStatus ?? "none")}`}
+        {String(info.userStatus) !== "active" && (
+          <span className="ms-1 font-semibold text-danger">account {String(info.userStatus)}</span>
+        )}
+      </p>
+
       <div className="space-y-2">
-        {thread.data!.messages.map((m, i) => (
-          <div key={i} className={`max-w-[85%] rounded-lg p-2 text-sm ${m.author_role === "staff" ? "ml-auto bg-brand text-white" : "bg-brand-tint text-brand-ink"}`}>
-            <p className="whitespace-pre-wrap">{m.body}</p>
-            <p className={`mt-1 text-[11px] ${m.author_role === "staff" ? "text-white/70" : "text-muted"}`}>
-              {m.author_role === "staff" ? "Staff" : "User"} · {timeAgo(m.created_at)}
-            </p>
-          </div>
-        ))}
+        {thread.data!.messages.map((m, i) => {
+          // ⚠️ AN INTERNAL NOTE LOOKS NOTHING LIKE A REPLY, ON PURPOSE. It is
+          // never sent to the user, and a staff member skimming a thread must
+          // not mistake one for something the user has already been told.
+          const isNote = m.author_role === "internal";
+          const isStaff = m.author_role === "staff";
+          return (
+            <div key={i} className={
+              isNote
+                ? "rounded-lg border border-dashed border-pending bg-pending-tint/40 p-2 text-sm"
+                : `max-w-[85%] rounded-lg p-2 text-sm ${isStaff ? "ml-auto bg-brand text-white" : "bg-brand-tint text-brand-ink"}`
+            }>
+              <p className="whitespace-pre-wrap">{m.body}</p>
+              <p className={`mt-1 text-[11px] ${isStaff && !isNote ? "text-white/70" : "text-muted"}`}>
+                {isNote ? "Internal note — the user cannot see this" : isStaff ? "Staff" : "User"}
+                {" · "}{timeAgo(m.created_at)}
+              </p>
+            </div>
+          );
+        })}
       </div>
+
+      <div className="flex flex-wrap gap-1.5 text-xs">
+        {info.assignedTo
+          ? <button onClick={() => patch({ assignedTo: null })} disabled={busy}
+              className="rounded bg-brand-tint px-2 py-1 font-semibold text-brand disabled:opacity-50">
+              Hand back to the pool
+            </button>
+          : <button onClick={() => patch({ assignedTo: "me" })} disabled={busy}
+              className="rounded bg-brand-tint px-2 py-1 font-semibold text-brand disabled:opacity-50">
+              Take this ticket
+            </button>}
+        {String(info.status) === "closed" && (
+          <button onClick={() => patch({ status: "open" })} disabled={busy}
+            className="rounded bg-brand-tint px-2 py-1 font-semibold text-brand disabled:opacity-50">Reopen</button>
+        )}
+      </div>
+
       <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2}
-        placeholder="Reply to the user…" className="w-full rounded-md border border-line bg-card p-2 text-sm outline-none" />
+        placeholder={internal ? "Note for staff only — the user never sees this…" : "Reply to the user…"}
+        className={`w-full rounded-md border p-2 text-sm outline-none ${
+          internal ? "border-dashed border-pending bg-pending-tint/30" : "border-line bg-card"
+        }`} />
+      <label className="flex items-center gap-1.5 text-xs text-muted">
+        <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+        Internal note — not sent to the user, and it leaves the ticket open
+      </label>
       {err && <p className="text-sm text-danger">{err}</p>}
       <div className="flex gap-2">
         <button disabled={!reply.trim() || busy} onClick={() => send(false)}
-          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Send reply</button>
-        <button disabled={!reply.trim() || busy} onClick={() => send(true)}
-          className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Send &amp; close</button>
+          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+          {internal ? "Save note" : "Send reply"}
+        </button>
+        {!internal && (
+          <button disabled={!reply.trim() || busy} onClick={() => send(true)}
+            className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Send &amp; close</button>
+        )}
       </div>
     </div>
   );

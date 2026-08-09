@@ -696,20 +696,59 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true };
   }));
 
-  // ---- Agent: support tickets --------------------------------------------
+  // ---- Support tickets (brief part 40) ------------------------------------
+  //
+  // A queue is only as good as what it can be narrowed to. Before this it
+  // served one status and nothing else: no counts, so there was no way to tell
+  // "nothing open" from "the filter is on the wrong tab"; no search, so finding
+  // the ticket a user is on the phone about meant paging; and no owner, so two
+  // agents answered the same person twice.
   app.get("/staff/tickets", staffGuard("support.view", async (_ctx, req) => {
-    const status = (req.query as { status?: string }).status ?? "open";
+    const q = req.query as { status?: string; q?: string; mine?: string };
+    const status = q.status ?? "open";
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    // "all" is a real choice: a ticket someone closed by mistake is invisible
+    // under any single-status view, which is when people start asking whether
+    // the panel is broken.
+    if (status !== "all") { where.push("ti.status = ?"); params.push(status); }
+    if (q.q?.trim()) {
+      // Subject or email. Case-insensitive because nobody types an address the
+      // way it was stored, and a search that misses on capitalisation reads as
+      // "this user does not exist".
+      const like = `%${q.q.trim().toLowerCase()}%`;
+      where.push("(LOWER(ti.subject) LIKE ? OR LOWER(u.email) LIKE ?)");
+      params.push(like, like);
+    }
+    if (q.mine) { where.push("ti.assigned_to = ?"); params.push(q.mine); }
+
     const rows = await sql.all<Record<string, unknown>>(
-      `SELECT ti.*, u.email AS user_email,
-         (SELECT COUNT(*)::int FROM ticket_messages m WHERE m.ticket_id = ti.id) AS message_count
-       FROM support_tickets ti JOIN users u ON u.id = ti.user_id
-       WHERE ti.status = ? ORDER BY ti.updated_at ASC`,
-      status,
+      `SELECT ti.*, u.email AS user_email, a.email AS assignee_email,
+         (SELECT COUNT(*)::int FROM ticket_messages m
+           WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count
+       FROM support_tickets ti
+       JOIN users u ON u.id = ti.user_id
+       LEFT JOIN users a ON a.id = ti.assigned_to
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY ti.updated_at ASC LIMIT 200`,
+      ...params,
     );
+
+    // Counts per status, always over ALL tickets — never over the current
+    // filter, or the tabs would each report the number of tickets matching
+    // themselves and the badge would always read the same as the list.
+    const counts = await sql.all<{ status: string; n: number }>(
+      "SELECT status, COUNT(*)::int AS n FROM support_tickets GROUP BY status",
+    );
+
     return {
+      counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
       tickets: rows.map((t) => ({
         id: t.id, userId: t.user_id, userEmail: t.user_email, subject: t.subject,
-        status: t.status, messageCount: t.message_count, at: t.created_at, updatedAt: t.updated_at,
+        status: t.status, messageCount: t.message_count,
+        assignedTo: t.assigned_to, assigneeEmail: t.assignee_email,
+        at: t.created_at, updatedAt: t.updated_at,
       })),
     };
   }));
@@ -717,17 +756,28 @@ export async function staffRoutes(app: FastifyInstance) {
   app.get("/staff/tickets/:id", staffGuard("support.view", async (_ctx, req, reply) => {
     const id = (req.params as { id: string }).id;
     const ticket = await sql.get<Record<string, unknown>>(
-      `SELECT ti.*, u.email AS user_email FROM support_tickets ti
-       JOIN users u ON u.id = ti.user_id WHERE ti.id = ?`, id,
+      `SELECT ti.*, u.email AS user_email, u.status AS user_status,
+              u.kyc_status, u.country, a.email AS assignee_email
+       FROM support_tickets ti
+       JOIN users u ON u.id = ti.user_id
+       LEFT JOIN users a ON a.id = ti.assigned_to
+       WHERE ti.id = ?`, id,
     );
     if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
+    // Internal notes ARE returned here — this is the staff view, and hiding
+    // them from the people who wrote them would defeat the point. The earner
+    // endpoint is where they are filtered out (routes/app.ts).
     const messages = await sql.all(
-      "SELECT id, author_role, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC", id,
+      `SELECT m.id, m.author_role, m.body, m.created_at, au.email AS author_email
+       FROM ticket_messages m LEFT JOIN users au ON au.id = m.author_id
+       WHERE m.ticket_id = ? ORDER BY m.created_at ASC`, id,
     );
     return {
       ticket: {
         id: ticket.id, userId: ticket.user_id, userEmail: ticket.user_email,
+        userStatus: ticket.user_status, kycStatus: ticket.kyc_status, country: ticket.country,
         subject: ticket.subject, status: ticket.status, at: ticket.created_at,
+        assignedTo: ticket.assigned_to, assigneeEmail: ticket.assignee_email,
       },
       messages,
     };
@@ -736,32 +786,85 @@ export async function staffRoutes(app: FastifyInstance) {
   const replySchema = z.object({
     message: z.string().min(1).max(2000),
     close: z.boolean().optional(),
+    // ⚠️ AN INTERNAL NOTE IS NEVER SENT TO THE USER, AND NEVER PUSHED.
+    // It is where an agent writes what they would say to a colleague, on the
+    // ticket, so the next person to open it does not start from nothing.
+    internal: z.boolean().optional(),
   });
   app.post("/staff/tickets/:id/reply", staffGuard("support.reply", async ({ userId }, req, reply) => {
     const parsed = replySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Type a reply first." });
     const id = (req.params as { id: string }).id;
+    const internal = parsed.data.internal === true;
 
-    const ticket = await sql.get<{ id: string; user_id: string }>(
-      "SELECT id, user_id FROM support_tickets WHERE id = ?", id);
+    const ticket = await sql.get<{ id: string; user_id: string; status: string }>(
+      "SELECT id, user_id, status FROM support_tickets WHERE id = ?", id);
     if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
 
     await sql.tx(async (t) => {
       await t.run(
-        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'staff', ?,?,?)",
-        newId(), id, userId, parsed.data.message, now(),
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?,?,?,?,?)",
+        newId(), id, internal ? "internal" : "staff", userId, parsed.data.message, now(),
       );
+      // A note changes nothing the user can see, so it must not move the
+      // status either: marking a ticket "answered" because someone wrote a
+      // note to themselves is how a person waiting for a reply drops out of
+      // the open queue and is never answered.
+      const nextStatus = internal
+        ? ticket.status
+        : (parsed.data.close ? "closed" : "answered");
       await t.run(
         "UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?",
-        parsed.data.close ? "closed" : "answered", now(), id,
+        nextStatus, now(), id,
       );
     });
-    // After commit: tell the user someone answered (fire-and-forget).
-    void sendPushToUser(ticket.user_id, {
-      title: "We replied to your question",
-      body: "Open the app to read our answer.",
-      url: "/help",
-    });
+    // After commit: tell the user someone answered (fire-and-forget). Never for
+    // an internal note — the whole point is that the user is not part of it.
+    if (!internal) {
+      void sendPushToUser(ticket.user_id, {
+        title: "We replied to your question",
+        body: "Open the app to read our answer.",
+        url: "/help",
+      });
+    }
+    return { ok: true };
+  }));
+
+  // Assignment and status, separately from replying — because both happen
+  // without a reply. Picking up a ticket you have not answered yet is exactly
+  // how two agents stop answering the same person twice.
+  const ticketPatchSchema = z.object({
+    // "" clears the assignment; omitted leaves it alone. Both are needed —
+    // handing a ticket back to the pool is a real action.
+    assignedTo: z.string().max(80).nullable().optional(),
+    status: z.enum(["open", "answered", "closed"]).optional(),
+  });
+  app.patch("/staff/tickets/:id", staffGuard("support.reply", async ({ userId }, req, reply) => {
+    const parsed = ticketPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Nothing valid to change." });
+    const id = (req.params as { id: string }).id;
+    const d = parsed.data;
+
+    const cols: string[] = [];
+    const vals: unknown[] = [];
+    if (d.assignedTo !== undefined) {
+      // "me" resolves server-side rather than the client sending its own id:
+      // one less thing a stale session can get wrong, and the only assignment
+      // anyone actually makes from the queue.
+      const to = d.assignedTo === "me" ? userId : (d.assignedTo || null);
+      if (to) {
+        const exists = await sql.get<{ user_id: string }>(
+          "SELECT user_id FROM admin_users WHERE user_id = ?", to);
+        if (!exists) return reply.code(400).send({ error: "That is not a staff account." });
+      }
+      cols.push("assigned_to = ?"); vals.push(to);
+    }
+    if (d.status !== undefined) { cols.push("status = ?"); vals.push(d.status); }
+    if (!cols.length) return reply.code(400).send({ error: "Nothing to change." });
+    cols.push("updated_at = ?"); vals.push(now());
+
+    const res = await sql.run(`UPDATE support_tickets SET ${cols.join(", ")} WHERE id = ?`, ...vals, id);
+    if (!res.rowCount) return reply.code(404).send({ error: "Ticket not found." });
     return { ok: true };
   }));
 

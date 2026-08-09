@@ -503,6 +503,10 @@ export const resolveFraud = (id: string, note?: string) =>
   apiFetch<{ ok: true }>(`/staff/fraud/${id}/resolve`, { method: "POST", body: JSON.stringify({ note }) });
 
 // ---- Support tickets (earner side) ---------------------------------------
+// ⚠️ THE EARNER TYPE HAS NO 'internal', AND THAT IS THE POINT. GET
+// /support/tickets filters internal notes out server-side (routes/app.ts), so a
+// user can never receive one — stating that in the type keeps the two views
+// from being quietly merged later. The staff view has its own wider type below.
 export type TicketMessage = { author_role: "user" | "staff"; body: string; created_at: string };
 export type MyTicket = {
   id: string; subject: string; status: "open" | "answered" | "closed";
@@ -522,15 +526,64 @@ export const replyToMyTicket = (id: string, message: string) =>
 export type StaffTicket = {
   id: string; userId: string; userEmail: string; subject: string;
   status: string; messageCount: number; at: string; updatedAt: string;
+  // Who has picked this up. Null = still in the pool.
+  assignedTo: string | null; assigneeEmail: string | null;
 };
-export const fetchStaffTickets = (status = "open") =>
-  apiFetch<{ tickets: StaffTicket[] }>(`/staff/tickets?status=${encodeURIComponent(status)}`);
+export const fetchStaffTickets = (status = "open", q = "", mine = "") =>
+  apiFetch<{ counts: Record<string, number>; tickets: StaffTicket[] }>(
+    `/staff/tickets?status=${encodeURIComponent(status)}` +
+    (q ? `&q=${encodeURIComponent(q)}` : "") +
+    (mine ? `&mine=${encodeURIComponent(mine)}` : ""));
+// Staff see the whole thread INCLUDING internal notes — hiding them from the
+// people who wrote them would defeat the point. Hence a separate, wider type
+// from the earner-facing `TicketMessage` above.
+export type StaffTicketMessage = {
+  author_role: "user" | "staff" | "internal";
+  body: string; created_at: string; author_email?: string | null;
+};
 export const fetchStaffTicket = (id: string) =>
-  apiFetch<{ ticket: Record<string, unknown>; messages: TicketMessage[] }>(`/staff/tickets/${id}`);
-export const replyStaffTicket = (id: string, message: string, close = false) =>
+  apiFetch<{ ticket: Record<string, unknown>; messages: StaffTicketMessage[] }>(`/staff/tickets/${id}`);
+// `internal: true` writes a note the USER NEVER SEES and sends no push. The
+// filter that keeps it from them lives in the API (GET /support/tickets).
+export const replyStaffTicket = (id: string, message: string, close = false, internal = false) =>
   apiFetch<{ ok: true }>(`/staff/tickets/${id}/reply`, {
-    method: "POST", body: JSON.stringify({ message, close }),
+    method: "POST", body: JSON.stringify({ message, close, internal }),
   });
+export const patchStaffTicket = (id: string, patch: { assignedTo?: string | null; status?: string }) =>
+  apiFetch<{ ok: true }>(`/staff/tickets/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+// ---- Notifications (brief part 39) ---------------------------------------
+export type NotifyAudience = { id: string; label: string; note: string; size: number };
+export type Broadcast = {
+  id: string; title: string; body: string; url: string | null; audience: string;
+  recipients: number; pushed: boolean; sentBy: string; at: string;
+};
+export const fetchNotifyAdmin = () =>
+  apiFetch<{ pushAvailable: boolean; audiences: NotifyAudience[]; history: Broadcast[] }>(
+    "/staff/notifications");
+export const sendBroadcast = (b: {
+  audience: string; title: string; body: string; url?: string | null; alsoPush?: boolean;
+}) => apiFetch<{ ok: true; id: string; recipients: number }>("/staff/notifications", {
+  method: "POST", body: JSON.stringify(b),
+});
+export const notifyOneUser = (userId: string, m: { title: string; body: string; url?: string | null }) =>
+  apiFetch<{ ok: true }>(`/staff/users/${userId}/notify`, { method: "POST", body: JSON.stringify(m) });
+
+// ---- Home content (brief part 43) ----------------------------------------
+export type ContentBlock = {
+  id: string; title: string; body: string; icon: string;
+  linkUrl: string | null; linkLabel: string | null;
+  tone: "info" | "good" | "warn"; status: "draft" | "live";
+  startsAt: string | null; endsAt: string | null; sort: number; updatedAt: string;
+};
+export const fetchContentAdmin = () =>
+  apiFetch<{ icons: string[]; blocks: ContentBlock[] }>("/staff/content");
+export const createContentBlock = (b: Record<string, unknown>) =>
+  apiFetch<{ ok: true; id: string }>("/staff/content", { method: "POST", body: JSON.stringify(b) });
+export const updateContentBlock = (id: string, patch: Record<string, unknown>) =>
+  apiFetch<{ ok: true }>(`/staff/content/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const deleteContentBlock = (id: string) =>
+  apiFetch<{ ok: true }>(`/staff/content/${id}`, { method: "DELETE" });
 
 // ---- Admin: ad-network config --------------------------------------------
 export type NetworkConfig = {
@@ -1183,6 +1236,29 @@ export const openConversionWindow = (potPoints: number, hours: number) =>
 export const settleConversionWindow = (id: string) =>
   apiFetch<{ ok: true; pointsPaid: number; users: number; totalBurned: number }>(
     `/staff/mining/conversion/${id}/settle`, { method: "POST" });
+
+// ---- My inbox (earner side) -------------------------------------------------
+// Deliberately NOT push. See api/src/notify.ts's header: a browser push
+// subscription is revoked once and permanently, and the message it exists for
+// is "your withdrawal was paid".
+export type InboxItem = {
+  id: string; title: string; body: string; url: string | null; read: boolean; at: string;
+};
+export const fetchNotifications = () =>
+  apiFetch<{ unread: number; notifications: InboxItem[] }>("/notifications");
+export const markNotificationsRead = (id?: string) =>
+  apiFetch<{ ok: true }>("/notifications/read", {
+    method: "POST", body: JSON.stringify(id ? { id } : {}),
+  });
+
+// Announcement cards on home, written by staff with no deploy. The live window
+// is applied server-side, so whatever comes back is what should be on screen.
+export type HomeBlock = {
+  id: string; title: string; body: string; icon: string;
+  tone: "info" | "good" | "warn"; linkUrl: string | null; linkLabel: string | null;
+  external: boolean;
+};
+export const fetchHomeContent = () => apiFetch<{ blocks: HomeBlock[] }>("/content/home");
 
 // ---- Web push notifications -------------------------------------------------
 export const fetchPushConfig = () =>

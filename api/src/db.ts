@@ -432,6 +432,102 @@ const MIGRATIONS = `
     created_at  TEXT NOT NULL
   );
 
+  -- ---- NOTIFICATIONS (brief part 39) ---------------------------------------
+  -- An in-app inbox. One row per user per message.
+  --
+  -- ⚠️ THE INBOX IS THE CHANNEL; PUSH IS AN EXTRA, AND THAT ORDER IS THE WHOLE
+  -- DESIGN. push.ts states outright that a push is sent on exactly four events
+  -- and never for marketing, because a subscription burnt on announcements is a
+  -- subscription revoked before the withdrawal-paid notification it existed
+  -- for. An inbox interrupts nobody, so a staff announcement lands HERE by
+  -- default; sending a push alongside it is a separate, explicit choice on the
+  -- compose screen. See routes/staffNotify.ts.
+  --
+  -- ⚠️ THE AUDIENCE IS MATERIALISED AT SEND TIME, not re-evaluated at read
+  -- time. "Everyone who had a balance on Tuesday" must not silently come to
+  -- mean "everyone who has one today" — a message about a specific moment
+  -- would keep finding new recipients forever, and the record of who was told
+  -- what would be unanswerable.
+  CREATE TABLE IF NOT EXISTS notifications (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    -- Where tapping it goes, e.g. "/wallet". Internal paths only (validated at
+    -- the route): an inbox row is written by staff and rendered inside the app,
+    -- so an external link here is a phishing vector wearing our own chrome.
+    url          TEXT,
+    -- Which broadcast produced it, or NULL for a one-to-one message.
+    broadcast_id TEXT,
+    read_at      TEXT,
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
+  -- The unread badge is read on every screen that shows the top bar, so the
+  -- count has its own partial index rather than scanning a user's whole inbox.
+  CREATE INDEX IF NOT EXISTS idx_notifications_unread
+    ON notifications(user_id) WHERE read_at IS NULL;
+
+  -- What was sent, to whom, by whom. Kept separately from the per-user rows so
+  -- "what did we announce last week" survives a user deleting their inbox, and
+  -- so the audience rule that was USED is recorded rather than re-guessed.
+  CREATE TABLE IF NOT EXISTS notification_broadcasts (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    url         TEXT,
+    audience    TEXT NOT NULL,
+    recipients  INTEGER NOT NULL DEFAULT 0,
+    pushed      INTEGER NOT NULL DEFAULT 0,
+    sent_by     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+
+  -- ---- HOME CONTENT (brief part 43) ----------------------------------------
+  -- Announcement cards on the earner home screen, editable without a deploy.
+  --
+  -- ⚠️ THE ICON IS A CLOSED LIST, NEVER A URL — the same rule as task icons.
+  -- These cards sit directly above a balance, and an admin-supplied remote
+  -- image there is a third-party request on a money screen.
+  --
+  -- ⚠️ THE LINK IS AN INTERNAL PATH BY DEFAULT. An https link is allowed
+  -- (someone will want to point at a Telegram channel) but is validated at the
+  -- route and rendered with an outward-link marker, so a card that leaves the
+  -- app says so before it is tapped.
+  CREATE TABLE IF NOT EXISTS content_blocks (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    icon        TEXT NOT NULL DEFAULT 'info',
+    link_url    TEXT,
+    link_label  TEXT,
+    tone        TEXT NOT NULL DEFAULT 'info' CHECK (tone IN ('info','good','warn')),
+    status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','live')),
+    -- A scheduling window. Both optional: NULL start = live now, NULL end =
+    -- until switched off. Checked at READ time, so a card that has expired
+    -- stops appearing without anything having to run on a timer and remember.
+    starts_at   TEXT,
+    ends_at     TEXT,
+    sort        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
+
+  -- ---- SUPPORT: internal notes + assignment (brief part 40) ----------------
+  -- ⚠️ 'internal' IS A NOTE THE USER MUST NEVER SEE, and the CHECK constraint
+  -- is not what protects them — the earner-facing query is. See the filter in
+  -- routes/app.ts's GET /support/tickets, and the regression test that posts an
+  -- internal note and then reads the ticket as the user.
+  --
+  -- Postgres has no "ALTER CONSTRAINT", and CREATE TABLE IF NOT EXISTS is a
+  -- no-op on an existing table, so an existing database keeps the old
+  -- two-value constraint unless it is dropped and re-added explicitly — the
+  -- same dance usdt_ledger's CHECK needed when 'refund' was added.
+  ALTER TABLE ticket_messages DROP CONSTRAINT IF EXISTS ticket_messages_author_role_check;
+  ALTER TABLE ticket_messages ADD CONSTRAINT ticket_messages_author_role_check
+    CHECK (author_role IN ('user','staff','internal'));
+  ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+
   -- ---- STAFF ROLES & AUDIT ------------------------------------------------
   -- Roles are job-shaped now, not a three-rung ladder (see permissions.ts for
   -- why a ladder cannot express "Finance but not campaigns"). The three old

@@ -194,6 +194,22 @@ export const taskIcon: Record<string, (p: IconProps) => React.ReactElement> = {
   star: StarIcon,
 };
 
+// Home announcement cards, keyed by content_blocks.icon.
+//
+// ⚠️ A CLOSED LIST, MIRRORING CONTENT_ICONS in api/src/routes/staffNotify.ts,
+// which refuses anything not named here. Never a URL: these cards sit directly
+// above a balance, and an admin-supplied remote image there would be a
+// third-party request on a money screen. Same rule as taskIcon above.
+export const contentIcon: Record<string, (p: IconProps) => React.ReactElement> = {
+  info: InfoIcon,
+  gift: GiftIcon,
+  rocket: (p) => <svg {...base(p)}><path d="M5 13c0-6 4-10 7-11 3 1 7 5 7 11l-3 3H8l-3-3Z" /><path d="M9 19l-2 3M15 19l2 3" /><circle cx="12" cy="9" r="1.5" /></svg>,
+  warning: (p) => <svg {...base(p)}><path d="M12 3 2 20h20L12 3Z" /><path d="M12 10v4M12 17h.01" /></svg>,
+  coin: (p) => <svg {...base(p)}><circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h5M9.5 14.5h5" /></svg>,
+  people: (p) => <svg {...base(p)}><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 3-5 6-5s6 2 6 5" /><path d="M17 8a3 3 0 1 0 0-.1M18 20c0-2-1-3.5-2.5-4.3" /></svg>,
+  star: StarIcon,
+};
+
 // Rig art, keyed by the `icon` column on the rigs table (Admin-editable). Falls
 // back to the chip so a rig with an unknown icon name still renders.
 export const rigIcon: Record<string, (p: IconProps) => React.ReactElement> = {

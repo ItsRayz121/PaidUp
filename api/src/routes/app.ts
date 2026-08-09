@@ -343,6 +343,72 @@ export async function appRoutes(app: FastifyInstance) {
     };
   }));
 
+  // ---- Notifications: my inbox (brief part 39) ----------------------------
+  //
+  // Staff announcements and one-to-one messages land here. Deliberately NOT a
+  // push by default — see notify.ts's header: a browser subscription is revoked
+  // once, permanently, and the message it exists for is "your withdrawal was
+  // paid". An inbox interrupts nobody.
+  app.get("/notifications", guard(async (userId) => {
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT id, title, body, url, read_at, created_at FROM notifications
+       WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      userId,
+    );
+    // Counted separately from the page above rather than from its length: the
+    // badge must stay right when someone has more than 50 unread.
+    const unread = await sql.get<{ n: number }>(
+      "SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = ? AND read_at IS NULL", userId);
+    return {
+      unread: unread?.n ?? 0,
+      notifications: rows.map((r) => ({
+        id: r.id, title: r.title, body: r.body, url: r.url,
+        read: r.read_at !== null, at: r.created_at,
+      })),
+    };
+  }));
+
+  // Mark one as read, or all of them. Scoped by user_id, so knowing another
+  // person's notification id does nothing.
+  app.post("/notifications/read", guard(async (userId, req) => {
+    const id = (req.body as { id?: string } | undefined)?.id;
+    if (id) {
+      await sql.run(
+        "UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL",
+        now(), id, userId);
+    } else {
+      await sql.run(
+        "UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL", now(), userId);
+    }
+    return { ok: true };
+  }));
+
+  // ---- Home content (brief part 43) ---------------------------------------
+  //
+  // Announcement cards an admin writes in /staff, with no deploy. The window is
+  // checked HERE, at read time, so an expired card stops appearing without
+  // anything having to run on a timer and remember.
+  app.get("/content/home", guard(async () => {
+    const at = now();
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT id, title, body, icon, link_url, link_label, tone FROM content_blocks
+       WHERE status = 'live'
+         AND (starts_at IS NULL OR starts_at <= ?)
+         AND (ends_at   IS NULL OR ends_at   >= ?)
+       ORDER BY sort, created_at DESC LIMIT 5`,
+      at, at,
+    );
+    return {
+      blocks: rows.map((r) => ({
+        id: r.id, title: r.title, body: r.body, icon: r.icon, tone: r.tone,
+        linkUrl: r.link_url, linkLabel: r.link_label,
+        // Told to the client rather than re-derived there, so the "leaves the
+        // app" marker cannot disagree with what the link actually does.
+        external: typeof r.link_url === "string" && !r.link_url.startsWith("/"),
+      })),
+    };
+  }));
+
   // ---- Support: earner-facing help tickets --------------------------------
   // Simple English, one screen. A ticket is a subject + a thread of messages;
   // staff answer from the Agent queue.
@@ -377,9 +443,16 @@ export async function appRoutes(app: FastifyInstance) {
     const messages = tickets.length === 0 ? [] : await sql.all<{
       ticket_id: string; author_role: string; body: string; created_at: string;
     }>(
+      // ⚠️ `author_role <> 'internal'` IS THE ONLY THING PROTECTING A STAFF
+      // NOTE FROM THE PERSON IT IS ABOUT (brief part 40). An internal note is
+      // where an agent writes "third refund request this week, check the device
+      // list before paying" — the CHECK constraint in db.ts permits the value,
+      // it does not hide it. This filter does. There is a regression test that
+      // posts one and then reads the ticket back as the user.
       `SELECT m.ticket_id, m.author_role, m.body, m.created_at
        FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
-       WHERE s.user_id = ? ORDER BY m.created_at ASC`,
+       WHERE s.user_id = ? AND m.author_role <> 'internal'
+       ORDER BY m.created_at ASC`,
       userId,
     );
     const byTicket = new Map<string, { author_role: string; body: string; created_at: string }[]>();
