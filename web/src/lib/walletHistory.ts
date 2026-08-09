@@ -53,6 +53,10 @@ export function preview(rows: Row[]): Row[] {
 
 export const STATUS_TEXT: Record<string, string> = {
   earned: "Added", paid: "Completed", pending: "Waiting", sending: "Sending", rejected: "Not added",
+  // Distinct from "rejected": this row is an outgoing send that didn't go
+  // through — the amount was credited back, not withheld. See ui.tsx's
+  // LedgerStatus comment for why "rejected" itself is wrong here.
+  refunded: "Not sent — you got the money back",
 };
 
 export function unifyHistory(args: {
@@ -106,7 +110,9 @@ export function unifyHistory(args: {
 
   const withdrawalRows: Row[] = withdrawals.map((w) => {
     const usdt = w.usdtAmount ? Number(w.usdtAmount) : pointsToUsdt(w.amount);
-    const statusKey = (w.status === "paid" ? "paid" : w.status === "rejected" ? "rejected"
+    // A rejected withdrawal credits the held points straight back
+    // (api/src/routes/staff.ts's reject branch) — "refunded", not "rejected".
+    const statusKey = (w.status === "paid" ? "paid" : w.status === "rejected" ? "refunded"
       : w.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
     const amountText = `−${usdt.toFixed(2)} USDT`;
     return {
@@ -129,7 +135,10 @@ export function unifyHistory(args: {
   });
 
   const refundRows: Row[] = refunds.map((r) => {
-    const statusKey = (r.status === "paid" ? "paid" : r.status === "rejected" ? "rejected"
+    // A rejected refund returns the full gross amount (staffMining.ts) — the
+    // user's deposit balance is untouched, so this reads "refunded", not
+    // "rejected" (which would suggest the money is stuck or gone).
+    const statusKey = (r.status === "paid" ? "paid" : r.status === "rejected" ? "refunded"
       : r.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
     const amountText = `−${usdtFromMicro(r.amountMicro - r.feeMicro).toFixed(2)} USDT`;
     return {
@@ -143,7 +152,10 @@ export function unifyHistory(args: {
   });
 
   const bnbRows: Row[] = bnb.map((b) => {
-    const statusKey = (b.status === "paid" ? "paid" : b.status === "failed" ? "rejected"
+    // A BNB withdraw has zero internal ledger entry (bnbWithdraw.ts) — a
+    // "failed" job never took the user's balance in the first place, so
+    // "refunded" (nothing lost) reads truer than "rejected" (implies denial).
+    const statusKey = (b.status === "paid" ? "paid" : b.status === "failed" ? "refunded"
       : b.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
     // formatBnbWei does the bigint-safe wei->BNB split — see its own note on
     // why this never runs Number() on a raw wei string.

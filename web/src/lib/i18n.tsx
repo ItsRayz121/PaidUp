@@ -524,6 +524,7 @@ const copy: Record<string, string> = {
   "wallet.total": "Total",
   "wallet.chooser.bnb.title": "BNB",
   "wallet.chooser.bnb.sub": "Get your BNB back, or add more",
+  "wallet.chooser.bnb.depositSub": "Same address as USDT — get your deposit address",
   "wallet.filter.all": "All",
   "wallet.filter.received": "Received",
   "wallet.filter.sent": "Sent",

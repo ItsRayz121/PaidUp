@@ -204,9 +204,18 @@ export const MINING_DEFAULTS = {
 
   // -- Transfers (§ 7). Wallet-to-wallet only. No order book, ever.
   //
-  // ON since 2026-07-30 (founder, asked for repeatedly): a user must be able to
-  // send ROZI to a friend's RoziPay account. Everything below is what makes that
-  // safe, and none of it was relaxed to turn the flag on:
+  // OFF again (founder, 2026-08-09) — reverses the 2026-07-30 "ON" decision
+  // below, which stands as the record of why it was ever turned on. Nothing
+  // about the safeguards changed; only the default flag did. A stored
+  // `mining.transfersEnabled` row in app_settings still wins over this
+  // default (see routes/mining.ts), so an instance where an Admin already
+  // flipped it to 1 stays on until they flip it back in /staff → Mining —
+  // same rule the 2026-07-30 note documents in the other direction.
+  //
+  // ORIGINAL 2026-07-30 NOTE, kept for context: ON since 2026-07-30 (founder,
+  // asked for repeatedly): a user must be able to send ROZI to a friend's
+  // RoziPay account. Everything below is what made that safe, and none of it
+  // was relaxed to turn the flag on:
   //   • transferRequireKyc = 1  — sending is the step a farm needs to consolidate
   //     what it mined, so it carries the same ID gate withdrawals do.
   //   • transferMinAccountDays  — a fresh account cannot send at all.
@@ -215,10 +224,9 @@ export const MINING_DEFAULTS = {
   // Receiving stays open to everyone: a new user being SENT ROZI has done nothing
   // wrong, and blocking it makes the app look broken to the person sending.
   //
-  // This is the one part of the 2-3 month lock that is now open. Conversion and
-  // the ROZI store stay shut (conversionEnabled = 0), so ROZI still cannot leave
-  // the system for money — it can only move between accounts inside it.
-  transfersEnabled: 1,
+  // Conversion and the ROZI store stay shut (conversionEnabled = 0) regardless
+  // of this flag, so ROZI still cannot leave the system for money either way.
+  transfersEnabled: 0,
   // Scaled with the 21M cap (was 50,000, which is 0.24% of the whole supply in
   // one day from one account — a cap that high is not a cap). At ~1 ROZI/day for
   // an engaged miner this is still years of mining, so it binds on consolidation

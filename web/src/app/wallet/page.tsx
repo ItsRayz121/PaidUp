@@ -237,6 +237,12 @@ export default function WalletPage() {
               href="/mine/topup"
             />
           )}
+          {usdtOn && (
+            <ChooserRow
+              Icon={BnbLogo} title={t("wallet.chooser.bnb.title")} sub={t("wallet.chooser.bnb.depositSub")}
+              href="/wallet/bnb"
+            />
+          )}
         </ChooserSheet>
       )}
 

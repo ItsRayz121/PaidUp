@@ -142,7 +142,10 @@ export type Task = {
 };
 export type LedgerEntry = {
   id: string; label: string; points: number;
-  status: "earned" | "pending" | "sending" | "paid" | "rejected"; kind: string; at: string;
+  // "refunded" never comes from the API — it's assigned client-side in
+  // walletHistory.ts for a rejected outgoing send, reusing this union so
+  // Row["status"] (@/lib/walletHistory) doesn't need a second type.
+  status: "earned" | "pending" | "sending" | "paid" | "rejected" | "refunded"; kind: string; at: string;
 };
 export type Withdrawal = {
   id: string; amount: number; chain: string; address?: string;

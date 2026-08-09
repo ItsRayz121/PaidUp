@@ -3,8 +3,12 @@ import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
 import { formatPointsAsRozi } from "@/lib/format";
 
-// Matches the backend's ledger row status (see @/lib/api LedgerEntry).
-type LedgerStatus = "earned" | "paid" | "pending" | "sending" | "rejected";
+// Matches the backend's ledger row status (see @/lib/api LedgerEntry), plus
+// "refunded" — a frontend-only status (see walletHistory.ts) for a rejected
+// OUTGOING send (withdrawal/refund/BNB) where the money came back to the
+// user, as opposed to a rejected INCOMING reward that was simply never paid.
+// Same backend word, opposite meaning to the user — they must not share a label.
+type LedgerStatus = "earned" | "paid" | "pending" | "sending" | "rejected" | "refunded";
 
 // ---- Button ---------------------------------------------------------------
 // One action per button, named by the action (DESIGN_BRIEF simple-English).
@@ -82,6 +86,8 @@ const statusMap: Record<LedgerStatus, { label: string; Icon: typeof CheckIcon; c
   // Distinct from plain "Waiting" (that's still in a queue; this is already moving).
   sending: { label: "Sending", Icon: ClockIcon, cls: "bg-brand-tint text-brand" },
   rejected: { label: "Not added", Icon: XIcon, cls: "bg-danger-tint text-danger" },
+  // Outgoing send that didn't go through — the money was returned, not lost.
+  refunded: { label: "Not sent", Icon: XIcon, cls: "bg-pending-tint text-pending" },
 };
 
 export function StatusBadge({ status }: { status: LedgerStatus }) {
