@@ -393,6 +393,25 @@ const MIGRATIONS = `
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_bonus_pct_l2 INTEGER NOT NULL DEFAULT 5;
   ALTER TABLE networks ADD COLUMN IF NOT EXISTS referral_first_task_bonus INTEGER NOT NULL DEFAULT 100;
 
+  -- ---- ACTIVITY (brief part 48: DAU / WAU / MAU / retention) ---------------
+  -- One row per user per UTC day on which they made an authenticated request.
+  --
+  -- WHY A TABLE AND NOT A COLUMN. A users.last_active_at column answers "are they
+  -- active now" and nothing else: it holds one value, so it cannot say whether
+  -- someone was active last Tuesday, which is the only thing retention is made
+  -- of. A row per day is the smallest structure that can answer both.
+  --
+  -- It is cheap because it is written at most ONCE per user per day per process
+  -- (analytics.ts memoises the write), and because the conflict is a primary-key
+  -- probe that does nothing. It holds no PII beyond the user id already
+  -- everywhere else in this schema.
+  CREATE TABLE IF NOT EXISTS user_activity_days (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    day     TEXT NOT NULL,
+    PRIMARY KEY (user_id, day)
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_day ON user_activity_days(day);
+
   -- ---- STAFF ROLES & AUDIT ------------------------------------------------
   -- Roles are job-shaped now, not a three-rung ladder (see permissions.ts for
   -- why a ladder cannot express "Finance but not campaigns"). The three old

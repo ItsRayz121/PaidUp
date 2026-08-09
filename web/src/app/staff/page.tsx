@@ -22,6 +22,7 @@ import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
 import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel } from "@/components/settings-admin";
+import { AnalyticsDashboard } from "@/components/analytics-admin";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -160,12 +161,18 @@ export default function StaffPage() {
 
         <main className="min-w-0 flex-1">
           {section === "dashboard" && may("analytics.view") && (
-            <Panel title="Dashboard">
-              <section className="mb-8">
-                <h2 className="mb-2 font-bold text-brand-ink">Dashboard</h2>
-                <KpiDashboard />
-              </section>
-            </Panel>
+            <>
+              <Panel title="Dashboard"><AnalyticsDashboard /></Panel>
+              {/* The original at-a-glance strip, kept below the full report:
+                  it reads from /staff/kpis, which several people already have
+                  bookmarked expectations of, and it costs one small request. */}
+              <Panel title="At a glance">
+                <section className="mb-8">
+                  <h2 className="mb-2 font-bold text-brand-ink">At a glance</h2>
+                  <KpiDashboard />
+                </section>
+              </Panel>
+            </>
           )}
 
           {section === "money" && (

@@ -576,6 +576,42 @@ export type Kpis = {
 };
 export const fetchKpis = () => apiFetch<Kpis>("/staff/kpis");
 
+// ---- Analytics (brief part 48) --------------------------------------------
+// Micro-USDT and micro-ROZI totals arrive as STRINGS: they are 6-decimal
+// integers that can exceed what a JS number holds exactly. Parse deliberately
+// at the point of formatting, never with implicit arithmetic.
+export type Analytics = {
+  generatedAt: string; windowDays: number;
+  users: {
+    total: number; verified: number; newToday: number; new7d: number; new30d: number;
+    dau: number; wau: number; mau: number; stickiness: number;
+  };
+  retention: Record<"d1" | "d7" | "d30", { cohort: number; returned: number; pct: number }>
+    & { sampleWindow: number };
+  tasks: {
+    starts: number; verified: number; credited: number; completionRate: number;
+    proofsSubmitted: number; proofsApproved: number; proofsPending: number;
+    approvalRate: number; completionsToday: number;
+  };
+  mining: { activeMiners: number; sessions: number; roziMinedTodayMicro: string };
+  money: {
+    depositMicro30d: string; depositMicroAll: string; refundMicro30d: string;
+    withdrawnPoints30d: number; withdrawnPointsAll: number; withdrawPendingPoints: number;
+    rewardCostPoints: number; referralCostPoints: number;
+    revenuePoints: number; revenuePerActiveUser: number;
+  };
+  referrals: { signups: number; activated: number; conversion: number };
+  risk: { openFraud: number; openTickets: number };
+  series: { day: string; signups: number; active: number; completions: number; points: number }[];
+  miningSeries: { day: string; rozi: string; miners: number }[];
+  byNetwork: {
+    network: string; label: string; split: number; status: string;
+    completions: number; userPoints: number; marginPoints: number;
+  }[];
+};
+export const fetchAnalytics = (days = 30) =>
+  apiFetch<Analytics>(`/staff/analytics?days=${days}`);
+
 // ---- Admin: global settings (withdrawal fee) -----------------------------
 export const fetchSettings = () =>
   apiFetch<{

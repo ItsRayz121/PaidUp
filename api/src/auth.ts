@@ -11,6 +11,7 @@ import { recordDevice } from "./fraud.ts";
 // that roles.ts would (roles.ts imports from this file).
 import { type Role, isRole, permissionsOf, ROLE_LABELS } from "./permissions.ts";
 import { enabled as flagEnabled } from "./flags.ts";
+import { touchActivity } from "./analytics.ts";
 
 // The frontend computes a device fingerprint (no PII) and sends it here so the
 // fraud layer can spot one device farming many accounts (guardrail #5).
@@ -133,6 +134,15 @@ export async function requireActiveUser(userId: string): Promise<void> {
   if (row.status !== "active") {
     throw { statusCode: 403, message: "This account is suspended. Please contact support." };
   }
+  // DAU/retention (analytics.ts). Every authenticated request passes through
+  // here, which makes it the one honest definition of "active" available
+  // without inventing an event pipeline. Fire-and-forget and memoised to once
+  // per user per day per process, so the common case costs a Set lookup.
+  //
+  // AFTER the suspension check on purpose: a suspended account being refused is
+  // not activity, and counting it would inflate DAU with exactly the accounts
+  // that were removed for inflating things.
+  touchActivity(userId);
 }
 
 async function uniqueReferralCode(email: string): Promise<string> {

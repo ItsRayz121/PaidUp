@@ -11,6 +11,7 @@ import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
 import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
+import { loadAnalytics } from "../analytics.ts";
 
 // Gate a route on ONE named permission (see permissions.ts). The old form took
 // a list of roles; a permission is the same gate stated as what it protects
@@ -1115,6 +1116,21 @@ export async function staffRoutes(app: FastifyInstance) {
       // Null when this is the last page, so the panel knows to stop asking.
       nextCursor: rows.length > limit ? String(page[page.length - 1].created_at) : null,
     };
+  }));
+
+  // ---- Analytics (brief part 48) ------------------------------------------
+  // Everything here is derived from tables that already exist — see
+  // analytics.ts. Separate from /staff/kpis, which stays as the small
+  // at-a-glance strip; this is the full report the dashboard's charts read.
+  app.get("/staff/analytics", staffGuard("analytics.view", async (_ctx, req) => {
+    // A nonsense value falls back to the DEFAULT, not to the minimum. `days=-5`
+    // clamped upward would quietly answer with 7 days, which is a number the
+    // caller never asked for and cannot tell apart from a real 7-day window.
+    // The clamp still applies to values that are merely out of range — an
+    // unbounded `days` is an unbounded generate_series.
+    const raw = Number((req.query as { days?: string }).days);
+    const days = Number.isFinite(raw) && raw > 0 ? Math.min(Math.max(raw, 7), 90) : 30;
+    return await loadAnalytics(days);
   }));
 
   // ---- Feature flags (brief part 44) --------------------------------------
