@@ -13,6 +13,10 @@
 // decision, audit-logged, never the user's own click).
 import { sql, now, newId, postLedger } from "./db.ts";
 import { config } from "./config.ts";
+import {
+  lockCampaign, campaignSpend, overBudget, markExhausted,
+  type BudgetRow, type BudgetVerdict,
+} from "./taskBudget.ts";
 import { checkGeoMismatch } from "./fraud.ts";
 import { accrue, grantBoost } from "./mining/engine.ts";
 import { loadMiningSettings } from "./mining/settings.ts";
@@ -61,6 +65,10 @@ export type CreditOutcome =
   | { status: "duplicate"; completionStatus: string }
   | { status: "unknown_user" }
   | { status: "velocity_blocked"; scope: "type" | "global"; detail: string }
+  // The campaign has paid out everything it was bought for (taskBudget.ts).
+  // A refusal, not a deferral: the campaign is now paused and this completion
+  // will not become creditable by waiting.
+  | { status: "budget_exhausted"; reason: "conversions" | "points"; used: number; cap: number }
   | { status: "credited"; completionId: string; points: number };
 
 // A credited task boosts the user's mining hashrate for a while. Accrue first so
@@ -133,7 +141,44 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
   // If either write fails, neither lands — no points without a completion row,
   // no completion row without points.
   const completionId = newId();
-  await sql.tx(async (t) => {
+  const verdict = await sql.tx<BudgetVerdict>(async (t) => {
+    // ---- CAMPAIGN BUDGET (brief part 16) ----------------------------------
+    // ⚠️ INSIDE THIS TRANSACTION, AND UNDER THE LOCK, ON PURPOSE. This is a
+    // read-then-write on a shared total — guardrail #8's shape, one level up
+    // from a user balance. Checked before the transaction, two postbacks
+    // arriving together would both count 1,999 credited, both pass, and the
+    // partner would be handed 2,001 conversions. Do not lift it out to "read
+    // the budget once at the top"; the stale read is the entire bug.
+    //
+    // Only fixed-catalog tasks have a campaign at all. A dynamic survey (CPX)
+    // arrives with no task_id and is unaffected — there is no row to budget.
+    if (taskId) {
+      await lockCampaign(t, taskId);
+      const budget = await t.get<BudgetRow>(
+        "SELECT budget_conversions, budget_points FROM tasks WHERE id = ?", taskId,
+      );
+      if (budget) {
+        const v = overBudget(budget, await campaignSpend(t, taskId), points);
+        if (!v.ok) {
+          // Auto-pause: the whole point of a budget. It stops being offered and
+          // stops crediting without anyone having to notice a number climbing.
+          await markExhausted(t, taskId, now());
+          // Same rule as a velocity block: a POSTBACK that was refused must be
+          // on the record, a staff-approved proof must not burn its external_id
+          // (see recordRejection on the request).
+          if (req.recordRejection !== false) {
+            await t.run(
+              `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at)
+               VALUES (?,?,?,?,?, 'rejected', ?,?,?,?)`,
+              newId(), userId, taskId, network, externalId, points, offerType,
+              JSON.stringify(payload), now(),
+            );
+          }
+          return v;
+        }
+      }
+    }
+
     await t.run(
       `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, offer_type, postback_payload, created_at, verified_at)
        VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?)`,
@@ -246,7 +291,14 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
         }
       }
     }
+    return { ok: true };
   });
+
+  if (!verdict.ok) {
+    return {
+      status: "budget_exhausted", reason: verdict.reason, used: verdict.used, cap: verdict.cap,
+    };
+  }
 
   // Geo-mismatch signal: raise a soft fraud flag if the source says the
   // completion came from a different country than the account's. Runs AFTER the

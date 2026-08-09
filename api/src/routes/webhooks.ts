@@ -110,12 +110,24 @@ export async function webhookRoutes(app: FastifyInstance) {
     let rewardPoints: number;
     let rewardType: string;
     if (taskId) {
-      const task = await sql.get<{ id: string; type: string; points: number }>(
-        "SELECT id, type, points FROM tasks WHERE id = ? AND status = 'active'", taskId,
+      // Read the status rather than filtering on it, so the two reasons a task
+      // is not creditable can be answered differently below.
+      const task = await sql.get<{ id: string; type: string; points: number; status: string }>(
+        "SELECT id, type, points, status FROM tasks WHERE id = ? AND status IN ('active','exhausted')", taskId,
       );
       if (!task) {
         await logPostback(true, "unknown_task", externalId);
         return reply.code(400).send({ error: "unknown task" });
+      }
+      // ⚠️ AN ALREADY-PAUSED CAMPAIGN ANSWERS 200, for the same reason the
+      // budget_exhausted case below does. This used to fall into "unknown task"
+      // above and return 400 — so the first postback past the cap got a polite
+      // "we are not paying for this" and every one after it got an error the
+      // network would retry, for days, against a campaign that had simply
+      // finished. The task is not unknown; it is done.
+      if (task.status === "exhausted") {
+        await logPostback(true, "budget_exhausted", externalId);
+        return reply.send({ ok: true, credited: 0, paused: "budget" });
       }
       rewardPoints = task.points;
       rewardType = task.type;
@@ -149,6 +161,21 @@ export async function webhookRoutes(app: FastifyInstance) {
           true, outcome.scope === "global" ? "velocity_blocked_global" : "velocity_blocked", externalId,
         );
         return reply.send({ ok: true, credited: 0, flagged: "velocity" });
+
+      // The campaign has delivered everything it was bought for and has just
+      // paused itself (taskBudget.ts).
+      //
+      // ⚠️ 200, NOT AN ERROR CODE, AND THAT IS DELIBERATE. Networks retry on a
+      // 4xx/5xx — often for days — so refusing with an error would turn a
+      // finished campaign into a permanent retry storm against this endpoint.
+      // The postback WAS received and understood; we are declining to pay for
+      // it, and `credited: 0` says exactly that.
+      case "budget_exhausted":
+        await logPostback(true, "budget_exhausted", externalId);
+        return reply.send({
+          ok: true, credited: 0, paused: "budget",
+          detail: `campaign budget reached (${outcome.reason}: ${outcome.used}/${outcome.cap})`,
+        });
 
       case "credited":
         await logPostback(true, "credited", externalId);

@@ -14,8 +14,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { sql, now, newId, logAudit } from "../db.ts";
+import { config } from "../config.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { creditCompletion, type NetworkRow } from "../credit.ts";
+import { campaignMoney, EXHAUSTED } from "../taskBudget.ts";
 
 function staffGuard(
   perm: Permission,
@@ -74,8 +76,22 @@ const upsertSchema = z.object({
     .optional().or(z.literal("")),
   minutes: z.number().int().min(0).max(600).default(1),
   country: z.string().max(60).default("Pakistan"),
+  // ⚠️ 'exhausted' IS ACCEPTED SO AN ADMIN CAN SEE IT, BUT ONLY THE CREDIT PATH
+  // SETS IT. An Admin picking it by hand would be claiming a campaign ran out
+  // when it did not; the two states an Admin owns are active and disabled.
+  // Reactivating an exhausted campaign whose budget was not raised simply
+  // exhausts it again on the next completion, which is the correct outcome.
   status: z.enum(["active", "disabled"]).default("active"),
   icon: z.enum(TASK_ICONS).optional().or(z.literal("")),
+  // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
+  // null clears a cap back to unlimited; undefined leaves it alone. Both are
+  // needed: "no budget" is a real, common state and has to be settable.
+  budgetConversions: z.number().int().positive().max(10_000_000).nullable().optional(),
+  budgetPoints: z.number().int().positive().max(1_000_000_000).nullable().optional(),
+  // What the partner pays US per conversion, in micro-USD. Entered as dollars
+  // in the panel and converted there; stored as an integer so no campaign's
+  // margin is computed from a float.
+  revenuePerConversionMicro: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 export async function staffTaskRoutes(app: FastifyInstance) {
@@ -84,12 +100,40 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const tasks = await sql.all<Record<string, unknown>>(
       `SELECT t.id, t.title, t.points, t.type, t.verify_mode, t.instructions, t.proof_label,
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
+              t.budget_conversions, t.budget_points, t.revenue_per_conversion_micro,
+              t.budget_exhausted_at,
               (t.postback_secret IS NOT NULL) AS has_secret,
               (SELECT COUNT(*) FROM task_completions c WHERE c.task_id = t.id AND c.status = 'credited') AS credited_count,
               (SELECT COUNT(*) FROM task_proofs p WHERE p.task_id = t.id AND p.status = 'pending') AS pending_proofs
        FROM tasks t WHERE t.source = 'custom' ORDER BY t.created_at DESC`,
     );
-    return { tasks };
+
+    // Part 15 — what each campaign earned against what it paid. DERIVED from the
+    // completions and the ledger (taskBudget.ts), never a stored counter, so it
+    // cannot drift away from the rows it is summarising.
+    const money = await campaignMoney(config.pointsPerUsdt);
+    return {
+      tasks: tasks.map((t) => {
+        const m = money.get(t.id as string);
+        const cap = t.budget_conversions as number | null;
+        const used = m?.conversions ?? 0;
+        return {
+          ...t,
+          // Everything below is money, and it is served pre-computed for the
+          // same reason `netUsdt` is on the withdrawal queue: a figure the panel
+          // works out for itself is a second definition waiting to disagree.
+          spentConversions: used,
+          spentPoints: m?.points ?? 0,
+          referralPointsPaid: m?.referralPoints ?? 0,
+          revenueMicro: m?.revenueMicro ?? 0,
+          marginMicro: m?.marginMicro ?? 0,
+          // null when there is no cap — NOT 0 and NOT 100. A campaign with no
+          // budget is not "0% used", and a progress bar reading 0% forever is
+          // how an unbudgeted campaign gets mistaken for a budgeted one.
+          budgetUsedPct: cap && cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : null,
+        };
+      }),
+    };
   }));
 
   // ---- Create a custom task -----------------------------------------------
@@ -105,14 +149,16 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       `INSERT INTO tasks
         (id, type, title, points, network, advertiser, minutes, requirement, country, status,
          source, verify_mode, instructions, proof_label, proof_required, action_url, icon,
-         postback_secret, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?)`,
+         postback_secret, budget_conversions, budget_points, revenue_per_conversion_micro, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?)`,
       id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
       b.instructions ?? null, b.country, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
       b.proofRequired === false ? 0 : 1,
       b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null,
-      b.icon && b.icon.length > 0 ? b.icon : null, secret, now(),
+      b.icon && b.icon.length > 0 ? b.icon : null, secret,
+      b.budgetConversions ?? null, b.budgetPoints ?? null,
+      b.revenuePerConversionMicro ?? 0, now(),
     );
 
     await logAudit({
@@ -152,6 +198,21 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (b.proofRequired !== undefined) set("proof_required", b.proofRequired ? 1 : 0);
     if (b.actionUrl !== undefined) set("action_url", b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null);
     if (b.icon !== undefined) set("icon", b.icon && b.icon.length > 0 ? b.icon : null);
+    // Budgets: `null` clears the cap, a number sets it, absent leaves it.
+    if (b.budgetConversions !== undefined) set("budget_conversions", b.budgetConversions);
+    if (b.budgetPoints !== undefined) set("budget_points", b.budgetPoints);
+    if (b.revenuePerConversionMicro !== undefined) {
+      set("revenue_per_conversion_micro", b.revenuePerConversionMicro);
+    }
+    // ⚠️ RAISING A BUDGET ON AN EXHAUSTED CAMPAIGN REOPENS IT. Otherwise the one
+    // action that fixes the problem — giving the campaign more room — leaves it
+    // paused, and the Admin has to know to also flip the status back. The stamp
+    // stays, so the record that it ran out once is not erased. If the new budget
+    // is still under what has been spent, the next completion pauses it again.
+    if (b.status === undefined && (b.budgetConversions !== undefined || b.budgetPoints !== undefined)) {
+      const cur = await sql.get<{ status: string }>("SELECT status FROM tasks WHERE id = ?", id);
+      if (cur?.status === EXHAUSTED) set("status", "active");
+    }
     set("verify_mode", nextMode);
     set("postback_secret", secret);
 
@@ -263,6 +324,18 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (outcome.status === "velocity_blocked") {
       // Leave the proof pending; tell the reviewer why nothing was credited.
       return { ok: false, error: `Blocked by a fraud cap (${outcome.detail}). The user is over their daily limit — try again later.` };
+    }
+    // The campaign ran out mid-queue. The proof stays PENDING (recordRejection
+    // is false above, so nothing burned its external_id) — but unlike a velocity
+    // block, waiting will not fix this one, so the message says so. Raising the
+    // budget in the task editor makes the same proof approvable again.
+    if (outcome.status === "budget_exhausted") {
+      return {
+        ok: false,
+        error: `This campaign's budget is used up (${outcome.used} of ${outcome.cap} `
+          + `${outcome.reason === "points" ? "points" : "conversions"}), so it has paused itself. `
+          + "Raise its budget in Our own tasks to approve this.",
+      };
     }
     if (outcome.status === "unknown_user") return { ok: false, error: "user not found" };
     if (outcome.status === "duplicate") {

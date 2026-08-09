@@ -482,6 +482,46 @@ const MIGRATIONS = `
   -- would be a third-party request on a money screen and a way to smuggle
   -- tracking pixels into it. NULL falls back to the icon for the task's type.
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS icon TEXT;
+
+  -- ---- PER-CAMPAIGN BUDGET AND REVENUE (brief parts 15 + 16) ---------------
+  --
+  -- ⚠️ WITHOUT A BUDGET THERE IS NO AUTO-PAUSE, and without an auto-pause a
+  -- partner who bought 2,000 conversions can be given 20,000. A task row had one
+  -- reward field and nothing that said how many times it was allowed to pay out,
+  -- so "stop this campaign" was a human noticing and clicking Disable. Adding
+  -- the column now is free; retrofitting it onto live campaigns is a migration
+  -- done under pressure, which is why it goes in ahead of the rest of the task
+  -- engine work.
+  --
+  -- NULL means UNLIMITED on both caps, so every existing row keeps exactly the
+  -- behaviour it has today. A cap is opt-in per campaign.
+  --
+  --   budget_conversions — how many credited completions this campaign may ever
+  --                        pay for. The primary control: it is the unit a
+  --                        partner actually buys.
+  --   budget_points      — a hard ceiling on the POINTS this campaign may pay in
+  --                        task rewards. A second brake for the case where the
+  --                        reward is edited mid-flight.
+  --
+  -- ⚠️ budget_points COUNTS TASK REWARDS ONLY, NOT THE REFERRAL BONUSES a
+  -- completion triggers. Those are real spend and they ARE reported in the
+  -- margin below — but they are a growth cost paid out of our margin, and
+  -- nothing in a partner's contract mentions them. Charging them against the
+  -- campaign budget would stop a campaign early for a reason the partner's own
+  -- numbers cannot explain, which is the harder conversation of the two.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS budget_conversions INTEGER;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS budget_points BIGINT;
+  -- What the PARTNER PAYS US per credited conversion, in micro-USD (1e6 = $1).
+  -- Part 15: without it, "is this campaign profitable" is unanswerable — the
+  -- ledger records every point we paid out and nothing at all about what came
+  -- in. 0 (the default) means "not recorded", which reads as unknown margin
+  -- rather than as a campaign that earns nothing.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS revenue_per_conversion_micro BIGINT NOT NULL DEFAULT 0;
+  -- Set when a cap was reached and the campaign auto-paused itself. Kept as a
+  -- stamp rather than inferred from status = 'exhausted', so raising the budget
+  -- and reactivating still leaves the record that it ran out once.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS budget_exhausted_at TEXT;
+
   -- Whether a 'proof' task ASKS THE USER FOR EVIDENCE (founder, 2026-08-01).
   --
   -- 1 (the default, and what every existing row keeps): the user types their

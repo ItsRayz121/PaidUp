@@ -565,14 +565,41 @@ export type CustomTask = {
   verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
   // Postgres INTEGER: 1 = ask the user for evidence, 0 = a tap-to-confirm task.
   proof_required: number;
-  action_url: string | null; icon: string | null; minutes: number; country: string; status: string;
+  action_url: string | null; icon: string | null; minutes: number; country: string;
+  // 'active' | 'disabled' | 'exhausted'. ⚠️ `exhausted` is set BY THE SERVER when
+  // a campaign hits its budget — an Admin never picks it, which is why the input
+  // type below does not offer it.
+  status: string;
   created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
+  // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
+  // null on either cap = unlimited. Every figure below is computed server-side
+  // (api/src/taskBudget.ts) for the same reason `netUsdt` is on the withdrawal
+  // queue: a number the panel derives for itself is a second definition of
+  // spend, and it will eventually disagree with the ledger.
+  budget_conversions: number | null;
+  budget_points: number | null;
+  revenue_per_conversion_micro: number;
+  budget_exhausted_at: string | null;
+  spentConversions: number;
+  spentPoints: number;
+  /** Referral commission these completions paid. Real spend, counted in margin,
+   *  deliberately NOT charged against the budget — see db.ts. */
+  referralPointsPaid: number;
+  revenueMicro: number;
+  marginMicro: number;
+  /** null when the campaign has no conversion cap. NOT 0 — an uncapped campaign
+   *  is not "0% used", and a bar stuck at 0% reads as a budget that isn't moving. */
+  budgetUsedPct: number | null;
 };
 export type CustomTaskInput = {
   title: string; points: number; verifyMode: "proof" | "postback";
   instructions?: string; proofLabel?: string; proofRequired?: boolean;
   actionUrl?: string; icon?: string;
   minutes?: number; country?: string; status?: "active" | "disabled";
+  // null clears a cap back to unlimited; omitted leaves it untouched.
+  budgetConversions?: number | null;
+  budgetPoints?: number | null;
+  revenuePerConversionMicro?: number;
 };
 // Must match TASK_ICONS in api/src/routes/staffTasks.ts — the API refuses
 // anything not on that list, so a value added here alone just fails to save.

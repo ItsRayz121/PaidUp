@@ -23,6 +23,10 @@ const empty: CustomTaskInput = {
   title: "", points: 100, verifyMode: "proof",
   instructions: "", proofLabel: "", proofRequired: true,
   actionUrl: "", icon: "", minutes: 1, country: "Pakistan", status: "active",
+  // null = no cap. A new campaign is uncapped unless somebody says otherwise —
+  // the same default every existing task row has, so adding the feature changed
+  // nothing about what is already running.
+  budgetConversions: null, budgetPoints: null, revenuePerConversionMicro: 0,
 };
 
 export function TasksPanel() {
@@ -49,7 +53,15 @@ export function TasksPanel() {
       instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
       proofRequired: t.proof_required !== 0,
       actionUrl: t.action_url ?? "", icon: t.icon ?? "", minutes: t.minutes, country: t.country,
-      status: t.status as "active" | "disabled",
+      // ⚠️ AN EXHAUSTED CAMPAIGN EDITS AS 'active'. `status` on the input is the
+      // two states an Admin owns, and sending 'exhausted' back would be the
+      // panel asserting a budget verdict it does not compute. Saving a raised
+      // budget reopens it server-side; saving without one exhausts it again on
+      // the next completion, which is correct either way.
+      status: t.status === "disabled" ? "disabled" : "active",
+      budgetConversions: t.budget_conversions,
+      budgetPoints: t.budget_points,
+      revenuePerConversionMicro: t.revenue_per_conversion_micro,
     });
   }
 
@@ -176,6 +188,39 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
         <label><span className={L}>Country (or ALL)</span>
           <input className={I} value={value.country}
             onChange={(e) => set("country", e.target.value)} /></label>
+
+        {/* ---- Campaign budget + revenue (brief parts 15 + 16) -------------
+            ⚠️ BLANK MEANS UNLIMITED, AND THE HINT SAYS SO ON EVERY FIELD. A
+            budget box that is empty because nobody filled it in looks identical
+            to one that is empty on purpose, and the difference is whether a
+            partner who bought 2,000 conversions can be given 20,000. */}
+        <div className="sm:col-span-2 mt-1 rounded-md border border-line bg-card p-2.5">
+          <p className="text-[11px] font-semibold uppercase text-muted">Budget &amp; revenue</p>
+          <p className="mt-0.5 text-[11px] text-muted">
+            When a cap is reached the campaign pauses itself — it stops showing to users and
+            stops paying out. Leave a box empty for no limit.
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label><span className={L}>Max conversions</span>
+              <input type="number" min={1} className={I} placeholder="no limit"
+                value={value.budgetConversions ?? ""}
+                onChange={(e) => set("budgetConversions",
+                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+            <label><span className={L}>Max points to pay</span>
+              <input type="number" min={1} className={I} placeholder="no limit"
+                value={value.budgetPoints ?? ""}
+                onChange={(e) => set("budgetPoints",
+                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+            {/* Entered in dollars, stored in micro-USD — an integer, so no
+                campaign's margin is ever computed from a float. */}
+            <label><span className={L}>They pay us / conversion ($)</span>
+              <input type="number" min={0} step="0.001" className={I} placeholder="0.00"
+                value={value.revenuePerConversionMicro
+                  ? value.revenuePerConversionMicro / 1e6 : ""}
+                onChange={(e) => set("revenuePerConversionMicro",
+                  e.target.value === "" ? 0 : Math.round(Number(e.target.value) * 1e6))} /></label>
+          </div>
+        </div>
       </div>
       <div className="mt-3 flex gap-2">
         <button onClick={onSave} className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">
@@ -185,6 +230,81 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+// Brief part 15: what this campaign earned against what it paid, and part 16:
+// how much of its budget is gone. Every figure comes from the API already
+// computed (api/src/taskBudget.ts) — this component formats, it never derives.
+function CampaignBudget({ t }: { t: CustomTask }) {
+  const capped = t.budget_conversions !== null || t.budget_points !== null;
+  const hasRevenue = t.revenue_per_conversion_micro > 0;
+  if (!capped && !hasRevenue && t.spentConversions === 0) return null;
+
+  const usd = (micro: number) => `${micro < 0 ? "−" : ""}$${(Math.abs(micro) / 1e6).toFixed(2)}`;
+  const pct = t.budgetUsedPct;
+  // Amber from 80%: the point of a budget is to be seen approaching, not to be
+  // discovered after it stopped a live campaign overnight.
+  const bar = pct === null ? "bg-brand" : pct >= 100 ? "bg-pending" : pct >= 80 ? "bg-pending" : "bg-success";
+
+  return (
+    <div className="mt-2 rounded-md border border-line p-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+        {t.budget_conversions !== null ? (
+          <span>
+            <span className="num font-semibold text-brand-ink">{t.spentConversions}</span>
+            {" / "}<span className="num">{t.budget_conversions}</span> conversions
+          </span>
+        ) : (
+          <span><span className="num font-semibold text-brand-ink">{t.spentConversions}</span> conversions · no cap</span>
+        )}
+        {t.budget_points !== null && (
+          <span>
+            <span className="num font-semibold text-brand-ink">{formatPoints(t.spentPoints)}</span>
+            {" / "}<span className="num">{formatPoints(t.budget_points)}</span> pts
+          </span>
+        )}
+        {hasRevenue && (
+          <>
+            <span>in <span className="num font-semibold text-brand-ink">{usd(t.revenueMicro)}</span></span>
+            {/* Margin is revenue minus task points AND the referral commission
+                those completions paid — referral bonuses come out of margin, so
+                a margin that ignored them would flatter every campaign that has
+                referred users on it. */}
+            <span>
+              margin{" "}
+              <span className={`num font-semibold ${t.marginMicro < 0 ? "text-danger" : "text-success"}`}>
+                {usd(t.marginMicro)}
+              </span>
+            </span>
+            {t.referralPointsPaid > 0 && (
+              <span className="text-[10px]">(incl. {formatPoints(t.referralPointsPaid)} pts referral)</span>
+            )}
+          </>
+        )}
+      </div>
+
+      {pct !== null && (
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-line">
+          <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {t.status === "exhausted" && (
+        <p className="mt-1.5 text-[11px] text-pending">
+          Paused automatically {t.budget_exhausted_at ? timeAgo(t.budget_exhausted_at) : ""} — it hit its
+          budget. Raise a cap in Edit to start it again.
+        </p>
+      )}
+      {/* A campaign that costs more than it earns, stated plainly. It is the one
+          thing this whole screen exists to surface, and it is easy to miss in a
+          row of numbers. */}
+      {hasRevenue && t.marginMicro < 0 && t.status !== "exhausted" && (
+        <p className="mt-1.5 text-[11px] text-danger">
+          This campaign is paying out more than it brings in.
+        </p>
+      )}
     </div>
   );
 }
@@ -219,13 +339,25 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
         </div>
         <div className="flex shrink-0 gap-1.5">
           <button onClick={onEdit} className="rounded bg-brand-tint px-2 py-1 text-[10px] font-semibold text-brand">Edit</button>
-          <button onClick={onToggle}
-            className={`rounded px-2 py-1 text-[10px] font-semibold ${
-              t.status === "active" ? "bg-success-tint text-success" : "bg-danger-tint text-danger"}`}>
-            {t.status}
-          </button>
+          {/* ⚠️ 'exhausted' GETS ITS OWN COLOUR AND IS NOT A BUTTON. It is not a
+              state an Admin sets, and clicking it would read as "un-exhaust
+              this" — which is not what it would do. Raising the budget in Edit
+              is what reopens the campaign. */}
+          {t.status === "exhausted" ? (
+            <span className="rounded bg-pending-tint px-2 py-1 text-[10px] font-semibold text-pending">
+              budget used up
+            </span>
+          ) : (
+            <button onClick={onToggle}
+              className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                t.status === "active" ? "bg-success-tint text-success" : "bg-danger-tint text-danger"}`}>
+              {t.status}
+            </button>
+          )}
         </div>
       </div>
+
+      <CampaignBudget t={t} />
 
       {/* The three seeded social tasks ship switched off with no link, because a
           guessed URL would send users to a 404 and then ask them to prove they

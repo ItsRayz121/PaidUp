@@ -35,7 +35,8 @@
     "test:permissions": "tsx --test src/tests/permissions.test.ts",
     "test:flags": "tsx --test src/tests/flags.test.ts",
     "test:analytics": "tsx src/tests/analytics.e2e.ts",
-    "test:stage4": "tsx src/tests/stage4.e2e.ts"
+    "test:stage4": "tsx src/tests/stage4.e2e.ts",
+    "test:taskbudget": "tsx src/tests/taskBudget.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
