@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { TaskFlow } from "@/components/TaskFlow";
 import { Card } from "@/components/ui";
@@ -7,15 +8,22 @@ import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { InfoIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchTasks } from "@/lib/api";
+import { fetchTasks, TASK_CATEGORY_LABELS } from "@/lib/api";
 
 export default function TasksPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const tasks = useApi(fetchTasks, []);
+  const [category, setCategory] = useState("");
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
-  const list = tasks.data?.tasks ?? [];
+  const all = tasks.data?.tasks ?? [];
+  // ⚠️ THE CHIPS ARE BUILT FROM WHAT IS ACTUALLY IN THE LIST, never from the
+  // full category list. A chip that filters to nothing is a screen telling a
+  // user there is work in a category that is empty today — and on a quiet day
+  // that is most of them.
+  const present = [...new Set(all.map((x) => x.category).filter(Boolean))] as string[];
+  const list = category ? all.filter((x) => x.category === category) : all;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -46,6 +54,16 @@ export default function TasksPage() {
         </Card>
       </Link>
 
+      {present.length > 1 && (
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+          <Chip label="All" active={category === ""} onClick={() => setCategory("")} />
+          {present.map((c) => (
+            <Chip key={c} label={TASK_CATEGORY_LABELS[c] ?? c}
+              active={category === c} onClick={() => setCategory(c)} />
+          ))}
+        </div>
+      )}
+
       {tasks.loading ? (
         <Loading />
       ) : tasks.error ? (
@@ -56,5 +74,15 @@ export default function TasksPage() {
         <TaskFlow tasks={list} />
       )}
     </div>
+  );
+}
+
+function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} aria-pressed={active}
+      className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold ${
+        active ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
+      {label}
+    </button>
   );
 }

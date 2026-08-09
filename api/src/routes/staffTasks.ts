@@ -18,6 +18,10 @@ import { config } from "../config.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { creditCompletion, type NetworkRow } from "../credit.ts";
 import { campaignMoney, EXHAUSTED } from "../taskBudget.ts";
+import {
+  FIELD_KINDS, MAX_FIELDS_PER_TASK, fieldsForTask, publicField, parseAnswers,
+} from "../taskFields.ts";
+import { packCountries, unpackCountries } from "../taskTargeting.ts";
 
 function staffGuard(
   perm: Permission,
@@ -35,6 +39,17 @@ function staffGuard(
 
 const CUSTOM_NETWORK = "custom";
 
+// The one-line form of a country list, written to the older `tasks.country`
+// column so the staff panel and every query that predates targeting still have
+// something readable. It is a LABEL, never the thing that is matched against —
+// taskTargeting.ts reads target_countries.
+function summariseCountries(list: string[]): string {
+  const parts = [...new Set(list.map((s) => s.trim()).filter(Boolean))];
+  if (parts.length === 0 || parts.some((p) => p.toLowerCase() === "all")) return "ALL";
+  if (parts.length === 1) return parts[0].slice(0, 60);
+  return `${parts[0]} +${parts.length - 1}`.slice(0, 60);
+}
+
 // The logos a task card can show. A CLOSED LIST, not a free-text field and not a
 // URL: the icon name is looked up against a map of inline SVGs in the web app
 // (components/icons.tsx `taskIcon`), so an Admin can never point a task card at
@@ -44,6 +59,16 @@ const CUSTOM_NETWORK = "custom";
 // Adding one = a line here and a matching entry in `taskIcon`. An unknown value
 // is refused at this boundary, so the two lists cannot drift apart silently.
 export const TASK_ICONS = ["whatsapp", "telegram", "twitter", "youtube", "facebook", "instagram", "star"] as const;
+
+// The categories a task can sit in (Stage 7). A CLOSED LIST for the same reason
+// the icon list is: the category is rendered as a filter chip in the earner app
+// with its own wording and colour, so free text would put whatever an Admin
+// typed — including a blank, or a paragraph — into the app's own navigation.
+//
+// Adding one = a line here and a matching label in the web app's
+// TASK_CATEGORY_LABELS. An unknown value is refused at this boundary, so the
+// two lists cannot drift apart silently.
+export const TASK_CATEGORIES = ["social", "signup", "app", "survey", "video", "shopping", "other"] as const;
 
 const upsertSchema = z.object({
   title: z.string().min(3).max(120),
@@ -92,6 +117,36 @@ const upsertSchema = z.object({
   // in the panel and converted there; stored as an integer so no campaign's
   // margin is computed from a float.
   revenuePerConversionMicro: z.number().int().min(0).max(1_000_000_000).optional(),
+  // ---- Category + targeting (Stage 7) -------------------------------------
+  // "" clears the category back to uncategorised. An unknown value is refused
+  // here rather than stored, so the earner app's chip list can never be handed
+  // a category it has no label for.
+  category: z.enum(TASK_CATEGORIES).optional().or(z.literal("")),
+  // The countries this task is offered in. ["ALL"] = everywhere. An empty list
+  // is read as ALL by packCountries() — a task targeted at nothing would be a
+  // campaign that silently shows to nobody, which is indistinguishable from a
+  // broken feed.
+  countries: z.array(z.string().min(1).max(60)).max(40).optional(),
+  // ⚠️ EVERY RULE BELOW IS ENFORCED IN taskTargeting.ts, on the FEED AND THE
+  // SUBMIT PATH BOTH. null clears it back to no limit; undefined leaves it.
+  targetMinAccountDays: z.number().int().min(0).max(3650).nullable().optional(),
+  targetMaxAccountDays: z.number().int().min(0).max(3650).nullable().optional(),
+  targetMinCompleted: z.number().int().min(0).max(10_000).nullable().optional(),
+});
+
+// A task's input fields, sent as a WHOLE LIST (see the PUT route below).
+const fieldSchema = z.object({
+  // Present = keep this existing field row and its id, so answers already
+  // stored still point at something. Absent = a new question.
+  id: z.string().max(64).optional(),
+  label: z.string().trim().min(1).max(120),
+  kind: z.enum(FIELD_KINDS).default("text"),
+  required: z.boolean().default(true),
+  placeholder: z.string().max(120).optional(),
+  help: z.string().max(300).optional(),
+  // One choice per line. Only meaningful for kind 'choice'.
+  options: z.string().max(2000).optional(),
+  maxLen: z.number().int().min(1).max(4000).nullable().optional(),
 });
 
 export async function staffTaskRoutes(app: FastifyInstance) {
@@ -102,6 +157,9 @@ export async function staffTaskRoutes(app: FastifyInstance) {
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
               t.budget_conversions, t.budget_points, t.revenue_per_conversion_micro,
               t.budget_exhausted_at,
+              t.category, t.target_countries, t.target_min_account_days,
+              t.target_max_account_days, t.target_min_completed,
+              (SELECT COUNT(*) FROM task_fields f WHERE f.task_id = t.id) AS field_count,
               (t.postback_secret IS NOT NULL) AS has_secret,
               (SELECT COUNT(*) FROM task_completions c WHERE c.task_id = t.id AND c.status = 'credited') AS credited_count,
               (SELECT COUNT(*) FROM task_proofs p WHERE p.task_id = t.id AND p.status = 'pending') AS pending_proofs
@@ -119,6 +177,11 @@ export async function staffTaskRoutes(app: FastifyInstance) {
         const used = m?.conversions ?? 0;
         return {
           ...t,
+          // The Admin-facing form of the stored comma-wrapped list. Served
+          // unpacked so the panel never has to know the storage shape — the
+          // one place that does is taskTargeting.ts.
+          countries: unpackCountries(t.target_countries as string | null, String(t.country ?? "")),
+          fieldCount: Number(t.field_count ?? 0),
           // Everything below is money, and it is served pre-computed for the
           // same reason `netUsdt` is on the withdrawal queue: a figure the panel
           // works out for itself is a second definition waiting to disagree.
@@ -145,20 +208,35 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     // credited through the postback route even by mistake.
     const secret = b.verifyMode === "postback" ? randomBytes(24).toString("hex") : null;
 
+    // ⚠️ `country` AND `target_countries` ARE WRITTEN TOGETHER, ALWAYS.
+    // target_countries is what the feed and the eligibility gate read;
+    // `country` is the older single-value column the staff panel, analytics and
+    // every pre-Stage-7 query still read, kept as a human-readable summary. A
+    // save that touched only one of them would give a task that reads
+    // "Pakistan" in the panel and shows in India.
+    const countries = b.countries ?? (b.country ? [b.country] : ["ALL"]);
+    const packed = packCountries(countries);
+    const countryLabel = summariseCountries(countries);
+
     await sql.run(
       `INSERT INTO tasks
         (id, type, title, points, network, advertiser, minutes, requirement, country, status,
          source, verify_mode, instructions, proof_label, proof_required, action_url, icon,
-         postback_secret, budget_conversions, budget_points, revenue_per_conversion_micro, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?)`,
+         postback_secret, budget_conversions, budget_points, revenue_per_conversion_micro,
+         category, target_countries, target_min_account_days, target_max_account_days,
+         target_min_completed, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
-      b.instructions ?? null, b.country, b.status,
+      b.instructions ?? null, countryLabel, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
       b.proofRequired === false ? 0 : 1,
       b.actionUrl && b.actionUrl.length > 0 ? b.actionUrl : null,
       b.icon && b.icon.length > 0 ? b.icon : null, secret,
       b.budgetConversions ?? null, b.budgetPoints ?? null,
-      b.revenuePerConversionMicro ?? 0, now(),
+      b.revenuePerConversionMicro ?? 0,
+      b.category && b.category.length > 0 ? b.category : null,
+      packed, b.targetMinAccountDays ?? null, b.targetMaxAccountDays ?? null,
+      b.targetMinCompleted ?? null, now(),
     );
 
     await logAudit({
@@ -191,8 +269,20 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     if (b.title !== undefined) set("title", b.title);
     if (b.points !== undefined) set("points", b.points);
     if (b.minutes !== undefined) set("minutes", b.minutes);
-    if (b.country !== undefined) set("country", b.country);
     if (b.status !== undefined) set("status", b.status);
+    // ⚠️ THE TWO COUNTRY COLUMNS MOVE TOGETHER OR NOT AT ALL — see the note on
+    // the create path. `countries` is the real control; a bare `country` from an
+    // older client is accepted and treated as a one-country list, so it still
+    // changes what the feed does rather than only what the panel says.
+    if (b.countries !== undefined || b.country !== undefined) {
+      const list = b.countries ?? [b.country as string];
+      set("target_countries", packCountries(list));
+      set("country", summariseCountries(list));
+    }
+    if (b.category !== undefined) set("category", b.category && b.category.length > 0 ? b.category : null);
+    if (b.targetMinAccountDays !== undefined) set("target_min_account_days", b.targetMinAccountDays);
+    if (b.targetMaxAccountDays !== undefined) set("target_max_account_days", b.targetMaxAccountDays);
+    if (b.targetMinCompleted !== undefined) set("target_min_completed", b.targetMinCompleted);
     if (b.instructions !== undefined) { set("instructions", b.instructions); set("requirement", b.instructions); }
     if (b.proofLabel !== undefined) set("proof_label", b.proofLabel);
     if (b.proofRequired !== undefined) set("proof_required", b.proofRequired ? 1 : 0);
@@ -226,6 +316,76 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     return { ok: true };
   }));
 
+  // ---- A task's input fields (Stage 7) ------------------------------------
+  app.get("/staff/tasks/:id/fields", staffGuard("tasks.view", async (_ctx, req) => {
+    const id = (req.params as { id: string }).id;
+    return { fields: (await fieldsForTask(id)).map(publicField) };
+  }));
+
+  // Replace the WHOLE list in one call, rather than a route per field.
+  //
+  // Why a whole-list PUT: the fields of a form are ordered, and order is a
+  // property of the list, not of any one row. Per-field POST/DELETE/reorder
+  // endpoints would let the panel get halfway through a rewrite and leave a
+  // form with two "Your username" boxes and a gap in the sort order. One call,
+  // one transaction, one valid state.
+  app.put("/staff/tasks/:id/fields", staffGuard("tasks.manage", async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const { fields } = z.object({ fields: z.array(fieldSchema).max(MAX_FIELDS_PER_TASK) })
+      .parse(req.body ?? {});
+
+    const task = await sql.get<{ id: string }>(
+      "SELECT id FROM tasks WHERE id = ? AND source = 'custom'", id,
+    );
+    if (!task) return { ok: false, error: "not found" };
+
+    // A 'choice' field with no choices renders as a question that cannot be
+    // answered — validateAnswers() refuses those answers, so the user would meet
+    // a dead form. Caught here, where an Admin can still fix it.
+    for (const f of fields) {
+      if (f.kind === "choice" && (f.options ?? "").split("\n").filter((s) => s.trim()).length === 0) {
+        return { ok: false, error: `“${f.label}” is a choice question with no choices. Add one per line.` };
+      }
+    }
+
+    const existing = await fieldsForTask(id);
+    const keep = new Set(fields.map((f) => f.id).filter(Boolean) as string[]);
+
+    await sql.tx(async (tx) => {
+      // Rows the Admin removed. Answers already submitted keep their own
+      // snapshotted label and kind (db.ts), so deleting the question never
+      // blanks evidence a reviewer has read.
+      for (const e of existing) {
+        if (!keep.has(e.id)) await tx.run("DELETE FROM task_fields WHERE id = ?", e.id);
+      }
+      for (const [i, f] of fields.entries()) {
+        const opts = f.kind === "choice" ? (f.options ?? "") : null;
+        if (f.id && existing.some((e) => e.id === f.id)) {
+          await tx.run(
+            `UPDATE task_fields SET label = ?, kind = ?, required = ?, placeholder = ?, help = ?,
+                                    options = ?, max_len = ?, sort_order = ? WHERE id = ?`,
+            f.label, f.kind, f.required ? 1 : 0, f.placeholder ?? null, f.help ?? null,
+            opts, f.maxLen ?? null, i, f.id,
+          );
+        } else {
+          await tx.run(
+            `INSERT INTO task_fields (id, task_id, label, kind, required, placeholder, help,
+                                      options, max_len, sort_order, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            newId(), id, f.label, f.kind, f.required ? 1 : 0, f.placeholder ?? null,
+            f.help ?? null, opts, f.maxLen ?? null, i, now(),
+          );
+        }
+      }
+    });
+
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "custom_task_fields_update",
+      detail: `task ${id}: ${fields.length} field(s)`,
+    });
+    return { ok: true, fields: (await fieldsForTask(id)).map(publicField) };
+  }));
+
   // ---- Reveal the postback URL + secret for a task ------------------------
   // Separate endpoint (not in the list) so the secret is fetched deliberately,
   // and every reveal is audit-logged.
@@ -253,21 +413,94 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     };
   }));
 
-  // ---- Proof review queue (any staff) -------------------------------------
+  // ---- Proof review dashboard (Stage 7) -----------------------------------
+  //
+  // The old queue was a status filter and a list. It could not answer the two
+  // questions a reviewer actually has — "how much is waiting?" and "is this
+  // person a repeat offender?" — and with one task's proofs mixed into every
+  // other task's, reviewing a single campaign meant reading past everything
+  // else.
   app.get("/staff/task-proofs", staffGuard("tasks.review", async (_ctx, req) => {
-    const status = z.enum(["pending", "approved", "rejected"]).catch("pending")
-      .parse((req.query as { status?: string })?.status);
+    const q = req.query as { status?: string; taskId?: string; q?: string };
+    const status = z.enum(["pending", "approved", "rejected"]).catch("pending").parse(q.status);
+    const taskId = (q.taskId ?? "").trim();
+    const search = (q.q ?? "").trim().toLowerCase();
+
+    const where: string[] = ["p.status = ?"];
+    const args: unknown[] = [status];
+    if (taskId) { where.push("p.task_id = ?"); args.push(taskId); }
+    if (search) {
+      // Email or @handle. LOWER on both sides rather than ILIKE so PGlite and
+      // Postgres behave identically.
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(COALESCE(u.username,'')) LIKE ?)");
+      args.push(`%${search}%`, `%${search}%`);
+    }
+
     const proofs = await sql.all<Record<string, unknown>>(
-      `SELECT p.id, p.task_id, p.user_id, p.proof_text, p.status, p.review_note, p.created_at,
-              u.email AS user_email, t.title AS task_title, t.points AS task_points,
-              t.proof_label
+      `SELECT p.id, p.task_id, p.user_id, p.proof_text, p.answers, p.status, p.review_note,
+              p.created_at, p.reviewed_at,
+              u.email AS user_email, u.username AS user_handle, u.country AS user_country,
+              u.created_at AS user_joined,
+              t.title AS task_title, t.points AS task_points, t.proof_label, t.category,
+              r.email AS reviewer_email
        FROM task_proofs p
        JOIN users u ON u.id = p.user_id
        JOIN tasks t ON t.id = p.task_id
-       WHERE p.status = ? ORDER BY p.created_at ASC LIMIT 200`,
-      status,
+       LEFT JOIN users r ON r.id = p.reviewed_by
+       WHERE ${where.join(" AND ")}
+       ORDER BY p.created_at ASC LIMIT 200`,
+      ...args,
     );
-    return { proofs };
+
+    // ⚠️ THE COUNTS ARE OVER ALL PROOFS, NEVER THE CURRENT FILTER — the same
+    // rule the support queue follows (stage 6). A "pending" number that shrank
+    // because someone typed a search would be read as the backlog clearing.
+    const countRows = await sql.all<{ status: string; n: string | number }>(
+      "SELECT status, COUNT(*) AS n FROM task_proofs GROUP BY status",
+    );
+    const counts = { pending: 0, approved: 0, rejected: 0 } as Record<string, number>;
+    for (const c of countRows) counts[c.status] = Number(c.n);
+
+    // The user's own record, so a reviewer can see a repeat rejection without
+    // opening another screen. One grouped query for the whole page rather than
+    // two correlated subqueries per row.
+    const userIds = [...new Set(proofs.map((p) => p.user_id as string))];
+    const history = new Map<string, { approved: number; rejected: number }>();
+    if (userIds.length > 0) {
+      const rows = await sql.all<{ user_id: string; status: string; n: string | number }>(
+        `SELECT user_id, status, COUNT(*) AS n FROM task_proofs
+         WHERE user_id IN (${userIds.map(() => "?").join(",")}) AND status <> 'pending'
+         GROUP BY user_id, status`,
+        ...userIds,
+      );
+      for (const r of rows) {
+        const h = history.get(r.user_id) ?? { approved: 0, rejected: 0 };
+        if (r.status === "approved") h.approved = Number(r.n);
+        if (r.status === "rejected") h.rejected = Number(r.n);
+        history.set(r.user_id, h);
+      }
+    }
+
+    // Tasks that have ever produced a proof — the filter's option list. Built
+    // from proofs rather than from all tasks so it never offers a filter that
+    // would return nothing.
+    const tasks = await sql.all<{ id: string; title: string; n: string | number }>(
+      `SELECT t.id, t.title, COUNT(*) AS n FROM task_proofs p JOIN tasks t ON t.id = p.task_id
+       WHERE p.status = 'pending' GROUP BY t.id, t.title ORDER BY COUNT(*) DESC`,
+    );
+
+    return {
+      counts,
+      tasks: tasks.map((t) => ({ id: t.id, title: t.title, pending: Number(t.n) })),
+      proofs: proofs.map((p) => ({
+        ...p,
+        // The structured answers, when the task has fields. Older rows have
+        // none and fall back to proof_text, which is what the queue always
+        // showed — so nothing needs a "structured or not" branch downstream.
+        answers: parseAnswers(p.answers as string | null),
+        userHistory: history.get(p.user_id as string) ?? { approved: 0, rejected: 0 },
+      })),
+    };
   }));
 
   // ---- Approve / reject a proof -------------------------------------------
@@ -277,6 +510,54 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       action: z.enum(["approve", "reject"]),
       note: z.string().max(500).optional(),
     }).parse(req.body ?? {});
+    return decideProof(app, { userId, role }, proofId, b.action, b.note);
+  }));
+
+  // ---- Decide several at once ---------------------------------------------
+  //
+  // ⚠️ A BULK DECISION IS N SEPARATE DECISIONS, NOT ONE. Each row goes through
+  // exactly the same creditCompletion() path as a single click, and each gets
+  // its own outcome back — because the interesting cases are per-row: one user
+  // is over a velocity cap, the campaign runs out of budget halfway down the
+  // list, a row was already reviewed in another tab. Wrapping the lot in one
+  // transaction would mean one blocked user silently undoing forty good
+  // approvals, and reporting a single ok/error would mean a reviewer believing
+  // they had cleared a queue they had not.
+  app.post("/staff/task-proofs/bulk", staffGuard("tasks.review", async ({ userId, role }, req) => {
+    const b = z.object({
+      ids: z.array(z.string().max(64)).min(1).max(50),
+      action: z.enum(["approve", "reject"]),
+      note: z.string().max(500).optional(),
+    }).parse(req.body ?? {});
+
+    const results: { id: string; ok: boolean; error?: string; credited?: number }[] = [];
+    for (const id of [...new Set(b.ids)]) {
+      const r = await decideProof(app, { userId, role }, id, b.action, b.note) as
+        { ok: boolean; error?: string; credited?: number };
+      results.push({ id, ok: r.ok, error: r.error, credited: r.credited });
+    }
+    return {
+      ok: true,
+      done: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      creditedPoints: results.reduce((s, r) => s + (r.credited ?? 0), 0),
+      results,
+    };
+  }));
+}
+
+// One decision, shared by the single-click route and the bulk route so the two
+// can never drift into different rules about what an approval means.
+async function decideProof(
+  app: FastifyInstance,
+  ctx: { userId: string; role: Role },
+  proofId: string,
+  action: "approve" | "reject",
+  note: string | undefined,
+) {
+  {
+    const { userId, role } = ctx;
+    const b = { action, note };
 
     const proof = await sql.get<{
       id: string; task_id: string; user_id: string; status: string;
@@ -357,5 +638,5 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       targetUserId: proof.user_id, detail: `proof ${proofId} → ${outcome.points} pts`,
     });
     return { ok: true, status: "approved", credited: outcome.points };
-  }));
+  }
 }

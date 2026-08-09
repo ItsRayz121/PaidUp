@@ -11,6 +11,8 @@ import { pointsToUsdt } from "../payout.ts";
 import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
 import { minWithdrawPointsNow } from "../settingsRuntime.ts";
 import { loadLeaderboard, maskName } from "../leaderboard.ts";
+import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
+import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -47,20 +49,24 @@ export async function appRoutes(app: FastifyInstance) {
     // broken app, whereas an empty feed with the usual "nothing right now"
     // state is exactly what a user sees on a quiet day anyway.
     if (!(await flagEnabled("tasks"))) return { tasks: [] };
-    const user = (await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId))!;
     // Hide offers from a network the Admin has disabled. A task whose network
     // has no row yet (predates the networks table) still shows — absence = active.
-    // A task marked country 'ALL' is global — it shows to every user, whatever
-    // their country. Surveys (CPX) are not in this table at all: that wall is
-    // targeted by the user's IP, so it is already worldwide.
+    // Surveys (CPX) are not in this table at all: that wall is targeted by the
+    // user's IP, so it is already worldwide.
+    //
+    // ⚠️ TARGETING IS NOT IN THIS SQL, ON PURPOSE. Country used to be a WHERE
+    // clause here and nowhere else, which made it a display filter — the submit
+    // path never checked it, so a task hidden from a user was still claimable by
+    // one who had its id. Every targeting rule now lives in taskTargeting.ts and
+    // is applied below AND on submit, from one definition. The catalog is tens
+    // of rows, so filtering in JS costs nothing and buys that guarantee.
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT t.* FROM tasks t
        LEFT JOIN networks n ON n.id = t.network
-       WHERE t.status = 'active' AND (t.country = ? OR t.country = 'ALL')
-         AND (n.status IS NULL OR n.status = 'active')
+       WHERE t.status = 'active' AND (n.status IS NULL OR n.status = 'active')
        ORDER BY t.points DESC`,
-      user.country,
     );
+    const ctx = await userContext(userId);
     // For our own 'proof' tasks, tell the user where they stand: have they
     // already submitted, was it approved, was it rejected? One query, not N.
     const proofRows = await sql.all<{ task_id: string; status: string; review_note: string | null }>(
@@ -70,10 +76,22 @@ export async function appRoutes(app: FastifyInstance) {
     );
     const proofByTask = new Map(proofRows.map((p) => [p.task_id, p]));
 
+    // How many input fields each custom task asks for. One query, not one per
+    // task — the card needs it only to say "3 questions" before you tap in.
+    const fieldCounts = new Map<string, number>();
+    for (const r of await sql.all<{ task_id: string; n: string | number }>(
+      "SELECT task_id, COUNT(*) AS n FROM task_fields GROUP BY task_id",
+    )) fieldCounts.set(r.task_id, Number(r.n));
+
     return {
-      tasks: rows.map((t) => {
+      tasks: rows.flatMap((t) => {
+        const gate = eligibility(t as unknown as TargetingRow, ctx);
+        // Never qualifies => not shown at all. Can qualify later => shown with
+        // the reason, so the rule is something to work towards rather than a
+        // task that silently appears one day. See taskTargeting.ts.
+        if (!gate.ok && gate.hide) return [];
         const proof = proofByTask.get(t.id as string);
-        return {
+        return [{
           id: t.id, type: t.type, title: t.title, points: t.points,
           network: t.network, advertiser: t.advertiser, minutes: t.minutes,
           requirement: t.requirement ?? undefined,
@@ -90,8 +108,74 @@ export async function appRoutes(app: FastifyInstance) {
           icon: t.icon ?? undefined,
           proofStatus: proof?.status ?? undefined,
           proofNote: proof?.review_note ?? undefined,
-        };
+          // ---- Stage 7 ----------------------------------------------------
+          category: t.category ?? undefined,
+          fieldCount: fieldCounts.get(t.id as string) ?? 0,
+          // Set only when the user has not met a gate they still CAN meet. The
+          // card renders locked and the detail page refuses to submit.
+          lockedReason: gate.ok ? undefined : gate.reason,
+        }];
       }),
+    };
+  }));
+
+  // ---- One task, with its input fields (Stage 7) ---------------------------
+  //
+  // The task detail page. It exists because a task can now ask several
+  // questions, and a bottom sheet is the wrong shape for a form — but the
+  // reason it is a SERVER route rather than the feed row the client already
+  // has is that the fields must be read fresh: they are what the answers are
+  // checked against on submit, and a stale copy means a user filling in a
+  // question that no longer exists.
+  app.get("/tasks/:id", guard(async (userId, req) => {
+    const id = (req.params as { id: string }).id;
+    const t = await sql.get<Record<string, unknown>>(
+      `SELECT t.* FROM tasks t LEFT JOIN networks n ON n.id = t.network
+       WHERE t.id = ? AND (n.status IS NULL OR n.status = 'active')`, id,
+    );
+    if (!t || !(await flagEnabled("tasks"))) return { ok: false, error: "This task is not available." };
+    if (t.status !== "active") {
+      // 'exhausted' is a real, common state (a campaign that hit its budget) and
+      // it deserves better than "not available": the user did nothing wrong and
+      // the task may well come back.
+      return {
+        ok: false,
+        error: t.status === "exhausted"
+          ? "This task is full for now. Please try another one."
+          : "This task is not available.",
+      };
+    }
+
+    const ctx = await userContext(userId);
+    const gate = eligibility(t as unknown as TargetingRow, ctx);
+    // A hidden task 404s from here too — the feed hid it, and a detail page that
+    // renders it anyway is exactly the hole this route would otherwise open.
+    if (!gate.ok && gate.hide) return { ok: false, error: gate.reason };
+
+    const proof = await sql.get<{ status: string; review_note: string | null; created_at: string }>(
+      `SELECT status, review_note, created_at FROM task_proofs
+       WHERE task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1`, id, userId,
+    );
+
+    return {
+      ok: true,
+      task: {
+        id: t.id, type: t.type, title: t.title, points: t.points,
+        network: t.network, advertiser: t.advertiser, minutes: t.minutes,
+        requirement: t.requirement ?? undefined,
+        source: t.source ?? "network",
+        verifyMode: t.verify_mode ?? undefined,
+        instructions: t.instructions ?? undefined,
+        proofLabel: t.proof_label ?? undefined,
+        proofRequired: t.proof_required !== 0,
+        actionUrl: t.action_url ?? undefined,
+        icon: t.icon ?? undefined,
+        category: t.category ?? undefined,
+        proofStatus: proof?.status ?? undefined,
+        proofNote: proof?.review_note ?? undefined,
+        lockedReason: gate.ok ? undefined : gate.reason,
+      },
+      fields: (await fieldsForTask(id)).map(publicField),
     };
   }));
 
@@ -108,13 +192,16 @@ export async function appRoutes(app: FastifyInstance) {
     // below. It cannot be decided here: whether this task asks for evidence is a
     // per-task Admin setting, and a fixed min(1) would refuse the tap-to-confirm
     // tasks outright.
-    const { proof } = z.object({ proof: z.string().trim().max(2000).optional() })
-      .parse(req.body ?? {});
+    const { proof, answers: rawAnswers } = z.object({
+      proof: z.string().trim().max(2000).optional(),
+      // fieldId -> what they typed. Checked against the task's CURRENT fields
+      // below (taskFields.ts) — the client's own validation is a courtesy and
+      // does not survive a curl.
+      answers: z.record(z.string().max(64), z.string().max(4000)).optional(),
+    }).parse(req.body ?? {});
 
-    const task = await sql.get<{
-      id: string; source: string; verify_mode: string; status: string; proof_required: number;
-    }>(
-      "SELECT id, source, verify_mode, status, proof_required FROM tasks WHERE id = ?", taskId,
+    const task = await sql.get<Record<string, unknown>>(
+      "SELECT * FROM tasks WHERE id = ?", taskId,
     );
     if (!task || task.source !== "custom" || task.status !== "active") {
       return { ok: false, error: "This task is not available." };
@@ -122,16 +209,36 @@ export async function appRoutes(app: FastifyInstance) {
     if (task.verify_mode !== "proof") {
       return { ok: false, error: "This task is checked automatically — you do not need to send proof." };
     }
+
+    // ⚠️ THE TARGETING GATE, ON THE WRITE PATH. The feed hiding a task is a
+    // display decision; this is the one that actually stops a claim. Both ask
+    // the same function (taskTargeting.ts) — see the note on the feed above for
+    // why the country rule was moved out of that SQL.
+    const gate = eligibility(task as unknown as TargetingRow, await userContext(userId));
+    if (!gate.ok) return { ok: false, error: gate.reason };
     // Asked for → must be there. Not asked for → a stored placeholder, so the
     // reviewer's screen never shows an empty grey box that reads as a bug.
     //
     // ⚠️ THE ROW IS STILL 'pending' AND A HUMAN STILL APPROVES IT. Nothing about
     // this branch credits anything; it only decides what text goes in the queue.
-    const text = (proof ?? "").trim();
-    if (task.proof_required !== 0 && text.length === 0) {
-      return { ok: false, error: "Please write your proof first." };
+    // A task with configured fields is answered through them; one without keeps
+    // the single free-text box exactly as before. Both end in the same pending
+    // row for the same human to approve.
+    const fields = await fieldsForTask(taskId);
+    let proofText: string;
+    let answersJson: string | null = null;
+    if (fields.length > 0) {
+      const checked = validateAnswers(fields, rawAnswers ?? {});
+      if (!checked.ok) return { ok: false, error: checked.error };
+      proofText = checked.text;
+      answersJson = JSON.stringify(checked.answers);
+    } else {
+      const text = (proof ?? "").trim();
+      if (task.proof_required !== 0 && text.length === 0) {
+        return { ok: false, error: "Please write your proof first." };
+      }
+      proofText = text.length > 0 ? text : "The user says they finished this task.";
     }
-    const proofText = text.length > 0 ? text : "The user says they finished this task.";
 
     // Already approved? Nothing to do — don't let them farm a second payout.
     const approved = await sql.get<{ id: string }>(
@@ -146,8 +253,9 @@ export async function appRoutes(app: FastifyInstance) {
       taskId, userId,
     );
     await sql.run(
-      "INSERT INTO task_proofs (id, task_id, user_id, proof_text, status, created_at) VALUES (?,?,?,?, 'pending', ?)",
-      newId(), taskId, userId, proofText, now(),
+      `INSERT INTO task_proofs (id, task_id, user_id, proof_text, answers, status, created_at)
+       VALUES (?,?,?,?,?, 'pending', ?)`,
+      newId(), taskId, userId, proofText, answersJson, now(),
     );
     return { ok: true, status: "pending" };
   }));

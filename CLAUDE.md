@@ -1554,10 +1554,101 @@ These override convenience or speed at every step:
     is not. `rm -rf api/data/pg` between suites (it is git-ignored and
     disposable). Running the matrix that way is also a **stronger** check: every
     suite then exercises a genuinely fresh boot.
-  - **Still not built**: Stage 7, the task-section work — configurable input
-    fields (unlocks the task detail page), then categories/targeting, then the
-    review dashboard. Parts 15+16 (campaign budget + revenue), which used to
-    head that list, shipped in the entry above this one.
+  - ~~**Still not built**: Stage 7~~ — **shipped, see the entry below.**
+
+- **THE ADMIN REBUILD, STAGE 7: THE TASK ENGINE — CONFIGURABLE INPUT FIELDS, A
+  TASK DETAIL PAGE, CATEGORIES, TARGETING, AND A REAL REVIEW DASHBOARD
+  (founder, 2026-08-09).** The last stage of the rebuild. Verified by
+  re-running **everything** from a genuinely fresh database, not carried
+  forward: **30 suites, 963 checks, 0 failures** (24 e2e — usdt 85, stage7 78
+  (new), stage6 70, stage5 55, wallet 52, mining 50, stage4 48, payoutRelay 48,
+  taskbudget 46, telegram 45, kyc 43, analytics 40, profile 31, store 29,
+  conversion 25, fees 24, withdrawControls 21, deposits 17, autoWithdraw 16,
+  admin 15, referrals 14, push 9, autoRefund 8, proxy 5; 6 unit — mining 41,
+  permissions 16, custody 8, signer 8, custodySeeds 8, flags 8); api + web
+  typecheck, eslint, web production build (33 routes) clean; `security-review`
+  no findings.
+  - ⚠️ **TARGETING IS AN ELIGIBILITY GATE, NOT A FEED FILTER, AND FIXING THAT
+    IS THE POINT OF THE STAGE.** Country targeting was a `WHERE` clause in
+    `GET /tasks` **and nowhere else** — so hiding a task from a user's list
+    never stopped a user who had its id (a screenshot, a shared link, a stale
+    cached feed) from POSTing a proof straight at it. Every rule now lives in
+    `api/src/taskTargeting.ts` and is asked by the feed, the task's own page
+    AND the submit path. A rule added to one of those three SQL queries and not
+    to that file gives you a task that is invisible everywhere and still
+    claimable. There is a test that skips the feed entirely and submits to a
+    task it was never shown.
+  - ⚠️ **TWO KINDS OF "NO", AND THE SPLIT IS A PRODUCT DECISION.** `hide: true`
+    (wrong country; "new members only" for an old account) means the user can
+    **never** qualify — showing it is a reward dangled where no effort reaches
+    it, so it never leaves the server. `hide: false` (account too new, finish N
+    tasks first) is a gate they can pass, so the task is shown **locked, with
+    the reason** — that is a goal. Four rules ship: countries (multi),
+    min/max account age, min finished tasks. All NULL-means-no-limit, so every
+    task row that predates this keeps exactly the behaviour it had.
+  - **`tasks.country` is now a LABEL, and `target_countries` is the authority.**
+    The new column holds a **comma-WRAPPED** list (`,Pakistan,India,`) so a
+    `LIKE '%,X,%'` cannot match a country whose name is a prefix of another;
+    `,ALL,` is everywhere. ⚠️ **The two columns are written together on every
+    save, always** — `country` is what the staff panel and every pre-Stage-7
+    query still read, and a save that touched one would give a task reading
+    "Pakistan" in the panel while showing in India.
+  - **Configurable input fields** (`task_fields`, `api/src/taskFields.ts`): an
+    Admin writes the questions — short text / long text / number / email / link
+    / phone / pick-one — and the answers arrive as label→value pairs instead of
+    one paragraph a reviewer has to guess their way through. The old single
+    proof box is **unchanged and still the fallback** when a task has no
+    fields; a tap-to-confirm task still works with no answers at all.
+    ⚠️ **THE LABEL AND KIND ARE SNAPSHOTTED ONTO THE ANSWER** (`task_proofs
+    .answers`), same reason `fee_points` is snapshotted onto a withdrawal: an
+    Admin renaming "Your username" to "Your email" afterwards would otherwise
+    silently relabel evidence a reviewer had already read, and a correct answer
+    would be rejected for being the wrong kind of thing. Regression test.
+    ⚠️ **A `url` ANSWER IS SCHEME-CHECKED SERVER-SIDE** — it is rendered as an
+    `href` in the staff queue, an admin session is the session worth stealing,
+    and `new URL()` accepts `javascript:` and `data:` perfectly happily. Same
+    check the task's own action URL already had, for the same reason. The queue
+    shows the **whole URL**, not a friendly word, so a reviewer reads where a
+    link goes before clicking it.
+    ⚠️ **Fields are saved as a WHOLE LIST in one PUT.** Order is a property of
+    the list, not of any row; per-field endpoints would let a half-finished
+    rewrite become the live form. Keeping the row ids on re-save is what stops
+    a second save duplicating the whole form — tested.
+  - **A task detail page** (`/tasks/[id]`), which the fields unlock: a bottom
+    sheet covers the instructions the user is trying to read while typing into
+    it. ⚠️ **A SPONSORED OFFER STILL STARTS IN EXACTLY ONE PLACE and it is not
+    this page** — the task list's disclosure sheet (guardrail #3). The detail
+    page is for OUR OWN tasks; a network task reached by typing a URL is shown
+    with its disclosure and sent back rather than quietly becoming a second
+    start button. **`ProofSheet` was deleted, not kept alongside** — two copies
+    of a submit flow disagree within a week.
+  - **Categories** — a **CLOSED LIST** (`TASK_CATEGORIES` ↔
+    `TASK_CATEGORY_LABELS`), same reason the icon list is: the category renders
+    as a chip in the app's own navigation, and free text there shows whatever
+    an Admin typed. ⚠️ **The chips are built from what is actually in the feed**,
+    never from the full list — a chip that filters to nothing tells a user
+    there is work in an empty category, and on a quiet day that is most of them.
+  - **The review dashboard**: per-status counts, a per-task filter, search by
+    email/@handle, the user's own prior approved/rejected record on every row,
+    who decided it and when, and bulk approve/reject. Split into
+    `web/src/components/proof-queue.tsx` — an Agent reviews, an Admin writes
+    campaigns.
+    ⚠️ **THE COUNTS ARE OVER ALL PROOFS, NEVER THE CURRENT FILTER** (stage 6's
+    rule for the ticket queue): a pending number that shrank because someone
+    typed a search reads as the backlog clearing.
+    ⚠️ **A BULK DECISION IS N SEPARATE DECISIONS, NOT ONE.** Each row runs the
+    same `creditCompletion()` path as a single click and gets its own outcome —
+    because the interesting cases are per-row: one user over a velocity cap, the
+    campaign hitting its budget partway down the list, a row already decided in
+    another tab. One transaction would let one blocked user silently undo forty
+    good approvals; one ok/error would leave a reviewer believing they had
+    cleared a queue they had not.
+  - **The `finance`/`marketing` defect class did not recur** — every new route
+    is gated on a permission that a role already holds (`tasks.view`,
+    `tasks.manage`, `tasks.review`) and reachable from a screen that role can
+    open.
+  - **Not built, deliberately**: nothing else was pulled forward. The brief's
+    task-section list is now complete.
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its

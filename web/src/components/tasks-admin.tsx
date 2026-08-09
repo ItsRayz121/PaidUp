@@ -1,18 +1,23 @@
 "use client";
 
-// Admin: create and manage OUR OWN tasks, and review the proofs users send for
-// them. Internal tool — density over friendliness, jargon allowed (DESIGN_BRIEF).
+// Admin: create and manage OUR OWN tasks — the campaign editor. Internal tool —
+// density over friendliness, jargon allowed (DESIGN_BRIEF).
+//
+// Reviewing the proofs users send lives next door in `proof-queue.tsx`: it is a
+// different job done by a different role (an Agent reviews, an Admin writes
+// campaigns) and it grew its own filters, selection state and bulk actions.
 //
 // Two verification modes, chosen per task:
-//   proof    — user sends evidence, staff approve here, points credited then.
+//   proof    — user sends evidence, staff approve it next door, credited then.
 //   postback — a partner's server calls our signed postback (URL + secret shown
 //              on the card). Same contract as a real ad network.
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, fetchTaskPostback,
-  fetchTaskProofs, decideTaskProof, TASK_ICON_CHOICES,
-  type CustomTask, type CustomTaskInput,
+  fetchTaskFields, saveTaskFields,
+  TASK_ICON_CHOICES, TASK_CATEGORY_CHOICES, TASK_CATEGORY_LABELS,
+  type CustomTask, type CustomTaskInput, type StaffTaskFieldInput, type TaskFieldKind,
 } from "@/lib/api";
 import { formatPoints, timeAgo } from "@/lib/format";
 
@@ -27,6 +32,11 @@ const empty: CustomTaskInput = {
   // the same default every existing task row has, so adding the feature changed
   // nothing about what is already running.
   budgetConversions: null, budgetPoints: null, revenuePerConversionMicro: 0,
+  // Uncategorised, offered everywhere, no targeting — the state every task row
+  // that predates Stage 7 is in, so a new task behaves like the existing ones
+  // until someone deliberately narrows it.
+  category: "", countries: ["ALL"],
+  targetMinAccountDays: null, targetMaxAccountDays: null, targetMinCompleted: null,
 };
 
 export function TasksPanel() {
@@ -62,6 +72,11 @@ export function TasksPanel() {
       budgetConversions: t.budget_conversions,
       budgetPoints: t.budget_points,
       revenuePerConversionMicro: t.revenue_per_conversion_micro,
+      category: t.category ?? "",
+      countries: t.countries.length > 0 ? t.countries : ["ALL"],
+      targetMinAccountDays: t.target_min_account_days,
+      targetMaxAccountDays: t.target_max_account_days,
+      targetMinCompleted: t.target_min_completed,
     });
   }
 
@@ -185,9 +200,47 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
         <label><span className={L}>About how many minutes</span>
           <input type="number" className={I} value={value.minutes}
             onChange={(e) => set("minutes", Number(e.target.value))} /></label>
-        <label><span className={L}>Country (or ALL)</span>
-          <input className={I} value={value.country}
-            onChange={(e) => set("country", e.target.value)} /></label>
+        <label><span className={L}>Category (earner app filter)</span>
+          <select className={I} value={value.category ?? ""}
+            onChange={(e) => set("category", e.target.value)}>
+            {TASK_CATEGORY_CHOICES.map((c) => (
+              <option key={c} value={c}>{c === "" ? "None" : TASK_CATEGORY_LABELS[c] ?? c}</option>
+            ))}
+          </select></label>
+
+        {/* ---- Targeting (Stage 7) ----------------------------------------
+            ⚠️ EVERY RULE HERE IS ENFORCED ON THE SUBMIT PATH TOO, not only on
+            what the feed shows (api/src/taskTargeting.ts). Hiding a task from
+            the list would never have stopped a user who had its id. */}
+        <div className="sm:col-span-2 mt-1 rounded-md border border-line bg-card p-2.5">
+          <p className="text-[11px] font-semibold uppercase text-muted">Who sees this task</p>
+          <p className="mt-0.5 text-[11px] text-muted">
+            Leave a box empty for no limit. Wrong-country users never see the task at all;
+            the two rules below show it locked, with the reason, because they can still get there.
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <label className="sm:col-span-2"><span className={L}>Countries — one per line, or ALL</span>
+              <textarea className={I} rows={2} placeholder="ALL"
+                value={(value.countries ?? ["ALL"]).join("\n")}
+                onChange={(e) => set("countries",
+                  e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))} /></label>
+            <label><span className={L}>Account at least N days old</span>
+              <input type="number" min={0} className={I} placeholder="no limit"
+                value={value.targetMinAccountDays ?? ""}
+                onChange={(e) => set("targetMinAccountDays",
+                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+            <label><span className={L}>Only accounts under N days old</span>
+              <input type="number" min={0} className={I} placeholder="no limit"
+                value={value.targetMaxAccountDays ?? ""}
+                onChange={(e) => set("targetMaxAccountDays",
+                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+            <label className="sm:col-span-2"><span className={L}>Must have finished N tasks already</span>
+              <input type="number" min={0} className={I} placeholder="no limit"
+                value={value.targetMinCompleted ?? ""}
+                onChange={(e) => set("targetMinCompleted",
+                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+          </div>
+        </div>
 
         {/* ---- Campaign budget + revenue (brief parts 15 + 16) -------------
             ⚠️ BLANK MEANS UNLIMITED, AND THE HINT SAYS SO ON EVERY FIELD. A
@@ -331,8 +384,10 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
           <p className="mt-0.5 text-xs text-muted">
             <span className="num font-semibold text-brand">{formatPoints(t.points)} pts</span> ·{" "}
             {t.verify_mode === "proof"
-              ? t.proof_required === 0 ? "staff approve (no proof asked)" : "staff approve proof"
+              ? t.fieldCount > 0 ? `staff approve · ${t.fieldCount} question(s)`
+                : t.proof_required === 0 ? "staff approve (no proof asked)" : "staff approve proof"
               : "partner postback"} · {t.country} ·{" "}
+            {t.category ? `${TASK_CATEGORY_LABELS[t.category] ?? t.category} · ` : ""}
             {t.credited_count} credited
             {t.pending_proofs > 0 && <span className="text-pending"> · {t.pending_proofs} proof(s) waiting</span>}
           </p>
@@ -358,6 +413,10 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
       </div>
 
       <CampaignBudget t={t} />
+
+      <TargetingSummary t={t} />
+
+      {t.verify_mode === "proof" && <FieldEditor task={t} />}
 
       {/* The three seeded social tasks ship switched off with no link, because a
           guessed URL would send users to a 404 and then ask them to prove they
@@ -413,6 +472,180 @@ function TaskCard({ t, onEdit, onToggle }: { t: CustomTask; onEdit: () => void; 
   );
 }
 
+// What targeting is actually in force, stated on the card rather than only
+// inside the edit form. A campaign that shows to nobody looks exactly like a
+// campaign nobody has done yet, and the only way to tell them apart used to be
+// opening Edit — which puts the card into a state you then have to cancel out of.
+function TargetingSummary({ t }: { t: CustomTask }) {
+  const rules: string[] = [];
+  const countries = t.countries.length > 0 ? t.countries : ["ALL"];
+  if (!countries.some((c) => c.toLowerCase() === "all")) rules.push(countries.join(", "));
+  if (t.target_min_account_days != null) rules.push(`account ${t.target_min_account_days}+ days old`);
+  if (t.target_max_account_days != null) rules.push(`under ${t.target_max_account_days} days old`);
+  if (t.target_min_completed != null) rules.push(`${t.target_min_completed}+ tasks finished`);
+  if (rules.length === 0) return null;
+  return (
+    <p className="mt-2 rounded-md border border-line p-2 text-[11px] text-muted">
+      <span className="font-semibold uppercase">Shown to</span> {rules.join(" · ")}
+    </p>
+  );
+}
+
+// ---- The questions a task asks (Stage 7) ---------------------------------
+//
+// Saved as a WHOLE LIST in one call, matching the API. Order is a property of
+// the list, so per-field save buttons would let a half-finished rewrite become
+// the live form — two "Your username" boxes and a hole in the order.
+//
+// A field with no `id` is new. Keeping the id on the others is what stops a
+// re-save from orphaning answers that were already submitted against them.
+const KIND_LABELS: Record<TaskFieldKind, string> = {
+  text: "Short text", longtext: "Long text", number: "Number",
+  email: "Email", url: "Link", phone: "Phone", choice: "Pick one",
+};
+
+function FieldEditor({ task }: { task: CustomTask }) {
+  const [open, setOpen] = useState(false);
+  const [fields, setFields] = useState<StaffTaskFieldInput[] | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setOpen(true); setMsg(null);
+    try {
+      const r = await fetchTaskFields(task.id);
+      setFields(r.fields.map((f) => ({
+        id: f.id, label: f.label, kind: f.kind, required: f.required,
+        placeholder: f.placeholder ?? "", help: f.help ?? "",
+        options: (f.options ?? []).join("\n"), maxLen: null,
+      })));
+    } catch (e) { setMsg((e as Error).message); }
+  }
+
+  async function save() {
+    if (!fields) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await saveTaskFields(task.id, fields);
+      if (!r.ok) { setMsg(r.error ?? "Could not save."); return; }
+      setMsg(`Saved — ${fields.length} question(s).`);
+      // Re-seat the list from the server so newly created rows pick up their
+      // real ids; without this a second save would insert duplicates.
+      if (r.fields) {
+        setFields(r.fields.map((f) => ({
+          id: f.id, label: f.label, kind: f.kind, required: f.required,
+          placeholder: f.placeholder ?? "", help: f.help ?? "",
+          options: (f.options ?? []).join("\n"), maxLen: null,
+        })));
+      }
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  const upd = (i: number, patch: Partial<StaffTaskFieldInput>) =>
+    setFields((s) => s!.map((f, n) => (n === i ? { ...f, ...patch } : f)));
+  const move = (i: number, by: number) => setFields((s) => {
+    const next = [...s!];
+    const j = i + by;
+    if (j < 0 || j >= next.length) return next;
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
+
+  const L = "block text-[10px] font-semibold uppercase text-muted";
+  const I = "mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1 text-xs outline-none";
+
+  if (!open) {
+    return (
+      <div className="mt-2 border-t border-line pt-2">
+        <button onClick={load} className="text-xs font-semibold text-brand">
+          {task.fieldCount > 0
+            ? `Edit the ${task.fieldCount} question(s) this task asks`
+            : "Add questions to this task"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 border-t border-line pt-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase text-muted">Questions the user answers</p>
+        <button onClick={() => setOpen(false)} className="text-[11px] font-semibold text-muted">Close</button>
+      </div>
+      <p className="mt-0.5 text-[11px] text-muted">
+        With no questions here the task falls back to one free-text proof box. Answers are
+        checked again on the server, and a link answer must start with http(s).
+      </p>
+
+      {msg && <p className="mt-1 text-[11px] text-brand-ink">{msg}</p>}
+      {!fields ? <p className="mt-2 text-xs text-muted">Loading…</p> : (
+        <>
+          <div className="mt-2 space-y-2">
+            {fields.map((f, i) => (
+              <div key={f.id ?? `new-${i}`} className="rounded-md border border-line p-2">
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <label className="sm:col-span-2"><span className={L}>Question</span>
+                    <input className={I} value={f.label}
+                      onChange={(e) => upd(i, { label: e.target.value })} /></label>
+                  <label><span className={L}>Answer type</span>
+                    <select className={I} value={f.kind}
+                      onChange={(e) => upd(i, { kind: e.target.value as TaskFieldKind })}>
+                      {(Object.keys(KIND_LABELS) as TaskFieldKind[]).map((k) => (
+                        <option key={k} value={k}>{KIND_LABELS[k]}</option>
+                      ))}
+                    </select></label>
+                  <label className="flex items-end gap-1.5 pb-1 text-xs">
+                    <input type="checkbox" checked={f.required}
+                      onChange={(e) => upd(i, { required: e.target.checked })} />
+                    Must answer
+                  </label>
+                  <label className="sm:col-span-2"><span className={L}>Hint under the question</span>
+                    <input className={I} value={f.help ?? ""}
+                      onChange={(e) => upd(i, { help: e.target.value })} /></label>
+                  <label className="sm:col-span-2"><span className={L}>Grey placeholder text</span>
+                    <input className={I} value={f.placeholder ?? ""}
+                      onChange={(e) => upd(i, { placeholder: e.target.value })} /></label>
+                  {f.kind === "choice" && (
+                    <label className="sm:col-span-4"><span className={L}>Choices — one per line</span>
+                      <textarea className={I} rows={3} value={f.options ?? ""}
+                        onChange={(e) => upd(i, { options: e.target.value })} /></label>
+                  )}
+                </div>
+                <div className="mt-1.5 flex gap-1.5">
+                  <button onClick={() => move(i, -1)} disabled={i === 0}
+                    className="rounded bg-brand-tint px-2 py-0.5 text-[10px] font-semibold text-brand disabled:opacity-40">↑</button>
+                  <button onClick={() => move(i, 1)} disabled={i === fields.length - 1}
+                    className="rounded bg-brand-tint px-2 py-0.5 text-[10px] font-semibold text-brand disabled:opacity-40">↓</button>
+                  <button onClick={() => setFields((s) => s!.filter((_, n) => n !== i))}
+                    className="rounded bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger">Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 flex gap-2">
+            {/* 8 is the API's own cap (MAX_FIELDS_PER_TASK). A twelve-question
+                form on a phone is a task that gets started and abandoned. */}
+            <button
+              disabled={fields.length >= 8}
+              onClick={() => setFields((s) => [...s!, {
+                label: "", kind: "text", required: true, placeholder: "", help: "", options: "",
+              }])}
+              className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand disabled:opacity-40">
+              + Question
+            </button>
+            <button onClick={save} disabled={busy}
+              className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">
+              {busy ? "Saving…" : "Save questions"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <p className="flex items-center gap-2">
@@ -425,76 +658,3 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ---- Proof review queue (all staff) --------------------------------------
-export function ProofQueue() {
-  const [status, setStatus] = useState("pending");
-  const proofs = useApi(() => fetchTaskProofs(status), [status]);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  async function decide(id: string, action: "approve" | "reject") {
-    let note: string | undefined;
-    if (action === "reject") {
-      const r = window.prompt("Why are you rejecting this? The user will see it.");
-      if (r === null) return;
-      note = r;
-    }
-    try {
-      const res = await decideTaskProof(id, action, note);
-      if (!res.ok) { setMsg(res.error ?? "Could not save."); return; }
-      setMsg(action === "approve" && res.credited ? `Approved — ${res.credited} pts credited.` : "Done.");
-      proofs.reload();
-    } catch (e) { setMsg((e as Error).message); }
-  }
-
-  return (
-    <section className="mb-8">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="font-bold text-brand-ink">Task proofs</h2>
-        <div className="flex gap-1">
-          {["pending", "approved", "rejected"].map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-brand-ink">{msg}</p>}
-
-      {proofs.loading ? <p className="text-sm text-muted">Loading…</p>
-        : (proofs.data?.proofs.length ?? 0) === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">Nothing {status}.</p>
-        ) : (
-          <div className="space-y-2">
-            {proofs.data!.proofs.map((p) => (
-              <div key={p.id} className="rounded-lg border border-line bg-card p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-brand-ink">{p.task_title}</p>
-                    <p className="text-xs text-muted">
-                      {p.user_email} · <span className="num text-brand">{formatPoints(p.task_points)} pts</span> · {timeAgo(p.created_at)}
-                    </p>
-                    <p className="mt-2 rounded-md bg-brand-tint/40 p-2 text-sm text-brand-ink">
-                      {p.proof_label && <span className="block text-[11px] font-semibold uppercase text-muted">{p.proof_label}</span>}
-                      {p.proof_text}
-                    </p>
-                    {p.review_note && <p className="mt-1 text-xs text-muted">Note: {p.review_note}</p>}
-                  </div>
-                  {status === "pending" && (
-                    <div className="flex shrink-0 flex-col gap-1.5">
-                      <button onClick={() => decide(p.id, "approve")}
-                        className="rounded-md bg-success px-2.5 py-1 text-xs font-semibold text-white">Approve</button>
-                      <button onClick={() => decide(p.id, "reject")}
-                        className="rounded-md bg-danger px-2.5 py-1 text-xs font-semibold text-white">Reject</button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-    </section>
-  );
-}

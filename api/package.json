@@ -38,7 +38,8 @@
     "test:stage4": "tsx src/tests/stage4.e2e.ts",
     "test:taskbudget": "tsx src/tests/taskBudget.e2e.ts",
     "test:stage5": "tsx src/tests/stage5.e2e.ts",
-    "test:stage6": "tsx src/tests/stage6.e2e.ts"
+    "test:stage6": "tsx src/tests/stage6.e2e.ts",
+    "test:stage7": "tsx src/tests/stage7.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

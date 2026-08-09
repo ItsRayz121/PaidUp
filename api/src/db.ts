@@ -1237,6 +1237,88 @@ const MIGRATIONS = `
   -- pass their own "enough balance" check and race to spend the same BNB.
   CREATE UNIQUE INDEX IF NOT EXISTS idx_bnb_withdrawals_inflight
     ON bnb_withdrawal_requests(user_id) WHERE status IN ('pending','sending');
+
+  -- ---- TASK ENGINE: FIELDS, CATEGORIES, TARGETING (Stage 7) ----------------
+  --
+  -- Until now a task asked for evidence in ONE free-text box. That is fine for
+  -- "join our channel" and useless for anything with more than one answer: a
+  -- signup task needs the email they used AND their username, and a reviewer
+  -- reading a paragraph has to guess which half is which. Worse, there was no
+  -- way to tell a user what shape the answer should take, so the queue filled
+  -- with unreviewable text and the rejection note became the instruction.
+  --
+  -- A field is a question the Admin writes. The user answers it on the task's
+  -- own page, and the reviewer sees label -> answer pairs.
+  CREATE TABLE IF NOT EXISTS task_fields (
+    id          TEXT PRIMARY KEY,
+    task_id     TEXT NOT NULL REFERENCES tasks(id),
+    label       TEXT NOT NULL,
+    -- A CLOSED LIST, checked at the API boundary (routes/staffTasks.ts) and
+    -- again when an answer is validated (taskFields.ts). The type decides how
+    -- the answer is checked, so an unknown type would mean an unchecked answer.
+    kind        TEXT NOT NULL DEFAULT 'text'
+                  CHECK (kind IN ('text','longtext','number','email','url','phone','choice')),
+    required    INTEGER NOT NULL DEFAULT 1,
+    placeholder TEXT,
+    help        TEXT,
+    -- Newline-separated choices, only for kind = 'choice'. Newline rather than
+    -- JSON so an Admin types one option per line and nothing has to parse.
+    options     TEXT,
+    max_len     INTEGER,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_fields_task ON task_fields(task_id, sort_order);
+
+  -- The structured answers, as a JSON array of {label, kind, value}.
+  --
+  -- ⚠️ THE LABEL IS SNAPSHOTTED ONTO THE ANSWER, for the same reason
+  -- withdrawal_requests.fee_points is snapshotted: an Admin editing "Your
+  -- username" to "Your email" afterwards would silently relabel evidence that
+  -- was already submitted, and a reviewer would then reject a correct answer
+  -- for being the wrong kind of thing. What the user was asked is part of what
+  -- they answered.
+  --
+  -- proof_text is still written on every row (a readable rendering of the same
+  -- answers) so every existing reader — the queue, exports, an old client —
+  -- keeps working with no branch. answers is the richer copy, not a
+  -- replacement.
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS answers TEXT;
+
+  -- ---- Categories ---------------------------------------------------------
+  -- Closed list again (TASK_CATEGORIES in routes/staffTasks.ts), for the same
+  -- reason the icon is: the category renders as a labelled chip in the earner
+  -- app, and free text there means the app shows whatever an Admin typed,
+  -- including nothing at all. NULL = uncategorised, which is what every
+  -- existing row keeps.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category TEXT;
+
+  -- ---- Targeting ----------------------------------------------------------
+  --
+  -- ⚠️ TARGETING IS AN ELIGIBILITY GATE, NOT A FEED FILTER. Hiding a task from
+  -- the list does not stop a user who knows its id from POSTing to it, so
+  -- every rule below is enforced in ONE place (taskTargeting.ts) that both the
+  -- feed and the submit path call. Adding a rule here without adding it there
+  -- gives you a task that is invisible and still claimable.
+  --
+  -- target_countries is the authority for country targeting and holds a
+  -- COMMA-WRAPPED list — ',Pakistan,India,' — so a LIKE '%,X,%' cannot match a
+  -- country whose name is a prefix of another. ',ALL,' means everywhere. It is
+  -- backfilled from the older single "country" column below, and both are
+  -- written together on save: "country" stays as the human-readable summary
+  -- that the staff panel and older queries already read.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_countries TEXT;
+  UPDATE tasks SET target_countries = ',' || country || ',' WHERE target_countries IS NULL;
+  -- Account age in days. min = "not brand-new accounts" (a fresh signup farming
+  -- a high-value task is the shape this stops); max = "new users only", for a
+  -- welcome task that should not keep paying out to a six-month-old account.
+  -- NULL on either = no limit, which is what every existing row keeps.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_min_account_days INTEGER;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_max_account_days INTEGER;
+  -- "Finish N tasks before this one is offered." A quality gate on the
+  -- expensive campaigns, counted from CREDITED completions only — a pending
+  -- claim is not evidence of anything.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_min_completed INTEGER;
 `;
 
 // ---------------------------------------------------------------------------

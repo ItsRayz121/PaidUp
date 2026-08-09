@@ -95,8 +95,8 @@ if (seedDemoTasks) {
     // Upsert the network key so re-seeding realigns tasks created before the
     // networks table existed (their old free-text network names).
     const res = await sql.run(
-      `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, requirement, country, status, created_at)
-       VALUES (?,?,?,?,?,?,?,?, 'Pakistan', 'active', ?)
+      `INSERT INTO tasks (id, type, title, points, network, advertiser, minutes, requirement, country, target_countries, status, created_at)
+       VALUES (?,?,?,?,?,?,?,?, 'Pakistan', ',Pakistan,', 'active', ?)
        ON CONFLICT (id) DO UPDATE SET network = EXCLUDED.network`,
       t.id, t.type, t.title, t.points, t.network, t.advertiser, t.minutes, t.requirement, now(),
     );
@@ -107,10 +107,10 @@ let social = 0;
 for (const s of socialTasks) {
   const res = await sql.run(
     `INSERT INTO tasks
-       (id, type, title, points, network, advertiser, minutes, requirement, country, status,
-        source, verify_mode, instructions, proof_label, action_url, icon, created_at)
-     VALUES (?, 'custom', ?, 50, 'custom', 'RoziPay', 2, NULL, 'ALL', 'disabled',
-             'custom', 'proof', ?, ?, NULL, ?, ?)
+       (id, type, title, points, network, advertiser, minutes, requirement, country, target_countries,
+        status, source, verify_mode, category, instructions, proof_label, action_url, icon, created_at)
+     VALUES (?, 'custom', ?, 50, 'custom', 'RoziPay', 2, NULL, 'ALL', ',ALL,', 'disabled',
+             'custom', 'proof', 'social', ?, ?, NULL, ?, ?)
      ON CONFLICT (id) DO NOTHING`,
     s.id, s.title, s.instructions, s.proof_label, s.icon, now(),
   );

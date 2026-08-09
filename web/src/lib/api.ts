@@ -164,6 +164,38 @@ export type Task = {
   // The current user's standing on a 'proof' task, if they've submitted.
   proofStatus?: "pending" | "approved" | "rejected";
   proofNote?: string;
+  // ---- Stage 7 -------------------------------------------------------------
+  /** One of TASK_CATEGORIES (api/src/routes/staffTasks.ts). Absent = uncategorised. */
+  category?: string;
+  /** How many questions the task asks. 0 = the old single proof box. */
+  fieldCount?: number;
+  /** Set when the user has NOT met a targeting rule they still CAN meet ("finish
+   *  2 more tasks first"). The card renders locked and the API refuses a submit.
+   *  Rules nobody can ever meet (wrong country) never reach the client at all —
+   *  see api/src/taskTargeting.ts. */
+  lockedReason?: string;
+};
+
+// ---- A task's configurable input fields (Stage 7) -------------------------
+export type TaskFieldKind = "text" | "longtext" | "number" | "email" | "url" | "phone" | "choice";
+export type TaskField = {
+  id: string; label: string; kind: TaskFieldKind; required: boolean;
+  placeholder?: string; help?: string; options?: string[]; maxLen: number;
+};
+export const fetchTask = (id: string) =>
+  apiFetch<{ ok: boolean; error?: string; task?: Task; fields?: TaskField[] }>(`/tasks/${id}`);
+
+// The chips on /tasks and the labels the staff form offers. Must match
+// TASK_CATEGORIES in api/src/routes/staffTasks.ts — the API refuses anything
+// not on that list, so a value added here alone just fails to save.
+export const TASK_CATEGORY_LABELS: Record<string, string> = {
+  social: "Social",
+  signup: "Sign up",
+  app: "Apps",
+  survey: "Surveys",
+  video: "Videos",
+  shopping: "Shopping",
+  other: "Other",
 };
 export type LedgerEntry = {
   id: string; label: string; points: number;
@@ -280,9 +312,14 @@ export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/l
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
 // `proof` is empty for a task whose Admin switched evidence off. The server
 // decides whether that is allowed — it re-reads the task's own setting.
-export const submitTaskProof = (taskId: string, proof: string) =>
+// `answers` is fieldId -> what they typed, for a task with configured fields.
+// The server re-checks every one of them against the task's CURRENT fields
+// (api/src/taskFields.ts); the form's own validation only saves a round trip.
+export const submitTaskProof = (
+  taskId: string, proof: string, answers?: Record<string, string>,
+) =>
   apiFetch<{ ok: boolean; status?: string; error?: string }>(`/tasks/${taskId}/proof`, {
-    method: "POST", body: JSON.stringify({ proof }),
+    method: "POST", body: JSON.stringify({ proof, answers }),
   });
 // `rewards` is what a friend is WORTH, served by the API rather than written into
 // the copy deck, because every one of those numbers is Admin-tunable. An invite
@@ -643,6 +680,16 @@ export type CustomTask = {
   /** null when the campaign has no conversion cap. NOT 0 — an uncapped campaign
    *  is not "0% used", and a bar stuck at 0% reads as a budget that isn't moving. */
   budgetUsedPct: number | null;
+  // ---- Category + targeting (Stage 7) --------------------------------------
+  category: string | null;
+  /** Served unpacked from the comma-wrapped storage form, so the panel never
+   *  has to know it. ['ALL'] = everywhere. */
+  countries: string[];
+  target_min_account_days: number | null;
+  target_max_account_days: number | null;
+  target_min_completed: number | null;
+  /** How many questions this task asks. */
+  fieldCount: number;
 };
 export type CustomTaskInput = {
   title: string; points: number; verifyMode: "proof" | "postback";
@@ -653,7 +700,16 @@ export type CustomTaskInput = {
   budgetConversions?: number | null;
   budgetPoints?: number | null;
   revenuePerConversionMicro?: number;
+  // ---- Category + targeting (Stage 7). null clears a rule; omitted leaves it.
+  category?: string;
+  countries?: string[];
+  targetMinAccountDays?: number | null;
+  targetMaxAccountDays?: number | null;
+  targetMinCompleted?: number | null;
 };
+export const TASK_CATEGORY_CHOICES = [
+  "", "social", "signup", "app", "survey", "video", "shopping", "other",
+] as const;
 // Must match TASK_ICONS in api/src/routes/staffTasks.ts — the API refuses
 // anything not on that list, so a value added here alone just fails to save.
 export const TASK_ICON_CHOICES = [
@@ -668,16 +724,53 @@ export const fetchTaskPostback = (id: string) =>
   apiFetch<{ ok: boolean; error?: string; taskId?: string; secret?: string; path?: string; signature?: string; params?: string[] }>(
     `/staff/tasks/${id}/postback`);
 
+// Admin: a task's input fields. Sent as a WHOLE LIST — order is a property of
+// the list, not of any one row, so there is no per-field endpoint.
+export type StaffTaskFieldInput = {
+  id?: string; label: string; kind: TaskFieldKind; required: boolean;
+  placeholder?: string; help?: string; options?: string; maxLen?: number | null;
+};
+export const fetchTaskFields = (taskId: string) =>
+  apiFetch<{ fields: TaskField[] }>(`/staff/tasks/${taskId}/fields`);
+export const saveTaskFields = (taskId: string, fields: StaffTaskFieldInput[]) =>
+  apiFetch<{ ok: boolean; error?: string; fields?: TaskField[] }>(
+    `/staff/tasks/${taskId}/fields`, { method: "PUT", body: JSON.stringify({ fields }) });
+
+/** One stored answer. The label and kind are SNAPSHOTTED at submit time, so a
+ *  question renamed afterwards never relabels evidence already reviewed. */
+export type ProofAnswer = { fieldId: string; label: string; kind: TaskFieldKind; value: string };
 export type TaskProof = {
   id: string; task_id: string; user_id: string; proof_text: string; status: string;
-  review_note: string | null; created_at: string; user_email: string;
-  task_title: string; task_points: number; proof_label: string | null;
+  review_note: string | null; created_at: string; reviewed_at: string | null;
+  user_email: string; user_handle: string | null; user_country: string | null;
+  user_joined: string | null; reviewer_email: string | null;
+  task_title: string; task_points: number; proof_label: string | null; category: string | null;
+  /** Empty for tasks with no configured fields — those fall back to proof_text,
+   *  which every row still carries. */
+  answers: ProofAnswer[];
+  /** This user's decided proofs across every task. A repeat rejection is the
+   *  signal a reviewer would otherwise have to go looking for. */
+  userHistory: { approved: number; rejected: number };
 };
-export const fetchTaskProofs = (status = "pending") =>
-  apiFetch<{ proofs: TaskProof[] }>(`/staff/task-proofs?status=${status}`);
+export type ProofQueue = {
+  /** Over ALL proofs, never the current filter — a pending count that shrank
+   *  because someone typed a search reads as the backlog clearing. */
+  counts: { pending: number; approved: number; rejected: number };
+  tasks: { id: string; title: string; pending: number }[];
+  proofs: TaskProof[];
+};
+export const fetchTaskProofs = (status = "pending", taskId = "", q = "") =>
+  apiFetch<ProofQueue>(
+    `/staff/task-proofs?status=${encodeURIComponent(status)}`
+    + `&taskId=${encodeURIComponent(taskId)}&q=${encodeURIComponent(q)}`);
 export const decideTaskProof = (id: string, action: "approve" | "reject", note?: string) =>
   apiFetch<{ ok: boolean; error?: string; credited?: number; status?: string }>(
     `/staff/task-proofs/${id}/decision`, { method: "POST", body: JSON.stringify({ action, note }) });
+export const decideTaskProofsBulk = (ids: string[], action: "approve" | "reject", note?: string) =>
+  apiFetch<{
+    ok: boolean; done: number; failed: number; creditedPoints: number;
+    results: { id: string; ok: boolean; error?: string; credited?: number }[];
+  }>("/staff/task-proofs/bulk", { method: "POST", body: JSON.stringify({ ids, action, note }) });
 
 // ---- Manager: KPI dashboard ----------------------------------------------
 export type Kpis = {
