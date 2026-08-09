@@ -1399,7 +1399,8 @@ These override convenience or speed at every step:
     15 + 16 (per-campaign budget + revenue tracking) remain the highest-value
     item in that list** for the reason the entry above gives: no budget means no
     auto-pause, so the first partner who buys 2,000 conversions can be given
-    20,000. (Stage 4 landed — see the entry below.)
+    20,000. (Stage 4 landed — see the entry below. **Stages 5 and 6 have since
+    landed too**, and parts 15+16 shipped — see the last entries in this file.)
 
 - **THE ADMIN REBUILD, STAGE 4: USER DETAIL, DEPOSITS, WITHDRAWALS — AND TWO
   REAL DEFECTS FOUND WHILE BUILDING IT (founder, 2026-08-09).** Brief parts
@@ -1464,6 +1465,99 @@ These override convenience or speed at every step:
     because the dashboard from Stage 3 is still unviewed in a browser, and
     this is the second piece of evidence that the visual layer is where this
     work is least verified.
+
+- **THE ADMIN REBUILD, STAGES 5–6: MACHINES, GROWTH, MESSAGES, SUPPORT, HOME
+  CONTENT (founder, 2026-08-09).** Brief parts 38/41/42 and 39/40/43 — every
+  remaining permission that existed with **nowhere to spend it**. `marketing`
+  held `referrals.manage`, `leaderboard.manage`, `notifications.send` and
+  `content.manage` and could not reach a single screen; the booster endpoints
+  had been permission-gated and callable since the mining build with **no UI
+  at all**. Same defect class as Finance in Stage 4. Two new sidebar sections
+  (**Growth**, **Messages & content**). Verified by re-running **everything**
+  from a genuinely fresh database: **29 suites, 879 checks, 0 failures**
+  (23 e2e — stage6 70, stage5 55, stage4 48, usdt 85, wallet 52, mining 50,
+  payoutRelay 48, taskbudget 46, telegram 45, kyc 43, analytics 40, profile 31,
+  store 29, conversion 25, fees 24, withdrawControls 21, deposits 17,
+  autoWithdraw 16, admin 15, referrals 14, push 9, autoRefund 8, proxy 5;
+  6 unit — mining 41, permissions 16, custody 8, signer 8, custodySeeds 8,
+  flags 8); api + web typecheck, eslint, web production build clean;
+  `security-review` no findings.
+  - **Machines (38).** The rig and booster catalogues now serve what they
+    actually DID — owners, levels sold, ROZI burned, points taken — all
+    DERIVED from `user_rigs` and the ledgers' own `rig_purchase` /
+    `booster_purchase` rows (`analytics.ts`'s rule; no counter to drift). A
+    price column alone answers "what did I set?" and says nothing about
+    whether the sink ever ran, and the honest answer to "should I reprice
+    this?" is usually **"nobody has bought one"**.
+    ⚠️ **BURN IS REPORTED AS A MAGNITUDE.** Both ledgers store a debit
+    negative, and "burned −1,400 ROZI" reads as a refund. Regression test.
+    Boosters got their first screen ever; new ones ship **DISABLED** — a
+    booster with a price nobody chose is a price we did not mean to publish.
+  - **Referrals (41).** The screen leads with the **ADVERTISED rate — the
+    minimum across ACTIVE networks** — because that is the only number a user
+    has been told (`/referrals/me`). Rows pinning the floor are marked
+    `floor`, so "raise it" means raising *those* rows. Plus activation rate
+    and invites-vs-active per inviter, which is the shape of a signup farm on
+    one row.
+  - **Leaderboard (42).** New `leaderboard_exclusions` — hide a seeded test
+    account or one under review. ⚠️ **A SUPPRESSION, NEVER A PUNISHMENT**: no
+    balance moves, nothing is clawed back, they carry on earning. The board
+    query moved to `api/src/leaderboard.ts` so **staff and earners read the
+    same rows** — a staff-only filter would be a screen lying to the person
+    reading it — and adding an exclusion **busts the one-minute cache**, or an
+    admin hides someone, reloads, still sees them, and clicks again.
+  - ⚠️ **NOTIFICATIONS (39): THE INBOX IS THE CHANNEL; PUSH IS AN OPT-IN TICK
+    BOX, OFF BY DEFAULT.** `push.ts` has said since it was written that a push
+    fires on exactly four events and never for marketing. That rule is
+    **amended, not abandoned**: a browser subscription is revoked *once,
+    permanently*, by an annoyed user — and the message it exists for is "your
+    withdrawal was paid". A staff announcement lands in the new `notifications`
+    inbox, which interrupts nobody; the compose screen states that cost next
+    to the tick box. Six audiences, each sized live before you send.
+    ⚠️ **THE AUDIENCE IS MATERIALISED AT SEND TIME** (one `INSERT … SELECT`),
+    never re-evaluated at read time — or "everyone with a balance on Tuesday"
+    quietly becomes a message that keeps finding new recipients forever, and
+    "who did we tell?" has no answer. There is a test for the latecomer case.
+    ⚠️ **AN INBOX MESSAGE MAY ONLY LINK INSIDE THE APP** (`isInternalPath` in
+    `notify.ts`). It is staff-written and rendered in our own chrome, which
+    makes it the most trusted link in the product; an external one there is
+    phishing wearing our branding. Home cards are the deliberate exception.
+  - ⚠️ **SUPPORT (40): `author_role <> 'internal'` IN `GET /support/tickets`
+    IS THE ENTIRE DEFENCE** between a staff note and the person it is about.
+    The `CHECK` constraint in `db.ts` *permits* the value; it does not hide
+    it. The earner-facing `TicketMessage` type deliberately has no `'internal'`
+    member (staff use the wider `StaffTicketMessage`), and there is a test that
+    writes a real note and reads the ticket back as the user. **A note also
+    leaves the status alone** — marking a ticket "answered" because someone
+    wrote to themselves drops a waiting user out of the open queue. Plus
+    assignment (`"me"` resolves server-side), search, reopen, and per-status
+    counts computed over **ALL** tickets, never the current filter.
+  - **Home content (43).** `content_blocks` — announcement cards on home, with
+    a live window checked at **READ** time so an expired card needs no timer.
+    ⚠️ **The icon is a CLOSED LIST, never a URL** (`CONTENT_ICONS` ↔
+    `contentIcon`) — these sit directly above a balance, so an admin-supplied
+    remote image is a third-party request on a money screen. A card **may**
+    link out (a Telegram channel is a real case) and says so in words before
+    it is tapped; `javascript:` and plain http are refused.
+    ⚠️ **THE SCHEDULE IS COMPARED AS A STRING**, so an un-normalised date
+    silently changes when a card appears instead of failing — `"2026-9-1"`
+    sorts *below* `"2026-08-09T…"`, so a September card would never have shown
+    and nothing would say why, and a date-only end meant a card set to end
+    today was gone by one minute past midnight. Dates are normalised (a
+    date-only END is the **end** of that day) and a partial edit is validated
+    against the **stored** start, so a window cannot be inverted one field at
+    a time. Found in review, not in production; three regression tests.
+  - ⚠️ **THE LOCAL PGlite STORE CORRUPTS WHEN SUITES RUN BACK TO BACK.** Every
+    e2e file ends in `process.exit()` without closing PGlite, so the next
+    suite opening `api/data/pg` immediately after can abort at boot with a wasm
+    `RuntimeError: Aborted()` — which looks exactly like a broken migration and
+    is not. `rm -rf api/data/pg` between suites (it is git-ignored and
+    disposable). Running the matrix that way is also a **stronger** check: every
+    suite then exercises a genuinely fresh boot.
+  - **Still not built**: Stage 7, the task-section work — configurable input
+    fields (unlocks the task detail page), then categories/targeting, then the
+    review dashboard. Parts 15+16 (campaign budget + revenue), which used to
+    head that list, shipped in the entry above this one.
 
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
