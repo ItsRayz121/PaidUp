@@ -176,8 +176,14 @@ export function MiningPanel() {
 
       <RigPanel />
 
-      <TopupPanel />
-      <RefundPanel />
+      {/* ⚠️ TopupPanel / RefundPanel USED TO RENDER HERE AND MUST NOT COME BACK.
+          They are USDT deposits and deposit refunds — money in and money out —
+          and their permissions say so (`deposits.*`, `refunds.*`, grouped under
+          "Money in" in permissions.ts). This section is gated on
+          `mining.manage`/`machines.manage`, which the Finance role does not
+          hold, so sitting here made the deposit-confirm and refund-payout
+          queues unreachable by the exact role that owns them. They live under
+          Money & payouts now. See staff/page.tsx. */}
 
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -780,7 +786,7 @@ function RigPanel() {
 //
 // So: send the USDT first, then click Sent. Clicking Sent before sending means
 // a user is told their money is on the way when it is not.
-function RefundPanel() {
+export function RefundPanel() {
   const refunds = useApi(() => fetchAdminRefunds("pending"), []);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -894,7 +900,7 @@ function RefundPanel() {
 // read off the chain — never the amount the user claimed. That distinction is
 // the entire reason this screen exists: without it a user sends $1, claims $500,
 // and the review step is a rubber stamp on a number nobody checked.
-function TopupPanel() {
+export function TopupPanel() {
   const topups = useApi(() => fetchAdminTopups("pending"), []);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

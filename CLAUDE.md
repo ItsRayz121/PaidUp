@@ -1324,6 +1324,147 @@ These override convenience or speed at every step:
     pressure. Then: configurable input fields (unlocks the task detail page),
     then categories/targeting, then the review dashboard.
 
+- **THE ADMIN REBUILD, STAGES 1–3: PERMISSIONS, FEATURE FLAGS, ANALYTICS
+  (founder, 2026-08-09).** The admin operations rebuild the audit entry above
+  deliberately declined to half-start (brief parts 32–48) is now started
+  properly, in three commits. Verified this pass by re-running **everything**,
+  not carrying results forward: **23 suites, 666 checks, 0 failures** (41 mining
+  + 16 permissions + 8 flags + 8 custody + 8 signer + 8 custodySeeds unit;
+  40 analytics + 85 usdt + 52 wallet + 50 mining + 48 payoutRelay + 45 telegram
+  + 43 kyc + 31 profile + 29 store + 25 conversion + 24 fees + 21
+  withdrawControls + 17 deposits + 16 autoWithdraw + 15 admin + 14 referrals
+  + 9 push + 8 autoRefund + 5 proxy e2e); api + web typecheck, eslint, web
+  production build (28 routes) all clean.
+  - **Permissions are named, not ranked** (`api/src/permissions.ts`). A route
+    used to say `staffGuard(["manager","admin"])` — the gate WAS the role, and
+    the three roles were a strict ladder. A ladder cannot express a Finance
+    person who pays withdrawals but must not edit a task campaign, or a Task
+    Manager who is the reverse: neither contains the other, and no number of
+    extra rungs fixes that. The gate is now an `area.verb` permission and a role
+    is a bundle of them; adding a role is one line in `ROLE_PERMISSIONS` and
+    touches no route.
+    ⚠️ **THE THREE LIVE ROLES KEEP EXACTLY THE REACH THEY HAD.** There are real
+    accounts holding `agent`/`manager`/`admin`, and a permissions refactor is the
+    easiest place in a codebase to silently widen one. Every permission carries
+    the **lowest legacy role that already held it** (`tier`), and the three role
+    bundles are built *from those tags* — the old ladder is reproduced by
+    construction, not by hand, and `test:permissions` asserts it.
+  - **`write: true` is stated per permission, never inferred from the name.**
+    `users.list` reads, `users.status` writes, and no naming convention survives
+    forty permissions. It is what makes "an analyst is read-only" a property the
+    tests can check instead of a promise in a comment.
+  - **Feature flags delegate to the switch that already exists**
+    (`api/src/flagsCore.ts` — split from `flags.ts` so the unit test can read the
+    registry without opening a database connection; same node:test hang
+    `mining/core.ts` documents). ⚠️ **A SECOND SWITCH FOR THE SAME FEATURE WOULD
+    BE WORSE THAN NO SWITCH** — two controls, disagreeing, with no way to tell
+    from the panel which one is actually stopping the thing. Five of the fourteen
+    features already had a working, tested switch (ROZI transfers, ads, USDT
+    deposits, ROZI conversion, the ID check); those flags point at the **existing
+    key, unchanged**. Only genuinely new flags get a new row.
+  - ⚠️ **A FLAG MUST DO SOMETHING, AND THE DISPLAY-ONLY ONES SAY SO IN THE
+    PANEL.** A switch that reads back what you set but changes no behaviour will
+    be trusted in an incident. Every flag names its enforcement point in a
+    comment; the ones that only hide a feature in the app without making the
+    route refuse are labelled `displayOnly` on screen rather than pretending.
+    Defaults are ON for everything already live, so deploying the file changed
+    nothing about the running system.
+  - **Analytics are DERIVED, never a second source of truth**
+    (`api/src/analytics.ts`). No pipeline, no event stream — a KPI that disagrees
+    with the ledger is worse than no KPI, and counting things twice is the
+    fastest way to get one. The single exception is `user_activity_days`, because
+    DAU genuinely cannot be derived from anything already stored.
+  - **`touchActivity()` is fire-and-forget and memoised per user per day per
+    process.** It is called from the guard every earner request passes through;
+    without the memo, an app that polls mining every few seconds would issue
+    thousands of no-op writes per user per day. Errors are swallowed on purpose —
+    an analytics row must never fail a request that was otherwise going to
+    succeed — and the memo entry is *deleted* on failure so the day gets retried
+    rather than lost.
+  - ⚠️ **A REAL SQL BUG SHIPPED PAST TYPECHECKING AND ONLY A LIVE-POSTGRES TEST
+    CAUGHT IT**: the network-margin query selected `networks.label`, a column
+    that does not exist (it is `name`). TypeScript cannot see inside a SQL
+    string, so the build was clean and the endpoint would have 500'd the moment
+    an admin opened the dashboard. It is why this stage's effort went into a
+    40-check suite driving real Postgres rather than more screens — and why the
+    e2e suites, which the previous pass skipped, were all re-run here.
+  - ⚠️ **THE DASHBOARD HAS NOT BEEN LOOKED AT IN A BROWSER.** Chart geometry is
+    verified numerically across eight edge cases (including all-zero and
+    single-point series) and the colours are validated by script, but nobody has
+    rendered it and looked — that needs a logged-in admin session against real
+    data. Treat the visual layer as unverified until someone does.
+  - **Still not built, and the order still matters**: Stage 5 (machines,
+    referral admin, leaderboard — 38/41/42), Stage 6 (notifications, support,
+    home content — 39/40/43), Stage 7 (the task-section work). ⚠️ **Brief parts
+    15 + 16 (per-campaign budget + revenue tracking) remain the highest-value
+    item in that list** for the reason the entry above gives: no budget means no
+    auto-pause, so the first partner who buys 2,000 conversions can be given
+    20,000. (Stage 4 landed — see the entry below.)
+
+- **THE ADMIN REBUILD, STAGE 4: USER DETAIL, DEPOSITS, WITHDRAWALS — AND TWO
+  REAL DEFECTS FOUND WHILE BUILDING IT (founder, 2026-08-09).** Brief parts
+  34/35/36. Verified: new `npm run test:stage4` (**38 checks**) plus every
+  suite that touches a changed endpoint re-run green (85 usdt + 48 payoutRelay
+  + 40 analytics + 24 fees + 21 withdrawControls + 17 deposits + 16
+  autoWithdraw + 16 permissions + 15 admin + 8 autoRefund); api + web
+  typecheck, eslint, web production build all clean. **Running total: 704
+  checks.**
+  - ⚠️ **DEFECT 1 — THE FINANCE ROLE COULD NOT DO ITS JOB.** `finance` holds
+    `deposits.decide` and `refunds.decide`, but the only screens rendering
+    those two queues (`TopupPanel`, `RefundPanel`) sat inside `MiningPanel`,
+    and the sidebar gates the Mining section on `mining.manage` /
+    `machines.manage` — neither of which Finance has. So the role created
+    specifically to own money-in and money-out **could not reach the
+    deposit-confirm or refund-payout screens at all**. They now live under
+    Money & payouts, each gated on its own permission. **Deposits are money,
+    not mining** — that is why the placement was wrong, and the comment left
+    at the old site says so.
+  - ⚠️ **DEFECT 2 — THE WITHDRAWAL QUEUE SHOWED THE GROSS AND THE "MARK PAID"
+    PROMPT NEVER SAID HOW MUCH TO SEND.** Manual payout is a human reading
+    that screen and sending USDT by hand, so with a fee configured they send
+    `amount` and the platform silently eats the fee it just charged, on every
+    withdrawal. `GET /staff/withdrawals` now serves `feePoints` + `netUsdt`
+    per row and a `pendingTotal` (net — the number to fund the treasury
+    with), and the prompt names the amount **and** the address, the way the
+    refund queue already did. **Latent, not live**: the gas fee and flat fee
+    are both 0 right now, so nothing has been overpaid — but the settings
+    panel invites an admin to set one.
+  - ⚠️ **THE `networks.label` BUG CLASS BIT AGAIN, IN THE SAME SESSION, AND
+    ONLY THE TEST CAUGHT IT.** The new withdrawal-history query was written
+    against `chain` / `address` / `note`; the table really holds
+    `payout_rail` / `payout_address` / `review_note`. Three wrong column
+    names, api typecheck **clean**, and the user-detail screen would have
+    500'd on open. They are aliased now, with a comment saying which is the
+    stored name and which is the served one. **Assume any new SQL is wrong
+    until a live query has run it** — that is now twice in two stages.
+  - **Part 34, the user detail screen, answers "who is this" in one place.**
+    `GET /staff/users/:id` gained: all three balances, withdrawal history
+    (with the signed-address proof), a paid-out summary counted from `paid`
+    rows only and **net of fees**, both referral directions, and support
+    tickets. Every field is DERIVED from a table that already exists —
+    `analytics.ts`'s rule — so there is no new counter to drift from the
+    ledger.
+  - ⚠️ **THREE BALANCES, THREE BOXES, NEVER A TOTAL** (guardrail #7). Points
+    and USDT credit have real rates; ROZI has none by design. A combined
+    figure on a staff screen would invent one, and it would then be quoted to
+    a user in a dispute. There is a check asserting no total is served. And
+    all three are shown *because* showing one of three is how a support agent
+    tells someone their money is gone while it sits on a ledger the screen
+    did not read.
+  - **The hold is served as a decided boolean (`withdrawalHeld`), not a date
+    string.** The panel must not re-derive "is this still in force" and get it
+    wrong; a lifted hold rendered as active is a user told they cannot be paid
+    when they can. Open-ended / expired / future-dated are each tested.
+    The badge says **"payouts held"**, never "suspended" — a held account
+    still mines and earns, and conflating the two is a wrong answer to a
+    ticket.
+  - **A caught-before-render styling bug**: the new badges used
+    `bg-warn-tint` / `text-warn`, and there is no `warn` token in the design
+    system — it is `pending`. It would have rendered unstyled. Worth noting
+    because the dashboard from Stage 3 is still unviewed in a browser, and
+    this is the second piece of evidence that the visual layer is where this
+    work is least verified.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

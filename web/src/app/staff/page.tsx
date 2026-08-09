@@ -7,7 +7,7 @@ import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
 import {
   fetchStaffQueue, decideWithdrawal, fetchFraud, fetchStaffUser,
-  type StaffWithdrawal,
+  type StaffWithdrawal, type StaffUserDetail,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtMicro, timeAgo } from "@/lib/format";
 import {
@@ -15,7 +15,7 @@ import {
   TreasuryPanel, WithdrawalFeePanel,
 } from "@/components/staff";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
-import { MiningPanel } from "@/components/mining-admin";
+import { MiningPanel, TopupPanel, RefundPanel } from "@/components/mining-admin";
 import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
 import { TasksPanel, ProofQueue } from "@/components/tasks-admin";
@@ -49,7 +49,13 @@ type SectionId =
   | "audit" | "settings" | "team";
 const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
-  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "treasury.view", "money.view", "settings.manage"] },
+  // ⚠️ `deposits.view` / `refunds.view` are listed here and that is a FIX, not
+  // decoration. Both queues used to render only inside the Mining section,
+  // which is gated on `mining.manage` — a permission the Finance role does not
+  // hold. Finance owns money in and money out and held `deposits.decide` +
+  // `refunds.decide`, yet could not reach either screen. Deposits are money,
+  // not mining.
+  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "deposits.view", "refunds.view", "treasury.view", "money.view", "settings.manage"] },
   { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
   { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
   // ⚠️ `mining.view` is deliberately NOT here. MiningPanel is one large screen
@@ -180,6 +186,13 @@ export default function StaffPage() {
               {may("withdrawals.view") && (
                 <Panel title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} canOpenLedger={may("users.view")} /></Panel>
               )}
+              {/* Money IN. Confirming a pasted tx hash credits real USDT, so it
+                  is gated on `deposits.view` and the buttons inside on
+                  `deposits.decide` — a read-only role sees the queue and cannot
+                  act on it. */}
+              {may("deposits.view") && <Panel title="USDT deposits"><TopupPanel /></Panel>}
+              {/* Money back OUT: a user's own unspent deposit, returned. */}
+              {may("refunds.view") && <Panel title="USDT refunds"><RefundPanel /></Panel>}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
               {may("treasury.view") && <Panel title="Treasury wallet"><TreasuryPanel /></Panel>}
               {may("settings.manage") && <Panel title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
@@ -254,6 +267,7 @@ function WithdrawalQueue(
   // Treasury wallet for the chains in the queue — so whoever pays sends from
   // the right wallet. Set by an admin under Money & payouts → Treasury wallet.
   const treasury = queue.data?.treasury;
+  const total = queue.data?.pendingTotal;
 
   async function act(id: string, action: "approve" | "reject" | "pay") {
     let note: string | undefined;
@@ -266,7 +280,17 @@ function WithdrawalQueue(
     if (action === "pay") {
       // v1 is manual: send the USDT from the treasury wallet, then paste the
       // on-chain transaction hash here so the user gets proof of payment.
-      const hash = window.prompt("Paste the USDT transaction hash you sent (0x…). Send the payment first.");
+      //
+      // ⚠️ THE PROMPT NAMES THE AMOUNT AND THE ADDRESS. It used to ask only for
+      // a hash, which left "how much do I send?" to whatever the person read
+      // off the row — and the row showed the GROSS. The refund queue has
+      // always stated its net here; this is the same fix on the payout side.
+      const row = queue.data?.requests.find((x) => x.id === id);
+      const amount = row?.netUsdt ?? (row ? formatMoney(row.amount) : "the amount shown");
+      const hash = window.prompt(
+        `Send ${amount} USDT to:\n\n${row?.address ?? "(no address on this request)"}\n\n` +
+        "Send the payment FIRST, then paste the transaction hash (0x…) here.",
+      );
       if (hash === null) return; // cancelled
       txHash = hash.trim();
     }
@@ -293,6 +317,16 @@ function WithdrawalQueue(
           ))}
         </div>
       </div>
+
+      {/* What this view will cost the treasury if every row is paid. The USDT
+          figure is NET of fees — it is the number to fund the wallet with. */}
+      {total && total.count > 0 && (
+        <p className="mb-2 rounded-lg border border-line bg-card p-2 text-xs text-muted">
+          <span className="font-semibold text-brand-ink">{total.count}</span> request{total.count === 1 ? "" : "s"} ·{" "}
+          <span className="num font-semibold text-brand-ink">{formatPoints(total.points)}</span> pts ·{" "}
+          to send <span className="num font-semibold text-brand">{total.usdt} USDT</span>
+        </p>
+      )}
 
       {treasury && (treasury.bep20 || treasury.base || treasury.aptos) && (
         <p className="mb-2 rounded-lg border border-line bg-brand-tint/40 p-2 text-xs text-muted">
@@ -339,8 +373,18 @@ function WithdrawalQueue(
                     )}
                   </td>
                   <td className="p-2.5">
+                    {/* Gross debited, then what actually gets SENT. Whoever pays
+                        by hand reads this cell, so the net is the emphasised
+                        one when a fee applies. */}
                     <div className="num font-semibold text-brand-ink">{formatPoints(r.amount)}</div>
-                    <div className="text-xs text-muted">{formatMoney(r.amount)}</div>
+                    {r.feePoints ? (
+                      <>
+                        <div className="text-xs text-muted">− {formatPoints(r.feePoints)} fee</div>
+                        <div className="num text-xs font-semibold text-brand">send {r.netUsdt} USDT</div>
+                      </>
+                    ) : (
+                      <div className="text-xs text-muted">{formatMoney(r.amount)}</div>
+                    )}
                   </td>
                   <td className="p-2.5 uppercase">{r.chain}</td>
                   <td className="p-2.5">
@@ -395,6 +439,88 @@ function Actions({ status, onAct }: { status: string; onAct: (a: "approve" | "re
   );
 }
 
+// ---- User detail (brief part 34) -------------------------------------------
+// The identity + money header. Everything a support agent needs before they say
+// anything to the user, above the fold, so nobody answers a dispute from the
+// one ledger that happened to be on screen.
+function Badge({ tone, children }: { tone: "ok" | "warn" | "bad" | "mute"; children: React.ReactNode }) {
+  const cls = {
+    ok: "bg-success-tint text-success",
+    warn: "bg-pending-tint text-pending",
+    bad: "bg-danger-tint text-danger",
+    mute: "bg-brand-tint/40 text-muted",
+  }[tone];
+  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{children}</span>;
+}
+
+function UserHeader({ d }: { d: StaffUserDetail }) {
+  const u = d.user;
+  const handle = u.username ? `@${String(u.username)}` : null;
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-semibold text-brand-ink">{String(u.email)}</span>
+        {handle && <span className="text-xs text-muted">{handle}</span>}
+        {u.display_name ? <span className="text-xs text-muted">· {String(u.display_name)}</span> : null}
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <Badge tone={String(u.status) === "active" ? "ok" : "bad"}>{String(u.status)}</Badge>
+        {/* A hold stops AUTOMATIC payouts only — the account still mines and
+            earns. Saying "held" without that is how it gets mistaken for a
+            suspension. */}
+        {u.withdrawalHeld && <Badge tone="warn">payouts held</Badge>}
+        <Badge tone={String(u.kyc_status) === "approved" ? "ok" : "mute"}>id: {String(u.kyc_status ?? "none")}</Badge>
+        {u.telegram_id ? <Badge tone="mute">telegram</Badge> : null}
+        {u.country ? <Badge tone="mute">{String(u.country)}</Badge> : null}
+        <Badge tone="mute">code {String(u.referral_code ?? "—")}</Badge>
+        <Badge tone="mute">joined {timeAgo(String(u.created_at))}</Badge>
+      </div>
+
+      {u.withdrawalHeld && (
+        <p className="mt-2 rounded bg-pending-tint p-2 text-xs text-pending">
+          Automatic payouts are held: {String(u.withdrawal_hold_reason)}
+          {u.withdrawal_hold_until ? ` (until ${String(u.withdrawal_hold_until).slice(0, 10)})` : " (no end date)"}.
+          They can still mine and earn.
+        </p>
+      )}
+      {String(u.status) !== "active" && (
+        <p className="mt-2 rounded bg-danger-tint p-2 text-xs text-danger">
+          This account is {String(u.status)}. It cannot sign in.
+        </p>
+      )}
+
+      {/* ⚠️ THREE LEDGERS, THREE BOXES, NEVER A TOTAL. Points and USDT credit
+          have real rates; ROZI has none by design (guardrail #7). A combined
+          figure here would invent one, and it would be quoted to a user. */}
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="rounded-lg border border-line p-2">
+          <p className="text-[10px] uppercase text-muted">Points</p>
+          <p className="num font-semibold text-brand-ink">{formatPoints(Number(u.balancePoints))}</p>
+          <p className="text-[10px] text-muted">withdrawable</p>
+        </div>
+        <div className="rounded-lg border border-line p-2">
+          <p className="text-[10px] uppercase text-muted">ROZI</p>
+          <p className="num font-semibold text-brand-ink">{(Number(u.roziMicro) / 1e6).toFixed(3)}</p>
+          <p className="text-[10px] text-muted">mined + received</p>
+        </div>
+        <div className="rounded-lg border border-line p-2">
+          <p className="text-[10px] uppercase text-muted">USDT credit</p>
+          <p className="num font-semibold text-brand-ink">{formatUsdtMicro(Number(u.usdtMicro))}</p>
+          <p className="text-[10px] text-muted">deposits, spend-only</p>
+        </div>
+      </div>
+
+      <p className="mt-2 text-xs text-muted">
+        Paid out: <span className="num font-semibold text-brand-ink">{formatPoints(d.paidSummary.totalPoints)}</span> pts
+        across {d.paidSummary.count} withdrawal{d.paidSummary.count === 1 ? "" : "s"}
+        {d.invitedBy && <> · invited by <span className="font-semibold text-brand-ink">{d.invitedBy.email}</span></>}
+        {d.invitees.length > 0 && <> · invited {d.invitees.length}</>}
+      </p>
+    </div>
+  );
+}
+
 function UserLookup({ target }: { target: string | null }) {
   const [id, setId] = useState("");
   const [query, setQuery] = useState("");
@@ -420,10 +546,9 @@ function UserLookup({ target }: { target: string | null }) {
       {res.error && <p className="mt-2 text-sm text-danger">{res.error}</p>}
       {res.data && (
         <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm">
-          <p className="font-semibold text-brand-ink">
-            {String((res.data.user as Record<string, unknown>).email)} ·
-            balance <span className="num">{formatPoints(Number((res.data.user as Record<string, unknown>).balancePoints))}</span> pts
-          </p>
+          <UserHeader d={res.data} />
+
+          <p className="mt-3 mb-1 text-xs font-semibold uppercase text-muted">Points ledger</p>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[420px] text-xs">
               <thead className="text-left text-muted"><tr><th className="p-1.5">Amount</th><th className="p-1.5">Source</th><th className="p-1.5">Note</th><th className="p-1.5">When</th></tr></thead>
@@ -492,6 +617,67 @@ function UserLookup({ target }: { target: string | null }) {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* Cash-out history. The points ledger above shows each withdrawal's
+              DEBIT, but not its chain, address, status or tx hash — which is
+              every question a "where is my money" ticket actually asks. */}
+          {res.data.withdrawals.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">Withdrawals (task/referral cash-out)</p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-xs">
+                  <thead className="text-left text-muted">
+                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Fee</th><th className="p-1.5">Chain / to</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
+                  </thead>
+                  <tbody>
+                    {res.data.withdrawals.map((r, i) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="num p-1.5">{formatPoints(Number(r.amount))}</td>
+                        <td className="num p-1.5 text-muted">{Number(r.fee_points) > 0 ? `− ${formatPoints(Number(r.fee_points))}` : "—"}</td>
+                        <td className="max-w-[180px] truncate p-1.5 text-muted" title={String(r.address)}>
+                          {String(r.chain)} · {String(r.address)}{" "}
+                          {/* Snapshotted at request time. A signature proves the
+                              address belongs to the user; a typed one proves
+                              nothing, and a payout cannot be reversed. */}
+                          {r.address_verified ? "✓ signed" : "· typed in"}
+                        </td>
+                        <td className="p-1.5">{String(r.status)}{r.note ? ` — ${String(r.note)}` : ""}</td>
+                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {res.data.invitees.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">
+                Invited {res.data.invitees.length} user(s)
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {res.data.invitees.map((r, i) => (
+                  <span key={i} className="rounded bg-brand-tint/40 px-1.5 py-0.5 text-[10px] text-muted">
+                    {String(r.email)}{String(r.status) !== "active" ? ` (${String(r.status)})` : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {res.data.tickets.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">Support tickets</p>
+              <ul className="space-y-1">
+                {res.data.tickets.map((t, i) => (
+                  <li key={i} className="text-xs text-muted">
+                    <span className="text-brand-ink">{String(t.subject)}</span> · {String(t.status)} · {timeAgo(String(t.created_at))}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

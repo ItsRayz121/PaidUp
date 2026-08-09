@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, postLedger, logAudit, getSetting, setSetting } from "../db.ts";
+import {
+  sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
+  postLedger, logAudit, getSetting, setSetting,
+} from "../db.ts";
 import { config } from "../config.ts";
 import { requirePermission, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
 import { ROLES, ROLE_LABELS, ROLE_PERMISSIONS, isRole, permissionsOf } from "../permissions.ts";
@@ -75,8 +78,24 @@ export async function staffRoutes(app: FastifyInstance) {
         base: await getSetting("treasury_address_base", ""),
         aptos: await getSetting("treasury_address_aptos", ""),
       },
+      // What this queue will cost the treasury if every row is paid. Whoever
+      // funds the wallet is otherwise adding up a column by hand, and NET is
+      // the figure that matters — see netUsdt on each row below.
+      pendingTotal: {
+        count: rows.length,
+        points: rows.reduce((a, r) => a + Number(r.amount), 0),
+        usdt: pointsToUsdt(rows.reduce((a, r) => a + (Number(r.amount) - Number(r.fee_points ?? 0)), 0)),
+      },
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
+        // ⚠️ THE FEE, AND WHAT IS ACTUALLY SENT. Both are snapshotted on the
+        // row at request time, and manual payout is a human reading this screen
+        // and sending USDT by hand. Showing only the gross `amount` — which is
+        // all this endpoint returned before — means that human sends the gross
+        // and the platform pays the fee it just charged, on every withdrawal.
+        // The refund queue already states its net for exactly this reason.
+        feePoints: Number(r.fee_points ?? 0),
+        netUsdt: pointsToUsdt(Number(r.amount) - Number(r.fee_points ?? 0)),
         chain: r.payout_rail, address: r.payout_address ?? null,
         // Did the user PROVE this exact address is theirs, by signing for it
         // with the wallet? Snapshotted at request time (see routes/withdrawals
@@ -242,7 +261,10 @@ export async function staffRoutes(app: FastifyInstance) {
   app.get("/staff/users/:id", staffGuard("users.view", async (_ctx, req, reply) => {
     const id = (req.params as { id: string }).id;
     const user = await sql.get<Record<string, unknown>>(
-      "SELECT id, email, country, referral_code, status, created_at FROM users WHERE id = ?", id,
+      `SELECT id, email, username, display_name, country, referral_code, status, created_at,
+              kyc_status, telegram_id,
+              withdrawal_hold_reason, withdrawal_hold_until, withdrawal_hold_at
+         FROM users WHERE id = ?`, id,
     );
     if (!user) return reply.code(404).send({ error: "User not found." });
 
@@ -262,7 +284,70 @@ export async function staffRoutes(app: FastifyInstance) {
       id,
     );
 
-    return { user: { ...user, balancePoints: await balanceOf(id) }, ledger, fraudFlags: flags, usdtRefunds, usdtTopups };
+    // Brief part 34 — one screen that answers "who is this and what have they
+    // done", instead of a balance and a ledger and four other tabs. Every
+    // number below is DERIVED from a table that already exists (analytics.ts's
+    // rule): nothing here is a new counter that could drift from the ledger.
+    //
+    // ⚠️ ALL THREE BALANCES, ALWAYS. A user in a dispute holds points, ROZI and
+    // possibly USDT deposit credit, and showing one of the three is how a
+    // support agent tells someone their money is gone while it is sitting on a
+    // ledger the screen did not read. They are separate ledgers by guardrail
+    // #7 — shown side by side, never summed.
+    const [balancePoints, roziMicro, usdtMicro] = await Promise.all([
+      balanceOf(id), roziBalanceMicroOf(id), usdtBalanceMicroOf(id),
+    ]);
+
+    // ⚠️ The column names here are payout_rail / payout_address / review_note,
+    // NOT chain / address / note — those are the names this row is SERVED
+    // under (see the withdrawal queue above, which aliases the same way).
+    // Guessing the served name is how `networks.label` shipped: TypeScript
+    // cannot see inside a SQL string, so only a live query catches it.
+    const withdrawals = await sql.all(
+      `SELECT id, amount, fee_points, payout_rail AS chain, payout_address AS address,
+              address_verified, status, tx_hash, review_note AS note, created_at
+         FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`, id,
+    );
+    // What they have actually been paid, ever — the question a dispute always
+    // comes down to. Counted from `paid` rows only, never from the request total.
+    const paid = await sql.get<{ n: string | number; total: string | number }>(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(amount - COALESCE(fee_points,0)), 0) AS total
+         FROM withdrawal_requests WHERE user_id = ? AND status = 'paid'`, id,
+    );
+
+    // Who invited them, and who they invited. Both directions, because a
+    // referral-ring flag is unreadable without them.
+    const invitedBy = await sql.get<{ id: string; email: string; referral_code: string }>(
+      `SELECT u.id, u.email, u.referral_code FROM users u
+         WHERE u.id = (SELECT referred_by FROM users WHERE id = ?)`, id,
+    );
+    const invitees = await sql.all(
+      `SELECT id, email, status, created_at FROM users
+         WHERE referred_by = ? ORDER BY created_at DESC LIMIT 50`, id,
+    );
+
+    const tickets = await sql.all(
+      "SELECT id, subject, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+      id,
+    );
+
+    return {
+      user: {
+        ...user,
+        balancePoints,
+        roziMicro,
+        usdtMicro,
+        // Stated as a boolean so the panel never has to re-derive "is this hold
+        // still in force" from a date string and get it wrong.
+        withdrawalHeld: Boolean(user.withdrawal_hold_reason)
+          && (!user.withdrawal_hold_until || String(user.withdrawal_hold_until) > now()),
+      },
+      ledger, fraudFlags: flags, usdtRefunds, usdtTopups, withdrawals,
+      paidSummary: { count: Number(paid?.n ?? 0), totalPoints: Number(paid?.total ?? 0) },
+      invitedBy: invitedBy ?? null,
+      invitees,
+      tickets,
+    };
   }));
 
   // Open fraud flags — managers/admins only.

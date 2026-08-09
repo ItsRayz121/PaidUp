@@ -367,22 +367,48 @@ export type StaffWithdrawal = {
   // the wallet, as of the moment they asked. Optional so an older API build
   // (mid-deploy) renders "not checked" rather than crashing the queue.
   addressVerified?: boolean;
+  // ⚠️ NET IS WHAT GETS SENT; `amount` is what the user was debited. Manual
+  // payout is a human reading this row and sending USDT by hand, so the fee
+  // has to be on it — otherwise the gross gets sent and the platform eats the
+  // fee it just charged. Optional for the same mid-deploy reason as above.
+  feePoints?: number;
+  netUsdt?: string;
 };
 // Treasury (hot wallet) address per chain — where payouts are sent FROM.
 export type TreasuryAddresses = { bep20: string; base: string; aptos: string };
+export type PendingTotal = { count: number; points: number; usdt: string };
 export const fetchStaffQueue = (status = "pending") =>
-  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses }>(`/staff/withdrawals?status=${encodeURIComponent(status)}`);
+  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses; pendingTotal?: PendingTotal }>(
+    `/staff/withdrawals?status=${encodeURIComponent(status)}`,
+  );
 export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
   apiFetch<{ ok: true; status: string; txHash?: string; usdt?: string }>(`/staff/withdrawals/${id}/decision`, {
     method: "POST", body: JSON.stringify({ action, note, txHash }),
   });
+// One user, everything about them (brief part 34). Every field is derived from
+// a table that already exists — there is no per-user counter to drift.
+export type StaffUserDetail = {
+  user: Record<string, unknown> & {
+    id: string; email: string;
+    // ⚠️ THREE SEPARATE LEDGERS, SHOWN SIDE BY SIDE AND NEVER SUMMED
+    // (guardrail #7). Points and USDT deposit credit have real rates; ROZI
+    // does not, and adding them together on a staff screen is how a made-up
+    // rate gets quoted to a user in a dispute.
+    balancePoints: number; roziMicro: number; usdtMicro: number;
+    withdrawalHeld: boolean;
+  };
+  ledger: Record<string, unknown>[]; fraudFlags: Record<string, unknown>[];
+  // Deposit refunds ("Get your USDT back") and top-ups — a SEPARATE money
+  // trail from `ledger` above (that one is points; this is usdt_ledger).
+  usdtRefunds: Record<string, unknown>[]; usdtTopups: Record<string, unknown>[];
+  withdrawals: Record<string, unknown>[];
+  paidSummary: { count: number; totalPoints: number };
+  invitedBy: { id: string; email: string; referral_code: string } | null;
+  invitees: Record<string, unknown>[];
+  tickets: Record<string, unknown>[];
+};
 export const fetchStaffUser = (id: string) =>
-  apiFetch<{
-    user: Record<string, unknown>; ledger: unknown[]; fraudFlags: unknown[];
-    // Deposit refunds ("Get your USDT back") and top-ups — a SEPARATE money
-    // trail from `ledger` above (that one is points; this is usdt_ledger).
-    usdtRefunds: Record<string, unknown>[]; usdtTopups: Record<string, unknown>[];
-  }>(`/staff/users/${id}`);
+  apiFetch<StaffUserDetail>(`/staff/users/${id}`);
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
 
 // ---- Super-admin ----------------------------------------------------------
