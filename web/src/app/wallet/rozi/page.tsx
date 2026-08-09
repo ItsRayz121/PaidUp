@@ -29,6 +29,7 @@ export default function RoziWalletPage() {
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
+  const transfersOn = Boolean(mining.data?.transfersEnabled);
   const rows = unifyHistory({
     ledger: [], rozi: rozi.data?.entries ?? [], withdrawals: [], topups: [], refunds: [], bnb: [], t,
   });
@@ -54,14 +55,31 @@ export default function RoziWalletPage() {
         <Link href="/mine" className="mt-2 inline-block text-sm font-semibold text-brand">{t("wallet.rozi.openMine")}</Link>
       </Card>
 
+      {/* ⚠️ SEND IS GATED ON transfersEnabled, THE SAME WAY /wallet's chooser
+          sheet gates it. Without this the button was a dead end: it led to a
+          filled-in form on /mine/send, which has no gate of its own, and the
+          API refused the submit at the last step (routes/mining.ts — "Sending
+          ROZI is not switched on yet"). Disabled-with-a-reason is the rule
+          this app already uses for a shut Send — a missing button reads as a
+          broken wallet, and a live one that fails at submit is worse.
+
+          Labels are Send/Receive, not Withdraw/Deposit: ROZI moves between
+          accounts and never crosses a chain. */}
       <div className="grid grid-cols-2 gap-2.5">
-        <Button href="/mine/send" variant="ghost">
-          <SendIcon size={20} /> {t("wallet.withdraw")}
-        </Button>
+        {transfersOn ? (
+          <Button href="/mine/send" variant="ghost">
+            <SendIcon size={20} /> {t("wallet.rozi.send")}
+          </Button>
+        ) : (
+          <Button variant="ghost" disabled>
+            <SendIcon size={20} /> {t("wallet.rozi.send")}
+          </Button>
+        )}
         <Button href="/mine/receive" variant="primary">
-          <ReceiveIcon size={20} /> {t("wallet.deposit")}
+          <ReceiveIcon size={20} /> {t("wallet.rozi.receive")}
         </Button>
       </div>
+      {!transfersOn && <p className="-mt-3 text-center text-xs text-muted">{t("wallet.sendOff")}</p>}
 
       <section>
         <SectionTitle>{t("wallet.rozi.transactions")}</SectionTitle>

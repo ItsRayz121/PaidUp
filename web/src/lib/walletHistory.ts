@@ -51,12 +51,16 @@ export function preview(rows: Row[]): Row[] {
   return rows.filter((r) => keep.has(r.key));
 }
 
+// The long form of ui.tsx's `statusMap`, shown inside the transaction detail
+// sheet where there is room for a sentence. Same five outcomes, same words —
+// keep the two in step, and read the note above statusMap before changing
+// either (in particular: `refunded` must never become "Failed").
 export const STATUS_TEXT: Record<string, string> = {
-  earned: "Added", paid: "Completed", pending: "Waiting", sending: "Sending", rejected: "Not added",
+  earned: "Completed", paid: "Completed", pending: "Pending", sending: "Processing",
+  rejected: "Rejected",
   // Distinct from "rejected": this row is an outgoing send that didn't go
-  // through — the amount was credited back, not withheld. See ui.tsx's
-  // LedgerStatus comment for why "rejected" itself is wrong here.
-  refunded: "Not sent — you got the money back",
+  // through — the amount was credited back, not withheld.
+  refunded: "Returned — the money is back in your balance",
 };
 
 export function unifyHistory(args: {

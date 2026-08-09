@@ -1262,6 +1262,68 @@ These override convenience or speed at every step:
     formula has exactly one place a future ROZI-valuation term would slot
     in.
 
+- **PRODUCT AUDIT PASS: THE MONEY SCREENS STOP CONTRADICTING THEMSELVES
+  (founder, 2026-08-09).** A 75-part product/UX/backend brief was audited against
+  the real codebase; nine defects were fixed. The two headline asks — a general
+  task marketplace (brief parts 8–19) and an admin operations rebuild (parts
+  32–48) — were **deliberately NOT started**, because they are schema work and
+  half-starting them is worse than scoping them. Verified: api + web typecheck,
+  eslint, web production build (24 routes) all clean. ⚠️ The 20 backend e2e
+  suites were **not re-run** (they need a live Postgres); nothing in this pass
+  touched backend code.
+  - ⚠️ **`/wallet/rozi`'s Send button was a dead end and had been since the page
+    shipped.** It offered "Withdraw" → `/mine/send`, and NEITHER screen checked
+    `transfersEnabled` — the user picked a recipient, typed an amount, and only
+    the API refused it at submit (`routes/mining.ts`). `/wallet`'s chooser sheet
+    gated this correctly; this route walked past it. Now disabled-with-a-reason,
+    matching the chooser. **If you add a third entry point to a transfer screen,
+    gate it there too** — the gate is per-entry-point, not on `/mine/send`.
+  - **ROZI's two buttons are Send/Receive, never Withdraw/Deposit.** Those words
+    mean real money crossing a chain everywhere else on that screen, and ROZI
+    cannot leave the system at all. "Withdraw ROZI" next to a real USDT withdraw
+    is a cash-out promise for a token the road map refuses to price.
+  - ⚠️ **SUPERSEDES the 2026-08-03 "no ROZI balance on /wallet" decision.** The
+    row said "Coming soon" with no number, one tap above `/wallet/rozi` showing
+    a real balance — the screen contradicting itself. What is coming soon is
+    TRANSFERS. ⚠️ **THE ROW SHOWS MINED ROZI ONLY, never `totalRoziMicro()`** —
+    the task/referral half is already inside the Total Balance card above it, as
+    USDT, so the combined figure would put the same money on screen twice.
+  - **Standard wallet status words**: `Added/Waiting/Not added` →
+    `Completed/Pending/Processing/Rejected/Returned`, in both definitions
+    (`components/ui.tsx` `statusMap` ↔ `lib/walletHistory.ts` `STATUS_TEXT`) and
+    the legend. ⚠️ **`refunded` IS NOT "Failed", and that was the founder's own
+    suggested word.** A rejected withdrawal or a relay job that gave up credits
+    the full amount straight back; "Failed" there tells a user their money is
+    gone when it is already in their balance.
+  - **Task badge "Checking" → "Under review"** — a proof sits in a HUMAN staff
+    queue and the wait is hours; "Checking" reads as automatic and instant.
+  - ⚠️ **THE CASH-OUT PROMISE IS REMOVED FROM EVERY SCREEN.** "Soon you will be
+    able to cash out your ROZI" is gone from `/mine` AND home
+    (`wallet.rozi.notcash`) together — the founder's own instruction, "do not
+    promise future cash-out unless that is guaranteed", against an unfunded
+    treasury, on the app's most-visited screen. The old rule ("one promise,
+    three screens, no version that says more") still holds and the promise is
+    now nowhere. **Do not put it back on one screen alone.**
+  - History filters: three permanent rows → the token row plus one **Filter**
+    control that names its own current value, so a filter cannot be left on with
+    the row that set it collapsed out of view.
+  - Copy pass on 14 strings in the deck (wallet subtitle, tasks subtitle —
+    de-ROZI'd so it survives a USDT-paying task, withdrawal address, sign-out,
+    support, Telegram, ID-check-off, "Your mining speed", "Roadmap").
+  - **A stale comment claimed the opposite of its own string**: the deck
+    asserted "the word KYC appears nowhere a user can see it" directly above
+    `"Verify your KYC"`. The STRING was right (founder, 2026-08-01: KYC is the
+    familiar word in these markets); the comment predated the decision. Fixed
+    the comment, not the string — cross-linked so it cannot drift again.
+  - ⚠️ **NOT BUILT, AND THE ORDER MATTERS: brief parts 15 + 16 (per-campaign
+    revenue tracking + budget control) SHOULD COME FIRST** of the task-engine
+    work. Today `tasks` has one reward field, one country string, and one
+    free-text proof box — no campaign budget means no auto-pause, so the first
+    partner who buys 2,000 conversions can be given 20,000. Adding a budget
+    column now is free; retrofitting it onto live campaigns is a migration under
+    pressure. Then: configurable input fields (unlocks the task detail page),
+    then categories/targeting, then the review dashboard.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

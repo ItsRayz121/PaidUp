@@ -15,7 +15,7 @@ import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
   fetchWithdrawals, fetchBnbWithdrawals,
 } from "@/lib/api";
-import { usdtFromMicro, formatUsdtMicro, formatBnbWei } from "@/lib/format";
+import { usdtFromMicro, formatUsdtMicro, formatBnbWei, formatRozi } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
 
 // The money screen. Wallet overhaul (founder): the headline is USDT again —
@@ -44,6 +44,7 @@ export default function WalletPage() {
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [tokenFilter, setTokenFilter] = useState<TokenFilter>("all");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [openTx, setOpenTx] = useState<Row | null>(null);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
@@ -144,10 +145,15 @@ export default function WalletPage() {
               />
             )}
           </Link>
+          {/* ⚠️ MINED ROZI ONLY — never totalRoziMicro(). The task/referral half
+              of a user's earnings is already counted in the Total Balance card
+              above, as USDT; adding it here as ROZI too would show the same
+              money twice on one screen. See the i18n note on
+              wallet.token.rozi.sub. */}
           <Link href="/wallet/rozi" className="block active:bg-brand-tint/40">
             <TokenRow
               Icon={RoziMark} name={t("wallet.token.rozi.name")} sub={t("wallet.token.rozi.sub")}
-              symbol="ROZI" amount={t("wallet.token.comingSoon")} muted
+              symbol="ROZI" amount={formatRozi(mining.data?.roziMicro ?? 0)}
             />
           </Link>
         </Card>
@@ -165,20 +171,33 @@ export default function WalletPage() {
         <SectionTitle>{t("wallet.history")}</SectionTitle>
         <p className="mb-2 px-1 text-xs text-muted">{t("wallet.history.sub")}</p>
 
-        <div className="mb-2 flex flex-wrap gap-1.5">
+        {/* ONE ROW OF FILTERS, NOT THREE (founder, 2026-08-09). The token row
+            is the one people actually use, so it stays visible; the kind
+            filters sit behind a Filter control that names its own current
+            value, so a filter can never be silently left on with the row that
+            set it collapsed out of view. */}
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {(["all", "USDT", "BNB", "ROZI"] as TokenFilter[]).map((f) => (
             <FilterChip key={f} active={tokenFilter === f} onClick={() => setTokenFilter(f)}>
               {f === "all" ? t("wallet.filter.all") : f}
             </FilterChip>
           ))}
-        </div>
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {(["all", "received", "sent", "reward", "mining"] as KindFilter[]).map((f) => (
-            <FilterChip key={f} active={kindFilter === f} onClick={() => setKindFilter(f)}>
-              {t(`wallet.filter.${f}`)}
+          <span className="ms-auto">
+            <FilterChip active={kindFilter !== "all"} onClick={() => setFiltersOpen(!filtersOpen)}>
+              {kindFilter === "all" ? t("wallet.filter.button") : t(`wallet.filter.${kindFilter}`)}
             </FilterChip>
-          ))}
+          </span>
         </div>
+        {filtersOpen && (
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {(["all", "received", "sent", "reward", "mining"] as KindFilter[]).map((f) => (
+              <FilterChip key={f} active={kindFilter === f}
+                onClick={() => { setKindFilter(f); setFiltersOpen(false); }}>
+                {t(`wallet.filter.${f}`)}
+              </FilterChip>
+            ))}
+          </div>
+        )}
 
         <Card className="p-2 mb-2"><div className="px-2 py-1"><StatusLegend /></div></Card>
 

@@ -78,16 +78,30 @@ export function PointsPill({ points }: { points: number }) {
 }
 
 // ---- Status badge — icon + WORD, never color alone -----------------------
+// ⚠️ STANDARD WALLET WORDS (founder, 2026-08-09), NOT INVENTED ONES. These read
+// "Added / Waiting / Not added", which is plain English but is not what a wallet
+// says, and "Not added" in particular has no clear meaning next to a balance —
+// a user cannot tell whether the money is gone, held, or coming back.
+//
+// ⚠️ "FAILED" IS DELIBERATELY NOT USED FOR `refunded`, and this is the one that
+// matters. A withdrawal we rejected, or a relay job that gave up, credits the
+// full amount straight back (staff.ts's reject branch, payoutRelay.ts's safe
+// path). "Failed" on that row tells a user their money is lost when it is
+// already back in their balance — the single most alarming thing this app could
+// say wrongly. The row names the outcome instead.
+//
+// The words are shared with STATUS_TEXT in lib/walletHistory.ts, which labels
+// the same statuses inside the transaction detail sheet. Change both together.
 const statusMap: Record<LedgerStatus, { label: string; Icon: typeof CheckIcon; cls: string }> = {
-  earned: { label: "Added", Icon: CheckIcon, cls: "bg-success-tint text-success" },
-  paid: { label: "Paid", Icon: CheckIcon, cls: "bg-success-tint text-success" },
-  pending: { label: "Waiting", Icon: ClockIcon, cls: "bg-pending-tint text-pending" },
+  earned: { label: "Completed", Icon: CheckIcon, cls: "bg-success-tint text-success" },
+  paid: { label: "Completed", Icon: CheckIcon, cls: "bg-success-tint text-success" },
+  pending: { label: "Pending", Icon: ClockIcon, cls: "bg-pending-tint text-pending" },
   // On its way — signed by your own wallet address, a few blocks from done.
-  // Distinct from plain "Waiting" (that's still in a queue; this is already moving).
-  sending: { label: "Sending", Icon: ClockIcon, cls: "bg-brand-tint text-brand" },
-  rejected: { label: "Not added", Icon: XIcon, cls: "bg-danger-tint text-danger" },
+  // Distinct from plain "Pending" (that's still in a queue; this is already moving).
+  sending: { label: "Processing", Icon: ClockIcon, cls: "bg-brand-tint text-brand" },
+  rejected: { label: "Rejected", Icon: XIcon, cls: "bg-danger-tint text-danger" },
   // Outgoing send that didn't go through — the money was returned, not lost.
-  refunded: { label: "Not sent", Icon: XIcon, cls: "bg-pending-tint text-pending" },
+  refunded: { label: "Returned", Icon: XIcon, cls: "bg-pending-tint text-pending" },
 };
 
 export function StatusBadge({ status }: { status: LedgerStatus }) {

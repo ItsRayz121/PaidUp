@@ -64,7 +64,7 @@ const copy: Record<string, string> = {
   "profile.refer": "Invite friends",
   "profile.referHint": "Share your link. Earn when friends earn.",
   "profile.signOut": "Sign out",
-  "profile.signOutHint": "You will need your password to come back.",
+  "profile.signOutHint": "You'll need your password to sign in again.",
 
   // ---- Edit your profile ----------------------------------------------------
   // The handle is the hard part to word. It is the name people SEND MONEY TO, so
@@ -105,10 +105,10 @@ const copy: Record<string, string> = {
   "profile.verifyIdHint": "Send a photo of your face and your ID card.",
   // Shown instead when an Admin has switched the ID check off. It must not
   // promise a date — same ceiling word as the road map and /mine.
-  "profile.verifyIdOffHint": "Not open yet. You do not need to do anything.",
+  "profile.verifyIdOffHint": "Verification is not required yet.",
   "profile.comingSoon": "Coming soon",
   // Where your money gets sent. Moved here from /wallet (founder, 2026-08-01).
-  "profile.walletHint": "Tell us where to send your money.",
+  "profile.walletHint": "Manage your withdrawal address.",
   "profile.wallet.badge.none": "Not set",
   "profile.wallet.badge.saved": "Saved",
   "profile.wallet.badge.checked": "Checked",
@@ -119,7 +119,7 @@ const copy: Record<string, string> = {
   "profile.leaderboard": "Leaderboard",
   "profile.leaderboardHint": "See who is earning the most.",
   "profile.help": "Help & support",
-  "profile.helpHint": "Ask us anything. We reply here.",
+  "profile.helpHint": "Get help from the RoziPay team.",
   "profile.notifications": "Notifications",
   "profile.telegramAccount": "Telegram account",
   "profile.emailTitle": "Add your email",
@@ -132,7 +132,7 @@ const copy: Record<string, string> = {
   "profile.emailConnected": "Email added",
   "profile.emailConnectedHint": "You can log in on the website with your email.",
   "profile.telegram": "Telegram",
-  "profile.telegramHint": "Use the same account here and on Telegram.",
+  "profile.telegramHint": "Connect Telegram to your RoziPay account.",
   "profile.telegramConnect": "Connect Telegram",
   "profile.telegramOpen": "Open Telegram to connect",
   "profile.telegramWaiting": "Finish in Telegram… this updates by itself.",
@@ -143,9 +143,9 @@ const copy: Record<string, string> = {
   // In ROZI, like the reward pill on every card below it. This said "get paid in
   // USDT" while each row underneath showed a ROZI figure — a section header
   // contradicting every item it introduces.
-  "tasks.subtitle": "Finish a task and earn ROZI.",
+  "tasks.subtitle": "Complete tasks and earn rewards.",
   "tasks.disclosure":
-    "These are sponsored offers from our partners. We tell you who gives the reward before you start.",
+    "Sponsored offers from our partners. We show you who pays the reward before you start.",
   "tasks.empty.title": "More ways to earn are coming",
   "tasks.empty.body":
     "Surveys are open now — tap “Answer surveys” above to earn today. New task types are added soon.",
@@ -212,7 +212,7 @@ const copy: Record<string, string> = {
   // next survey does not get done.
   "home.rozi.breakdown": "{mined} mined · {earned} from tasks and friends",
   // wallet
-  "wallet.subtitle": "Your balance, and everything that moved in and out.",
+  "wallet.subtitle": "Your balances and transactions.",
   // ⚠️ "wallet.reachAt" WAS DELETED (founder, 2026-08-01), not moved. It read
   // "You need {points} earned from tasks and friends to get money", and it ran
   // under the balance for every user below the minimum — which is almost
@@ -224,7 +224,7 @@ const copy: Record<string, string> = {
   // HISTORY IS BOTH LEDGERS NOW. The line says where the numbers come from,
   // because the previous list showed task money only while the balance above it
   // was mostly mined — so the history appeared to contradict the balance.
-  "wallet.history.sub": "Everything that came in and went out of this account.",
+  "wallet.history.sub": "Everything that came in and went out.",
   "wallet.noHistoryTitle": "No history yet",
   "wallet.noHistoryBody": "Start mining or finish a task to see your first ROZI here.",
   // The history opens short — the last two things that happened — and the rest
@@ -483,12 +483,18 @@ const copy: Record<string, string> = {
   "wallet.chooser.usdt.deposit.sub": "Get your deposit address",
 
   "wallet.token.rozi.name": "ROZI",
-  // ⚠️ CHANGED 2026-08-03 (founder): the wallet screen no longer shows a ROZI
-  // balance at all, real or combined — it shows "Coming soon" like the BNB
-  // row. Mining is unaffected; this is a display choice on ONE screen. The
-  // full balance and history still live on /mine, which this sub-line points
-  // to in words rather than a tap target, since the row itself is not a link.
-  "wallet.token.rozi.sub": "See your mining balance on the Mine tab",
+  // ⚠️ SUPERSEDES the 2026-08-03 "no ROZI balance on /wallet" decision
+  // (founder, 2026-08-09): a token row showing "Coming soon" and no number,
+  // one tap above /wallet/rozi showing a real balance, is the wallet screen
+  // contradicting itself. What is coming soon is TRANSFERS, not the balance —
+  // so the row states the balance and names the thing that is actually shut.
+  //
+  // ⚠️ THE NUMBER ON THIS ROW IS MINED ROZI ONLY, AND THAT IS LOAD-BEARING.
+  // /mine leads with mined + earned (totalRoziMicro), because there the points
+  // half has nowhere else to appear. On /wallet the points half is ALREADY in
+  // the Total Balance above, as USDT. Showing the combined figure here would
+  // count the same earnings twice on one screen.
+  "wallet.token.rozi.sub": "Transfers coming soon",
   "wallet.token.comingSoon": "Coming soon",
   "wallet.token.usdt.name": "USDT",
   "wallet.token.usdt.sub": "BNB Smart Chain · buys mining machines",
@@ -526,6 +532,7 @@ const copy: Record<string, string> = {
   "wallet.chooser.bnb.sub": "Get your BNB back, or add more",
   "wallet.chooser.bnb.depositSub": "Same address as USDT — get your deposit address",
   "wallet.filter.all": "All",
+  "wallet.filter.button": "Filter",
   "wallet.filter.received": "Received",
   "wallet.filter.sent": "Sent",
   "wallet.filter.reward": "Rewards",
@@ -544,6 +551,14 @@ const copy: Record<string, string> = {
   "wallet.rozi.seeMine": "The full balance and history live on the Mine tab.",
   "wallet.rozi.openMine": "Open Mine",
   "wallet.rozi.transactions": "Transactions",
+  // ⚠️ ROZI MOVES BETWEEN ACCOUNTS. IT DOES NOT DEPOSIT OR WITHDRAW.
+  // This page used the wallet-wide "Deposit"/"Withdraw" labels, which on every
+  // other token on this screen mean real money crossing a chain. ROZI cannot
+  // leave the system at all — the buttons go to /mine/send and /mine/receive,
+  // which are user-to-user transfers by handle. "Withdraw" there reads as a
+  // cash-out promise for a token the road map deliberately refuses to price.
+  "wallet.rozi.send": "Send",
+  "wallet.rozi.receive": "Receive",
   // Generic empty-history copy for the per-token pages — wallet.noHistoryBody
   // names ROZI specifically (right for the main wallet screen, wrong on a
   // USDT- or BNB-only view).
@@ -641,16 +656,19 @@ const copy: Record<string, string> = {
   "nav.mine": "Mine",
   "mine.title": "Mine ROZI",
   "mine.subtitle": "Earn ROZI every day, even when there are no tasks.",
-  // Founder, 2026-07-30: lead with "soon you can cash it out", not "you cannot
-  // cash it out yet". Same fact, forward-facing — the old line made the app's
-  // headline feature open with its limit.
+  // ⚠️ THE CASH-OUT PROMISE IS GONE FROM THIS SENTENCE (founder, 2026-08-09:
+  // "Do not promise future cash-out unless that is guaranteed"). It read "Soon
+  // you will be able to cash out your ROZI", which was the app's most forward
+  // claim sitting on its most-visited screen, backed by an unfunded treasury —
+  // and the road map already had to drop "Cash out to USDT" from its own
+  // Working-today list for exactly that reason. The remaining line says only
+  // what is true today and is the stronger motivator anyway: the rate falls,
+  // and today's mining cannot be re-mined later.
   //
-  // ⚠️ "Soon" IS THE CEILING. It must not become "you can cash out", a date, or
-  // a rate, on this screen or any other, until a real payout has cleared. The
-  // road map's no-price rule applies to this sentence too: cashing out is a step
-  // we are working on, never an amount we have promised. Home and the road map
-  // use the same word on purpose — one promise, three screens, no version of it
-  // anywhere that says more.
+  // ⚠️ REMOVED FROM BOTH SCREENS AT ONCE — here and wallet.rozi.notcash on
+  // home. The earlier rule was "one promise, three screens, no version of it
+  // anywhere that says more"; that rule still holds, and the promise is now
+  // nowhere. Do not put "soon you can cash out" back on one screen alone.
   //
   // ⚠️ IT PROMISED SENDING "SOON" AFTER SENDING SHIPPED. Transfers went live
   // (transfersEnabled = 1) and this banner kept saying you would be able to send
@@ -658,9 +676,9 @@ const copy: Record<string, string> = {
   // the same screen. Every "soon" in this app is protecting the one claim we
   // cannot yet back, and a user who can visibly disprove one of them discounts
   // all of them. Never leave a "soon" attached to something already shipped.
-  "mine.notcash.title": "You are early. Mine ROZI now.",
+  "mine.notcash.title": "You're early.",
   "mine.notcash.body":
-    "Soon you will be able to cash out your ROZI. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
+    "Mine while the rate is high. The rate halves as RoziPay grows — what you mine today, you cannot mine again later.",
   // MINED ONLY — see the label block at home.rozi.label. This screen's number is
   // what can be spent on rigs, sent, converted or spent in the store, and it is
   // smaller than the figure on home and in the top bar. The earned half is shown
@@ -697,7 +715,7 @@ const copy: Record<string, string> = {
   "mine.ad.claim": "Claim my boost",
   "mine.ad.blocked": "Your phone blocked the ad window. Allow pop-ups for this app, then try again.",
   "mine.boost.rigs.title": "Buy a machine",
-  "mine.breakdown.title": "What makes your speed",
+  "mine.breakdown.title": "Your mining speed",
   "mine.breakdown.base": "Everyone gets",
   "mine.breakdown.rigs": "Your machines",
   "mine.breakdown.streak": "{days} days in a row",
@@ -1001,7 +1019,7 @@ const copy: Record<string, string> = {
   // a claim on this page that a user cannot act on is the single most damaging
   // thing it could contain. Cash-out goes back on this list when a real payout
   // has cleared, and not before.
-  "mine.roadmap.title": "Road map",
+  "mine.roadmap.title": "Roadmap",
   "roadmap.title": "The road ahead",
   "roadmap.subtitle": "Where RoziPay is going, and when.",
   "roadmap.live.title": "Working today",
@@ -1052,14 +1070,21 @@ const copy: Record<string, string> = {
   // commit that reordered this screen, so the sentence aimed at empty space.
   //
   // It also said "you cannot cash it out yet" while /mine said "soon you will be
-  // able to" — the same fact in two tones, and the defensive one had already
-  // been retired. One promise, every screen: "soon", never more, never less.
+  // able to" — the same fact in two tones. Both are gone now: the "soon you can
+  // cash it out" claim was dropped from this screen and from mine.notcash.body
+  // in the same pass (founder, 2026-08-09). What is left states which half can
+  // be paid out, and promises nothing about the other half.
   "wallet.rozi.notcash":
-    "You are mining ROZI early. Soon you will be able to cash it out. Only what you earned from tasks and friends can be paid out now.",
+    "You are mining ROZI early. Only what you earned from tasks and friends can be paid out now.",
 
   // ---- Verify your ID -------------------------------------------------------
-  // The word "KYC" appears nowhere a user can see it. It is jargon, and half our
-  // users would not know it. "Verify your ID" says the same thing to everyone.
+  // ⚠️ THIS COMMENT SAID THE OPPOSITE OF THE STRING UNDER IT, and the string was
+  // right. It read "the word KYC appears nowhere a user can see it" — written
+  // before the founder's 2026-08-01 decision to keep the abbreviation, because
+  // in Pakistan, India and Bangladesh it is what every bank and exchange calls
+  // this step, i.e. the FAMILIAR word here rather than the jargon one. The full
+  // reasoning is at profile.verifyId; the two are one decision and must not
+  // drift apart again.
   "kyc.title": "Verify your KYC",
   "kyc.subtitle": "We need to check you are a real person before we send you money.",
   // Shown when an Admin has switched the ID check off. Reachable from a bookmark

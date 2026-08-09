@@ -129,11 +129,17 @@ export function TaskPreview({ task }: { task: Task }) {
 }
 
 // A small coloured word showing where a submitted proof stands.
+//
+// "Under review", not "Checking": a proof sits in a human staff queue
+// (staffTasks.ts), and "Checking" reads as something automatic that finishes in
+// a moment. The wait here is hours. "Rejected" keeps the standard word the rest
+// of the app now uses for the same outcome, and the sheet underneath already
+// tells the user they can fix it and send again.
 function ProofBadge({ status }: { status: "pending" | "approved" | "rejected" }) {
   const map = {
-    pending: { label: "Checking", cls: "bg-pending-tint text-pending" },
-    approved: { label: "Done", cls: "bg-success-tint text-success" },
-    rejected: { label: "Try again", cls: "bg-danger-tint text-danger" },
+    pending: { label: "Under review", cls: "bg-pending-tint text-pending" },
+    approved: { label: "Completed", cls: "bg-success-tint text-success" },
+    rejected: { label: "Rejected", cls: "bg-danger-tint text-danger" },
   }[status];
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${map.cls}`}>{map.label}</span>;
 }
@@ -334,13 +340,14 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
   );
 }
 
-// A small legend used on empty states etc.
+// A small legend used on empty states etc. Words match ui.tsx's `statusMap` —
+// see the note there before changing either.
 export function StatusLegend() {
   return (
     <div className="flex flex-wrap gap-3 text-xs text-muted">
-      <span className="flex items-center gap-1"><CheckIcon size={13} /> Added</span>
-      <span className="flex items-center gap-1"><ClockIcon size={13} /> Waiting</span>
-      <span className="flex items-center gap-1"><XIcon size={13} /> Not added</span>
+      <span className="flex items-center gap-1"><CheckIcon size={13} /> Completed</span>
+      <span className="flex items-center gap-1"><ClockIcon size={13} /> Pending</span>
+      <span className="flex items-center gap-1"><XIcon size={13} /> Rejected</span>
     </div>
   );
 }
