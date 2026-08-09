@@ -23,6 +23,7 @@ import { tickDepositScan } from "./deposits/scanner.ts";
 import { tickSweep } from "./deposits/sweep.ts";
 import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
+import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -221,6 +222,11 @@ async function tickPayoutRelayJob() {
     await tickPayoutRelay();
   } catch (err) {
     app.log.error({ err }, "Payout relay tick failed");
+  }
+  try {
+    await tickBnbWithdrawals();
+  } catch (err) {
+    app.log.error({ err }, "BNB withdrawal tick failed");
   }
 }
 setInterval(tickPayoutRelayJob, config.depositScanIntervalMs).unref();

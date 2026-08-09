@@ -14,6 +14,7 @@ import {
 import { chainById, validateAddress } from "../chains.ts";
 import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
+import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
 import { requireStaff, type Role } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
@@ -391,7 +392,8 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     // transaction exists" while the amount went unchecked.
     const b = z.object({ amount: z.number().positive() }).parse(req.body);
 
-    return sql.tx(async (t) => {
+    let creditedUserId: string | null = null;
+    const result = await sql.tx(async (t) => {
       // Claim the row FIRST, and only if it is still pending. Two admins on the
       // queue at the same moment would otherwise both see 'pending', both post
       // credit, and pay one deposit twice.
@@ -410,8 +412,16 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         actorUserId: userId, actorRole: role, action: "usdt_topup_confirm",
         detail: `${id} -> ${claimed.user_id}: ${b.amount} USDT`,
       }, t);
+      creditedUserId = claimed.user_id;
       return { ok: true, balanceMicro: await usdtBalanceMicroOf(claimed.user_id, t) };
     });
+    // AFTER the transaction commits, never inside it (push.ts's header rule).
+    if (creditedUserId) {
+      void sendPushToUser(creditedUserId, {
+        title: "USDT received", body: `We got your deposit of ${b.amount.toFixed(2)} USDT.`, url: "/wallet/usdt",
+      });
+    }
+    return result;
   }));
 
   app.post("/staff/mining/topups/:id/reject", staffGuard(["admin"], async ({ userId, role }, req) => {

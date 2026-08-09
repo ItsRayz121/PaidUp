@@ -206,11 +206,17 @@ export function totalRoziMicro(roziMicro: number, points: number): number {
 // USDT" on a task card puts it straight back — it is the smallest number in the
 // app and it made a real task look worthless.
 //
-// THE THREE PLACES USDT LEGITIMATELY SURVIVES, because the number there IS
+// THE PLACES USDT LEGITIMATELY SURVIVES, because the number there IS
 // USDT and calling it anything else would be the lie:
 //   • /wallet/withdraw — what we will actually send, on a real chain.
 //   • /mine/topup and /mine/rigs — top-up credit the user paid real USDT for.
 //   • /mine/convert — the conversion window's whole job is stating a cash rate.
+//   • /wallet, /wallet/usdt, /wallet/bnb — the wallet overhaul's Total Balance
+//     and USDT/BNB token pages. This is the founder's own reversal of the
+//     "hide USDT everywhere" rule above, done deliberately (see CLAUDE.md,
+//     the wallet overhaul entry): the headline figure folds in withdrawable
+//     points at the real 1000pts=$1 rate, which is a different case from
+//     ROZI — ROZI still has no fixed rate and is never part of this number.
 // The staff panel is exempt too, and still shows raw points: it is where the
 // ledger gets reconciled.
 export function formatPointsAsRozi(points: number): string {

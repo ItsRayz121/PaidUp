@@ -236,6 +236,17 @@ export const fetchBalance = () =>
     personalGasWei: string | null;
     personalGasRequiredWei: string | null;
     personalGasReady: boolean | null;
+    // ---- Wallet overhaul (Total Balance) -----------------------------------
+    // The wallet's headline USDT figure: real deposited USDT (usdt_ledger)
+    // PLUS withdrawable task/referral points, at the real 1000pts=$1 rate —
+    // see the comment above this computation in api/src/routes/app.ts.
+    // "Locked" is the points-derived half while the account sits below
+    // minWithdrawPoints; it becomes "Available" automatically the moment it
+    // clears, with no separate unlock call. Micro-USDT, same scale as every
+    // other USDT figure in this app (USDT_SCALE in format.ts).
+    usdtAvailableMicro: number;
+    usdtLockedMicro: number;
+    usdtTotalMicro: number;
   }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export const fetchTasks = () => apiFetch<{ tasks: Task[] }>("/tasks");
@@ -294,6 +305,20 @@ export const verifyWalletSignature = (nonce: string, signature: string) =>
     "/withdrawals/addresses/verify",
     { method: "POST", body: JSON.stringify({ nonce, signature }) },
   );
+
+// ---- BNB withdraw (wallet overhaul) ----------------------------------------
+// A user pulling their OWN gas balance back out of their derived custody
+// address. No ledger, no treasury involvement — api/src/bnbWithdraw.ts.
+export type BnbWithdrawal = {
+  id: string; address: string; amountWei: string; status: "pending" | "sending" | "paid" | "failed";
+  txHash?: string; at: string; completedAt?: string;
+};
+export const fetchBnbWithdrawals = () =>
+  apiFetch<{ requests: BnbWithdrawal[] }>("/wallet/bnb/withdrawals");
+export const createBnbWithdrawal = (address: string, amountBnb: string) =>
+  apiFetch<{ ok: true; id: string; status: "pending" }>("/wallet/bnb/withdraw", {
+    method: "POST", body: JSON.stringify({ address, amountBnb }),
+  });
 
 // ---- Surveys (CPX Research) ----------------------------------------------
 // The backend signs the survey-wall URL for this user (the secure hash is

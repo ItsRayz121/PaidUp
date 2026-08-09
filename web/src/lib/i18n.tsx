@@ -45,6 +45,7 @@ const copy: Record<string, string> = {
   "common.yourCountry": "your country",
   "common.getMyMoney": "Get my money",
   "common.cancel": "Cancel",
+  "common.close": "Close",
   // install (PWA add-to-home-screen). Say plainly that nothing is downloaded —
   // "install" makes people expect an APK, and we must not over-promise.
   "install.title": "Put RoziPay on your phone",
@@ -90,6 +91,7 @@ const copy: Record<string, string> = {
   "settings.usernameRules": "3 to 20 letters, numbers or _. Start with a letter.",
   "settings.save": "Save",
   "settings.payout.title": "Payout wallet",
+  "settings.notifications": "Notifications",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.nothing": "Nothing to save yet.",
@@ -469,8 +471,8 @@ const copy: Record<string, string> = {
   // ROZI transfer and USDT deposit/withdraw are different balances with
   // different screens. Tapping Send or Receive opens this chooser instead of
   // going straight to ROZI, which is what made USDT unreachable from here.
-  "wallet.chooser.send.title": "What do you want to send?",
-  "wallet.chooser.receive.title": "What do you want to receive?",
+  "wallet.chooser.send.title": "What do you want to withdraw?",
+  "wallet.chooser.receive.title": "What do you want to deposit?",
   "wallet.chooser.rozi.sendSub": "To another RoziPay user, by handle",
   "wallet.chooser.rozi.receiveSub": "Show your handle so a friend can send you ROZI",
   "wallet.chooser.usdt.cashout.title": "USDT — cash out",
@@ -511,6 +513,48 @@ const copy: Record<string, string> = {
   // not the "we hold none of this" case the line above still is elsewhere.
   "wallet.token.bnb.gasSub": "For sending USDT — your own wallet",
   "wallet.token.soon": "—",
+  // ---- Wallet overhaul (Total Balance, Deposit/Withdraw, unified history) --
+  // Reverses the 2026-07-30/08-03 "hide USDT, ROZI only" decisions on
+  // /wallet specifically — see CLAUDE.md's wallet-overhaul entry for why.
+  "wallet.deposit": "Deposit",
+  "wallet.withdraw": "Withdraw",
+  "wallet.totalBalance": "Total balance",
+  "wallet.available": "Available",
+  "wallet.locked": "Locked",
+  "wallet.total": "Total",
+  "wallet.chooser.bnb.title": "BNB",
+  "wallet.chooser.bnb.sub": "Get your BNB back, or add more",
+  "wallet.filter.all": "All",
+  "wallet.filter.received": "Received",
+  "wallet.filter.sent": "Sent",
+  "wallet.filter.reward": "Rewards",
+  "wallet.filter.mining": "Mining",
+  "wallet.tx.usdtWithdrawal": "USDT withdrawal",
+  "wallet.tx.usdtDeposit": "USDT deposit",
+  "wallet.tx.usdtRefund": "USDT sent back",
+  "wallet.tx.bnbWithdrawal": "BNB withdrawal",
+  "wallet.usdt.transactions": "Transactions",
+  "wallet.bnb.transactions": "Transactions",
+  "wallet.bnb.amount": "How much BNB?",
+  "wallet.bnb.submitted": "We're sending your BNB now.",
+  "wallet.bnb.notEnough": "You do not have enough BNB for this amount and its own network fee.",
+  "wallet.bnb.feeNote": "The network fee is about {fee}.",
+  "wallet.rozi.miningBalance": "Mining balance",
+  "wallet.rozi.seeMine": "The full balance and history live on the Mine tab.",
+  "wallet.rozi.openMine": "Open Mine",
+  "wallet.rozi.transactions": "Transactions",
+  // Generic empty-history copy for the per-token pages — wallet.noHistoryBody
+  // names ROZI specifically (right for the main wallet screen, wrong on a
+  // USDT- or BNB-only view).
+  "wallet.noHistoryBody.generic": "Nothing here yet.",
+  // ---- Transaction detail sheet ---------------------------------------------
+  "tx.amount": "Amount",
+  "tx.status": "Status",
+  "tx.network": "Network",
+  "tx.from": "From",
+  "tx.to": "To",
+  "tx.hash": "Transaction ID",
+  "tx.viewExplorer": "View on BscScan",
   "withdraw.saveAddress": "Save this address",
   "withdraw.addressSaved": "Address saved",
   // Shown next to a typed address that has NOT been saved yet — the exact gap

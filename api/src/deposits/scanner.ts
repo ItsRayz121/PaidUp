@@ -13,12 +13,13 @@
 // duration of the RPC round trips, not just DB work. Acceptable at this
 // tick's cadence and pool size; revisit if scan volume ever grows enough for
 // that to matter.
-import { sql, now, type TxApi } from "../db.ts";
+import { sql, now, usdtFromMicro, type TxApi } from "../db.ts";
 import { config } from "../config.ts";
 import { rpcCall } from "../rpc.ts";
 import { custodyEnabled } from "../custody.ts";
 import { scanEvmChain } from "./adapters/evm.ts";
 import { recordObservedDeposit } from "./credit.ts";
+import { sendPushToUser } from "../push.ts";
 
 // Chains this scanner knows how to walk. Grows as chain families are added
 // (TRC20 shares this adapter's log-scanning shape; UTXO/Solana/Aptos need
@@ -30,7 +31,9 @@ async function latestBlock(chain: string): Promise<number> {
   return parseInt(hex, 16);
 }
 
-async function scanOneEvmChain(chain: string, t: TxApi): Promise<void> {
+type CreditedPush = { userId: string; amountMicro: number };
+
+async function scanOneEvmChain(chain: string, t: TxApi, pushes: CreditedPush[]): Promise<void> {
   const confirmations = config.depositConfirmations[chain] ?? 15;
   const cursor = await t.get<{ last_scanned_block: string }>(
     "SELECT last_scanned_block FROM deposit_scan_cursors WHERE chain = ?", chain,
@@ -44,7 +47,10 @@ async function scanOneEvmChain(chain: string, t: TxApi): Promise<void> {
 
   const { deposits, scannedTo } = await scanEvmChain(chain, fromBlock, safeTip);
   for (const d of deposits) {
-    await recordObservedDeposit(d, confirmations, t);
+    const result = await recordObservedDeposit(d, confirmations, t);
+    if (result.status === "credited" && result.userId && result.amountMicro !== undefined) {
+      pushes.push({ userId: result.userId, amountMicro: result.amountMicro });
+    }
   }
 
   await t.run(
@@ -56,7 +62,8 @@ async function scanOneEvmChain(chain: string, t: TxApi): Promise<void> {
 }
 
 export async function tickDepositScan(): Promise<{ chain: string; scanned: boolean }[]> {
-  return sql.tx(async (t) => {
+  const pushes: CreditedPush[] = [];
+  const outcome = await sql.tx(async (t) => {
     // One global lock, not per-chain — scanning is I/O-bound and cheap enough
     // to serialize across chains; split into per-chain locks only if scan
     // time ever approaches the tick interval.
@@ -68,9 +75,21 @@ export async function tickDepositScan(): Promise<{ chain: string; scanned: boole
         results.push({ chain, scanned: false });
         continue; // no xpub configured for this chain => no deposit addresses to watch
       }
-      await scanOneEvmChain(chain, t);
+      await scanOneEvmChain(chain, t, pushes);
       results.push({ chain, scanned: true });
     }
     return results;
   });
+
+  // AFTER the transaction commits, never inside it — a push can't be rolled
+  // back (push.ts's header rule, same as every other money-path notification).
+  for (const p of pushes) {
+    void sendPushToUser(p.userId, {
+      title: "USDT received",
+      body: `We got your deposit of ${usdtFromMicro(p.amountMicro).toFixed(2)} USDT.`,
+      url: "/wallet/usdt",
+    });
+  }
+
+  return outcome;
 }

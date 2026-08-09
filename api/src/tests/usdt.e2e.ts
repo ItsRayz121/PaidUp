@@ -26,14 +26,25 @@
 //   npm run test:usdt
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import { initDb, sql, now, newId, usdtBalanceMicroOf, usdtFromMicro, roziBalanceMicroOf, postRozi } from "../db.ts";
+import { HDKey } from "@scure/bip32";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import { toChecksumAddress } from "../wallet.ts";
+import {
+  initDb, sql, now, newId, postLedger, postUsdt, usdtBalanceMicroOf, usdtFromMicro, roziBalanceMicroOf, postRozi,
+} from "../db.ts";
 import { config } from "../config.ts";
+import { appRoutes } from "../routes/app.ts";
 import { miningRoutes } from "../routes/mining.ts";
 import { staffMiningRoutes } from "../routes/staffMining.ts";
 import { withdrawalRoutes } from "../routes/withdrawals.ts";
 import { CHAINS, chainById, chainIsOffered } from "../chains.ts";
 import { setMiningSetting } from "../mining/settings.ts";
 import { toMicro, fromMicro } from "../mining/core.ts";
+import { gasCheckHook, type GasCheckResult } from "../payoutRelay.ts";
+import { encryptSecret as encryptTreasurySecret } from "../signer.ts";
+import { encryptSecret as encryptWith, parseAesKeyHex } from "../crypto/aesSecret.ts";
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -43,6 +54,7 @@ function check(name: string, ok: boolean, extra = "") {
 
 await initDb();
 const app = Fastify();
+await app.register(appRoutes);
 await app.register(miningRoutes);
 await app.register(staffMiningRoutes);
 await app.register(withdrawalRoutes);
@@ -518,6 +530,155 @@ config.custodyXpub.bep20 = ""; // leave the gate as we found it
 res = await app.inject({ method: "GET", url: "/usdt", headers: tok(user) });
 check("turning the xpub back off falls back to the shared address, address already on record or not",
   res.json().personalAddress === null && res.json().treasuryAddress === TREASURY, res.body);
+
+console.log("\n-- wallet balance: Available/Locked (wallet overhaul) --");
+{
+  // The headline USDT figure folds real deposited USDT together with
+  // withdrawable task/referral points at the real 1000pts=$1 rate — see the
+  // comment above this computation in routes/app.ts. This is NOT the ROZI
+  // case guardrail #7 forbids: points already have a fixed, real rate.
+  const u = await mkUser("balmath");
+
+  // A real deposit credit is always Available, whatever the points balance is.
+  await postUsdt({
+    userId: u, micro: 2_000_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e",
+  });
+
+  // Below config.minWithdrawPoints (1000): the points-derived half is
+  // entirely Locked, and Available is just the real deposit.
+  await postLedger({
+    userId: u, points: 500, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e",
+  });
+  let r = await app.inject({ method: "GET", url: "/wallet/balance", headers: tok(u) });
+  let b = r.json();
+  check("below the minimum: locked = the points half, available = just the real deposit",
+    b.usdtLockedMicro === 500_000 && b.usdtAvailableMicro === 2_000_000, JSON.stringify(b));
+  check("total always equals available + locked",
+    b.usdtTotalMicro === b.usdtAvailableMicro + b.usdtLockedMicro, JSON.stringify(b));
+
+  // Crossing the minimum with a fresh credit — the SAME live read flips
+  // Locked to Available, with no separate unlock event or extra bookkeeping.
+  await postLedger({
+    userId: u, points: 600, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e",
+  });
+  r = await app.inject({ method: "GET", url: "/wallet/balance", headers: tok(u) });
+  b = r.json();
+  check("crossing the minimum: everything is Available, nothing Locked",
+    b.usdtLockedMicro === 0 && b.usdtAvailableMicro === 2_000_000 + 1_100_000, JSON.stringify(b));
+  check("total still equals available + locked",
+    b.usdtTotalMicro === b.usdtAvailableMicro + b.usdtLockedMicro, JSON.stringify(b));
+}
+
+console.log("\n-- BNB withdraw: zero treasury involvement, zero ledger entry --");
+{
+  // Same throwaway BIP32 seed pattern as payoutRelay.e2e.ts / custodySeeds.test.ts
+  // — safe in a test file because it can never authorize a real spend.
+  const SEED = Buffer.from(
+    "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899", "hex",
+  ).subarray(0, 32);
+  const ACCOUNT = HDKey.fromMasterSeed(SEED).derive("m/44'/60'/0'");
+  const TEST_XPUB = ACCOUNT.publicExtendedKey;
+  const TEST_XPRV = ACCOUNT.privateExtendedKey;
+  const SWEEP_AES_KEY = "e".repeat(64);
+  const encryptSweepSeed = (plaintext: string) => encryptWith(plaintext, parseAesKeyHex(SWEEP_AES_KEY, "test key"));
+
+  function testAddress(): string {
+    const { publicKey } = secp256k1.keygen();
+    const uncompressed = secp256k1.Point.fromBytes(publicKey).toBytes(false);
+    return toChecksumAddress("0x" + bytesToHex(keccak_256(uncompressed.slice(1))).slice(-40));
+  }
+
+  function clearGate() {
+    config.payoutMode = "manual";
+    config.treasuryKeyEncrypted = "";
+    config.treasuryKeySecret = "";
+    config.custodyXpub.bep20 = "";
+    config.custodySweepSeedEncrypted.evm = "";
+    config.custodySweepSeedSecret.evm = "";
+  }
+  function fullyConfigureSigning() {
+    config.treasuryKeySecret = "c".repeat(64);
+    config.treasuryKeyEncrypted = encryptTreasurySecret(
+      "0x0000000000000000000000000000000000000000000000000000000000000001",
+    );
+    config.custodyXpub.bep20 = TEST_XPUB;
+    config.custodySweepSeedSecret.evm = SWEEP_AES_KEY;
+    config.custodySweepSeedEncrypted.evm = encryptSweepSeed(TEST_XPRV);
+  }
+  const ALWAYS_READY = async (): Promise<GasCheckResult> =>
+    ({ ok: true, address: testAddress(), balanceWei: 10n ** 18n, requiredWei: 1n });
+  const NEVER_READY = async (): Promise<GasCheckResult> =>
+    ({ ok: false, address: testAddress(), balanceWei: 0n, requiredWei: 10n ** 15n });
+
+  clearGate();
+  gasCheckHook.override = ALWAYS_READY;
+
+  {
+    const u = await mkUser("bnbwd1");
+    const r = await app.inject({
+      method: "POST", url: "/wallet/bnb/withdraw", headers: tok(u),
+      payload: { address: testAddress(), amountBnb: "0.001" },
+    });
+    check("nothing configured => refused outright, no queued-forever request",
+      r.statusCode === 400, r.body);
+  }
+
+  fullyConfigureSigning();
+  config.payoutMode = "manual"; // <- the switch stays off
+  {
+    const u = await mkUser("bnbwd2");
+    const r = await app.inject({
+      method: "POST", url: "/wallet/bnb/withdraw", headers: tok(u),
+      payload: { address: testAddress(), amountBnb: "0.001" },
+    });
+    check("fully configured signing keys, but payoutMode MANUAL => still refused",
+      r.statusCode === 400, r.body);
+  }
+
+  config.payoutMode = "onchain";
+  gasCheckHook.override = NEVER_READY;
+  {
+    const u = await mkUser("bnbwd3");
+    const r = await app.inject({
+      method: "POST", url: "/wallet/bnb/withdraw", headers: tok(u),
+      payload: { address: testAddress(), amountBnb: "0.001" },
+    });
+    check("not enough BNB for the amount + its own network fee => refused, nothing held",
+      r.statusCode === 400, r.body);
+    const row = await sql.get<{ id: string }>(
+      "SELECT id FROM bnb_withdrawal_requests WHERE user_id = ?", u);
+    check("...and no request row was created at all", !row);
+  }
+
+  gasCheckHook.override = ALWAYS_READY;
+  {
+    const u = await mkUser("bnbwd4");
+    const dest = testAddress();
+    const r = await app.inject({
+      method: "POST", url: "/wallet/bnb/withdraw", headers: tok(u),
+      payload: { address: dest, amountBnb: "0.001" },
+    });
+    check("fully configured, onchain, enough gas => accepted", r.statusCode === 200, r.body);
+    check("status is 'pending' — signing is left to the background tick, never fired from the route",
+      r.json().status === "pending", r.body);
+    const row = await sql.get<{ status: string; address: string; amount_wei: string }>(
+      "SELECT status, address, amount_wei FROM bnb_withdrawal_requests WHERE user_id = ?", u);
+    check("a request row was created, targeting the destination the user asked for",
+      !!row && row.status === "pending" && row.address.toLowerCase() === dest.toLowerCase(), JSON.stringify(row));
+    check("the amount was converted to wei (18 decimals), not micro-USDT (6)",
+      row?.amount_wei === "1000000000000000", `${row?.amount_wei}`);
+
+    const second = await app.inject({
+      method: "POST", url: "/wallet/bnb/withdraw", headers: tok(u),
+      payload: { address: dest, amountBnb: "0.001" },
+    });
+    check("a second request while one is still in flight is refused (one in-flight request per user)",
+      second.statusCode === 409, second.body);
+  }
+
+  clearGate();
+  gasCheckHook.override = null;
+}
 
 // Put the economy back so a re-run and the other suites start clean.
 await setMiningSetting("usdtTopupEnabled", 0);

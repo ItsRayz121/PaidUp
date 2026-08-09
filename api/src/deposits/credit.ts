@@ -22,11 +22,16 @@ async function currentBlockHash(chain: string, blockNumber: number): Promise<str
 
 export type CreditOutcome = "credited" | "already_credited" | "reorged_out";
 
+// userId/amountMicro are populated only on "credited" — the caller (scanner.ts)
+// uses them to send a push AFTER its own transaction commits. This function is
+// always called from inside sql.tx (see scanner.ts), so it must never send the
+// push itself — a push can't be rolled back, same rule as every other
+// money-path notification in this codebase (push.ts's header).
 export async function recordObservedDeposit(
   observed: ObservedDeposit,
   confirmationsRequired: number,
   t: Pick<TxApi, "run" | "get"> = sql,
-): Promise<{ status: CreditOutcome; id: string }> {
+): Promise<{ status: CreditOutcome; id: string; userId?: string; amountMicro?: number }> {
   const existing = await t.get<{ id: string; status: string }>(
     `SELECT id, status FROM chain_deposits
      WHERE LOWER(chain) = LOWER(?) AND LOWER(tx_hash) = LOWER(?) AND COALESCE(log_index, -1) = ?`,
@@ -91,5 +96,5 @@ export async function recordObservedDeposit(
     ledgerId, now(), id,
   );
 
-  return { status: "credited", id };
+  return { status: "credited", id, userId: observed.userId, amountMicro: Number(observed.amountMicro) };
 }

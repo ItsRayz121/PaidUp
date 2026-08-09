@@ -1,0 +1,160 @@
+// Shared history-row builder for the wallet overhaul — used by /wallet and
+// the per-token pages (/wallet/usdt, /wallet/bnb, /wallet/rozi) so all four
+// screens agree on how a transaction is labelled, formatted and detailed.
+//
+// ⚠️ THIS IS A DISPLAY MERGE ONLY (guardrail #7). Nothing here writes
+// anything; it turns five already-fetched API responses into one sorted,
+// filterable list. Task/referral/adjustment rows stay in ROZI (the app-wide
+// convention) — only real USDT/BNB movement (withdrawals, refunds, top-ups,
+// BNB sends) renders in its own native currency, because that is what
+// actually moved.
+import {
+  StarIcon, WalletIcon, GiftIcon, MineIcon, BoltIcon, ChipIcon, SendIcon, ReceiveIcon,
+} from "@/components/icons";
+import {
+  type LedgerEntry, type RoziEntry, type Withdrawal, type BnbWithdrawal, type UsdtTopup, type UsdtRefund,
+} from "@/lib/api";
+import { formatRozi, usdtFromMicro, pointsToRoziMicro, pointsToUsdt, formatBnbWei } from "@/lib/format";
+
+export type IconComp = (p: { size?: number; className?: string }) => React.ReactElement;
+export type TokenFilter = "all" | "USDT" | "BNB" | "ROZI";
+export type KindFilter = "all" | "received" | "sent" | "reward" | "mining";
+
+export type Row = {
+  key: string;
+  label: string;
+  at: string;
+  token: "USDT" | "BNB" | "ROZI";
+  kind: Exclude<KindFilter, "all">;
+  amountText: string; // pre-formatted, signed, with unit
+  credit: boolean;
+  status?: LedgerEntry["status"];
+  Icon: IconComp;
+  detail: {
+    amountText: string;
+    statusText: string;
+    network?: string;
+    from?: string;
+    to?: string;
+    txHash?: string;
+  };
+};
+
+const HISTORY_PREVIEW = 2;
+
+// The two newest rows, plus anything still in flight — a pending/sending row
+// is real money in flight and must never disappear just because newer rows
+// piled on top of it (same rule the original wallet screen used).
+export function preview(rows: Row[]): Row[] {
+  const keep = new Set(rows.slice(0, HISTORY_PREVIEW).map((r) => r.key));
+  for (const r of rows) if (r.status === "pending" || r.status === "sending") keep.add(r.key);
+  return rows.filter((r) => keep.has(r.key));
+}
+
+export const STATUS_TEXT: Record<string, string> = {
+  earned: "Added", paid: "Completed", pending: "Waiting", sending: "Sending", rejected: "Not added",
+};
+
+export function unifyHistory(args: {
+  ledger: LedgerEntry[];
+  rozi: RoziEntry[];
+  withdrawals: Withdrawal[];
+  topups: UsdtTopup[];
+  refunds: UsdtRefund[];
+  bnb: BnbWithdrawal[];
+  t: (key: string, vars?: Record<string, string>) => string;
+}): Row[] {
+  const { ledger, rozi, withdrawals, topups, refunds, bnb, t } = args;
+
+  const roziIcon: Record<string, IconComp> = {
+    mining: MineIcon, rig_purchase: ChipIcon, transfer_in: ReceiveIcon,
+    transfer_out: SendIcon, transfer_fee: BoltIcon, conversion_burn: WalletIcon,
+    store_redemption: GiftIcon, bonus: GiftIcon, admin_adjustment: BoltIcon,
+  };
+  const roziKind: Record<string, Row["kind"]> = {
+    mining: "mining", transfer_in: "received", transfer_out: "sent",
+  };
+  const useNote = new Set(["rig_purchase", "store_redemption", "transfer_out"]);
+
+  // Task/referral/adjustment rows stay in ROZI. 'withdrawal' rows are
+  // excluded here and rebuilt below from /withdrawals, which carries the
+  // real USDT amount and tx hash the points ledger row does not.
+  const points: Row[] = ledger
+    .filter((e) => e.status !== "rejected" && e.kind !== "withdrawal")
+    .map((e) => {
+      const micro = pointsToRoziMicro(e.points);
+      const credit = micro >= 0;
+      const amountText = `${credit ? "+" : "−"}${formatRozi(Math.abs(micro))} ROZI`;
+      return {
+        key: `p:${e.id}`, label: e.label, at: e.at, token: "ROZI" as const, kind: "reward" as const,
+        amountText, credit, status: e.status, Icon: e.kind === "referral" ? GiftIcon : StarIcon,
+        detail: { amountText, statusText: STATUS_TEXT[e.status] ?? e.status },
+      };
+    });
+
+  const roziRows: Row[] = rozi.map((e) => {
+    const credit = e.amountMicro >= 0;
+    const amountText = `${credit ? "+" : "−"}${formatRozi(Math.abs(e.amountMicro))} ROZI`;
+    return {
+      key: `r:${e.id}`,
+      label: (useNote.has(e.source_type) && e.note) || t(`wallet.tx.${e.source_type}`),
+      at: e.created_at, token: "ROZI" as const, kind: roziKind[e.source_type] ?? "reward",
+      amountText, credit, Icon: roziIcon[e.source_type] ?? MineIcon,
+      detail: { amountText, statusText: "Completed" },
+    };
+  });
+
+  const withdrawalRows: Row[] = withdrawals.map((w) => {
+    const usdt = w.usdtAmount ? Number(w.usdtAmount) : pointsToUsdt(w.amount);
+    const statusKey = (w.status === "paid" ? "paid" : w.status === "rejected" ? "rejected"
+      : w.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
+    const amountText = `−${usdt.toFixed(2)} USDT`;
+    return {
+      key: `w:${w.id}`, label: t("wallet.tx.usdtWithdrawal"), at: w.at, token: "USDT" as const, kind: "sent" as const,
+      amountText, credit: false, status: statusKey, Icon: SendIcon,
+      detail: {
+        amountText, statusText: STATUS_TEXT[statusKey] ?? w.status, network: w.chain, to: w.address, txHash: w.txHash,
+      },
+    };
+  });
+
+  const topupRows: Row[] = topups.map((u) => {
+    const statusKey = (u.status === "confirmed" ? "paid" : u.status === "rejected" ? "rejected" : "pending") as LedgerEntry["status"];
+    const amountText = `+${usdtFromMicro(u.amountMicro).toFixed(2)} USDT`;
+    return {
+      key: `tu:${u.id}`, label: t("wallet.tx.usdtDeposit"), at: u.createdAt, token: "USDT" as const, kind: "received" as const,
+      amountText, credit: true, status: statusKey, Icon: ReceiveIcon,
+      detail: { amountText, statusText: STATUS_TEXT[statusKey] ?? u.status, network: u.chain, txHash: u.txHash },
+    };
+  });
+
+  const refundRows: Row[] = refunds.map((r) => {
+    const statusKey = (r.status === "paid" ? "paid" : r.status === "rejected" ? "rejected"
+      : r.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
+    const amountText = `−${usdtFromMicro(r.amountMicro - r.feeMicro).toFixed(2)} USDT`;
+    return {
+      key: `ru:${r.id}`, label: t("wallet.tx.usdtRefund"), at: r.createdAt, token: "USDT" as const, kind: "sent" as const,
+      amountText, credit: false, status: statusKey, Icon: SendIcon,
+      detail: {
+        amountText, statusText: STATUS_TEXT[statusKey] ?? r.status, network: r.chain, to: r.address,
+        txHash: r.txHash ?? undefined,
+      },
+    };
+  });
+
+  const bnbRows: Row[] = bnb.map((b) => {
+    const statusKey = (b.status === "paid" ? "paid" : b.status === "failed" ? "rejected"
+      : b.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
+    // formatBnbWei does the bigint-safe wei->BNB split — see its own note on
+    // why this never runs Number() on a raw wei string.
+    const amountText = `−${formatBnbWei(b.amountWei)}`;
+    return {
+      key: `bw:${b.id}`, label: t("wallet.tx.bnbWithdrawal"), at: b.at, token: "BNB" as const, kind: "sent" as const,
+      amountText, credit: false, status: statusKey, Icon: SendIcon,
+      detail: { amountText, statusText: STATUS_TEXT[statusKey] ?? b.status, network: "bep20", to: b.address, txHash: b.txHash },
+    };
+  });
+
+  return [...points, ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows]
+    .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+}

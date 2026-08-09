@@ -19,6 +19,7 @@ import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { custodyEnabled } from "../custody.ts";
 import { tryAutoSettleRefund } from "../autoRefund.ts";
 import { getGasFeeRate, gasFeeMicro } from "../fees.ts";
+import { sendPushToUser } from "../push.ts";
 import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
@@ -754,14 +755,22 @@ export async function miningRoutes(app: FastifyInstance) {
     // signer are actually turned on — see autoRefund.ts and payout.ts.
     const auto = await tryAutoSettleRefund(id);
     if (auto.settled === true) {
+      // autoRefund.ts sends its own "paid" push — a second "submitted" one
+      // here would be redundant for money that already landed.
       return { ok: true, id, status: "paid", txHash: auto.txHash, balanceMicro, feeMicro, netMicro: micro - feeMicro };
     }
     if (auto.settled === "processing") {
       // Signed by the user's own address (payoutRelay.ts) — a few blocks
       // away from 'paid', not instant, but not the manual queue either.
+      void sendPushToUser(userId, {
+        title: "Refund submitted", body: "We're sending your USDT back now.", url: "/wallet/usdt",
+      });
       return { ok: true, id, status: "sending", balanceMicro, feeMicro, netMicro: micro - feeMicro };
     }
 
+    void sendPushToUser(userId, {
+      title: "Refund submitted", body: "We got your request and will send it back soon.", url: "/wallet/usdt",
+    });
     return { ok: true, id, status: "pending", balanceMicro, feeMicro, netMicro: micro - feeMicro };
   }));
 

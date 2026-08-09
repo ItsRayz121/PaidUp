@@ -17,6 +17,7 @@ import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { ArrowRightIcon, ProfileIcon, LockIcon, CheckIcon } from "@/components/icons";
 import { ConnectWallet } from "@/components/ConnectWallet";
+import { NotificationsCard } from "@/components/NotificationsCard";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -409,6 +410,10 @@ export default function ProfileSettingsPage() {
       <Button onClick={onSave} disabled={!canSave || busy} full>
         {busy ? t("settings.saving") : t("settings.save")}
       </Button>
+
+      {/* Renders nothing if push can't work here (no VAPID keys, unsupported
+          browser) — see NotificationsCard's own header for why. */}
+      <NotificationsCard heading={t("settings.notifications")} />
     </div>
   );
 }

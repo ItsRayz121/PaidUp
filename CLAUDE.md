@@ -1136,6 +1136,132 @@ These override convenience or speed at every step:
     Only the third (still "Sending") was actually broken; recorded here so
     it isn't mistaken for a bigger loss than it was.
 
+- **THE WALLET SCREEN BECOMES A REAL WALLET: DEPOSIT/WITHDRAW, ONE USDT
+  TOTAL (AVAILABLE+LOCKED), UNIFIED HISTORY, A REAL BNB WITHDRAW (founder,
+  2026-08-08, third pass).** A detailed spec asked `/wallet` to read like an
+  ordinary crypto wallet app. Verified: `npm run test:usdt` is now **85**
+  checks (was 72, +4 balance-math +9 BNB withdraw), all other suites
+  unchanged and green (182 re-run: usdt+withdrawcontrols+autowithdraw+
+  autorefund+payoutrelay+deposits, all pass); api+web typecheck, eslint, web
+  production build all clean.
+  - ⚠️ **THIS REVERSES THE 2026-07-30/08-03 "ROZI-ONLY" WALLET DISPLAY
+    DECISIONS, ON THIS ONE SCREEN, DELIBERATELY.** `/wallet`'s headline is
+    USDT again: **Total Balance = real deposited USDT (`usdt_ledger`) +
+    withdrawable task/referral points, at the existing real 1000pts=$1
+    rate** — confirmed with the founder before building, because it looks
+    like the exact thing guardrail #7 forbids and isn't: guardrail #7 is
+    about **ROZI**, which still has no fixed rate and is never folded into
+    this number. Points already convert to USDT at a real, fixed rate used
+    at actual payout — folding them into one wallet figure is not a new
+    liability, just the display the founder wants back on this one screen.
+    ROZI's own balance still reads "Coming soon" on `/wallet` (that decision
+    stands) — only the USDT headline reverses.
+  - **Available / Locked is a derived read, not a new ledger.**
+    `usdtAvailableMicro = usdtBalanceMicroOf(user) + (points ≥
+    minWithdrawPoints ? pointsAsUsdt : 0)`; `usdtLockedMicro` is the
+    points-derived half otherwise. No new table, no unlock event — crossing
+    the $1 minimum flips Locked to Available on the very next read, for
+    free. `GET /wallet/balance` (`api/src/routes/app.ts`) carries the three
+    new fields; the real `usdt_ledger` balance is unconditionally Available
+    (it has no locking concept today, and none was invented).
+  - **A real BNB Withdraw, not just Deposit** — confirmed explicitly with the
+    founder, since there was no existing capability for a user to pull BNB
+    back out (it's gas for the user's own relay address, per the 2026-08-08
+    "gas is the user's own responsibility" entry above). `bnbWithdraw.ts`
+    reuses the exact signing primitive the existing USDT refund relay
+    already uses (`deriveChildPrivateKey`, `payoutRelay.ts`) — a plain
+    native-value `sendTransaction`, not an ERC-20 transfer, **zero treasury
+    involvement and zero ledger entry**: the balance moved is the address's
+    own live on-chain balance, so a failed job needs no compensating credit,
+    because nothing was ever debited internally. New table
+    `bnb_withdrawal_requests`, gated by a **partial unique index allowing
+    only one in-flight request per user** (the amount check is a live
+    balance read, so two concurrent requests could otherwise both pass it).
+    ⚠️ **No manual fallback exists for this route, unlike USDT** — a BNB send
+    can only be signed by the relay, so `POST /wallet/bnb/withdraw` refuses
+    outright (400) rather than queue a request when `PAYOUT_MODE` isn't
+    `onchain`, instead of accepting one that could sit forever.
+  - ⚠️ **Caught in review before landing: `advanceBnbWithdrawal` was missing
+    the exact "load-bearing check" `payoutRelay.e2e.ts` exists to prove** —
+    `relayAvailable()` alone doesn't know about `PAYOUT_MODE`, so a job
+    could have signed and broadcast for real even with the founder's switch
+    left on `manual`, if every key happened to be configured. Fixed to match
+    `advanceRelayJob`'s own guard exactly, with the identical regression
+    test (`fully configured signing keys, but payoutMode MANUAL => still
+    refused`). **Also caught**: the route originally kicked off signing
+    synchronously from inside the request handler (`void
+    advanceBnbWithdrawal(id)`), unlike every other relay path in this
+    codebase, which leaves that entirely to the background tick — fixed to
+    match, both because a request handler reaching the real chain over the
+    network is a real-world latency/reliability smell this codebase avoids
+    everywhere else, and because it's what makes the e2e suite provable
+    without ever touching BSC (same convention `payoutRelay.e2e.ts`'s header
+    states outright).
+  - **Unified History, still a display merge (guardrail #7's own pattern,
+    extended).** `wallet/page.tsx`'s existing `unify()` — already documented
+    as "two ledgers, interleaved by time, nothing written" — now folds in
+    THREE more sources: `/withdrawals` (real USDT payouts, native amount +
+    tx hash, replacing the ROZI-converted row the points ledger alone would
+    have shown), `GET /usdt`'s `topups`/`refunds` arrays, and the new BNB
+    withdrawals. Extracted into `web/src/lib/walletHistory.ts` +
+    `components/{TxDetailSheet,HistoryList}.tsx` so `/wallet`,
+    `/wallet/usdt`, `/wallet/bnb` and `/wallet/rozi` all agree on how a row
+    is labelled and detailed — one function, four screens, not four copies.
+    Task/referral/adjustment rows are UNCHANGED (still ROZI, the app-wide
+    convention) — only rows that are real USDT/BNB movement switch to their
+    native currency, because that's what actually moved.
+  - **Deposit/Withdraw buttons are a relabel, not new plumbing.** The
+    existing Send/Receive chooser-sheet mechanism (ROZI transfer vs. real
+    USDT flows, founder 2026-08-05) is untouched — only the trigger labels
+    changed (Send→Withdraw, Receive→Deposit, same up/down-arrow icons,
+    which already matched the new words) — plus one new row for BNB
+    withdraw in the Withdraw sheet. Nothing about ROZI peer-to-peer transfer
+    or the existing USDT cash-out/refund/deposit flows was removed or
+    rebuilt.
+  - **New dedicated token pages**: `/wallet/usdt` (Available/Locked/Total,
+    deposit address + QR + copy, USDT-only history), `/wallet/bnb` (live
+    balance, same deposit address as USDT since it's the same chain, the
+    real withdraw form, BNB-only history), `/wallet/rozi` (mining balance,
+    links to the existing `/mine/send`/`/mine/receive`, ROZI-only history —
+    `/mine` remains ROZI's real home and is untouched). QR codes render
+    client-side (new `qrcode` npm dependency, `components/QrCode.tsx`) — no
+    network call, so a deposit address never leaves the browser to render.
+  - **Notifications**: added, using the existing `sendPushToUser`
+    box-after-commit pattern, for deposit-credited (both the on-chain and
+    manual-confirm paths), USDT withdrawal/refund submitted, and all three
+    BNB withdrawal states — all low-frequency, high-value events. **Per-task
+    and per-mining-tick push notifications were deliberately NOT added**,
+    confirmed with the founder first: the existing design is stated as
+    "sent on exactly four events, never marketing" specifically to avoid
+    notification fatigue, and task/mining credits fire far more often than
+    that. A "Push Notifications" ON/OFF row was added to
+    `/profile/settings`, reusing `NotificationsCard`'s existing
+    subscribe/unsubscribe logic — no new permission-request code.
+  - ⚠️ **UNRELATED PRE-EXISTING BUG FOUND AND FIXED WHILE VERIFYING THIS ON A
+    FRESH DATABASE**: `db.ts`'s migration chain had `ALTER TABLE rigs ADD
+    COLUMN IF NOT EXISTS base_cost_usdt BIGINT` sitting in `MIGRATIONS`
+    (runs 2nd), while `rigs` itself is created in `MINING_SCHEMA` (runs
+    3rd) — `initDb()` would fail outright on a genuinely fresh database
+    (`relation "rigs" does not exist`), before the API could serve a single
+    request. Invisible on every developer's machine because nobody's local
+    `data/pg` had ever been fresh since that line was added — it was always
+    already-migrated. This would have broken a brand-new Railway database
+    or a new contributor's first `npm run dev` identically. Moved the
+    `ALTER TABLE` to sit right after `rigs` is created in `MINING_SCHEMA`.
+    Confirmed fixed by deleting the local `data/pg` (git-ignored, disposable)
+    and re-running the entire test suite from an empty database — 20 suites,
+    every one green, which is a stronger check than existed before this pass
+    (nobody had exercised a truly fresh boot before).
+  - **Scope cuts, stated up front:** no generic blockchain-explorer indexer
+    for arbitrary external wallet activity (the user's derived address is a
+    custody/relay address this system controls and already watches for
+    everything it originates — deposits, withdrawals, refunds, BNB sends —
+    each with a real tx hash; a full external-chain indexer is a separate,
+    much larger project). No admin-configurable ROZI valuation (the
+    request's own spec says not to hard-code it yet) — the Total Balance
+    formula has exactly one place a future ROZI-valuation term would slot
+    in.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

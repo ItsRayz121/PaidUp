@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { parseEther } from "viem";
 import { sql, now, newId, balanceOf, postLedger, getSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser, issueCode, consumeCode } from "../auth.ts";
@@ -11,7 +12,8 @@ import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 import { tryAutoSettle } from "../autoWithdraw.ts";
 import { getGasFeeRate, gasFeePoints } from "../fees.ts";
-import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
+import { relayAvailable, hasEnoughGas, requiredGasWei } from "../payoutRelay.ts";
+import { sendPushToUser } from "../push.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -272,14 +274,23 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     // the request sits in the same manual queue as always.
     const auto = await tryAutoSettle(id);
     if (auto.settled === true) {
+      // autoWithdraw.ts sends its own "paid" push — sending a second
+      // "submitted" one here would be a redundant notification for money
+      // that already landed.
       return { request: { id, amount: amountPoints, chain, address, status: "paid", txHash: auto.txHash, usdt: auto.usdt } };
     }
     if (auto.settled === "processing") {
       // Routed through the user's own derived address (payoutRelay.ts) — a
       // few blocks away from 'paid', not instant, but not the manual queue.
+      void sendPushToUser(userId, {
+        title: "Withdrawal submitted", body: "We're sending your USDT now.", url: "/wallet",
+      });
       return { request: { id, amount: amountPoints, chain, address, status: "sending" } };
     }
 
+    void sendPushToUser(userId, {
+      title: "Withdrawal submitted", body: "We got your request and will send it soon.", url: "/wallet",
+    });
     return { request: { id, amount: amountPoints, chain, address, status: "pending" } };
   }));
 
@@ -466,6 +477,90 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
         usdtAmount: r.usdt_amount ?? undefined, feePoints: (r.fee_points as number) ?? 0,
         addressVerified: Boolean(r.address_verified),
+      })),
+    };
+  }));
+
+  // ---- BNB withdraw (wallet overhaul) ---------------------------------------
+  //
+  // A user pulling their OWN gas balance back out of their derived custody
+  // address. ZERO treasury involvement, ZERO ledger entry — see bnbWithdraw.ts's
+  // header. There is no fallback path when the relay isn't wired up: unlike
+  // USDT (which has the old direct-treasury payout.ts path), BNB has never had
+  // any other way to leave, so this is refused outright rather than queued.
+  const bnbWithdrawSchema = z.object({
+    address: z.string().min(1).max(120),
+    amountBnb: z.string().trim().min(1).max(40),
+  });
+
+  app.post("/wallet/bnb/withdraw", guard(async (userId, req, reply) => {
+    const parsed = bnbWithdrawSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount and wallet address." });
+    const { address: addressRaw, amountBnb } = parsed.data;
+
+    // No manual fallback exists for this route, unlike USDT (which always has
+    // a staff-sent path) — a BNB withdrawal is signed from the user's own
+    // derived address, and only the on-chain relay can do that. Refuse
+    // outright rather than accept a request that would sit forever: see the
+    // matching guard inside advanceBnbWithdrawal (bnbWithdraw.ts).
+    if (!relayAvailable("bep20") || config.payoutMode !== "onchain") {
+      return reply.code(400).send({ error: "Sending BNB out is not available yet." });
+    }
+
+    const addrCheck = validateAddress("bep20", addressRaw);
+    if (!addrCheck.ok) return reply.code(400).send({ error: addrCheck.error });
+    const address = addressRaw.trim();
+
+    let amountWei: bigint;
+    try {
+      amountWei = parseEther(amountBnb);
+      if (amountWei <= 0n) throw new Error("not positive");
+    } catch {
+      return reply.code(400).send({ error: "Enter a valid BNB amount." });
+    }
+
+    const gas = await hasEnoughGas(userId, "bep20");
+    if (amountWei + requiredGasWei() > gas.balanceWei) {
+      return reply.code(400).send({
+        error: "You do not have enough BNB to cover this amount and its own network fee.",
+        walletAddress: gas.address,
+      });
+    }
+
+    const id = newId();
+    try {
+      await sql.run(
+        `INSERT INTO bnb_withdrawal_requests (id, user_id, chain, address, amount_wei, status, created_at)
+         VALUES (?,?, 'bep20', ?, ?, 'pending', ?)`,
+        id, userId, address, amountWei.toString(), now(),
+      );
+    } catch {
+      // The partial unique index refuses a second in-flight request per user.
+      return reply.code(409).send({ error: "You already have a BNB withdrawal in progress." });
+    }
+
+    void sendPushToUser(userId, {
+      title: "BNB withdrawal submitted", body: "We're sending your BNB now.", url: "/wallet/bnb",
+    });
+
+    // Deliberately NOT kicked off synchronously here — signing reaches the
+    // real chain over the network, and every other relay path in this
+    // codebase (payoutRelay.ts) leaves that entirely to the background tick
+    // (server.ts's tickBnbWithdrawals) rather than firing it from inside a
+    // request handler. Same reason: it keeps the route itself free of
+    // network calls, and it is what lets the e2e suite prove the decision
+    // logic here without ever reaching BSC (see payoutRelay.e2e.ts's header).
+    return { ok: true, id, status: "pending" };
+  }));
+
+  app.get("/wallet/bnb/withdrawals", guard(async (userId) => {
+    const rows = await sql.all<Record<string, unknown>>(
+      "SELECT * FROM bnb_withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC", userId,
+    );
+    return {
+      requests: rows.map((r) => ({
+        id: r.id, address: r.address, amountWei: r.amount_wei, status: r.status,
+        txHash: r.tx_hash ?? undefined, at: r.created_at, completedAt: r.completed_at ?? undefined,
       })),
     };
   }));

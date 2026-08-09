@@ -1,12 +1,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { sql, now, newId, balanceOf, getSetting } from "../db.ts";
+import { sql, now, newId, balanceOf, getSetting, usdtBalanceMicroOf, usdtToMicro } from "../db.ts";
 import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import { getGasFeeRate } from "../fees.ts";
 import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
+import { pointsToUsdt } from "../payout.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -139,8 +140,30 @@ export async function appRoutes(app: FastifyInstance) {
     // waiting for the user to pick one.
     const relayReady = relayAvailable("bep20");
     const gas = relayReady ? await hasEnoughGas(userId, "bep20") : null;
+    const points = await balanceOf(userId);
+    // ---- Wallet Total Balance (founder, wallet overhaul) --------------------
+    // Reverses the 2026-07-30/08-03 "ROZI-only" display decisions: the wallet's
+    // headline number is USDT again, and now folds in withdrawable task/referral
+    // points at the real, existing rate (pointsToUsdt — the SAME conversion used
+    // at actual payout time, payout.ts) alongside the real deposited USDT
+    // (usdt_ledger). This is NOT the ROZI case guardrail #7 forbids: ROZI has no
+    // fixed rate and is never part of this number.
+    //
+    // Nothing new is written here — both halves are the existing SUM(ledger)
+    // reads. "Locked" is the entire points-derived half while the account is
+    // below the withdrawal minimum, and "Available" the moment it clears — a
+    // pure re-read on every request, so crossing the threshold "unlocks" it
+    // with zero extra bookkeeping and no unlock event to miss.
+    const pointsAsUsdtMicro = usdtToMicro(Number(pointsToUsdt(points)));
+    const canWithdrawNow = points >= config.minWithdrawPoints;
+    const depositUsdtMicro = await usdtBalanceMicroOf(userId);
+    const usdtAvailableMicro = depositUsdtMicro + (canWithdrawNow ? pointsAsUsdtMicro : 0);
+    const usdtLockedMicro = canWithdrawNow ? 0 : pointsAsUsdtMicro;
     return {
-      points: await balanceOf(userId),
+      points,
+      usdtAvailableMicro,
+      usdtLockedMicro,
+      usdtTotalMicro: usdtAvailableMicro + usdtLockedMicro,
       minWithdrawPoints: config.minWithdrawPoints,
       withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
       // The gas fee (founder, 2026-08-08; DROPPED same day, second pass, when

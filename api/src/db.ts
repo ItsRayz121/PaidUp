@@ -769,17 +769,6 @@ const MIGRATIONS = `
   CREATE INDEX IF NOT EXISTS idx_usdt_topups_status ON usdt_topups(status, created_at);
   CREATE INDEX IF NOT EXISTS idx_usdt_topups_user ON usdt_topups(user_id, created_at);
 
-  -- What a rig costs in real money. NULL means "cannot be bought with USDT",
-  -- and that is the shipped default for every rig on purpose.
-  --
-  -- ⚠️ SETTING THIS PRICE PUBLISHES AN IMPLIED ROZI EXCHANGE RATE. If a rig
-  -- costs 100 ROZI or $10, every user can divide, and $0.10 per ROZI is the
-  -- number they will repeat to their friends — for a token we say has no price
-  -- and cannot be cashed out. Price the USDT option WELL ABOVE what the ROZI
-  -- price implies (real money buys convenience, not a discount), or leave it
-  -- NULL. This is a founder decision each time, which is why nothing is seeded.
-  ALTER TABLE rigs ADD COLUMN IF NOT EXISTS base_cost_usdt BIGINT;
-
   -- Per-user deposit addresses (CUSTODY_SPEC.md § 5, step 1 — READ-ONLY: this
   -- table only records an address that was shown to a user. Nothing sweeps,
   -- nothing auto-credits; a deposit made to one of these still gets confirmed
@@ -1015,6 +1004,41 @@ const MIGRATIONS = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_relay_jobs_request
     ON payout_relay_jobs(purpose, request_id);
   CREATE INDEX IF NOT EXISTS idx_payout_relay_jobs_status ON payout_relay_jobs(status, created_at);
+
+  -- BNB withdraw (wallet overhaul). Lets a user pull their OWN gas balance out
+  -- of their derived custody address — reuses the exact signing primitive
+  -- payoutRelay.ts's refund path already uses (deriveChildPrivateKey), but this
+  -- is a native-value transfer, not an ERC-20 transfer, so it is a separate,
+  -- simpler single-phase job, not a payout_relay_jobs row (that table's
+  -- amount_micro column is USDT-scaled at 6dp; BNB needs 18dp wei).
+  --
+  -- ⚠️ NO LEDGER ENTRY, ANYWHERE, FOR THIS TABLE. Unlike every other request
+  -- table in this file, nothing here is ever held by a debit — there is
+  -- nothing TO hold. The balance being withdrawn is the address's live
+  -- on-chain balance, read fresh at request time and again right before
+  -- signing (payoutRelay.ts's requireGasOrFail pattern). A failed job needs no
+  -- compensating credit, because nothing was ever taken out of an internal
+  -- balance in the first place.
+  CREATE TABLE IF NOT EXISTS bnb_withdrawal_requests (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    chain        TEXT NOT NULL,
+    address      TEXT NOT NULL,
+    amount_wei   TEXT NOT NULL, -- decimal string; wei doesn't fit BIGINT for larger balances
+    status       TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','sending','paid','failed')),
+    tx_hash      TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    created_at   TEXT NOT NULL,
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_bnb_withdrawals_user ON bnb_withdrawal_requests(user_id, created_at);
+  -- At most one request in flight per user at a time — the amount is computed
+  -- from a live balance read, so two concurrent requests could otherwise both
+  -- pass their own "enough balance" check and race to spend the same BNB.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_bnb_withdrawals_inflight
+    ON bnb_withdrawal_requests(user_id) WHERE status IN ('pending','sending');
 `;
 
 // ---------------------------------------------------------------------------
@@ -1144,6 +1168,29 @@ const MINING_SCHEMA = `
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, rig_id)
   );
+
+  -- What a rig costs in real money. NULL means "cannot be bought with USDT",
+  -- and that is the shipped default for every rig on purpose.
+  --
+  -- ⚠️ SETTING THIS PRICE PUBLISHES AN IMPLIED ROZI EXCHANGE RATE. If a rig
+  -- costs 100 ROZI or $10, every user can divide, and $0.10 per ROZI is the
+  -- number they will repeat to their friends — for a token we say has no price
+  -- and cannot be cashed out. Price the USDT option WELL ABOVE what the ROZI
+  -- price implies (real money buys convenience, not a discount), or leave it
+  -- NULL. This is a founder decision each time, which is why nothing is seeded.
+  --
+  -- ⚠️ MUST LIVE HERE, AFTER rigs IS CREATED ABOVE — it used to sit in
+  -- MIGRATIONS (which runs BEFORE this MINING_SCHEMA block; see the exec
+  -- order at the bottom of this file), an ALTER TABLE rigs on a table that
+  -- did not exist yet. Harmless on every developer's already-migrated local
+  -- database (the table was always already there from an earlier run), which
+  -- is exactly why nobody had hit it — but a genuinely FRESH database (a new
+  -- deploy, a new contributor's first npm run dev, CI) ran SCHEMA then
+  -- MIGRATIONS then MINING_SCHEMA in order and failed at boot with
+  -- relation "rigs" does not exist, before a single route could serve a
+  -- request. Found while proving the wallet-overhaul migration runs clean
+  -- against a fresh database — fixed here, not papered over.
+  ALTER TABLE rigs ADD COLUMN IF NOT EXISTS base_cost_usdt BIGINT;
 
   -- Temporary multipliers. kind='task' (a credited survey), 'ad' (a watched
   -- rewarded video), 'points' (bought with the CASH currency — a Points sink,
