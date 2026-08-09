@@ -216,7 +216,6 @@ export default function WithdrawPage() {
           <WalletIcon size={20} className="shrink-0 text-brand" />
           {t("withdraw.bep20WalletAddress")}
         </label>
-        <p className="mt-1 text-sm text-muted">{t("withdraw.addressHelp")}</p>
         <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
           autoCapitalize="none" autoCorrect="off" spellCheck={false}
           placeholder={t("withdraw.addrPlaceholderEvm")}

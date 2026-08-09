@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, Button, SectionTitle } from "@/components/ui";
+import { Card, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { ArrowRightIcon, CopyIcon, CheckIcon } from "@/components/icons";
 import { UsdtLogo } from "@/components/tokenIcons";
@@ -43,7 +43,7 @@ export default function UsdtWalletPage() {
   const rows = unifyHistory({
     ledger: led.data?.entries ?? [], rozi: [], withdrawals: withdrawals.data?.requests ?? [],
     topups: usdt.data?.topups ?? [], refunds: usdt.data?.refunds ?? [], bnb: [], t,
-  }).filter((r) => r.token === "USDT");
+  }).filter((r) => r.token === "USDT").slice(0, 4);
 
   function copyAddress() {
     if (!address) return;
@@ -91,8 +91,6 @@ export default function UsdtWalletPage() {
           </Card>
         </section>
       )}
-
-      <Button href="/wallet/withdraw" variant="primary">{t("wallet.withdraw")}</Button>
 
       <section>
         <SectionTitle>{t("wallet.usdt.transactions")}</SectionTitle>

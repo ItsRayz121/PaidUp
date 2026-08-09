@@ -40,7 +40,7 @@ export default function BnbWalletPage() {
   const rows = unifyHistory({
     ledger: [], rozi: [], withdrawals: [], topups: [], refunds: [],
     bnb: bnbWithdrawals.data?.requests ?? [], t,
-  });
+  }).slice(0, 4);
 
   function copyAddress() {
     if (!depositAddress) return;

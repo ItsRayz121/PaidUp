@@ -32,7 +32,7 @@ export default function RoziWalletPage() {
   const transfersOn = Boolean(mining.data?.transfersEnabled);
   const rows = unifyHistory({
     ledger: [], rozi: rozi.data?.entries ?? [], withdrawals: [], topups: [], refunds: [], bnb: [], t,
-  });
+  }).slice(0, 4);
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">

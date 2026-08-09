@@ -21,8 +21,7 @@ import { createContext, useCallback, useContext } from "react";
 const copy: Record<string, string> = {
   "wallet.chooser.usdt.withdrawSub": "Withdraw your available USDT",
   "wallet.chooser.bnb.withdrawSub": "Send BNB to your wallet address",
-  "withdraw.bep20WalletAddress": "Your BNB Chain USDT wallet address",
-  "withdraw.addressHelp": "Paste the BEP20 address where you want to receive USDT.",
+  "withdraw.bep20WalletAddress": "Withdrawal address",
   "withdraw.savedAddressReady": "Saved address ready",
   "withdraw.newAddressReady": "New address ready",
   "withdraw.addressAutoSave": "A valid new address is saved automatically after you withdraw.",
@@ -394,7 +393,7 @@ const copy: Record<string, string> = {
   "withdraw.noWallet.body": "We need to know where to send your money before you can ask for it.",
   "withdraw.noWallet.cta": "Add a payout wallet",
   "withdraw.yourWalletAddress": "Your USDT wallet address",
-  "withdraw.addrPlaceholderEvm": "0x… (42 characters)",
+  "withdraw.addrPlaceholderEvm": "Paste address (0x…)",
   "withdraw.addrPlaceholderAptos": "0x… (Aptos)",
   "withdraw.addrInvalid": "That does not look like a {label} address.",
   "withdraw.sendRightNetwork":
