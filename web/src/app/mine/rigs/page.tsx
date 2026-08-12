@@ -131,6 +131,13 @@ export default function RigsPage() {
                           ? `${r.nextPower?.toLocaleString()}`
                           : `${r.power.toLocaleString()} → ${r.nextPower?.toLocaleString()}`}
                       </strong>
+                      {r.level > 0 && r.power > 0 && r.nextPower !== null && (
+                        <span className="num ms-1.5 text-xs font-semibold text-success">
+                          {t("rigs.pctIncrease", {
+                            pct: String(Math.round(((r.nextPower - r.power) / r.power) * 100)),
+                          })}
+                        </span>
+                      )}
                     </p>
 
                     <div className="flex items-center gap-3">

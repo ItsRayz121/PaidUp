@@ -781,7 +781,11 @@ const copy: Record<string, string> = {
   "rigs.maxed": "Fully upgraded",
   "rigs.bought": "Done. Your machine is now level {level}.",
   "rigs.treadmill":
-    "Every level costs more than the last, and gives a little less speed for the price. Buy the cheap machines first.",
+    "Every level costs more than the last, and gives a little less speed for the price. Buy the cheap machines first. Machines never expire or wear out — an upgrade is permanent.",
+  // The number version of the arrow ("450 → 540") on the list card and the
+  // detail page's "After this upgrade" tile — the arrow alone still leaves a
+  // reader doing the subtraction themselves (audit 2026-08-12).
+  "rigs.pctIncrease": "+{pct}%",
   // ---- Send ROZI (wallet to wallet) ----
   // A TRANSFER, not a sale. No string here may suggest a price, a buyer, or that
   // we will find someone to trade with — that is the MINING_SPEC.md § 7 line, and

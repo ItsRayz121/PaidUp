@@ -96,6 +96,13 @@ export default function RigDetailPage() {
           <p className="num mt-1 text-2xl font-extrabold text-brand">
             {maxed ? "—" : r.nextPower?.toLocaleString()}
           </p>
+          {!maxed && r.level > 0 && r.power > 0 && r.nextPower !== null && (
+            <p className="num mt-0.5 text-xs font-semibold text-success">
+              {t("rigs.pctIncrease", {
+                pct: String(Math.round(((r.nextPower - r.power) / r.power) * 100)),
+              })}
+            </p>
+          )}
         </div>
       </Card>
 
