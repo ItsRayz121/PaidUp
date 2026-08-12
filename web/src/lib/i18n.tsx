@@ -744,7 +744,9 @@ const copy: Record<string, string> = {
   "mine.boost.task.title": "Finish a survey",
   "mine.boost.task.body": "Get paid, and mine faster for 2 days.",
   "mine.boost.ad.title": "Watch an ad",
-  "mine.boost.ad.body": "Mine {pct}% faster for {hours} hours.",
+  // Anchored to the user's actual current speed so "{pct}% faster" has a
+  // number to be faster THAN, instead of floating on its own (audit 2026-08-12).
+  "mine.boost.ad.body": "You mine at {speed} now. Watch an ad to add {pct}% for {hours} hours.",
   "mine.boost.ad.left": "{n} left today",
   "mine.boost.ad.cta": "Watch",
   "mine.ad.done": "Done. You now mine {pct}% faster for {hours} hours.",

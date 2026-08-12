@@ -344,9 +344,11 @@ export default function MinePage() {
               <div className="min-w-0 flex-1">
                 <p className="font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>
                 <p className="text-sm text-muted">
-                  {t("mine.boost.ad.body")
-                    .replace("{pct}", String(s.ads.boostPct))
-                    .replace("{hours}", String(s.ads.boostHours))}
+                  {t("mine.boost.ad.body", {
+                    speed: s.hashrate.toLocaleString(),
+                    pct: String(s.ads.boostPct),
+                    hours: String(s.ads.boostHours),
+                  })}
                 </p>
                 <p className="mt-0.5 text-xs text-muted">
                   {t("mine.boost.ad.left").replace("{n}", String(adsLeft))}
