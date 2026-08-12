@@ -225,7 +225,7 @@ export default function WalletPage() {
         {historyLoading ? <Loading /> : historyError ? (
           <ErrorState message={historyError} onRetry={() => { led.reload(); rozi.reload(); }} />
         ) : filtered.length === 0 ? (
-          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
+          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.money")} />
         ) : (
           <HistoryList rows={visible} onOpen={setOpenTx} />
         )}

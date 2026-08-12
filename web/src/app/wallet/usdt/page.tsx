@@ -97,7 +97,7 @@ export default function UsdtWalletPage() {
         {led.loading ? <Loading /> : led.error ? (
           <ErrorState message={led.error} onRetry={led.reload} />
         ) : rows.length === 0 ? (
-          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.generic")} />
+          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.usdt")} />
         ) : (
           <HistoryList rows={rows} onOpen={setOpenTx} />
         )}

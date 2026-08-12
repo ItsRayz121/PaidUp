@@ -86,7 +86,7 @@ export default function RoziWalletPage() {
         {rozi.loading ? <Loading /> : rozi.error ? (
           <ErrorState message={rozi.error} onRetry={rozi.reload} />
         ) : rows.length === 0 ? (
-          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
+          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.roziTransfers")} />
         ) : (
           <HistoryList rows={rows} onOpen={setOpenTx} />
         )}

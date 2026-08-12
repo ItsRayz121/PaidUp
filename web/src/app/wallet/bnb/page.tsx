@@ -91,7 +91,7 @@ export default function BnbWalletPage() {
         {bnbWithdrawals.loading ? <Loading /> : bnbWithdrawals.error ? (
           <ErrorState message={bnbWithdrawals.error} onRetry={bnbWithdrawals.reload} />
         ) : rows.length === 0 ? (
-          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.generic")} />
+          <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.bnb")} />
         ) : (
           <HistoryList rows={rows} onOpen={setOpenTx} />
         )}

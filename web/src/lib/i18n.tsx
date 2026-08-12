@@ -240,6 +240,13 @@ const copy: Record<string, string> = {
   // was mostly mined — so the history appeared to contradict the balance.
   "wallet.history.sub": "Everything that came in and went out.",
   "wallet.noHistoryTitle": "No history yet",
+  // ⚠️ THIS KEY IS FOR /mine ONLY (rewardsHistory — mining + task + referral
+  // ROZI). /wallet and /wallet/rozi show unifyHistory() instead, which is
+  // real money movement only (guardrail in walletHistory.ts's header) — mining
+  // and finishing a task never add a row there, so this exact sentence on
+  // those two screens would tell a user to do something that changes nothing
+  // on the page they're looking at. Use wallet.noHistoryBody.money /
+  // .roziTransfers there instead.
   "wallet.noHistoryBody": "Start mining or finish a task to see your first ROZI here.",
   // The history opens short — the last two things that happened — and the rest
   // is one tap away. It counts what is hidden ("See all 14") rather than saying
@@ -586,10 +593,15 @@ const copy: Record<string, string> = {
   // cash-out promise for a token the road map deliberately refuses to price.
   "wallet.rozi.send": "Send",
   "wallet.rozi.receive": "Receive",
-  // Generic empty-history copy for the per-token pages — wallet.noHistoryBody
-  // names ROZI specifically (right for the main wallet screen, wrong on a
-  // USDT- or BNB-only view).
-  "wallet.noHistoryBody.generic": "Nothing here yet.",
+  // Per-screen empty-history copy for unifyHistory() views (real money
+  // movement only — see walletHistory.ts's header). Each names what would
+  // actually make a row appear on THAT screen, so the sentence stays true
+  // instead of pointing at an action (mining, finishing a task) that fills a
+  // different list entirely.
+  "wallet.noHistoryBody.money": "Your deposits, withdrawals and transfers will show up here.",
+  "wallet.noHistoryBody.roziTransfers": "Send or receive ROZI to see it here. Mining and task ROZI show on the Mine tab.",
+  "wallet.noHistoryBody.usdt": "Your USDT deposits and withdrawals will show up here.",
+  "wallet.noHistoryBody.bnb": "Your BNB deposits and withdrawals will show up here.",
   // ---- Transaction detail sheet ---------------------------------------------
   "tx.amount": "Amount",
   "tx.status": "Status",
