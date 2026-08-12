@@ -359,10 +359,15 @@ export type Referrals = {
 };
 export const fetchReferrals = () => apiFetch<Referrals>("/referrals/me");
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
-export const createWithdrawal = (amountPoints: number, chain: string, address: string) =>
+export const createWithdrawal = (amountPoints: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
-    method: "POST", body: JSON.stringify({ amountPoints, chain, address }),
+    method: "POST", body: JSON.stringify({ amountPoints, chain, address, stepUpCode }),
   });
+// Large withdrawals (see stepUpMinPoints, api/src/routes/withdrawals.ts) refuse
+// with `{ stepUpRequired: true }` until a fresh 6-digit code is supplied. This
+// sends that code to the user's email; POST /withdrawals is then retried with it.
+export const requestWithdrawalStepUp = () =>
+  apiFetch<{ sent: true }>("/withdrawals/request-step-up", { method: "POST" });
 
 // Saved payout addresses (set once per chain, reused). `addresses` is keyed by
 // chain id -> the saved wallet address. `verified` says, per chain, whether the
@@ -757,9 +762,9 @@ export const updateTaskLifecycle = (id: string, action: "pause" | "resume" | "en
   apiFetch<{ ok: boolean; error?: string; status?: string }>(`/staff/tasks/${id}/lifecycle`, {
     method: "POST", body: JSON.stringify({ action }),
   });
-export const createEarnedUsdtWithdrawal = (amountUsdtMicro: number, chain: string, address: string) =>
+export const createEarnedUsdtWithdrawal = (amountUsdtMicro: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
-    method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address }),
+    method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address, stepUpCode }),
   });
 export const uploadTaskLogo = (data: string) =>
   apiFetch<{ ok: boolean; error?: string; id?: string; url?: string }>("/staff/task-assets", {

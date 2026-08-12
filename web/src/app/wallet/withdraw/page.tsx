@@ -5,10 +5,11 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { ConnectWallet } from "@/components/ConnectWallet";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, ApiError } from "@/lib/api";
+import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, requestWithdrawalStepUp, ApiError } from "@/lib/api";
 import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 import { shortAddress } from "@/lib/wallet";
@@ -39,6 +40,18 @@ export default function WithdrawPage() {
   // their ID yet. Drives the "Verify your ID" card below instead of a dead error.
   const [needsKyc, setNeedsKyc] = useState(false);
   const [kycStatus, setKycStatus] = useState("none");
+  // Set when the server refuses because this withdrawal (or today's total) is
+  // over stepUpMinPoints (api/src/routes/withdrawals.ts) and no code has been
+  // supplied yet. submit() sends the code itself the first time this happens —
+  // see below — then shows the code box.
+  const [needsStepUp, setNeedsStepUp] = useState(false);
+  const [stepUpCode, setStepUpCode] = useState("");
+  const [resendBusy, setResendBusy] = useState(false);
+  const [justResent, setJustResent] = useState(false);
+  // Connect (signed) is the default and the safe path — see ConnectWallet.tsx.
+  // Typing is the documented fallback for a smart-contract wallet, an exchange
+  // deposit address, or a phone with no wallet app at all.
+  const [addrTyping, setAddrTyping] = useState(false);
 
   const savedAddresses = saved.data?.addresses ?? {};
   // Pre-fill the saved address for the current chain once it loads (only when the
@@ -89,17 +102,19 @@ export default function WithdrawPage() {
   // before holding any points anyway.
   const gasReady = bal.data?.personalGasReady ?? null;
   const gasBlocked = gasReady === false;
-  const invalid = belowMin || overBalance || !addressOk || gasBlocked;
+  const stepUpCodeOk = /^\d{6}$/.test(stepUpCode);
+  const invalid = belowMin || overBalance || !addressOk || gasBlocked || (needsStepUp && !stepUpCodeOk);
   const trimmed = address.trim();
 
   if (done) return <SentConfirmation amount={net} chainLabel={chainMeta.label} address={trimmed} status={resultStatus} />;
 
   async function submit() {
     setBusy(true); setError(null); setNeedsKyc(false);
+    const code = stepUpCode.trim() || undefined;
     try {
       const response = source === "earned_usdt"
-        ? await createEarnedUsdtWithdrawal(amountUsdtMicro, chain, address.trim())
-        : await createWithdrawal(amt, chain, address.trim());
+        ? await createEarnedUsdtWithdrawal(amountUsdtMicro, chain, address.trim(), code)
+        : await createWithdrawal(amt, chain, address.trim(), code);
       const status = response.request.status;
       setResultStatus(status === "paid" ? "paid" : status === "sending" ? "sending" : "pending");
       setDone(true);
@@ -109,10 +124,32 @@ export default function WithdrawPage() {
       if (e instanceof ApiError && e.body.kycRequired) {
         setNeedsKyc(true);
         setKycStatus(String(e.body.kycStatus ?? "none"));
+      } else if (e instanceof ApiError && e.body.stepUpRequired) {
+        // First time we see this: no code has reached their inbox yet, so send
+        // one now and let the card's own copy explain why — no need to also
+        // surface the raw "confirm with the code" server message. A wrong or
+        // expired code on a later attempt hits this same branch with nothing
+        // left to auto-send; that message (e.g. "that code is wrong") DOES
+        // need to reach the user, so it's shown in the card below instead.
+        if (!needsStepUp) void requestWithdrawalStepUp().catch(() => {});
+        else setError((e as Error).message);
+        setNeedsStepUp(true);
+      } else {
+        setError((e as Error).message);
       }
-      setError((e as Error).message);
     }
     finally { setBusy(false); }
+  }
+
+  async function resendStepUpCode() {
+    setResendBusy(true); setJustResent(false);
+    try {
+      await requestWithdrawalStepUp();
+      setJustResent(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    finally { setResendBusy(false); }
   }
 
   return (
@@ -137,6 +174,23 @@ export default function WithdrawPage() {
               <Button href="/kyc" full>{t("withdraw.kyc.cta")}</Button>
             </div>
           )}
+        </Card>
+      ) : needsStepUp ? (
+        <Card className="border-pending/30 bg-pending-tint p-4">
+          <p className="font-bold text-pending">{t("withdraw.stepUp.title")}</p>
+          <p className="mt-1 text-sm text-brand-ink">{t("withdraw.stepUp.body")}</p>
+          <label htmlFor="stepup-code" className="mt-3 mb-1.5 block text-sm font-semibold text-brand-ink">
+            {t("withdraw.stepUp.codeLabel")}
+          </label>
+          <input id="stepup-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+            placeholder="123456" value={stepUpCode}
+            onChange={(e) => setStepUpCode(e.target.value.replace(/\D/g, ""))}
+            className="num w-full rounded-xl border border-line bg-card p-3 text-lg tracking-widest text-brand-ink outline-none focus:border-brand" />
+          {error && <p className="mt-2 text-sm font-semibold text-danger">{error}</p>}
+          <button type="button" onClick={resendStepUpCode} disabled={resendBusy}
+            className="mt-2 text-sm font-semibold text-brand disabled:opacity-50">
+            {justResent ? t("withdraw.stepUp.resent") : t("withdraw.stepUp.resend")}
+          </button>
         </Card>
       ) : (
         error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
@@ -207,50 +261,73 @@ export default function WithdrawPage() {
       </div>
 
       {/* ---- Where the money goes ----
-          Read-only summary now (founder, 2026-08-05) — the actual connect/type
-          flow moved to /profile/settings, so it exists in exactly one place.
-          This card shows what's already saved and links there to change it;
-          it never collects an address itself, which is what made the old
-          version of this screen feel like a second, competing setup flow. */}
-      <Card className="p-4">
-        <label htmlFor="withdraw-address" className="flex items-center gap-2 font-bold text-brand-ink">
-          <WalletIcon size={20} className="shrink-0 text-brand" />
-          {t("withdraw.bep20WalletAddress")}
-        </label>
-        {/* One saved address, tap to paste it instantly (founder, 2026-08-12:
-            "as simple as the BNB screen"). Only shown once there is a saved
-            address that differs from what's in the box right now — otherwise
-            it would just be a second copy of what the field already says. */}
-        {savedAddresses[chain] && savedAddresses[chain]!.toLowerCase() !== trimmed.toLowerCase() && (
+          Connect (signed) is the default, same reasoning as ConnectWallet.tsx:
+          a pasted address proves nothing, and the most common way money is
+          stolen from users in our markets is a fake "support agent" swapping
+          in their own address. This used to live on /profile/settings as the
+          app's only address-entry screen; when that screen was simplified
+          down to a plain typed box (2026-08-12), the signed path had nowhere
+          left to run from — restored here, since this is now the one place
+          a payout address is ever set. */}
+      {!addrTyping ? (
+        <ConnectWallet
+          chain={chain}
+          savedAddress={savedAddresses[chain]}
+          verified={saved.data?.verified?.[chain]}
+          onConnected={(addr) => { setAddress(addr); saved.reload(); }}
+          onUseTyping={() => {
+            setAddrTyping(true);
+            if (!address && savedAddresses[chain]) setAddress(savedAddresses[chain]);
+          }}
+        />
+      ) : (
+        <Card className="p-4">
+          <label htmlFor="withdraw-address" className="flex items-center gap-2 font-bold text-brand-ink">
+            <WalletIcon size={20} className="shrink-0 text-brand" />
+            {t("withdraw.bep20WalletAddress")}
+          </label>
+          {/* One saved address, tap to paste it instantly (founder, 2026-08-12:
+              "as simple as the BNB screen"). Only shown once there is a saved
+              address that differs from what's in the box right now — otherwise
+              it would just be a second copy of what the field already says. */}
+          {savedAddresses[chain] && savedAddresses[chain]!.toLowerCase() !== trimmed.toLowerCase() && (
+            <button
+              type="button"
+              onClick={() => setAddress(savedAddresses[chain]!)}
+              className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
+            >
+              <CheckIcon size={13} className="shrink-0" />
+              <span className="truncate">
+                {t("withdraw.useSaved")} {shortAddress(savedAddresses[chain]!)}
+              </span>
+            </button>
+          )}
+          <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
+            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            placeholder={t("withdraw.addrPlaceholderEvm")}
+            className="num mt-3 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand" />
+          {trimmed && addressOk && (
+            <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-success">
+              <CheckIcon size={16} />
+              {savedAddresses[chain]?.toLowerCase() === trimmed.toLowerCase()
+                ? t("withdraw.savedAddressReady") : t("withdraw.newAddressReady")}
+            </p>
+          )}
+          {trimmed && !addressOk && (
+            <p className="mt-2 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
+          )}
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
+            <InfoIcon size={15} className="mt-0.5 shrink-0" /> {t("withdraw.addressAutoSave")}
+          </p>
           <button
             type="button"
-            onClick={() => setAddress(savedAddresses[chain]!)}
-            className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
+            onClick={() => setAddrTyping(false)}
+            className="mt-3 text-sm font-semibold text-brand underline-offset-2 hover:underline"
           >
-            <CheckIcon size={13} className="shrink-0" />
-            <span className="truncate">
-              {t("withdraw.useSaved")} {shortAddress(savedAddresses[chain]!)}
-            </span>
+            {t("connect.connectInstead")}
           </button>
-        )}
-        <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
-          autoCapitalize="none" autoCorrect="off" spellCheck={false}
-          placeholder={t("withdraw.addrPlaceholderEvm")}
-          className="num mt-3 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand" />
-        {trimmed && addressOk && (
-          <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-success">
-            <CheckIcon size={16} />
-            {savedAddresses[chain]?.toLowerCase() === trimmed.toLowerCase()
-              ? t("withdraw.savedAddressReady") : t("withdraw.newAddressReady")}
-          </p>
-        )}
-        {trimmed && !addressOk && (
-          <p className="mt-2 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
-        )}
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
-          <InfoIcon size={15} className="mt-0.5 shrink-0" /> {t("withdraw.addressAutoSave")}
-        </p>
-      </Card>
+        </Card>
+      )}
 
       {/* Amount */}
       <div>
@@ -311,7 +388,8 @@ export default function WithdrawPage() {
       </div>
 
       <Button variant="accent" disabled={invalid || busy} onClick={submit}>
-        <WalletIcon size={20} /> {busy ? t("withdraw.sending") : t("withdraw.askForUsdt")}
+        <WalletIcon size={20} />
+        {busy ? t("withdraw.sending") : needsStepUp ? t("withdraw.stepUp.confirm") : t("withdraw.askForUsdt")}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
         <ShieldIcon size={14} /> {t("withdraw.safetyNote")}

@@ -466,6 +466,11 @@ export default function MinePage() {
       <div className="grid grid-cols-3 gap-2.5">
         <Tile href="/mine/roadmap" Icon={ChartIcon} label={t("mine.roadmap.title")} />
         <Tile href="/mine/rigs" Icon={MineIcon} label={t("mine.boost.rigs.title")} />
+        {/* Unconditional, same as Rigs above: the catalogue can be empty (no
+            boosters created in /staff yet) and the destination page handles
+            that with its own EmptyState — matching the precedent that only
+            FLAG-gated destinations (convert/store) get hidden from here. */}
+        <Tile href="/mine/boosters" Icon={BoltIcon} label={t("mine.boosters.title")} />
         {s.convertible && (
           <Tile href="/mine/convert" Icon={StarIcon} label={t("mine.convert.title")} tone="accent" />
         )}

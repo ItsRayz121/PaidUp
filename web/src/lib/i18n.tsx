@@ -909,7 +909,25 @@ const copy: Record<string, string> = {
   "store.status.pending": "On the way",
   "store.status.fulfilled": "Sent",
   "store.status.rejected": "Not done — your ROZI came back",
+
+  // Speed boosters, priced in the withdrawable money balance (points under
+  // the hood; see formatMoney) — a sink for the cash side, same idea as the
+  // ROZI store above, just the other currency. The route applies the boost
+  // immediately on purchase; its effect shows up in the existing "Boosts"
+  // row on /mine, so this screen only needs to sell it.
+  "boosters.title": "Speed boosters",
+  "boosters.subtitle": "Spend money you have earned to mine faster for a while.",
+  "boosters.yourMoney": "Your money",
+  "boosters.effect": "+{pct}% speed for {hours} hours",
+  "boosters.get": "Get this",
+  "boosters.notEnough": "Not enough yet",
+  "boosters.empty.title": "No boosters right now",
+  "boosters.empty.body": "Check back soon — keep mining in the meantime.",
+  "boosters.confirm": "Use {n} for {title}?",
+  "boosters.bought": "Done. Your mining is faster now.",
+
   "mine.store.title": "Spend your ROZI",
+  "mine.boosters.title": "Speed up mining",
 
   // ---- Add USDT (top-up credit) ---------------------------------------------
   // THE HARDEST PROMISE TO GET RIGHT ON THIS SCREEN is what the money can and
@@ -1195,6 +1213,15 @@ const copy: Record<string, string> = {
   "withdraw.kyc.body": "We check who you are before we send money. It only takes a minute.",
   "withdraw.kyc.cta": "Verify your ID",
   "withdraw.kyc.pending": "We are still checking your ID. You can withdraw as soon as that is done.",
+
+  // Shown on the withdraw screen for a large amount (api/src/config.ts
+  // stepUpMinPoints) — one more code, emailed, before we send real money.
+  "withdraw.stepUp.title": "Confirm it's you",
+  "withdraw.stepUp.body": "This is a big withdrawal, so we sent a 6-digit code to your email. Enter it below to send the money.",
+  "withdraw.stepUp.codeLabel": "Code from your email",
+  "withdraw.stepUp.resend": "Send the code again",
+  "withdraw.stepUp.resent": "Code sent again",
+  "withdraw.stepUp.confirm": "Confirm and send",
 
   // ---- Notifications ----------------------------------------------------------
   // The user turns these on themselves (Help screen, or after a withdrawal).
