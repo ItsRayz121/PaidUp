@@ -33,9 +33,45 @@ import {
 } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
 
-// The steps, in order. `key` drives every string, so the copy deck stays the one
-// place any of this is worded.
-const STEPS = ["launch", "kyc", "dex", "cex"] as const;
+// The steps, in order, each with the date range its `roadmap.step.*.when`
+// string in the copy deck describes IN WORDS ("August — September 2026").
+// These `start`/`end` values exist only to compute which state a step is in
+// below — they are never rendered, so they can never drift into a second,
+// more precise promise sitting next to the deliberately vague public one.
+//
+// NOT wired to the admin content_blocks table (audit 2026-08-12 asked for
+// this). That table is built for timed announcement cards with free-text
+// body/link fields — a fine fit for home-screen banners, a bad one here:
+// this page's own header comments carry three rules (no price, ever; dates
+// read as regulatory commitments) that a generic CMS field has no way to
+// enforce. Keeping these dates in the copy deck, reviewable in one file, is
+// what makes "grep this file for a dollar sign before shipping" possible.
+const STEPS = [
+  { key: "launch", start: "2026-08-01", end: "2026-09-30" },
+  { key: "kyc", start: "2026-10-01", end: "2026-11-30" },
+  { key: "dex", start: "2026-12-01", end: "2026-12-31" },
+  { key: "cex", start: "2027-01-01", end: "2027-01-31" },
+] as const;
+
+type StepState = "done" | "active" | "upcoming" | "planned";
+
+// Every row looked identical before this (audit 2026-08-12) — no way to tell
+// "happening now" from "months away" apart from reading the date text. Pure
+// date math against the ranges above; the first step that is neither done nor
+// active is "upcoming" (the one concrete "what's next"), everything after it
+// "planned". That is also correct with no active step at all (e.g. between two
+// ranges, or before launch) — it just names the very next one "upcoming".
+function stepStates(now: Date): StepState[] {
+  const t = now.getTime();
+  const states: StepState[] = STEPS.map((s) => {
+    if (t > new Date(`${s.end}T23:59:59`).getTime()) return "done";
+    if (t >= new Date(`${s.start}T00:00:00`).getTime()) return "active";
+    return "planned";
+  });
+  const firstPlanned = states.indexOf("planned");
+  if (firstPlanned !== -1) states[firstPlanned] = "upcoming";
+  return states;
+}
 
 const LIVE = [
   "roadmap.live.mining",
@@ -47,6 +83,10 @@ const LIVE = [
 
 export default function RoadmapPage() {
   const { t } = useI18n();
+  // Which state each step is in "as of right now" — a fresh read on every
+  // render is exactly what's wanted here (a page left open across midnight
+  // should flip from "Happening now" the moment that becomes true).
+  const states = stepStates(new Date());
 
   // Deliberately NOT behind useRequireAuth. Someone deciding whether to trust
   // this app enough to sign up is exactly the person who should be able to read
@@ -86,28 +126,70 @@ export default function RoadmapPage() {
         {/* A single vertical line down the left with a dot per step. The line is
             drawn by the border on each row rather than by an absolutely
             positioned element, so it can never drift out of line with the dots
-            at a different font size. */}
+            at a different font size. Dot style + badge now carry the step's
+            state (done/active/upcoming/planned) — every row used to look
+            identical, which is exactly why a page whose whole point is "when"
+            gave no visual answer to "which one is now". */}
         <ol className="space-y-0">
-          {STEPS.map((step, i) => (
-            <li key={step} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <span
-                  aria-hidden
-                  className="mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full bg-brand ring-4 ring-brand-tint"
-                />
-                {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
-              </div>
-              <div className="min-w-0 flex-1 pb-5">
-                <p className="text-xs font-bold uppercase tracking-wide text-brand">
-                  {t(`roadmap.step.${step}.when`)}
-                </p>
-                <p className="mt-0.5 font-bold text-brand-ink">
-                  {t(`roadmap.step.${step}.title`)}
-                </p>
-                <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step}.body`)}</p>
-              </div>
-            </li>
-          ))}
+          {STEPS.map((step, i) => {
+            const state = states[i];
+            return (
+              <li key={step.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  {state === "done" ? (
+                    <span
+                      aria-hidden
+                      className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
+                    >
+                      <CheckIcon size={14} />
+                    </span>
+                  ) : state === "active" ? (
+                    <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
+                      <span className="mining-ring" aria-hidden="true" />
+                      <span
+                        aria-hidden
+                        className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
+                      />
+                    </span>
+                  ) : (
+                    <span
+                      aria-hidden
+                      className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
+                        state === "upcoming"
+                          ? "bg-card ring-2 ring-brand"
+                          : "bg-card ring-2 ring-line"
+                      }`}
+                    />
+                  )}
+                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
+                </div>
+                <div className="min-w-0 flex-1 pb-5">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="text-xs font-bold uppercase tracking-wide text-brand">
+                      {t(`roadmap.step.${step.key}.when`)}
+                    </p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        state === "done"
+                          ? "bg-success-tint text-success"
+                          : state === "active"
+                            ? "bg-brand text-white"
+                            : state === "upcoming"
+                              ? "bg-brand-tint text-brand"
+                              : "bg-line/60 text-muted"
+                      }`}
+                    >
+                      {t(`roadmap.state.${state}`)}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 font-bold text-brand-ink">
+                    {t(`roadmap.step.${step.key}.title`)}
+                  </p>
+                  <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
+                </div>
+              </li>
+            );
+          })}
         </ol>
       </div>
 

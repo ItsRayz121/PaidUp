@@ -1084,6 +1084,14 @@ const copy: Record<string, string> = {
   "roadmap.live.send": "Send ROZI to a friend (after your ID check)",
   "roadmap.live.invite": "Invite friends and earn with them",
   "roadmap.next.title": "What is next",
+  // State badges for the timeline (audit 2026-08-12: every "next" row looked
+  // identical before this — no way to tell "happening now" from "months away").
+  // Computed from the same date ranges the *.when strings above describe, in
+  // roadmap/page.tsx — not admin-editable, on purpose: see that file's header.
+  "roadmap.state.done": "Done",
+  "roadmap.state.active": "Happening now",
+  "roadmap.state.upcoming": "Up next",
+  "roadmap.state.planned": "Planned",
   "roadmap.step.launch.when": "August — September 2026",
   "roadmap.step.launch.title": "Mining opens to everyone",
   "roadmap.step.launch.body":
