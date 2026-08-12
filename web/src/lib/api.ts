@@ -1015,6 +1015,14 @@ export type UsdtTopup = {
   status: "pending" | "confirmed" | "rejected";
   rejectReason: string | null; createdAt: string;
 };
+// A plain BNB transfer into the user's own deposit address, found by
+// deposits/adapters/evmNative.ts. History-only — this never touches a
+// balance (see native_deposits' table comment in api/src/db.ts); the BNB
+// balance itself is still the live eth_getBalance read served as
+// personalGasWei below.
+export type BnbDeposit = {
+  id: string; txHash: string; amountWei: string; fromAddress: string; createdAt: string;
+};
 export type UsdtRefund = {
   id: string; chain: string; address: string; amountMicro: number;
   // The gas fee (founder, 2026-08-08), snapshotted at request time. What was
@@ -1056,6 +1064,8 @@ export type UsdtState = {
   personalGasRequiredWei: string | null;
   personalGasReady: boolean | null;
   refunds: UsdtRefund[];
+  // BNB deposits into the same personal address, for history display only.
+  nativeDeposits: BnbDeposit[];
 };
 export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");
 export const claimUsdtTopup = (txHash: string, amount: number) =>

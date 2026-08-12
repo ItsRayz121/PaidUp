@@ -16,7 +16,18 @@
 //   npm run test:deposits
 import { initDb, sql, now, newId, usdtBalanceMicroOf } from "../db.ts";
 import { recordObservedDeposit } from "../deposits/credit.ts";
-import type { ObservedDeposit } from "../deposits/types.ts";
+import { recordObservedNativeDeposit } from "../deposits/creditNative.ts";
+import { scanEvmChain } from "../deposits/adapters/evm.ts";
+import { scanEvmNativeChain } from "../deposits/adapters/evmNative.ts";
+import type { ObservedDeposit, ObservedNativeDeposit } from "../deposits/types.ts";
+
+// Several fixtures here carry bigints (amountWei) — plain JSON.stringify
+// throws on those, and it is evaluated eagerly as a check() argument even on
+// a passing check, so every diagnostic string in this file must go through
+// this instead of the raw global.
+function safeJson(v: unknown): string {
+  return JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val));
+}
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -30,6 +41,15 @@ await initDb();
 // the "reorg happened underneath this deposit" scenario can change the
 // answer between when a deposit is first observed and when it's re-checked.
 let blockHashByNumber = new Map<number, string>();
+// Full block bodies, for eth_getBlockByNumber(..., true) — only the native
+// scanner (evmNative.ts) asks for these; the reorg re-check (credit.ts,
+// creditNative.ts) always asks with `false` and only wants the hash above.
+let fullBlockByNumber = new Map<number, { number: string; hash: string; transactions: unknown[] }>();
+// eth_getLogs fixtures — a provider "range too wide" limit (blocks) and the
+// logs to hand back once a request's window is within it, so the adaptive
+// range-shrinking in evm.ts's scanEvmChain has something real to recover.
+let logsProviderLimit = 1_000_000; // effectively unlimited unless a test lowers it
+let logsFixture: { transactionHash: string; logIndex: string; data: string; topics: string[]; blockNumber: string; blockHash: string }[] = [];
 
 const realFetch = globalThis.fetch;
 // @ts-expect-error test stub — narrower signature than the real fetch
@@ -37,6 +57,10 @@ globalThis.fetch = async (_url: string, init: { body: string }) => {
   const body = JSON.parse(init.body as string);
   if (body.method === "eth_getBlockByNumber") {
     const blockNumber = parseInt(body.params[0], 16);
+    if (body.params[1] === true) {
+      const block = fullBlockByNumber.get(blockNumber);
+      return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: block ?? null }) };
+    }
     const hash = blockHashByNumber.get(blockNumber);
     return {
       ok: true,
@@ -44,8 +68,31 @@ globalThis.fetch = async (_url: string, init: { body: string }) => {
       json: async () => ({ jsonrpc: "2.0", id: 1, result: hash ? { hash } : null }),
     };
   }
+  if (body.method === "eth_getLogs") {
+    const [{ fromBlock, toBlock, topics }] = body.params;
+    const from = parseInt(fromBlock, 16), to = parseInt(toBlock, 16);
+    if (to - from + 1 > logsProviderLimit) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          jsonrpc: "2.0", id: 1,
+          error: { code: -32005, message: `eth_getLogs is limited to a ${logsProviderLimit} range` },
+        }),
+      };
+    }
+    const addrTopics: string[] = topics[2] ?? [];
+    const matches = logsFixture.filter((l) => {
+      const bn = parseInt(l.blockNumber, 16);
+      return addrTopics.includes(l.topics[2]) && bn >= from && bn <= to;
+    });
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: matches }) };
+  }
   throw new Error(`Unexpected RPC method in test stub: ${body.method}`);
 };
+
+function addrTopic(addr: string): string {
+  return "0x" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+}
 
 // A fresh, collision-free address each call — this test's PGlite data
 // persists to disk across runs (api/data/pg), so anything hardcoded (a
@@ -188,6 +235,144 @@ console.log("\n-- the block simply no longer exists at that height (deep reorg /
   check("a missing block is treated as reorged_out, not credited on a null",
     result.status === "reorged_out", JSON.stringify(result));
   check("nothing credited", (await usdtBalanceMicroOf(userId)) === 0);
+}
+
+console.log("\n-- native (BNB) deposit: recorded and confirmed, NO ledger touched --");
+
+{
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 7000 + Math.floor(Math.random() * 1_000_000);
+  blockHashByNumber.set(blockNumber, "0xnative1");
+  const dep: ObservedNativeDeposit = {
+    userId, chain: "bep20", address,
+    txHash: `0x${newId().replace(/-/g, "")}`.padEnd(66, "0").slice(0, 66),
+    fromAddress: testAddress(), amountWei: 250_000_000_000_000_000n, // 0.25 BNB
+    blockNumber, blockHash: "0xnative1",
+  };
+
+  const result = await recordObservedNativeDeposit(dep);
+  check("status is 'confirmed'", result.status === "confirmed", safeJson(result));
+
+  const row = await sql.get<{ status: string; amount_wei: string }>(
+    "SELECT status, amount_wei FROM native_deposits WHERE id = ?", result.id,
+  );
+  check("native_deposits row is 'confirmed' with the observed amount",
+    row?.status === "confirmed" && row?.amount_wei === "250000000000000000", safeJson(row));
+
+  // The whole point of this table: it NEVER touches a balance. usdt_ledger
+  // must be untouched by a BNB deposit — mixing the two would be exactly the
+  // guardrail #7-shaped bug this file's header warns against.
+  check("the USDT ledger balance is untouched by a BNB deposit", (await usdtBalanceMicroOf(userId)) === 0);
+}
+
+console.log("\n-- native (BNB) deposit: same tx observed twice is a no-op, not two rows --");
+
+{
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 8000 + Math.floor(Math.random() * 1_000_000);
+  blockHashByNumber.set(blockNumber, "0xnative2");
+  const dep: ObservedNativeDeposit = {
+    userId, chain: "bep20", address,
+    txHash: `0x${newId().replace(/-/g, "")}`.padEnd(66, "0").slice(0, 66),
+    fromAddress: testAddress(), amountWei: 10_000_000_000_000_000n,
+    blockNumber, blockHash: "0xnative2",
+  };
+
+  const first = await recordObservedNativeDeposit(dep);
+  const second = await recordObservedNativeDeposit(dep);
+  check("first call confirms", first.status === "confirmed");
+  check("second call is a no-op", second.status === "already_confirmed");
+  check("same native_deposits row both times", first.id === second.id);
+
+  const rows = await sql.all("SELECT id FROM native_deposits WHERE tx_hash = ?", dep.txHash);
+  check("exactly one row for this tx, not two", rows.length === 1, String(rows.length));
+}
+
+console.log("\n-- native (BNB) deposit: a reorg underneath it is never shown as confirmed --");
+
+{
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 9000 + Math.floor(Math.random() * 1_000_000);
+  blockHashByNumber.set(blockNumber, "0xactual");
+  const dep: ObservedNativeDeposit = {
+    userId, chain: "bep20", address,
+    txHash: `0x${newId().replace(/-/g, "")}`.padEnd(66, "0").slice(0, 66),
+    fromAddress: testAddress(), amountWei: 1_000_000_000_000_000n,
+    blockNumber, blockHash: "0xstale", // stale — the chain's real hash for this block is 0xactual
+  };
+
+  const result = await recordObservedNativeDeposit(dep);
+  check("status is 'reorged_out'", result.status === "reorged_out", safeJson(result));
+  const again = await recordObservedNativeDeposit(dep);
+  check("stays reorged_out on re-processing", again.status === "reorged_out");
+}
+
+console.log("\n-- scanEvmNativeChain: only a nonzero top-level transfer to a KNOWN address counts --");
+
+{
+  const knownAddr = testAddress();
+  const userId = await mkUserWithDeposit("bep20", knownAddr);
+  const blockNum = 100_000 + Math.floor(Math.random() * 1_000_000);
+  fullBlockByNumber.set(blockNum, {
+    number: "0x" + blockNum.toString(16), hash: "0xblockA",
+    transactions: [
+      // A real deposit: value > 0, `to` is a known deposit address.
+      { hash: "0xtx1", from: "0xsender1", to: knownAddr, value: "0x38d7ea4c68000", blockHash: "0xblockA" }, // 0.001 BNB
+      // A plain contract call with no value attached — not a deposit.
+      { hash: "0xtx2", from: "0xsender2", to: knownAddr, value: "0x0", blockHash: "0xblockA" },
+      // Value sent, but to an address we never handed anyone — not ours.
+      { hash: "0xtx3", from: "0xsender3", to: testAddress(), value: "0x38d7ea4c68000", blockHash: "0xblockA" },
+      // Contract creation — no `to` at all.
+      { hash: "0xtx4", from: "0xsender4", to: null, value: "0x38d7ea4c68000", blockHash: "0xblockA" },
+    ],
+  });
+
+  const { deposits, scannedTo } = await scanEvmNativeChain("bep20", blockNum, blockNum);
+  check("exactly one deposit found", deposits.length === 1, String(deposits.length));
+  check("it is tx1, for the right user and amount",
+    deposits[0]?.txHash === "0xtx1" && deposits[0]?.userId === userId && deposits[0]?.amountWei === 1_000_000_000_000_000n,
+    safeJson(deposits[0]));
+  check("scannedTo is the block requested", scannedTo === blockNum);
+}
+
+console.log("\n-- scanEvmChain: a provider's block-range limit is survived by shrinking, not by failing --");
+
+{
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const depositBlock = 500; // must land inside whatever window the shrink settles on
+  const amountMicro = 7_000_000n; // 7 USDT
+  const rawOnChain = amountMicro * 10n ** 12n; // BSC USDT is 18 decimals, we store 6
+  const txHash = `0x${newId().replace(/-/g, "")}`.padEnd(66, "0").slice(0, 66);
+  logsFixture = [{
+    transactionHash: txHash, logIndex: "0x0", data: "0x" + rawOnChain.toString(16),
+    topics: ["0xtransfer", "0x" + "1".padStart(64, "0"), addrTopic(address)],
+    blockNumber: "0x" + depositBlock.toString(16), blockHash: "0xshrunk",
+  }];
+  // A provider that rejects any eth_getLogs window wider than 1,000 blocks —
+  // narrower than evm.ts's own starting MAX_BLOCK_RANGE (5,000), so the first
+  // attempt or two are guaranteed to fail before the adaptive shrink recovers.
+  logsProviderLimit = 1_000;
+
+  const { deposits, scannedTo } = await scanEvmChain("bep20", 1, 10_000);
+  check("the deposit was found despite the provider's tighter limit",
+    deposits.some((d) => d.txHash === txHash && d.amountMicro === amountMicro),
+    safeJson(deposits.filter((d) => d.txHash === txHash)));
+  check("the scanned window shrank well under the original 10,000-block request",
+    scannedTo < 10_000, String(scannedTo));
+
+  // Feed it through the real crediting path too, proving the two new pieces
+  // (adaptive scan + existing credit path) actually compose end to end.
+  blockHashByNumber.set(depositBlock, "0xshrunk");
+  const found = deposits.find((d) => d.txHash === txHash)!;
+  const credited = await recordObservedDeposit(found, 15);
+  check("the recovered deposit credits normally", credited.status === "credited", safeJson(credited));
+  check("the user's balance reflects it", (await usdtBalanceMicroOf(userId)) === Number(amountMicro));
+
+  logsProviderLimit = 1_000_000; // restore, so later suites/reruns in this process are unaffected
 }
 
 globalThis.fetch = realFetch;

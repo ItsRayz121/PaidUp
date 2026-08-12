@@ -157,13 +157,28 @@ export const config = {
   //     and got nothing.
   // Put a paid endpoint FIRST in the list when you have one; the public ones
   // then act as the fallback rather than the primary.
+  //
+  // ⚠️ ORDER MATTERS MORE THAN IT LOOKS (measured directly, 2026-08-12): the
+  // three official BNB Chain "dataseed" nodes below all REFUSE eth_getLogs
+  // outright — not "too wide a range", every width tested down to 50 blocks
+  // failed with a real JSON-RPC error body. rpc.ts's failover deliberately
+  // does NOT try the next endpoint after a well-formed JSON-RPC error (that's
+  // "the chain answered", not a transport failure) — so whichever of these
+  // is reached FIRST for eth_getLogs kills the whole call right there, and
+  // every endpoint listed after it never gets a chance. They still work fine
+  // for cheaper calls (eth_blockNumber, eth_getBlockByNumber), which is why
+  // they stay in the list — just last, not first. publicnode/blastapi/1rpc
+  // are ordered first because they answer eth_getLogs for real (publicnode:
+  // wide range but blocks some cloud/datacenter IPs with a 403, which fails
+  // over correctly; blastapi: exactly 10 inclusive blocks; 1rpc: 50).
   payoutRpc: {
     bep20: rpcList(process.env.RPC_BEP20, [
+      "https://bsc-rpc.publicnode.com",
+      "https://bsc-mainnet.public.blastapi.io",
+      "https://1rpc.io/bnb",
       "https://bsc-dataseed.bnbchain.org",
       "https://bsc-dataseed1.defibit.io",
       "https://bsc-dataseed1.ninicoin.io",
-      "https://bsc-rpc.publicnode.com",
-      "https://1rpc.io/bnb",
     ]),
     base: rpcList(process.env.RPC_BASE, [
       "https://mainnet.base.org",
@@ -277,9 +292,13 @@ export const config = {
   //
   // Empty => the feature is off and every user falls back to the one shared
   // treasury address (usdtTreasuryAddress) exactly as today. Setting this does
-  // NOT turn on auto-crediting or auto-withdrawal — those are stages 2-4 of
-  // CUSTODY_SPEC.md and are not built. Deposits made to a per-user address are
-  // still confirmed by a staff member pasting the tx hash, same as always.
+  // NOT by itself turn on auto-withdrawal (stage 4 of CUSTODY_SPEC.md, gated
+  // separately by PAYOUT_MODE + a treasury signer). It DOES enable
+  // auto-crediting (stages 2-3, deposits/scanner.ts + credit.ts) for USDT
+  // landing on a personal address — that deposit is detected and credited with
+  // no staff step. A deposit to the one shared treasury address above still
+  // needs a staff member pasting the tx hash; only per-user addresses are
+  // watched by the scanner.
   custodyXpub: {
     bep20: process.env.CUSTODY_XPUB_BEP20 ?? "",
   },

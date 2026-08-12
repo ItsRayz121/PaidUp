@@ -73,6 +73,7 @@ export default function WalletPage() {
     topups: usdt.data?.topups ?? [],
     refunds: usdt.data?.refunds ?? [],
     bnb: bnbWithdrawals.data?.requests ?? [],
+    bnbDeposits: usdt.data?.nativeDeposits ?? [],
     taskUsdt: taskUsdt.data?.rewards ?? [],
     t,
   });

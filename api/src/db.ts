@@ -1056,6 +1056,43 @@ const MIGRATIONS = `
     last_scanned_block_hash TEXT,
     updated_at            TEXT NOT NULL
   );
+  -- The native-value scanner (deposits/adapters/evmNative.ts) shares this same
+  -- table under a distinct pseudo-chain key ("<chain>:native") rather than a
+  -- schema change — it is a plain TEXT primary key with no FK to a real chain
+  -- list, and giving it its own row keeps its cadence independent of the
+  -- ERC-20 log-scan cursor for the same chain (a heavier per-block RPC shape).
+
+  -- A plain native-value (BNB) transfer INTO one of our deposit addresses.
+  -- Deliberately separate from chain_deposits, not a 'bnb' row in it: BNB has
+  -- ZERO ledger entry, ever (bnbWithdraw.ts's own rule — the balance shown on
+  -- /wallet/bnb is a live eth_getBalance read, never a stored liability). This
+  -- table exists ONLY to give a real deposit a history row; it has no
+  -- credited_ledger_id column and NEVER GETS ONE — do not wire this into
+  -- postUsdt or any ledger-crediting path. A native transfer emits no log
+  -- event, so this can only be found by walking full block bodies
+  -- (eth_getBlockByNumber(..., true)) and matching top-level tx.to — internal
+  -- value transfers from a contract call are out of scope, same "no full
+  -- trace-based indexer" boundary this codebase already draws elsewhere.
+  CREATE TABLE IF NOT EXISTS native_deposits (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    chain          TEXT NOT NULL,
+    address        TEXT NOT NULL,
+    tx_hash        TEXT NOT NULL,
+    from_address   TEXT NOT NULL,
+    amount_wei     TEXT NOT NULL,
+    block_number   BIGINT NOT NULL,
+    block_hash     TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'seen'
+                    CHECK (status IN ('seen','confirmed','reorged_out')),
+    first_seen_at  TEXT NOT NULL,
+    confirmed_at   TEXT,
+    created_at     TEXT NOT NULL
+  );
+  -- One native transfer = one top-level transaction; no log_index concept.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_native_deposits_tx
+    ON native_deposits(LOWER(chain), LOWER(tx_hash));
+  CREATE INDEX IF NOT EXISTS idx_native_deposits_user ON native_deposits(user_id, created_at);
 
   -- One sweep (deposit address -> treasury) per row. Two-phase for chains that
   -- need native gas funded to the deposit address before it can send the token

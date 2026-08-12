@@ -497,10 +497,14 @@ export async function miningRoutes(app: FastifyInstance) {
   // ---- USDT top-up credit ---------------------------------------------------
   //
   // READ THE usdt_ledger COMMENT IN db.ts BEFORE CHANGING ANYTHING HERE. The
-  // short version: this balance is SPEND-ONLY, deposits are confirmed by a human
-  // against the chain, and there is deliberately no route in this file (or any
-  // other) that lets the balance leave the app. That absence is what keeps us
-  // out of holding customer funds.
+  // short version: this balance is SPEND-ONLY, and there is deliberately no
+  // route in this file (or any other) that lets the balance leave the app.
+  // That absence is what keeps us out of holding customer funds. A deposit to
+  // the one shared treasury address is confirmed by a staff member pasting the
+  // tx hash (POST /usdt/topups below); a deposit to a personal address
+  // (CUSTODY_SPEC.md § 5 steps 2-3) is detected and credited automatically by
+  // deposits/scanner.ts + credit.ts, no staff step — both paths land in the
+  // same usdt_ledger and the same `topups` array below.
   app.get("/usdt", guard(async (userId) => {
     const s = await loadMiningSettings();
     const enabled = Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "";
@@ -510,6 +514,31 @@ export async function miningRoutes(app: FastifyInstance) {
     }>(
       `SELECT id, chain, tx_hash, amount, status, reject_reason, created_at
        FROM usdt_topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      userId,
+    );
+    // Deposits the scanner found and credited on its own (deposits/credit.ts)
+    // — a personal deposit address (personalAddress below) never goes through
+    // the manual-claim table above, so without this query those deposits move
+    // the balance but leave no history row at all. 'reorged_out' rows are
+    // excluded outright: as far as the user should ever see, that deposit
+    // never happened.
+    const autoRows = await sql.all<{
+      id: string; chain: string; tx_hash: string; amount: string;
+      status: string; created_at: string;
+    }>(
+      `SELECT id, chain, tx_hash, amount, status, created_at
+       FROM chain_deposits WHERE user_id = ? AND token = 'usdt' AND status <> 'reorged_out'
+       ORDER BY created_at DESC LIMIT 50`,
+      userId,
+    );
+    // BNB deposits (deposits/creditNative.ts) — history-only, never a ledger
+    // row; see native_deposits' table comment in db.ts.
+    const nativeDepositRows = await sql.all<{
+      id: string; tx_hash: string; amount_wei: string; from_address: string; created_at: string;
+    }>(
+      `SELECT id, tx_hash, amount_wei, from_address, created_at
+       FROM native_deposits WHERE user_id = ? AND status = 'confirmed'
+       ORDER BY created_at DESC LIMIT 50`,
       userId,
     );
     const refunds = await sql.all<{
@@ -569,9 +598,21 @@ export async function miningRoutes(app: FastifyInstance) {
         : null,
       minTopup: s.usdtMinTopup,
       maxTopup: s.usdtMaxTopup,
-      topups: rows.map((r) => ({
-        id: r.id, chain: r.chain, txHash: r.tx_hash, amountMicro: Number(r.amount),
-        status: r.status, rejectReason: r.reject_reason, createdAt: r.created_at,
+      topups: [
+        ...rows.map((r) => ({
+          id: r.id, chain: r.chain, txHash: r.tx_hash, amountMicro: Number(r.amount),
+          status: r.status, rejectReason: r.reject_reason, createdAt: r.created_at,
+        })),
+        // chain_deposits has no 'rejected' state of its own — 'credited' is the
+        // only terminal-success status, everything pre-credit reads as pending.
+        ...autoRows.map((r) => ({
+          id: r.id, chain: r.chain, txHash: r.tx_hash, amountMicro: Number(r.amount),
+          status: r.status === "credited" ? "confirmed" : "pending",
+          rejectReason: null as string | null, createdAt: r.created_at,
+        })),
+      ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)).slice(0, 50),
+      nativeDeposits: nativeDepositRows.map((r) => ({
+        id: r.id, txHash: r.tx_hash, amountWei: r.amount_wei, fromAddress: r.from_address, createdAt: r.created_at,
       })),
     };
   }));

@@ -39,7 +39,7 @@ export default function BnbWalletPage() {
 
   const rows = unifyHistory({
     ledger: [], rozi: [], withdrawals: [], topups: [], refunds: [],
-    bnb: bnbWithdrawals.data?.requests ?? [], t,
+    bnb: bnbWithdrawals.data?.requests ?? [], bnbDeposits: usdt.data?.nativeDeposits ?? [], t,
   }).slice(0, 4);
 
   function copyAddress() {

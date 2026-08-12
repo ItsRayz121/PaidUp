@@ -3,21 +3,25 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
-import { Loading, ErrorState } from "@/components/state";
+import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon,
   ChartIcon, WalletIcon, GiftIcon,
 } from "@/components/icons";
+import { TxDetailSheet } from "@/components/TxDetailSheet";
+import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchMiningState, startMining, issueAd, completeAd, fetchBalance, type MiningState,
+  fetchMiningState, startMining, issueAd, completeAd, fetchBalance, fetchLedger, fetchRoziHistory,
+  type MiningState,
 } from "@/lib/api";
 import { formatRozi, formatPointsAsRozi } from "@/lib/format";
 import {
   ensureRewarded, showRewarded, openAdTab, showGateAd,
 } from "@/lib/ads";
 import { useInsideTelegram } from "@/lib/telegram";
+import { rewardsHistory, type Row } from "@/lib/walletHistory";
 
 // The session countdown moved to lib/hooks.ts — the home screen leads with
 // mining now and shows the same clock.
@@ -31,6 +35,12 @@ export default function MinePage() {
   // converted — while home and the top bar show mined + earned. Naming both here
   // is what stops the smaller number reading as money going missing.
   const bal = useApi(fetchBalance, []);
+  // Mining/task/referral activity — moved off /wallet (2026-08-12): that
+  // screen is real money movement only now, and this one is where "Mined
+  // +0.383213 ROZI" and task/referral credits actually belong.
+  const ledgerHistory = useApi(fetchLedger, []);
+  const roziHistory = useApi(fetchRoziHistory, []);
+  const [openTx, setOpenTx] = useState<Row | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // A direct-link ad the user opened and has not claimed yet. `readyAt` is when
@@ -188,6 +198,13 @@ export default function MinePage() {
   const gateAdLive =
     s.ads.gateOnStart &&
     (rewardedZone !== "" || s.ads.monetagDirectLink !== "" || s.ads.monetagZoneId !== "");
+
+  const activity = rewardsHistory({
+    ledger: ledgerHistory.data?.entries ?? [],
+    rozi: roziHistory.data?.entries ?? [],
+    t,
+  }).slice(0, 10);
+  const activityLoading = ledgerHistory.loading || roziHistory.loading;
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -419,6 +436,21 @@ export default function MinePage() {
           {t("mine.breakdown.note")}
         </p>
       </div>
+
+      {/* ---- Mining/rewards activity — NOT wallet history (2026-08-12).
+          /wallet's history is now real USDT/BNB/ROZI-transfer movement only;
+          mining credits, rig purchases, boosts and task/referral rewards live
+          here instead. See lib/walletHistory.ts's header for the full split. */}
+      <div>
+        <SectionTitle>{t("mine.activity.title")}</SectionTitle>
+        {activityLoading ? <Loading /> : (
+          activity.length === 0
+            ? <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
+            : <HistoryList rows={activity} onOpen={setOpenTx} />
+        )}
+      </div>
+
+      {openTx && <TxDetailSheet row={openTx} onClose={() => setOpenTx(null)} />}
 
       {/* The road map moved into the grid above. It keeps its unflagged,
           always-present status there: what we are building next is true whether

@@ -3,17 +3,27 @@
 // screens agree on how a transaction is labelled, formatted and detailed.
 //
 // ⚠️ THIS IS A DISPLAY MERGE ONLY (guardrail #7). Nothing here writes
-// anything; it turns five already-fetched API responses into one sorted,
-// filterable list. Task/referral/adjustment rows stay in ROZI (the app-wide
-// convention) — only real USDT/BNB movement (withdrawals, refunds, top-ups,
-// BNB sends) renders in its own native currency, because that is what
-// actually moved.
+// anything; it turns already-fetched API responses into sorted, filterable
+// lists.
+//
+// ⚠️ WALLET HISTORY IS BLOCKCHAIN/MONEY HISTORY ONLY (founder audit,
+// 2026-08-12): `unifyHistory()` — what /wallet and the per-token pages show —
+// includes ONLY real USDT/BNB movement (deposits, withdrawals, refunds,
+// top-ups) and real ROZI TRANSFERS (transfer_in/transfer_out/transfer_fee —
+// the one ROZI event that is genuinely money moving between two wallets).
+// Mining credits, rig purchases, boosters, bonuses, admin adjustments, task
+// completions and referral bonuses are real activity but NOT a wallet
+// transaction — a user reading "Mined +0.383213 ROZI" in a screen titled
+// Wallet History is the exact bug this boundary exists to prevent. That
+// activity is built by `rewardsHistory()` below instead, for a Mining/Rewards
+// screen to render — same icons, same Row shape, so the two never disagree
+// about how an event looks, only about which list it belongs in.
 import {
   StarIcon, WalletIcon, GiftIcon, MineIcon, BoltIcon, ChipIcon, SendIcon, ReceiveIcon,
 } from "@/components/icons";
 import {
   type LedgerEntry, type RoziEntry, type Withdrawal, type BnbWithdrawal, type UsdtTopup, type UsdtRefund,
-  type UsdtTaskReward,
+  type UsdtTaskReward, type BnbDeposit,
 } from "@/lib/api";
 import { formatRozi, usdtFromMicro, pointsToRoziMicro, pointsToUsdt, formatBnbWei } from "@/lib/format";
 
@@ -64,32 +74,38 @@ export const STATUS_TEXT: Record<string, string> = {
   refunded: "Returned — the money is back in your balance",
 };
 
-export function unifyHistory(args: {
-  ledger: LedgerEntry[];
-  rozi: RoziEntry[];
-  withdrawals: Withdrawal[];
-  topups: UsdtTopup[];
-  refunds: UsdtRefund[];
-  bnb: BnbWithdrawal[];
-  taskUsdt?: UsdtTaskReward[];
-  t: (key: string, vars?: Record<string, string>) => string;
-}): Row[] {
-  const { ledger, rozi, withdrawals, topups, refunds, bnb, taskUsdt = [], t } = args;
+const ROZI_ICON: Record<string, IconComp> = {
+  mining: MineIcon, rig_purchase: ChipIcon, transfer_in: ReceiveIcon,
+  transfer_out: SendIcon, transfer_fee: BoltIcon, conversion_burn: WalletIcon,
+  store_redemption: GiftIcon, bonus: GiftIcon, admin_adjustment: BoltIcon,
+};
+const ROZI_KIND: Record<string, Row["kind"]> = {
+  mining: "mining", transfer_in: "received", transfer_out: "sent",
+};
+const ROZI_NOTE_SOURCES = new Set(["rig_purchase", "store_redemption", "transfer_out"]);
+// The only rozi_ledger source types that are genuinely a wallet
+// transaction — real ROZI moving between two wallets. Everything else
+// (mining, rig purchases, bonuses, admin adjustments, store redemptions) is
+// real activity but not a wallet transaction; see the file header.
+const WALLET_ROZI_SOURCES = new Set(["transfer_in", "transfer_out", "transfer_fee"]);
 
-  const roziIcon: Record<string, IconComp> = {
-    mining: MineIcon, rig_purchase: ChipIcon, transfer_in: ReceiveIcon,
-    transfer_out: SendIcon, transfer_fee: BoltIcon, conversion_burn: WalletIcon,
-    store_redemption: GiftIcon, bonus: GiftIcon, admin_adjustment: BoltIcon,
+function buildRoziRow(e: RoziEntry, t: (key: string, vars?: Record<string, string>) => string): Row {
+  const credit = e.amountMicro >= 0;
+  const amountText = `${credit ? "+" : "−"}${formatRozi(Math.abs(e.amountMicro))} ROZI`;
+  return {
+    key: `r:${e.id}`,
+    label: (ROZI_NOTE_SOURCES.has(e.source_type) && e.note) || t(`wallet.tx.${e.source_type}`),
+    at: e.created_at, token: "ROZI" as const, kind: ROZI_KIND[e.source_type] ?? "reward",
+    amountText, credit, Icon: ROZI_ICON[e.source_type] ?? MineIcon,
+    detail: { amountText, statusText: "Completed" },
   };
-  const roziKind: Record<string, Row["kind"]> = {
-    mining: "mining", transfer_in: "received", transfer_out: "sent",
-  };
-  const useNote = new Set(["rig_purchase", "store_redemption", "transfer_out"]);
+}
 
-  // Task/referral/adjustment rows stay in ROZI. 'withdrawal' rows are
-  // excluded here and rebuilt below from /withdrawals, which carries the
-  // real USDT amount and tx hash the points ledger row does not.
-  const points: Row[] = ledger
+// Task/referral rows. 'withdrawal' rows are excluded here and rebuilt in
+// unifyHistory from /withdrawals, which carries the real USDT amount and tx
+// hash the points ledger row does not.
+function buildPointsRows(ledger: LedgerEntry[]): Row[] {
+  return ledger
     .filter((e) => e.status !== "rejected" && e.kind !== "withdrawal")
     .map((e) => {
       const micro = pointsToRoziMicro(e.points);
@@ -101,18 +117,27 @@ export function unifyHistory(args: {
         detail: { amountText, statusText: STATUS_TEXT[e.status] ?? e.status },
       };
     });
+}
 
-  const roziRows: Row[] = rozi.map((e) => {
-    const credit = e.amountMicro >= 0;
-    const amountText = `${credit ? "+" : "−"}${formatRozi(Math.abs(e.amountMicro))} ROZI`;
-    return {
-      key: `r:${e.id}`,
-      label: (useNote.has(e.source_type) && e.note) || t(`wallet.tx.${e.source_type}`),
-      at: e.created_at, token: "ROZI" as const, kind: roziKind[e.source_type] ?? "reward",
-      amountText, credit, Icon: roziIcon[e.source_type] ?? MineIcon,
-      detail: { amountText, statusText: "Completed" },
-    };
-  });
+export function unifyHistory(args: {
+  // Accepted for callers that already fetch it for other reasons, but NOT
+  // rendered here — task/referral rewards are not a wallet transaction.
+  // Use rewardsHistory() below for a mining/rewards activity feed.
+  ledger: LedgerEntry[];
+  rozi: RoziEntry[];
+  withdrawals: Withdrawal[];
+  topups: UsdtTopup[];
+  refunds: UsdtRefund[];
+  bnb: BnbWithdrawal[];
+  bnbDeposits?: BnbDeposit[];
+  taskUsdt?: UsdtTaskReward[];
+  t: (key: string, vars?: Record<string, string>) => string;
+}): Row[] {
+  const { rozi, withdrawals, topups, refunds, bnb, bnbDeposits = [], taskUsdt = [], t } = args;
+
+  const roziRows: Row[] = rozi
+    .filter((e) => WALLET_ROZI_SOURCES.has(e.source_type))
+    .map((e) => buildRoziRow(e, t));
 
   const withdrawalRows: Row[] = withdrawals.map((w) => {
     const usdt = w.usdtAmount ? Number(w.usdtAmount) : pointsToUsdt(w.amount);
@@ -182,6 +207,35 @@ export function unifyHistory(args: {
     };
   });
 
-  return [...points, ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows, ...taskUsdtRows]
-    .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+  // A plain BNB transfer into the user's own deposit address
+  // (deposits/adapters/evmNative.ts) — history-only, never a balance change
+  // here (the BNB balance is always a live on-chain read).
+  const bnbDepositRows: Row[] = bnbDeposits.map((d) => {
+    const amountText = `+${formatBnbWei(d.amountWei)}`;
+    return {
+      key: `bd:${d.id}`, label: t("wallet.tx.bnbDeposit"), at: d.createdAt, token: "BNB" as const, kind: "received" as const,
+      amountText, credit: true, status: "paid" as const, Icon: ReceiveIcon,
+      detail: { amountText, statusText: "Completed", network: "bep20", from: d.fromAddress, txHash: d.txHash },
+    };
+  });
+
+  return [
+    ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows, ...bnbDepositRows, ...taskUsdtRows,
+  ].sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+}
+
+// Mining/task/referral activity for a Mining/Rewards screen (currently
+// /mine) — the events unifyHistory() deliberately excludes because they are
+// not a wallet transaction. Same row shape and icons as unifyHistory, built
+// from the same underlying data, so the two lists never disagree about how a
+// given event looks — only about which screen it belongs on.
+export function rewardsHistory(args: {
+  ledger: LedgerEntry[];
+  rozi: RoziEntry[];
+  t: (key: string, vars?: Record<string, string>) => string;
+}): Row[] {
+  const { ledger, rozi, t } = args;
+  const points = buildPointsRows(ledger);
+  const roziRows = rozi.filter((e) => !WALLET_ROZI_SOURCES.has(e.source_type)).map((e) => buildRoziRow(e, t));
+  return [...points, ...roziRows].sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
 }

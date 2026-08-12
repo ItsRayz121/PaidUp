@@ -18,7 +18,9 @@ import { config } from "../config.ts";
 import { rpcCall } from "../rpc.ts";
 import { custodyEnabled } from "../custody.ts";
 import { scanEvmChain } from "./adapters/evm.ts";
+import { scanEvmNativeChain } from "./adapters/evmNative.ts";
 import { recordObservedDeposit } from "./credit.ts";
+import { recordObservedNativeDeposit } from "./creditNative.ts";
 import { sendPushToUser } from "../push.ts";
 
 // Chains this scanner knows how to walk. Grows as chain families are added
@@ -32,6 +34,16 @@ async function latestBlock(chain: string): Promise<number> {
 }
 
 type CreditedPush = { userId: string; amountMicro: number };
+type NativePush = { userId: string; amountWei: bigint };
+
+// wei -> a short BNB string for a push notification body only (never used for
+// anything money-authoritative — the balance itself stays a live on-chain
+// read, per native_deposits' own table comment).
+function formatBnbWeiShort(wei: bigint): string {
+  const whole = wei / 10n ** 18n;
+  const frac = (wei % 10n ** 18n).toString().padStart(18, "0").slice(0, 6);
+  return `${whole}.${frac} BNB`;
+}
 
 async function scanOneEvmChain(chain: string, t: TxApi, pushes: CreditedPush[]): Promise<void> {
   const confirmations = config.depositConfirmations[chain] ?? 15;
@@ -61,8 +73,40 @@ async function scanOneEvmChain(chain: string, t: TxApi, pushes: CreditedPush[]):
   );
 }
 
+// Same shape as scanOneEvmChain, its own cursor row ("<chain>:native" — see
+// db.ts's comment on deposit_scan_cursors for why this doesn't need a schema
+// change), and NO ledger write on the credited side — see creditNative.ts's
+// header for why that boundary matters.
+async function scanOneEvmNativeChain(chain: string, t: TxApi, pushes: NativePush[]): Promise<void> {
+  const confirmations = config.depositConfirmations[chain] ?? 15;
+  const cursorKey = `${chain}:native`;
+  const cursor = await t.get<{ last_scanned_block: string }>(
+    "SELECT last_scanned_block FROM deposit_scan_cursors WHERE chain = ?", cursorKey,
+  );
+  const latest = await latestBlock(chain);
+  const safeTip = latest - confirmations;
+  const fromBlock = cursor ? Number(cursor.last_scanned_block) + 1 : Math.max(0, safeTip - 1);
+  if (fromBlock > safeTip) return;
+
+  const { deposits, scannedTo } = await scanEvmNativeChain(chain, fromBlock, safeTip);
+  for (const d of deposits) {
+    const result = await recordObservedNativeDeposit(d, t);
+    if (result.status === "confirmed" && result.userId && result.amountWei !== undefined) {
+      pushes.push({ userId: result.userId, amountWei: result.amountWei });
+    }
+  }
+
+  await t.run(
+    `INSERT INTO deposit_scan_cursors (chain, last_scanned_block, updated_at)
+     VALUES (?,?,?)
+     ON CONFLICT (chain) DO UPDATE SET last_scanned_block = EXCLUDED.last_scanned_block, updated_at = EXCLUDED.updated_at`,
+    cursorKey, scannedTo, now(),
+  );
+}
+
 export async function tickDepositScan(): Promise<{ chain: string; scanned: boolean }[]> {
   const pushes: CreditedPush[] = [];
+  const nativePushes: NativePush[] = [];
   const outcome = await sql.tx(async (t) => {
     // One global lock, not per-chain — scanning is I/O-bound and cheap enough
     // to serialize across chains; split into per-chain locks only if scan
@@ -76,6 +120,7 @@ export async function tickDepositScan(): Promise<{ chain: string; scanned: boole
         continue; // no xpub configured for this chain => no deposit addresses to watch
       }
       await scanOneEvmChain(chain, t, pushes);
+      await scanOneEvmNativeChain(chain, t, nativePushes);
       results.push({ chain, scanned: true });
     }
     return results;
@@ -88,6 +133,13 @@ export async function tickDepositScan(): Promise<{ chain: string; scanned: boole
       title: "USDT received",
       body: `We got your deposit of ${usdtFromMicro(p.amountMicro).toFixed(2)} USDT.`,
       url: "/wallet/usdt",
+    });
+  }
+  for (const p of nativePushes) {
+    void sendPushToUser(p.userId, {
+      title: "BNB received",
+      body: `We got your deposit of ${formatBnbWeiShort(p.amountWei)}.`,
+      url: "/wallet/bnb",
     });
   }
 
