@@ -657,11 +657,17 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
           withheld += o.micro;
           continue;
         }
-        await postRozi({
-          userId: o.userId, micro: o.micro, direction: "credit",
-          sourceType: "mining", sourceRefId: String(epoch),
-          note: `Mining reward, day ${epoch}`,
-        }, t);
+        // Parked here, NOT credited yet (founder decision 2026-08-12: mining is a
+        // real "claim your gems" action, not a silent daily auto-credit). The cap
+        // accounting above still treats this as emitted the moment it is owed —
+        // an unclaimed reward is still ROZI that exists and counts against the
+        // supply cap, exactly like an unswept USDT deposit still counts as ours.
+        // claimRozi() below is the only place this ever becomes a real
+        // rozi_ledger credit.
+        await t.run(
+          `INSERT INTO mining_unclaimed (epoch, user_id, micro, created_at) VALUES (?,?,?,?)`,
+          epoch, o.userId, o.micro, now(),
+        );
         emitted += o.micro;
       }
     }
@@ -703,4 +709,57 @@ export async function settleDueEpochs(): Promise<SettlementResult[]> {
     out.push(await settleEpoch(e));
   }
   return out;
+}
+
+// ---- Claiming ---------------------------------------------------------------
+//
+// Settled ROZI sits in mining_unclaimed until the user taps Claim. This is the
+// ONLY place a mining_unclaimed row ever becomes a real rozi_ledger credit.
+
+// Sum of every settled-but-not-yet-claimed day, for the "ready to claim" card.
+export async function claimableRoziMicro(userId: string): Promise<number> {
+  const row = await sql.get<{ total: string }>(
+    "SELECT COALESCE(SUM(micro), 0) AS total FROM mining_unclaimed WHERE user_id = ?", userId);
+  return Number(row?.total ?? 0);
+}
+
+export type ClaimResult = { claimedMicro: number };
+
+// Locked exactly like every other balance-changing route (guardrail #8) — not
+// because a claim can be double-SPENT, but because two concurrent taps must not
+// both sum the same unclaimed rows and each credit them, doubling the payout.
+export async function claimRozi(userId: string): Promise<ClaimResult> {
+  return sql.tx(async (t) => {
+    await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
+
+    const rows = await t.all<{ epoch: number; micro: string }>(
+      "SELECT epoch, micro FROM mining_unclaimed WHERE user_id = ?", userId);
+    const claimedMicro = rows.reduce((a, r) => a + Number(r.micro), 0);
+    if (claimedMicro <= 0) return { claimedMicro: 0 };
+
+    await postRozi({
+      userId, micro: claimedMicro, direction: "credit",
+      sourceType: "mining",
+      sourceRefId: rows.map((r) => r.epoch).sort((a, b) => a - b).join(","),
+      note: rows.length === 1
+        ? `Mining reward, day ${rows[0].epoch}, claimed`
+        : `Mining reward, ${rows.length} days, claimed`,
+    }, t);
+
+    // ⚠️ MUST delete exactly the epochs just summed and credited, NEVER a blanket
+    // `WHERE user_id = ?`. settleEpoch() locks on a GLOBAL key
+    // (hashtext('rozi-settlement')), not this per-user one, so it can commit a
+    // brand-new mining_unclaimed row for THIS user in the gap between the SELECT
+    // above and this DELETE. Under READ COMMITTED each statement re-reads the
+    // table fresh — a blanket delete would then sweep up that new, never-summed,
+    // never-credited row: the reward silently vanishes, counted as emitted
+    // against the supply cap but never landing in anyone's balance. Found in
+    // security review (2026-08-12) before this ever shipped.
+    const placeholders = rows.map(() => "?").join(",");
+    await t.run(
+      `DELETE FROM mining_unclaimed WHERE user_id = ? AND epoch IN (${placeholders})`,
+      userId, ...rows.map((r) => r.epoch),
+    );
+    return { claimedMicro };
+  });
 }

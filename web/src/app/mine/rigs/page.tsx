@@ -42,6 +42,17 @@ export default function RigsPage() {
 
   const { roziMicro, usdtMicro, usdtEnabled, rigs: list } = rigs.data;
 
+  // Best value = fewest days to pay for itself. Computed here from what the API
+  // already sends — no extra call — and used only to put a small badge on one
+  // card, not to reorder the list (the list stays in the catalogue's own order,
+  // which is a deliberate progression from cheap to powerful).
+  const paybackDays = (r: (typeof list)[number]) =>
+    r.nextCostMicro && r.extraRoziPerDayMicro ? r.nextCostMicro / r.extraRoziPerDayMicro : null;
+  const bestValueId = list
+    .map((r) => ({ id: r.id, days: paybackDays(r) }))
+    .filter((x): x is { id: string; days: number } => x.days !== null && x.days > 0)
+    .sort((a, b) => a.days - b.days)[0]?.id;
+
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
       <header>
@@ -105,7 +116,14 @@ export default function RigsPage() {
                     <Icon size={24} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="font-bold text-brand-ink">{r.name}</p>
+                    <p className="flex items-center gap-1.5 font-bold text-brand-ink">
+                      <span className="truncate">{r.name}</span>
+                      {r.id === bestValueId && (
+                        <span className="shrink-0 rounded-full bg-success-tint px-2 py-0.5 text-[11px] font-semibold text-success">
+                          {t("rigs.bestValue")}
+                        </span>
+                      )}
+                    </p>
                     <p className="text-sm text-muted">
                       {r.level === 0
                         ? t("rigs.notOwned")
@@ -139,6 +157,21 @@ export default function RigsPage() {
                         </span>
                       )}
                     </p>
+
+                    {/* What this level is actually worth (founder, 2026-08-12) —
+                        only shown when the API sent a real number (pi model,
+                        see the route's own comment); silently absent under the
+                        pool model rather than showing a guess. */}
+                    {r.extraRoziPerDayMicro !== null && r.extraRoziPerDayMicro > 0 && (
+                      <p className="text-xs text-muted">
+                        {t("rigs.extraPerDay", { n: formatRozi(r.extraRoziPerDayMicro) })}
+                        {r.nextCostMicro !== null && (
+                          <> · {t("rigs.payback", {
+                            days: Math.max(1, Math.round(r.nextCostMicro / r.extraRoziPerDayMicro)).toLocaleString(),
+                          })}</>
+                        )}
+                      </p>
+                    )}
 
                     <div className="flex items-center gap-3">
                       <p className="num min-w-0 flex-1 text-sm font-semibold text-brand">

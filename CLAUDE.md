@@ -1701,6 +1701,122 @@ These override convenience or speed at every step:
     group, add the existing bot, call `getUpdates`) — see `.env.example` for
     the exact instructions — then set that one variable on Railway.
 
+- **A VOICE-MEMO AUDIT PASS: MINING BECOMES A REAL CLAIM, DEPOSIT UIs GET
+  SIMPLER, AND A REAL RACE BUG WAS CAUGHT AND FIXED BEFORE IT SHIPPED (founder,
+  2026-08-12, later the same day).** The founder sent a long voice memo
+  covering ~20 asks; this pass audited what had already shipped earlier the
+  same day (a lot — deposit auto-credit, wallet history filtering, roadmap
+  states, the ad-boost card were all already live) versus what was genuinely
+  still missing, flagged three items that collided with guardrails already
+  recorded in this file, and got explicit founder answers before touching
+  them. Verified: 62 mining e2e (was 59, +3 for the claim-correctness
+  regression test) + 41 mining unit + 85 usdt + 52 wallet + 33 deposits + 78
+  stage7, all green; api + web typecheck, eslint (0 errors, pre-existing
+  unrelated warnings only), web production build (33 routes) all clean;
+  `security-review` found and this pass fixed one real bug before it ever
+  reached production (below).
+  - **Mining is now a real claim, not a silent daily auto-credit** (founder's
+    explicit choice, after being told this changes real settlement behavior,
+    not just its look). `settleEpoch()` (`api/src/mining/engine.ts`) no longer
+    calls `postRozi` directly — it parks the owed amount in a new
+    `mining_unclaimed` table instead, and the ONLY way that ever becomes a
+    real `rozi_ledger` credit is the new `POST /mining/claim`
+    (`claimRozi()`), locked exactly like every other balance-changing route
+    (guardrail #8). `totalEmittedMicro()` (`mining/settings.ts`) now sums
+    `rozi_ledger` mining credits **plus** `mining_unclaimed`, so the supply
+    cap still can't be breached by a backlog of unclaimed rewards eventually
+    getting claimed. `/mine` shows a "Your gems are ready" card with a claim
+    button and a gem-glint/burst animation (`globals.css`) — purely
+    decorative, same rule as the existing mining-chamber ring: it never
+    implies the number is ticking up live.
+    ⚠️ **A SECURITY REVIEW CAUGHT A REAL DATA-LOSS RACE IN `claimRozi()`
+    BEFORE THIS SHIPPED, FIXED THE SAME PASS.** The original `DELETE FROM
+    mining_unclaimed WHERE user_id = ?` was a blanket delete. `settleEpoch()`
+    locks on a GLOBAL key (`hashtext('rozi-settlement')`), not the per-user
+    key `claimRozi()` uses, so the two can genuinely interleave — under READ
+    COMMITTED, if settlement commits a brand-new unclaimed row for a user in
+    the gap between `claimRozi`'s `SELECT` and its `DELETE`, the blanket
+    delete would erase that row too, even though it was never summed or
+    credited: the reward silently vanishes, still counted as emitted against
+    the cap but paid to nobody. Fixed by scoping the delete to the exact
+    epochs just summed. A regression test was added (`mining.e2e.ts`), with
+    an honest caveat matching the double-spend test right next to it: PGlite
+    is single-connection and cannot reproduce the actual transaction
+    interleaving, so the test proves the sequential case pays in full, not
+    the race itself — that needs `DATABASE_URL` against real Postgres.
+  - **USDT deposits on `/mine/topup` are as simple as the BNB screen now**
+    (founder: "make the interface as BNB interface"). The screen used to
+    always ask for a pasted transaction ID + amount before crediting anything
+    — a leftover from before personal deposit addresses existed. They exist
+    now and the scanner (`deposits/scanner.ts` + `credit.ts`, unchanged) has
+    already auto-credited them since 2026-08-06; the manual form was pure
+    friction over money already in the balance. It now shows a QR + address
+    (matching `/wallet/usdt`/`/wallet/bnb`'s exact layout) with an
+    auto-credit note, and the manual paste-tx-hash form appears ONLY as a
+    fallback on a deployment with no `personalAddress` (no custody xpub
+    configured).
+  - **Profile got simpler**: the "Set up your withdrawal wallet" row is gone
+    from `/profile`, and the whole payout-address section (ConnectWallet +
+    typed fallback) is gone from `/profile/settings` — the withdraw screen
+    already collects and auto-saves the address inline, so a second place to
+    set the same thing was the duplication, not a feature. `/wallet/withdraw`
+    gained a small "Use your saved address" chip that tap-fills the box,
+    covering the founder's "click it and it pastes instantly" ask without
+    building a full named-address book for what is, today, a single saved
+    address (only one chain is offered). **Forgot password now works from
+    inside the app**: `/profile/settings` links to `/login?mode=forgot`,
+    reusing the exact existing flow rather than a second copy of it — the
+    login page's "already signed in → bounce to home" redirect now has a
+    narrow exception for `mode=forgot`/`reset`, verified against `auth.ts`
+    that both routes are genuinely session-independent (email + emailed
+    code), so this opens no new attack surface.
+  - **Rig cards show what a machine is actually worth**: `GET /mining/rigs`
+    now computes `extraRoziPerDayMicro` — the extra ROZI/day the NEXT level
+    alone would add, holding the user's other multipliers constant — and the
+    UI shows "+X ROZI a day · pays for itself in ~N days" plus a "Best value"
+    badge on whichever rig pays back fastest. ⚠️ **Computed ONLY under the pi
+    emission model, deliberately null under pool**: a pi payout comes from
+    the user's own shares alone (no dilution), so the rate is a real, stable
+    number; under pool it depends on a shared, moving pot, and showing a
+    payback estimate there would be a guess wearing a number.
+  - **Three items were flagged as colliding with guardrails already recorded
+    in this file, and the founder's explicit answer is recorded, not
+    silently assumed:**
+    1. **The "sponsored offers" banner on `/tasks` is removed, but the
+       PER-OFFER disclosure sheet in `TaskFlow.tsx` — the one that actually
+       fires immediately before a sponsored task starts — was deliberately
+       left untouched.** The founder asked to remove the disclosure outright;
+       told plainly this is guardrail #3 (disclose sponsorship before a
+       user starts a paid task) and a likely compliance requirement in these
+       markets, the founder chose to remove the banner anyway. What was
+       removed is the redundant, skippable list-screen summary; what still
+       fires is the harder-to-miss per-offer sheet, which is closer to what
+       the rule actually requires. Recorded here as a knowing decision, same
+       pattern as every other guardrail override in this file.
+    2. **Rig prices are NOT set to a fixed 1 ROZI = 0.1 USDT rate.** The
+       founder asked for exactly that; told it would publish a real implied
+       ROZI valuation (roughly $2.1M on the 21M cap at that rate) — precisely
+       what guardrail #7 and multiple prior entries in this file exist to
+       prevent — the founder chose the existing "display estimate only, made
+       more prominent" option instead. No rig pricing code changed.
+    3. **Mining's "claim" mechanic is real, not cosmetic** — see above. The
+       founder was told this changes actual settlement behavior (the thing
+       MINING_PLAN.md M9.5 says to be careful around) and chose it anyway,
+       explicitly.
+  - **Not done, and said so rather than guessed at**: no literal "screenshot"
+    references exist anywhere user-facing in the app (searched the whole web
+    app; the only two hits were an admin-only config description and a code
+    comment on the KYC photo input) — the founder's "remove the screenshots"
+    ask could not be matched to anything concrete and was left alone pending
+    clarification. The requested progressive ad-boost copy ("watch a 2nd ad,
+    mine 3x faster"...) was not implemented as literally described because
+    the real boost math doesn't stack that way today (each watch adds a flat
+    `adBoostPct`, capped at `adBoostMaxStack` watches, matching CLAUDE.md's
+    existing "advertised rate comes from the API, never invented copy" rule)
+    — the icon was swapped from a video icon to a rocket (`RocketIcon`) as
+    asked, but the copy still states the real percentage/hours/cap rather
+    than a 2x/3x/5x ladder that doesn't exist server-side.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

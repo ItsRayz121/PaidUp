@@ -11,6 +11,7 @@ import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, ApiError } from "@/lib/api";
 import { formatMoney, pointsToUsdt, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
+import { shortAddress } from "@/lib/wallet";
 
 // Withdrawal request in USDT. v1 payout is MANUAL (staff approve, then send) —
 // the confirmation is honest: a request we pay within the SLA, not instant.
@@ -216,6 +217,22 @@ export default function WithdrawPage() {
           <WalletIcon size={20} className="shrink-0 text-brand" />
           {t("withdraw.bep20WalletAddress")}
         </label>
+        {/* One saved address, tap to paste it instantly (founder, 2026-08-12:
+            "as simple as the BNB screen"). Only shown once there is a saved
+            address that differs from what's in the box right now — otherwise
+            it would just be a second copy of what the field already says. */}
+        {savedAddresses[chain] && savedAddresses[chain]!.toLowerCase() !== trimmed.toLowerCase() && (
+          <button
+            type="button"
+            onClick={() => setAddress(savedAddresses[chain]!)}
+            className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
+          >
+            <CheckIcon size={13} className="shrink-0" />
+            <span className="truncate">
+              {t("withdraw.useSaved")} {shortAddress(savedAddresses[chain]!)}
+            </span>
+          </button>
+        )}
         <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
           autoCapitalize="none" autoCorrect="off" spellCheck={false}
           placeholder={t("withdraw.addrPlaceholderEvm")}

@@ -5,8 +5,8 @@ import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
-  MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon,
-  ChartIcon, GiftIcon,
+  MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
+  ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
@@ -14,7 +14,7 @@ import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchMiningState, startMining, issueAd, completeAd, fetchBalance, fetchLedger, fetchRoziHistory,
-  type MiningState,
+  claimMinedRozi, type MiningState,
 } from "@/lib/api";
 import { formatRozi, formatPointsAsRozi } from "@/lib/format";
 import {
@@ -43,6 +43,10 @@ export default function MinePage() {
   const [openTx, setOpenTx] = useState<Row | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Set right after a claim lands, cleared a moment later — the burst ring is
+  // one-shot, not a persistent state.
+  const [justClaimed, setJustClaimed] = useState(false);
+  const [claiming, setClaiming] = useState(false);
   // A direct-link ad the user opened and has not claimed yet. `readyAt` is when
   // the server's minimum watch time will have passed and the claim can succeed.
   const [adClaim, setAdClaim] = useState<{ nonce: string; readyAt: number } | null>(null);
@@ -166,6 +170,24 @@ export default function MinePage() {
         setNotice((e as Error).message);
       })
       .finally(() => setBusy(false));
+  }
+
+  // Collect settled-but-unclaimed ROZI (founder, 2026-08-12: mining pays out
+  // through a real "claim your gems" tap, not a silent daily auto-credit).
+  async function onClaimGems() {
+    setClaiming(true);
+    setNotice(null);
+    try {
+      const res = await claimMinedRozi();
+      setJustClaimed(true);
+      setNotice(t("mine.claim.done").replace("{n}", formatRozi(res.claimedMicro)));
+      mining.reload();
+      setTimeout(() => setJustClaimed(false), 750);
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setClaiming(false);
+    }
   }
 
   async function onClaimBoost() {
@@ -313,6 +335,33 @@ export default function MinePage() {
         )}
       </Card>
 
+      {/* ---- Claim your gems (founder, 2026-08-12): mining settles once a day
+          but ROZI now sits here, unclaimed, until the user taps to collect it —
+          the "gems get mined, then you claim them" moment. Nothing here implies
+          the number below is ticking up live; it only ever moves on a real
+          settlement or a tap. */}
+      {s.claimableMicro > 0 && (
+        <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
+          <div className="relative mx-auto grid h-16 w-16 place-items-center">
+            {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
+            <span className="gem-glint relative grid h-14 w-14 place-items-center rounded-full bg-accent text-white">
+              <GemIcon size={26} />
+            </span>
+          </div>
+          <p className="mt-3 text-sm font-semibold text-accent-ink">{t("mine.claim.title")}</p>
+          <p className="num mt-1 text-3xl font-extrabold text-brand-ink">
+            {formatRozi(s.claimableMicro)} <span className="text-xl text-accent-ink">ROZI</span>
+          </p>
+          <p className="mt-1 text-xs text-muted">{t("mine.claim.body")}</p>
+          <div className="mt-3">
+            <Button onClick={onClaimGems} disabled={claiming} variant="accent">
+              <GemIcon size={18} />
+              {t("mine.claim.cta")}
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {notice && (
         <p className="rounded-xl border border-line bg-card p-3 text-sm text-brand-ink">{notice}</p>
       )}
@@ -339,7 +388,7 @@ export default function MinePage() {
           {s.ads.enabled && (s.ads.monetagDirectLink !== "" || rewardedZone !== "") && (
             <Card className="flex items-center gap-3 p-4">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-                <VideoIcon size={22} />
+                <RocketIcon size={22} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>

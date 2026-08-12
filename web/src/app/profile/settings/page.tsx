@@ -16,15 +16,13 @@ import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { ArrowRightIcon, ProfileIcon, LockIcon, CheckIcon } from "@/components/icons";
-import { ConnectWallet } from "@/components/ConnectWallet";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchProfile, updateProfile, fetchAvatar, uploadAvatar, removeAvatar,
-  getStoredUser, setSession, getToken, fetchPayoutAddresses, savePayoutAddress,
+  getStoredUser, setSession, getToken,
 } from "@/lib/api";
-import { CHAINS, addressLooksValid, chainLabel } from "@/lib/chains";
 
 // A profile picture is shown at 56px, so 256px on the long edge is already
 // generous. Downscaling in the browser is what keeps this under the server's
@@ -67,18 +65,6 @@ export default function ProfileSettingsPage() {
   const { t } = useI18n();
   const profile = useApi(fetchProfile, []);
   const avatar = useApi(fetchAvatar, []);
-  // Payout wallet — moved here from /wallet/withdraw (founder, 2026-08-05).
-  // Where the money gets sent is an account setting, not a step of asking for
-  // it; withdraw now just shows what is saved here and links back if nothing
-  // is set yet. Only one chain is offered right now (see lib/chains.ts), so
-  // there is nothing to pick — CHAINS[0] is the only address that matters.
-  const payoutChain = CHAINS[0].id;
-  const payout = useApi(fetchPayoutAddresses, []);
-  const [payoutAddress, setPayoutAddress] = useState("");
-  const [payoutTyping, setPayoutTyping] = useState(true);
-  const [payoutSaving, setPayoutSaving] = useState(false);
-  const [payoutSaved, setPayoutSaved] = useState(false);
-  const [payoutError, setPayoutError] = useState<string | null>(null);
 
   // The form starts as null and holds edits only once the user types. The
   // displayed value is then DERIVED — their edit if there is one, otherwise
@@ -175,32 +161,6 @@ export default function ProfileSettingsPage() {
 
   const picture = avatar.data?.image ?? null;
   const fallbackName = loaded.displayName || user?.email?.split("@")[0] || "";
-
-  const savedPayoutAddresses = payout.data?.addresses ?? {};
-  const savedPayoutAddr = savedPayoutAddresses[payoutChain];
-  const payoutVerified = payout.data?.verified?.[payoutChain];
-  const typedAddr = payoutAddress.trim();
-  const typedAddrOk = addressLooksValid(payoutChain, typedAddr);
-
-  async function onPayoutConnected(addr: string) {
-    setPayoutAddress(addr);
-    setPayoutSaved(false);
-    payout.reload();
-  }
-
-  async function onPayoutSaveTyped() {
-    setPayoutSaving(true);
-    setPayoutError(null);
-    try {
-      await savePayoutAddress(payoutChain, typedAddr);
-      setPayoutSaved(true);
-      payout.reload();
-    } catch (e) {
-      setPayoutError((e as Error).message);
-    } finally {
-      setPayoutSaving(false);
-    }
-  }
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
@@ -316,88 +276,27 @@ export default function ProfileSettingsPage() {
         )}
       </div>
 
-      {/* ---- Payout wallet (moved off /wallet/withdraw, founder, 2026-08-05) ----
-          Where the money goes is an account setting, not a step you pass
-          through on the way to asking for money. Withdraw itself now shows a
-          read-only summary of whatever is saved here and links back if
-          nothing is set — the actual connect/type flow lives in exactly one
-          place, so it can never disagree with itself between two screens. */}
+      {/* ---- Account security ----
+          Payout wallet moved OFF this screen (founder, 2026-08-12): the
+          withdraw screen already collects and saves the address inline —
+          having a second place to set the same thing was the duplication, not
+          a feature. Forgot password reuses the exact flow the login screen
+          already has (login/page.tsx, ?mode=forgot) rather than a second copy
+          of it living inside the signed-in app shell. */}
       <div>
-        <SectionTitle>{t("settings.payout.title")}</SectionTitle>
-        {payoutError && (
-          <p className="mb-2 rounded-xl bg-danger-tint p-3 text-sm text-danger">{payoutError}</p>
-        )}
-        {!payoutTyping ? (
-          <ConnectWallet
-            chain={payoutChain}
-            savedAddress={savedPayoutAddr}
-            verified={payoutVerified}
-            onConnected={onPayoutConnected}
-            onUseTyping={() => {
-              setPayoutTyping(true);
-              // Seed the field with whatever is already saved, so switching to
-              // the typing view shows the true current state instead of a
-              // blank box that reads as "nothing set" when something is.
-              if (!payoutAddress && savedPayoutAddr) setPayoutAddress(savedPayoutAddr);
-            }}
-          />
-        ) : (
-          <Card className="p-4">
-            <label htmlFor="payout-addr" className="mb-2 block font-semibold text-brand-ink">
-              {t("withdraw.yourWalletAddress")}
-            </label>
-            <input
-              id="payout-addr"
-              type="text"
-              inputMode="text"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder={t("withdraw.addrPlaceholderEvm")}
-              value={payoutAddress}
-              onChange={(e) => { setPayoutAddress(e.target.value); setPayoutSaved(false); }}
-              className="w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none break-all"
-            />
-            {payoutAddress.length > 0 && !typedAddrOk && (
-              <p className="mt-1.5 text-sm text-danger">
-                {t("withdraw.addrInvalid", { label: chainLabel(payoutChain) })}
-              </p>
-            )}
-            {/* The exact gap that left a real user's withdraw button dead with
-                no explanation (2026-08-07): a valid address just sitting in
-                the box, typed but never saved, looks identical to a saved one
-                at a glance — an input holds text either way. This makes the
-                in-between state visible instead of silent. Disappears the
-                moment Save succeeds (payoutSaved) or while it is in flight. */}
-            {typedAddrOk && typedAddr !== savedPayoutAddr && !payoutSaved && !payoutSaving && (
-              <p className="mt-1.5 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">
-                {t("withdraw.addressNotSaved")}
-              </p>
-            )}
-            <div className="mt-3 flex items-center gap-3">
-              <Button
-                onClick={onPayoutSaveTyped}
-                full={false}
-                size="md"
-                disabled={!typedAddrOk || typedAddr === savedPayoutAddr || payoutSaving}
-              >
-                {payoutSaving ? t("withdraw.sending") : t("withdraw.saveAddress")}
-              </Button>
-              {payoutSaved && (
-                <span className="flex items-center gap-1 text-sm font-semibold text-success">
-                  <CheckIcon size={16} /> {t("withdraw.addressSaved")}
-                </span>
-              )}
+        <SectionTitle>{t("settings.security")}</SectionTitle>
+        <Link href="/login?mode=forgot" className="block">
+          <Card className="flex items-center gap-3 p-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+              <LockIcon size={20} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-brand-ink">{t("settings.forgotPassword")}</p>
+              <p className="text-sm text-muted">{t("settings.forgotPasswordHint")}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setPayoutTyping(false)}
-              className="mt-3 text-sm font-semibold text-brand underline-offset-2 hover:underline"
-            >
-              {t("connect.connectInstead")}
-            </button>
+            <ArrowRightIcon size={20} className="shrink-0 text-brand" />
           </Card>
-        )}
+        </Link>
       </div>
 
       {saved && (

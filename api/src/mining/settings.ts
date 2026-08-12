@@ -50,9 +50,18 @@ export function isMiningKey(k: string): k is Key {
 //
 // Pass `t` to read it inside the settlement transaction.
 export async function totalEmittedMicro(t: Pick<TxApi, "get"> = sql): Promise<number> {
+  // Two piles count as "emitted" now, not one: rozi_ledger mining credits (already
+  // claimed) PLUS mining_unclaimed (settled, parked, not yet claimed — founder
+  // decision 2026-08-12 made claiming a real action). Both piles are real ROZI
+  // that already exists against the cap; only rozi_ledger would silently let the
+  // cap accounting reset every time someone leaves a reward unclaimed, and then
+  // breach the cap for real the moment a backlog of unclaimed rewards is claimed.
   const r = await t.get<{ total: string }>(
-    `SELECT COALESCE(SUM(amount), 0) AS total FROM rozi_ledger
-     WHERE source_type = 'mining' AND direction = 'credit'`,
+    `SELECT
+       COALESCE((SELECT SUM(amount) FROM rozi_ledger
+                 WHERE source_type = 'mining' AND direction = 'credit'), 0)
+       + COALESCE((SELECT SUM(micro) FROM mining_unclaimed), 0)
+       AS total`,
   );
   return Number(r?.total ?? 0);
 }

@@ -17,23 +17,18 @@ import {
   StarIcon,
   HelpIcon,
   SlidersIcon,
-  WalletIcon,
   ArrowRightIcon,
 } from "@/components/icons";
 import { useRouter } from "next/navigation";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchKyc, fetchAvatar, fetchPayoutAddresses, clearSession, type KycState } from "@/lib/api";
+import { fetchKyc, fetchAvatar, clearSession, type KycState } from "@/lib/api";
 
 export default function ProfilePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
   const kyc = useApi(fetchKyc, []);
   const avatar = useApi(fetchAvatar, []);
-  // Where the money gets sent. This row moved here from /wallet (founder,
-  // 2026-08-01): it is an account setting for a feature that has not opened, and
-  // it was the first thing on the screen holding someone's balance.
-  const addrs = useApi(fetchPayoutAddresses, []);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -41,14 +36,6 @@ export default function ProfilePage() {
   // that has never opened the settings screen.
   const name = user?.displayName || user?.email?.split("@")[0] || "";
   const picture = avatar.data?.image ?? null;
-
-  // Any saved chain counts: only one chain is offered right now, and a user who
-  // saved an address before a chain was retired has still done the task.
-  const hasAddress = Object.keys(addrs.data?.addresses ?? {}).length > 0;
-  // Saved and PROVED by connecting the wallet, versus saved because it was typed
-  // in. Two different states, and merging them would tell the user a check
-  // happened that did not — on the setting that decides where real money goes.
-  const addressVerified = Object.values(addrs.data?.verified ?? {}).some(Boolean);
 
   // The ID check can be switched off by an Admin (/staff → Verify IDs). When it
   // is, the row stays visible but reads "Coming soon" and does not open: a tab
@@ -89,28 +76,6 @@ export default function ProfilePage() {
           Icon={GiftIcon}
           label={t("profile.refer")}
           hint={t("profile.referHint")}
-        />
-        {/* Where your money gets sent — moved off /wallet (founder, 2026-08-01),
-            then off the withdraw screen entirely and into Settings (founder,
-            2026-08-05): the actual connect/type flow lives at /profile/settings
-            now, not on the way to asking for money. The badge is the whole
-            point of it being a row: a user who typed an address months ago can
-            see at a glance whether it was ever proved, without opening it. */}
-        <Row
-          href="/profile/settings"
-          Icon={WalletIcon}
-          label={t("wallet.setup.title")}
-          hint={t("profile.walletHint")}
-          badge={
-            addrs.data
-              ? <PlainBadge
-                  label={t(hasAddress
-                    ? addressVerified ? "profile.wallet.badge.checked" : "profile.wallet.badge.saved"
-                    : "profile.wallet.badge.none")}
-                  tone={hasAddress ? (addressVerified ? "success" : "pending") : "brand"}
-                />
-              : undefined
-          }
         />
         {kycOn ? (
           <Row

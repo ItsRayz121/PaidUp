@@ -5,7 +5,7 @@ import Link from "next/link";
 import { TaskFlow } from "@/components/TaskFlow";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
-import { InfoIcon, ArrowRightIcon, StarIcon } from "@/components/icons";
+import { ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView } from "@/lib/api";
@@ -60,10 +60,14 @@ export default function TasksPage() {
         ))}
       </nav>
 
-      {view === "available" && <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/50 p-3 text-sm text-muted">
-        <InfoIcon size={18} className="mt-0.5 shrink-0 text-brand" />
-        {t("tasks.disclosure")}
-      </p>}
+      {/* ⚠️ THE GENERIC BANNER THAT USED TO SIT HERE IS GONE (founder,
+          2026-08-12), NOT THE DISCLOSURE ITSELF. Guardrail #3 ("disclose that
+          offers are sponsored, before a user starts a task") is still met — it
+          lives in TaskFlow.tsx's per-offer sheet, which is the one that
+          actually fires immediately before a sponsored task starts, is closer
+          to what the rule requires, and cannot be skipped the way a banner on
+          a list screen can be scrolled past. Removing that sheet too was
+          explicitly NOT part of this change; it is the load-bearing one. */}
 
       {/* Surveys (CPX) are the live earner — they pay real points today, while
           the task catalog below may be empty. Lead with them, don't bury them. */}
@@ -74,7 +78,7 @@ export default function TasksPage() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="font-bold text-brand-ink">{t("surveys.title")}</p>
-            <p className="text-sm text-muted">{t("surveys.cta")}</p>
+            <p className="text-sm text-muted">{t("surveys.subtitle")}</p>
           </div>
           <ArrowRightIcon size={22} className="text-brand" />
         </Card>

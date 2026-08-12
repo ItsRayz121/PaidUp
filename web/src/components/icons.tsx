@@ -121,6 +121,23 @@ export const BoltIcon = (p: IconProps) => (
 export const LockIcon = (p: IconProps) => (
   <svg {...base(p)}><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
 );
+// Boost = a rocket, not a video screen — the ad-boost card watches a video, but
+// what it SELLS is speed, so the icon leads with that (founder, 2026-08-12).
+export const RocketIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 2.5c3 1.6 5 4.8 5 9 0 2.2-.7 4-1.6 5.3L12 19l-3.4-2.2C7.7 15.5 7 13.7 7 11.5c0-4.2 2-7.4 5-9Z" />
+    <circle cx="12" cy="10.5" r="1.8" />
+    <path d="M8.3 15.8 5.5 17c-.3 1.3-.3 2.8 0 3.5.7.3 2.2.3 3.5 0l1.2-2.8" />
+    <path d="M15.7 15.8 18.5 17c.3 1.3.3 2.8 0 3.5-.7.3-2.2.3-3.5 0l-1.2-2.8" />
+  </svg>
+);
+// A mined gem — the "claim your gems" moment (founder, 2026-08-12).
+export const GemIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M6.5 3h11L21 8.5 12 21 3 8.5 6.5 3Z" />
+    <path d="M3 8.5h18M9 3l-2 5.5L12 21l5-12.5L15 3" />
+  </svg>
+);
 
 export const offerIcon = { install: InstallIcon, video: VideoIcon, survey: SurveyIcon, custom: StarIcon };
 

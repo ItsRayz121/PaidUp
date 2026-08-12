@@ -24,9 +24,11 @@ import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
+  claimableRoziMicro, claimRozi, effectivePiRate, minerPopulation,
 } from "../mining/engine.ts";
 import {
   rigUpgradeCost, rigPower, conversionPayout, conversionAllowanceMicro, toMicro, fromMicro,
+  piPayoutMicroFor,
 } from "../mining/core.ts";
 import { requireFeature } from "../flags.ts";
 
@@ -210,8 +212,9 @@ export async function miningRoutes(app: FastifyInstance) {
     const s = await loadMiningSettings();
     const state = await sessionState(userId);
     const { breakdown } = await hashrateOf(userId, s);
-    const [roziMicro, streak, boosts, adsToday, me, sentToday, store] = await Promise.all([
+    const [roziMicro, claimableMicro, streak, boosts, adsToday, me, sentToday, store] = await Promise.all([
       roziBalanceMicroOf(userId),
+      claimableRoziMicro(userId),
       sql.get<{ current_days: number; best_days: number }>(
         "SELECT current_days, best_days FROM mining_streaks WHERE user_id = ?", userId),
       sql.all<{ kind: string; multiplier_pct: number; expires_at: string }>(
@@ -244,6 +247,10 @@ export async function miningRoutes(app: FastifyInstance) {
 
     return {
       roziMicro,
+      // Settled ROZI waiting for the user to tap Claim — see mining_unclaimed.
+      // NOT included in roziMicro above; it only joins the spendable balance
+      // once POST /mining/claim runs.
+      claimableMicro,
       session: {
         active: state.active,
         expiresAt: state.expiresAt ?? null,
@@ -349,6 +356,16 @@ export async function miningRoutes(app: FastifyInstance) {
     return { ok: true, expiresAt: r.expiresAt, boost };
   }));
 
+  // Claim settled ROZI (founder, 2026-08-12: mining is a real "claim your gems"
+  // action, not a silent daily auto-credit). The heavy lifting — the lock, the
+  // sum, the ledger write, clearing the unclaimed rows — is all in claimRozi();
+  // this route is just the guard + the zero-claimable rejection.
+  app.post("/mining/claim", guard(async (userId) => {
+    const r = await claimRozi(userId);
+    if (r.claimedMicro <= 0) throw { statusCode: 400, message: "Nothing ready to claim yet" };
+    return { ok: true, claimedMicro: r.claimedMicro };
+  }));
+
   // ---- ROZI history --------------------------------------------------------
   app.get("/mining/history", guard(async (userId) => {
     const rows = await sql.all<{
@@ -383,6 +400,15 @@ export async function miningRoutes(app: FastifyInstance) {
         .map((r) => [r.rig_id, r.level]),
     );
     const s = await loadMiningSettings();
+    // "Pays for itself in N days" (founder, 2026-08-12: rig cards had no way to
+    // judge one against another). Computed ONLY under the pi model, on purpose —
+    // a pi payout comes from the user's own shares alone (no dilution, see
+    // engine.ts), so the current rate is a real, stable number. Under the pool
+    // model the same figure depends on a shared pot that moves with every other
+    // miner that day; showing a payback estimate there would be a guess wearing
+    // a number, which is exactly the honesty problem the pi model exists to fix.
+    const piRate = s.emissionModel === "pi" ? effectivePiRate(s, await minerPopulation()) : 0;
+    const piReferenceSeconds = s.piReferenceHours * 3600;
     return {
       roziMicro: await roziBalanceMicroOf(userId),
       // The second way to pay. Zero for everyone until a deposit is confirmed,
@@ -396,16 +422,28 @@ export async function miningRoutes(app: FastifyInstance) {
         const level = owned.get(r.id) ?? 0;
         const def = defOf(r);
         const maxed = level >= r.max_level;
+        const power = rigPower(def, level);
+        const nextPower = maxed ? null : rigPower(def, level + 1);
+        // The extra ROZI/day the NEXT level alone would add, holding every other
+        // multiplier the user already has constant — i.e. what this purchase is
+        // actually worth, not the user's whole hashrate re-priced.
+        const powerDelta = maxed || nextPower === null ? 0 : nextPower - power;
+        const extraRoziPerDayMicro = !maxed && piRate > 0 && powerDelta > 0
+          ? piPayoutMicroFor(powerDelta * 86400, piRate, s.baseHashrate, piReferenceSeconds)
+          : null;
         return {
           id: r.id, name: r.name, icon: r.icon, level, maxLevel: r.max_level,
-          power: rigPower(def, level),
-          nextPower: maxed ? null : rigPower(def, level + 1),
+          power,
+          nextPower,
           // The catalogue prices rigs in WHOLE ROZI (an admin types "50", not
           // "50000000"), so the cost is converted here, at the API edge, to the
           // same micro unit as the balance it will be compared against.
           nextCostMicro: maxed ? null : toMicro(rigUpgradeCost(def, level)),
           // null => this rig is ROZI-only. Most are, and that is the default.
           nextCostUsdtMicro: maxed ? null : rigUsdtCostMicro(r, level),
+          // null under the pool model, or once no rate is configured — the
+          // client must treat null as "not shown", never as zero.
+          extraRoziPerDayMicro,
         };
       }),
     };

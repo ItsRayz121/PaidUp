@@ -12,7 +12,7 @@ import {
   usingRealPostgres, type TxApi,
 } from "../db.ts";
 import { setMiningSetting, loadMiningSettings } from "../mining/settings.ts";
-import { settleEpoch, hashrateOf, grantBoost, accrueAllSessions } from "../mining/engine.ts";
+import { settleEpoch, hashrateOf, grantBoost, accrueAllSessions, claimRozi } from "../mining/engine.ts";
 import {
   epochOf, rigUpgradeCost, toMicro, fromMicro, MINING_DEFAULTS,
 } from "../mining/core.ts";
@@ -81,6 +81,10 @@ await addShares(bob, 1_000_000);
 const s = await loadMiningSettings();
 const r1 = await settleEpoch(EPOCH);
 
+// Settlement only PARKS the reward now (founder, 2026-08-12) — claim it to prove
+// the real end-to-end path, same as a user tapping "Claim my gems" would.
+await claimRozi(alice);
+await claimRozi(bob);
 const aliceRozi = await roziOf(alice);
 const bobRozi = await roziOf(bob);
 
@@ -117,6 +121,8 @@ await sql.run(
 
 const aliceBefore = await roziOf(alice);
 const r3 = await settleEpoch(E2);
+await claimRozi(alice);
+await claimRozi(mallory); // withheld => nothing parked => claim is a safe no-op
 const aliceGain = (await roziOf(alice)) - aliceBefore;
 
 check("the flagged miner is paid nothing", (await roziOf(mallory)) === 0);
@@ -355,6 +361,69 @@ check("sweeping again does not double-credit the same seconds",
   Math.abs(Number(afterSecond?.shares ?? 0) - Number(afterSweep?.shares ?? 0)) < 10 * 60,
   `${afterSweep?.shares} -> ${afterSecond?.shares}`);
 
+console.log("\n-- CLAIM: settlement parks ROZI, only claimRozi() pays it out --");
+
+// A dedicated epoch/user so this reads independently of everything above.
+const { claimableRoziMicro } = await import("../mining/engine.ts");
+const CLAIM_EPOCH = epochOf() - 8;
+await sql.run("DELETE FROM mining_epochs WHERE epoch = ?", CLAIM_EPOCH);
+await sql.run("DELETE FROM mining_shares WHERE epoch = ?", CLAIM_EPOCH);
+
+const pat = await mkUser("pat");
+await addShares(pat, 1_000_000, CLAIM_EPOCH);
+
+const beforeSettle = await claimableRoziMicro(pat);
+check("nothing claimable before the epoch settles", beforeSettle === 0);
+
+await settleEpoch(CLAIM_EPOCH);
+const afterSettle = await claimableRoziMicro(pat);
+check("settlement makes it CLAIMABLE, not credited", afterSettle > 0, `claimable=${afterSettle}`);
+check("but the spendable balance has not moved yet", (await roziOf(pat)) === 0);
+
+const patBefore = await roziOf(pat);
+const claim1 = await claimRozi(pat);
+check("claiming pays exactly the claimable amount",
+  claim1.claimedMicro === afterSettle, `claimed=${claim1.claimedMicro} claimable=${afterSettle}`);
+check("and it lands in the real spendable balance",
+  (await roziOf(pat)) > patBefore, `bal=${await roziOf(pat)}`);
+check("nothing left claimable after claiming", (await claimableRoziMicro(pat)) === 0);
+
+const balAfterFirstClaim = await roziOf(pat);
+const claim2 = await claimRozi(pat);
+check("claiming again with nothing pending pays zero, does not double-pay",
+  claim2.claimedMicro === 0 && (await roziOf(pat)) === balAfterFirstClaim);
+
+console.log("\n-- CLAIM correctness: a fresh unclaimed row is paid in full, none of it lost --");
+
+// Security review, 2026-08-12: claimRozi() used to run
+// `DELETE FROM mining_unclaimed WHERE user_id = ?` — no epoch filter. Under
+// READ COMMITTED, settleEpoch() (a GLOBAL lock, not this user's lock — see its
+// own comment) can commit a brand-new unclaimed row for this same user in the
+// gap between claimRozi's SELECT and its DELETE; a blanket delete would then
+// erase that row too, even though it was never summed into what got credited
+// — the reward silently vanishes, counted as emitted but paid to no one. Fixed
+// by scoping the DELETE to the exact epochs summed.
+//
+// ⚠️ THIS TEST DOES NOT REPRODUCE THE ACTUAL RACE — PGlite is single-connection
+// and cannot interleave two real transactions, the identical limitation the
+// DOUBLE-SPEND race below documents. It only proves the ordinary sequential
+// case pays correctly. Re-run this file with DATABASE_URL set against a real
+// Postgres, with an artificial delay spliced between the SELECT and DELETE in
+// claimRozi, to exercise the interleaving for real.
+const CLAIM_EPOCH_2 = epochOf() - 9;
+await sql.run("DELETE FROM mining_unclaimed WHERE epoch = ?", CLAIM_EPOCH_2);
+await sql.run(
+  "INSERT INTO mining_unclaimed (epoch, user_id, micro, created_at) VALUES (?,?,?,?)",
+  CLAIM_EPOCH_2, pat, toMicro(5), now(),
+);
+check("the late-arriving row is there before any further claim",
+  (await claimableRoziMicro(pat)) === toMicro(5));
+const claim3 = await claimRozi(pat);
+check("a claim only ever pays out what is actually pending, never loses it",
+  claim3.claimedMicro === toMicro(5), `claimed=${claim3.claimedMicro}`);
+check("and the balance actually received it — nothing was silently dropped",
+  (await roziOf(pat)) === balAfterFirstClaim + 5);
+
 console.log("\n-- DOUBLE-SPEND: concurrent debits cannot overdraw a balance --");
 
 // The advisory lock (lockUser) is what stops two concurrent requests both
@@ -484,6 +553,9 @@ await addShares(dave, FULL_DAY * 2, PI_EPOCH);
 await addShares(erin, Math.floor(FULL_DAY / 3), PI_EPOCH);
 
 const piR = await settleEpoch(PI_EPOCH);
+await claimRozi(carol);
+await claimRozi(dave);
+await claimRozi(erin);
 const carolRozi = await roziOf(carol);
 const daveRozi = await roziOf(dave);
 const erinRozi = await roziOf(erin);
@@ -518,6 +590,7 @@ const frank = await mkUser("frank");
 await addShares(frank, FULL_DAY, PI_EPOCH_2);
 await setMiningSetting("piBaseRate", 500); // one halving of 1000
 await settleEpoch(PI_EPOCH_2);
+await claimRozi(frank);
 const frankRozi = await roziOf(frank);
 
 check("PI: after one halving the same mining earns exactly half",
@@ -549,6 +622,8 @@ await addShares(hank, FULL_DAY, PI_EPOCH_3);   // wants 500 — 1000 total
 // Only 400 ROZI of headroom for a 1000-ROZI demand.
 await setMiningSetting("supplyCap", alreadyRozi + 400);
 const capR = await settleEpoch(PI_EPOCH_3);
+await claimRozi(gina);
+await claimRozi(hank);
 const emittedRozi = fromMicro(capR.emitted);
 const ginaRozi = await roziOf(gina);
 const hankRozi = await roziOf(hank);
@@ -587,6 +662,7 @@ const EIGHT_HOURS = launchS.baseHashrate * launchS.sessionHours * 3600;
 const nadia = await mkUser("nadia");
 await addShares(nadia, EIGHT_HOURS, LAUNCH_EPOCH);
 await settleEpoch(LAUNCH_EPOCH);
+await claimRozi(nadia);
 const nadiaRozi = await roziOf(nadia);
 
 const launchRate = launchS.piBaseRate;
@@ -610,6 +686,7 @@ const omar = await mkUser("omar");
 await addShares(omar, EIGHT_HOURS, HALVED_EPOCH);
 await setMiningSetting("piBaseRate", fullyHalved);
 await settleEpoch(HALVED_EPOCH);
+await claimRozi(omar);
 const omarRozi = await roziOf(omar);
 
 check("LAUNCH: an 8h session at the FULLY-HALVED rate still pays, not zero",

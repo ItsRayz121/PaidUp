@@ -106,6 +106,19 @@ export default function RigDetailPage() {
         </div>
       </Card>
 
+      {/* What this upgrade is actually worth (founder, 2026-08-12) — see the
+          list page's comment for why this is null under the pool model. */}
+      {!maxed && r.extraRoziPerDayMicro !== null && r.extraRoziPerDayMicro > 0 && (
+        <p className="rounded-xl border border-success/30 bg-success-tint/50 px-4 py-2.5 text-center text-sm font-semibold text-success">
+          {t("rigs.extraPerDay", { n: formatRozi(r.extraRoziPerDayMicro) })}
+          {r.nextCostMicro !== null && (
+            <> · {t("rigs.payback", {
+              days: Math.max(1, Math.round(r.nextCostMicro / r.extraRoziPerDayMicro)).toLocaleString(),
+            })}</>
+          )}
+        </p>
+      )}
+
       {notice && (
         <p className="rounded-xl border border-line bg-card p-3 text-sm text-brand-ink">{notice}</p>
       )}

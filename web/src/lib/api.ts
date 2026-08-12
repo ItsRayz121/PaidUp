@@ -922,6 +922,10 @@ export type MiningBoost = { kind: "task" | "ad" | "points"; pct: number; expires
 // before it reaches a screen — printed raw, a balance of 3.33 ROZI reads "3333333".
 export type MiningState = {
   roziMicro: number;
+  // Settled ROZI waiting for the user to tap Claim — NOT part of roziMicro
+  // above. Founder decision 2026-08-12: mining pays out through a real claim
+  // action, not a silent daily auto-credit. See POST /mining/claim.
+  claimableMicro: number;
   session: { active: boolean; expiresAt: string | null; sessionHours: number };
   hashrate: number;
   breakdown: {
@@ -993,11 +997,20 @@ export const startMining = (adNonce?: string) =>
   apiFetch<{ ok: true; expiresAt: string; boost: { pct: number; hours: number } | null }>(
     "/mining/start", { method: "POST", body: JSON.stringify({ adNonce }) });
 
+// Collect settled-but-unclaimed ROZI into the real spendable balance. See the
+// mining_unclaimed comment in api/src/db.ts.
+export const claimMinedRozi = () =>
+  apiFetch<{ ok: true; claimedMicro: number }>("/mining/claim", { method: "POST" });
+
 export type Rig = {
   id: string; name: string; icon: string; level: number; maxLevel: number;
   power: number; nextPower: number | null; nextCostMicro: number | null;
   // null => this machine is ROZI-only, which is the default for all of them.
   nextCostUsdtMicro: number | null;
+  // What the NEXT level alone would add per day, at today's real pi rate — null
+  // under the pool model (a shared, moving pot — see api/src/routes/mining.ts)
+  // or once the rig is maxed. Never treat null as zero; it means "not shown".
+  extraRoziPerDayMicro: number | null;
 };
 export const fetchRigs = () => apiFetch<{
   roziMicro: number; usdtMicro: number; usdtEnabled: boolean;

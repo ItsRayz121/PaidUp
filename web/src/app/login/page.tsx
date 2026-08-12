@@ -84,7 +84,13 @@ function LoginForm() {
   const { t } = useI18n();
   // Referral code from an invite link (/login?ref=CODE), straight off the URL.
   const ref = useSearchParams().get("ref") ?? undefined;
-  const [mode, setMode] = useState<Mode>("login");
+  // Profile links here with ?mode=forgot (founder, 2026-08-12) so "forgot
+  // password" has exactly one implementation, not a second copy inside the app
+  // shell. forgotPassword/resetPassword are already session-independent (an
+  // email + a code), so a logged-in user running through them is harmless —
+  // finishing just refreshes their session token, same as any other login.
+  const requestedMode = useSearchParams().get("mode");
+  const [mode, setMode] = useState<Mode>(requestedMode === "forgot" ? "forgot" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -92,10 +98,11 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // Already signed in? Skip to the app.
+  // Already signed in? Skip to the app — UNLESS they were sent here on purpose
+  // to reset their password, in which case bouncing them away is the bug.
   useEffect(() => {
-    if (getToken()) router.replace("/");
-  }, [router]);
+    if (getToken() && mode !== "forgot" && mode !== "reset") router.replace("/");
+  }, [router, mode]);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const passwordOk = password.length >= 8;

@@ -68,7 +68,15 @@ export default function HomePage() {
   const first = tasks.data?.tasks?.[0];
 
   return (
-    <div className="px-4 pt-5 pb-8 space-y-5">
+    <div className="relative px-4 pt-5 pb-8 space-y-5">
+      {/* Purely decorative — a slow drift, never a data visualisation, and
+          -z-10 keeps it behind every real element no matter how those are
+          positioned. See the ambient-bg comment in globals.css. */}
+      <div className="ambient-bg -z-10" aria-hidden="true">
+        <span />
+        <span />
+      </div>
+
       {/* `break-all` used to sit on the name, which splits an ordinary word
           wherever the line happens to end — "Muhamm / ad". `break-words` only
           breaks a word that would otherwise overflow, so a normal name wraps

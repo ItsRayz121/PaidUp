@@ -13,9 +13,15 @@
 // come back out has been misled by us, no matter how true each individual
 // sentence on the page was.
 //
-// The flow is deliberately manual: send to our address, paste the transaction
-// ID, a human checks the chain and confirms. No wallet connect, no automatic
-// crediting, nothing this app holds a key for.
+// ⚠️ SIMPLIFIED 2026-08-12 (founder audit): this screen used to ALWAYS ask for
+// a pasted transaction ID + amount before crediting anything — a leftover from
+// before personal deposit addresses existed. They exist now (CUSTODY_SPEC.md
+// § 5 step 1) and the scanner (deposits/scanner.ts + credit.ts) already
+// auto-credits a deposit to one, exactly like the BNB deposit screen. Making a
+// user paste a tx hash for money that was already credited was pure friction
+// with nothing behind it. The manual form now shows ONLY on a deployment with
+// no custody xpub configured (`s.personalAddress` is null), where a human
+// really does still have to read the chain and confirm by hand.
 import { useState } from "react";
 import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
@@ -23,16 +29,19 @@ import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
   ArrowRightIcon, CopyIcon, CheckIcon, InfoIcon, ClockIcon, LockIcon,
 } from "@/components/icons";
+import { QrCode } from "@/components/QrCode";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchUsdt, claimUsdtTopup } from "@/lib/api";
 import { formatUsdtMicro, timeAgo } from "@/lib/format";
+import { chainLabel } from "@/lib/chains";
 
 export default function TopUpPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const usdt = useApi(fetchUsdt, []);
 
+  // Manual claim state — only used on the fallback path (no personal address).
   const [tx, setTx] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,11 +59,14 @@ export default function TopUpPage() {
   }
 
   const s = usdt.data;
-  // Prefer the user's own address once custody derivation is on (deployments
-  // without an xpub configured always get null here — see CUSTODY_SPEC.md §5
-  // step 1). Falls back to the one shared treasury address, exactly the
-  // behaviour this screen had before the per-user feature existed.
+  // A personal deposit address auto-credits the moment the chain confirms it
+  // — no staff step, no tx hash to paste, same as the BNB deposit screen. Only
+  // a deployment with no custody xpub configured has no personal address, and
+  // falls back to the one shared treasury address, which still needs a human
+  // to confirm the tx hash by hand.
+  const auto = Boolean(s.personalAddress);
   const depositAddress = s.personalAddress ?? s.treasuryAddress;
+  const chain = s.treasuryChain ?? "bep20";
 
   const header = (
     <header>
@@ -143,7 +155,7 @@ export default function TopUpPage() {
         <p className="mt-1 text-sm text-brand-ink">{t("topup.spendOnly.body")}</p>
       </Card>
 
-      {sent && (
+      {!auto && sent && (
         <Card className="border-success/30 bg-success-tint/60 p-4">
           <p className="flex items-center gap-2 font-bold text-success">
             <CheckIcon size={18} />
@@ -153,43 +165,35 @@ export default function TopUpPage() {
         </Card>
       )}
 
-      {/* ---- Address ---- */}
+      {/* ---- Address — QR + two labelled rows, exactly the BNB deposit
+          screen's layout (founder, 2026-08-12: "make it as simple as BNB"). ---- */}
       <div>
         <SectionTitle>{t("topup.address")}</SectionTitle>
-        <Card className="p-4">
-          {/* Coin and network as two separate labelled rows, ABOVE the address.
-              A wallet asks for both, and a user who has to infer either one from
-              a run-on sentence is a user who eventually sends BNB on the wrong
-              network. Two rows, two answers, nothing to infer. */}
-          <dl className="mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-            <dt className="text-muted">{t("topup.token")}</dt>
-            <dd className="font-bold text-brand-ink">{t("topup.tokenValue")}</dd>
-            <dt className="text-muted">{t("topup.network")}</dt>
-            <dd className="font-bold text-brand-ink">{t("topup.networkValue")}</dd>
-          </dl>
-          {/* When custody derivation is on, this is the user's OWN address —
-              still confirmed by staff reading the tx hash exactly as before
-              (CUSTODY_SPEC.md § 5 step 1 is read-only), but it means a deposit
-              is no longer landing in a pool shared with every other user. */}
-          {s.personalAddress && (
-            <p className="mb-2 text-xs font-semibold text-brand">{t("topup.yourOwnAddress")}</p>
-          )}
-          {/* One line: the full address, horizontally scrollable rather than
-              truncated (nothing about it is hidden — see the copy button
-              beside it for an exact-value alternative), with Copy pinned
-              next to it instead of stacked below. */}
-          <div className="flex items-center gap-2 border-t border-line pt-3">
-            <p className="num flex-1 overflow-x-auto whitespace-nowrap text-sm font-semibold text-brand-ink">
-              {depositAddress}
-            </p>
-            <button
-              onClick={copyAddress}
-              aria-label={copied ? t("topup.copied") : t("topup.copy")}
-              className="flex shrink-0 items-center justify-center rounded-xl border border-brand bg-brand-tint p-2 text-brand"
-            >
-              {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-            </button>
+        <Card className="p-4 space-y-3">
+          <div className="flex justify-center"><QrCode value={depositAddress ?? ""} /></div>
+          {/* Coin and network as two separate labelled rows. A wallet asks for
+              both, and a user who has to infer either one from a run-on
+              sentence is a user who eventually sends BNB on the wrong network. */}
+          <div className="rounded-lg border border-line p-2.5 text-xs text-muted flex justify-between">
+            <span>{t("topup.token")}</span>
+            <span className="font-semibold text-brand-ink">{t("topup.tokenValue")}</span>
           </div>
+          <div className="rounded-lg border border-line p-2.5 text-xs text-muted flex justify-between">
+            <span>{t("topup.network")}</span>
+            <span className="font-semibold text-brand-ink">{chainLabel(chain)}</span>
+          </div>
+          {/* When custody derivation is on, this is the user's OWN address, and
+              a deposit to it credits on its own — see the auto note below. */}
+          {s.personalAddress && (
+            <p className="text-xs font-semibold text-brand">{t("topup.yourOwnAddress")}</p>
+          )}
+          <button
+            onClick={copyAddress}
+            className="w-full rounded-xl border border-line p-3 text-left flex items-center justify-between active:bg-brand-tint/40"
+          >
+            <span className="num text-sm break-all text-brand-ink">{depositAddress}</span>
+            {copied ? <CheckIcon size={18} className="shrink-0 text-success ml-2" /> : <CopyIcon size={18} className="shrink-0 text-muted ml-2" />}
+          </button>
         </Card>
         {/* Wrong-chain deposits are the number one way people lose money doing
             this, and they are unrecoverable. Said in danger colours, next to the
@@ -198,54 +202,65 @@ export default function TopUpPage() {
           <InfoIcon size={16} className="mt-0.5 shrink-0" />
           {t("topup.addressWarn")}
         </p>
+        {auto && (
+          <p className="mt-2 flex gap-2 rounded-xl border border-success/30 bg-success-tint/50 p-3 text-sm text-brand-ink">
+            <CheckIcon size={16} className="mt-0.5 shrink-0 text-success" />
+            {t("topup.autoNote")}
+          </p>
+        )}
       </div>
 
-      {/* ---- Claim ---- */}
-      {error && (
-        <p className="rounded-xl border border-danger/30 bg-danger-tint p-3 text-sm font-semibold text-danger">
-          {error}
-        </p>
+      {/* ---- Manual claim — fallback path only, when there is no personal
+          deposit address to auto-credit from. ---- */}
+      {!auto && (
+        <>
+          {error && (
+            <p className="rounded-xl border border-danger/30 bg-danger-tint p-3 text-sm font-semibold text-danger">
+              {error}
+            </p>
+          )}
+
+          <div>
+            <label htmlFor="tx" className="mb-2 block px-1 font-semibold text-brand-ink">
+              {t("topup.txLabel")}
+            </label>
+            <input
+              id="tx"
+              value={tx}
+              onChange={(e) => { setTx(e.target.value); setSent(false); }}
+              placeholder={t("topup.txPlaceholder")}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">
+              {t("topup.amountLabel")}
+            </label>
+            <input
+              id="amt"
+              type="number"
+              inputMode="decimal"
+              min={s.minTopup}
+              max={s.maxTopup}
+              value={amount}
+              onChange={(e) => { setAmount(e.target.value); setSent(false); }}
+              placeholder="0"
+              className="num w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none focus:border-brand"
+            />
+            <p className="mt-1.5 px-1 text-xs text-muted">
+              {t("topup.limits", { min: String(s.minTopup), max: String(s.maxTopup) })}
+            </p>
+          </div>
+
+          <Button onClick={submit} disabled={!canSubmit || busy} full>
+            {busy ? t("topup.sending") : t("topup.submit")}
+          </Button>
+        </>
       )}
-
-      <div>
-        <label htmlFor="tx" className="mb-2 block px-1 font-semibold text-brand-ink">
-          {t("topup.txLabel")}
-        </label>
-        <input
-          id="tx"
-          value={tx}
-          onChange={(e) => { setTx(e.target.value); setSent(false); }}
-          placeholder={t("topup.txPlaceholder")}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          className="w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">
-          {t("topup.amountLabel")}
-        </label>
-        <input
-          id="amt"
-          type="number"
-          inputMode="decimal"
-          min={s.minTopup}
-          max={s.maxTopup}
-          value={amount}
-          onChange={(e) => { setAmount(e.target.value); setSent(false); }}
-          placeholder="0"
-          className="num w-full rounded-xl border border-line bg-card p-3 text-brand-ink outline-none focus:border-brand"
-        />
-        <p className="mt-1.5 px-1 text-xs text-muted">
-          {t("topup.limits", { min: String(s.minTopup), max: String(s.maxTopup) })}
-        </p>
-      </div>
-
-      <Button onClick={submit} disabled={!canSubmit || busy} full>
-        {busy ? t("topup.sending") : t("topup.submit")}
-      </Button>
 
       {/* ---- History ---- */}
       <div>
@@ -272,26 +287,27 @@ export default function TopUpPage() {
         )}
       </div>
 
-      {/* ---- How (moved to the bottom, 2026-08-08: redundant with the address
-          card + form above it for most people, but still worth having for
-          anyone who wants the steps spelled out) ---- */}
-      <div>
-        <SectionTitle>{t("topup.how")}</SectionTitle>
-        <Card className="divide-y divide-line">
-          {[
-            t("topup.step1"),
-            t("topup.step2"),
-            t("topup.step3"),
-          ].map((line, i) => (
-            <p key={line} className="flex gap-3 px-4 py-3 text-sm text-brand-ink">
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">
-                {i + 1}
-              </span>
-              {line}
-            </p>
-          ))}
-        </Card>
-      </div>
+      {/* ---- How — only the manual fallback has steps to follow. The auto path
+          has exactly one step, already said above the address: send it. ---- */}
+      {!auto && (
+        <div>
+          <SectionTitle>{t("topup.how")}</SectionTitle>
+          <Card className="divide-y divide-line">
+            {[
+              t("topup.step1"),
+              t("topup.step2"),
+              t("topup.step3"),
+            ].map((line, i) => (
+              <p key={line} className="flex gap-3 px-4 py-3 text-sm text-brand-ink">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">
+                  {i + 1}
+                </span>
+                {line}
+              </p>
+            ))}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

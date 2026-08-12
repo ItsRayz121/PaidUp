@@ -24,6 +24,9 @@ const copy: Record<string, string> = {
   "withdraw.bep20WalletAddress": "Withdrawal address",
   "withdraw.savedAddressReady": "Saved address ready",
   "withdraw.newAddressReady": "New address ready",
+  // Tap-to-fill chip (founder, 2026-08-12: "as simple as the BNB screen") —
+  // shown only when the box holds something other than the saved address.
+  "withdraw.useSaved": "Use your saved address",
   "withdraw.addressAutoSave": "A valid new address is saved automatically after you withdraw.",
   "profile.member": "RoziPay member",
   "profile.accountEmail": "Account email",
@@ -104,7 +107,11 @@ const copy: Record<string, string> = {
   "settings.usernameTaken": "Someone already has that name. Try another.",
   "settings.usernameRules": "3 to 20 letters, numbers or _. Start with a letter.",
   "settings.save": "Save",
-  "settings.payout.title": "Payout wallet",
+  // Payout wallet is gone from this screen (founder, 2026-08-12) — set it
+  // inline on the withdraw screen instead, where it is auto-saved.
+  "settings.security": "Account security",
+  "settings.forgotPassword": "Forgot your password?",
+  "settings.forgotPasswordHint": "Get a code by email to set a new one.",
   "settings.notifications": "Notifications",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
@@ -121,11 +128,6 @@ const copy: Record<string, string> = {
   // promise a date — same ceiling word as the road map and /mine.
   "profile.verifyIdOffHint": "Verification is not required yet.",
   "profile.comingSoon": "Coming soon",
-  // Where your money gets sent. Moved here from /wallet (founder, 2026-08-01).
-  "profile.walletHint": "Manage your withdrawal address.",
-  "profile.wallet.badge.none": "Not set",
-  "profile.wallet.badge.saved": "Saved",
-  "profile.wallet.badge.checked": "Checked",
   "profile.kycBadge.none": "Not done",
   "profile.kycBadge.pending": "Checking",
   "profile.kycBadge.approved": "Done",
@@ -158,11 +160,9 @@ const copy: Record<string, string> = {
   // USDT" while each row underneath showed a ROZI figure — a section header
   // contradicting every item it introduces.
   "tasks.subtitle": "Complete tasks and earn rewards.",
-  "tasks.disclosure":
-    "Sponsored offers from our partners. We show you who pays the reward before you start.",
   "tasks.empty.title": "More ways to earn are coming",
   "tasks.empty.body":
-    "Surveys are open now — tap “Answer surveys” above to earn today. New task types are added soon.",
+    "Surveys are open now — tap “Surveys” above to earn today. New task types are added soon.",
   "tasks.seeAll": "See all",
   // home
   //
@@ -473,26 +473,6 @@ const copy: Record<string, string> = {
   "login.msg.verifyPrompt": "Please check your email for a code to verify your account.",
   "login.msg.codeSent": "We sent a 6-number code to {email}.",
   "login.msg.forgotSent": "If that email has an account, we sent a code to it.",
-  // wallet + withdraw additions
-  "wallet.setupWallet": "Connect my wallet",
-  // ⚠️ THESE RENDER ON /profile NOW, NOT /wallet (founder, 2026-08-01). Saving a
-  // payout address is an account setting for a feature that is not open yet, and
-  // it was sitting above the balance on the screen named "wallet". It is not
-  // compulsory anywhere: /wallet/withdraw still collects the address, validates
-  // it, and offers Connect-my-wallet at payout time.
-  //
-  // Same ceiling word as everywhere else: "soon", never a date.
-  "wallet.setup.title": "Set up your withdrawal wallet",
-  "wallet.setup.body":
-    "Tell us the wallet address to send your money to. Do it once now, and you are ready the moment cash-out opens.",
-  // TWO SENTENCES FOR TWO STATES, and merging them would be a lie. A connected
-  // wallet has proved it belongs to this user; a typed one is only a string we
-  // were given. Saying "done" over both would tell the user a check happened
-  // that did not — on the screen that decides where real money is sent.
-  "wallet.setup.doneVerified": "Your wallet is connected and checked. You can change it any time.",
-  "wallet.setup.doneTyped": "Your wallet address is saved. Connect the wallet to be sure it is yours.",
-  "wallet.setup.cta": "Change my wallet",
-  "wallet.setup.ctaConnect": "Connect my wallet",
   // ---- Send / receive + the token list (founder, 2026-07-30) ---------------
   "wallet.send": "Send",
   "wallet.receive": "Receive",
@@ -667,9 +647,12 @@ const copy: Record<string, string> = {
   "leaderboard.invitesLabel": "{n} friends invited",
   "leaderboard.seeLeaderboard": "See the leaderboard",
   // surveys (CPX)
-  "surveys.title": "Answer surveys",
+  // ⚠️ SIMPLIFIED 2026-08-12 (founder audit): "Answer surveys" / "New surveys
+  // for you. Earn real money." read like an ad banner rather than a plain
+  // description of what this is. The tasks-list card now reuses this same
+  // subtitle instead of a separate hype line — one honest sentence, said once.
+  "surveys.title": "Surveys",
   "surveys.subtitle": "Share your opinion and get paid.",
-  "surveys.cta": "New surveys for you. Earn real money.",
   "surveys.disclosure":
     "These surveys come from our partner. Your money is added after they confirm you finished — this can take a little time.",
   "surveys.offTitle": "Surveys are closed right now",
@@ -735,6 +718,12 @@ const copy: Record<string, string> = {
   "mine.earned": "You have earned today",
   "mine.earned.note":
     "This is yours. It goes up the longer you mine. Other people mining does not take it away.",
+  // Settlement (once a day) makes ROZI CLAIMABLE, not credited — the user still
+  // has to tap to collect it. This card only shows once there is something ready.
+  "mine.claim.title": "Your gems are ready",
+  "mine.claim.body": "This ROZI is settled and waiting for you. Tap to add it to your balance.",
+  "mine.claim.cta": "Claim my gems",
+  "mine.claim.done": "Claimed! {n} ROZI added to your balance.",
   "mine.start": "Start mining for {hours} hours",
   "mine.running": "You are mining now",
   "mine.running.note": "Come back when the time runs out and start again.",
@@ -786,6 +775,13 @@ const copy: Record<string, string> = {
   // detail page's "After this upgrade" tile — the arrow alone still leaves a
   // reader doing the subtraction themselves (audit 2026-08-12).
   "rigs.pctIncrease": "+{pct}%",
+  // Payback estimate + a "best value" badge across the list (founder,
+  // 2026-08-12: rig info "is very incomplete"). Only rendered when the API
+  // sends a real number — see the /mining/rigs route for why that's pi-model
+  // only. n is already formatted ROZI, not a raw number.
+  "rigs.extraPerDay": "+{n} ROZI a day",
+  "rigs.payback": "pays for itself in ~{days} days",
+  "rigs.bestValue": "Best value",
   // ---- Send ROZI (wallet to wallet) ----
   // A TRANSFER, not a sale. No string here may suggest a price, a buyer, or that
   // we will find someone to trade with — that is the MINING_SPEC.md § 7 line, and
@@ -958,6 +954,12 @@ const copy: Record<string, string> = {
   "topup.yourOwnAddress": "This address belongs only to your account",
   "topup.addressWarn":
     "Send USDT only — never BNB or any other coin, and only on BNB Smart Chain (BEP20). Anything else is lost and we cannot get it back.",
+  // The auto-credit path (founder, 2026-08-12): a personal deposit address is
+  // watched by the same scanner that credits BNB — no tx hash to paste, no
+  // staff step. Said once, right here, so nobody sits waiting for a form that
+  // no longer exists.
+  "topup.autoNote":
+    "We add it automatically once the blockchain confirms it — usually within a few minutes. No need to tell us anything.",
   "topup.network": "Network",
   "topup.networkValue": "BNB Smart Chain (BEP20)",
   "topup.token": "Coin to send",

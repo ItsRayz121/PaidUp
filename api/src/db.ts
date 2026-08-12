@@ -1547,6 +1547,22 @@ const MINING_SCHEMA = `
     settled_at   TEXT NOT NULL
   );
 
+  -- Settled but not yet claimed. Settlement (settleEpoch, mining/engine.ts) used
+  -- to credit rozi_ledger directly the moment a day closed; founder decision
+  -- 2026-08-12 made claiming a real user action (the "claim your gems" flow), so
+  -- settlement now parks the owed amount here instead, and POST /mining/claim is
+  -- the only thing that ever turns a row here into an actual rozi_ledger credit.
+  -- Deleted once claimed — the credit itself, in rozi_ledger, is the permanent
+  -- record, so a row surviving here always means "still unclaimed."
+  CREATE TABLE IF NOT EXISTS mining_unclaimed (
+    epoch      INTEGER NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    micro      BIGINT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_mining_unclaimed_user ON mining_unclaimed(user_id);
+
   -- Daily streak. A day counts if the user ran at least one session in it.
   CREATE TABLE IF NOT EXISTS mining_streaks (
     user_id      TEXT PRIMARY KEY REFERENCES users(id),
