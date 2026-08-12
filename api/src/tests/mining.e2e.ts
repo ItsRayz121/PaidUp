@@ -205,6 +205,24 @@ const cfg = await loadMiningSettings();
 const expected = Math.floor(base * (1 + (cfg.taskBoostMaxStack * cfg.taskBoostPct) / 100));
 check(`10 task boosts are capped at ${cfg.taskBoostMaxStack}`, stacked === expected, `got ${stacked}, expected ${expected}`);
 
+console.log("\n-- ad boost cap: an ad-watching burst cannot stack boosts forever --");
+
+const adStacker = await mkUser("adStacker");
+const adBase = (await hashrateOf(adStacker)).hashrate;
+for (let i = 0; i < 10; i++) await grantBoost(adStacker, "ad", 100, 4);
+const adStacked = (await hashrateOf(adStacker)).hashrate;
+const adExpected = Math.floor(adBase * (1 + (cfg.adBoostMaxStack * cfg.adBoostPct) / 100));
+check(`10 ad boosts are capped at ${cfg.adBoostMaxStack}`, adStacked === adExpected, `got ${adStacked}, expected ${adExpected}`);
+
+// Task and ad stacks are counted independently — a maxed-out ad burst must not
+// crowd out an active task boost, and vice versa.
+await grantBoost(adStacker, "task", 50, 48);
+const adPlusTask = (await hashrateOf(adStacker)).hashrate;
+const adPlusTaskExpected = Math.floor(
+  adBase * (1 + (cfg.adBoostMaxStack * cfg.adBoostPct + cfg.taskBoostPct) / 100));
+check("ad cap and task boost stack independently", adPlusTask === adPlusTaskExpected,
+  `got ${adPlusTask}, expected ${adPlusTaskExpected}`);
+
 console.log("\n-- AD NONCE: a single ad view cannot be redeemed twice --");
 
 // Found in security review. The redemption used to SELECT the row, check

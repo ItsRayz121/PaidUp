@@ -70,6 +70,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
       ["taskBoostMaxStack", "Max task boosts stacked"],
       ["adBoostPct", "Ad boost (%)"],
       ["adBoostHours", "Ad boost lasts (hours)"],
+      ["adBoostMaxStack", "Max ad boosts stacked"],
       ["adWatchDailyCap", "Ads per user per day"],
       ["adsEnabled", "Ads on (1) / off (0)"],
       ["adProvider", "Ad provider (monetag / adsterra)"],

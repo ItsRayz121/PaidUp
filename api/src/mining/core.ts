@@ -144,6 +144,18 @@ export const MINING_DEFAULTS = {
   adBoostPct: 100,
   adBoostHours: 4,
   adWatchDailyCap: 10,
+
+  // Capped in activeBoostPcts() the SAME way taskBoostMaxStack caps task boosts
+  // (2026-08-12): count active "ad" rows, drop any past the cap, newest first.
+  // Without this, adWatchDailyCap was the only brake — and it throttles daily ad
+  // REVENUE, not concurrent hashrate. A user who watches all 10 ads in one burst
+  // has them nearly all active at once (each lasts adBoostHours independently),
+  // which is +1000% (11x) stacked on top of streak and task boosts — an order of
+  // magnitude past the "~3x for an engaged miner" figure the rest of the economy
+  // is tuned around. Capped at grant time it would throw away boosts a user
+  // genuinely earned; capping the READ, like task boosts, means the 4th+ watch
+  // simply queues and kicks in as an earlier one expires, so nothing is wasted.
+  adBoostMaxStack: 3,
   adsEnabled: 0,            // off until the founder has a Monetag/Adsterra account
   adProvider: "",           // ads stay off until this is set too, even if the flag is 1
 

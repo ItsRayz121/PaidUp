@@ -68,25 +68,44 @@ async function rigPowerOf(userId: string): Promise<number> {
   ), 0);
 }
 
-// Live boosts, newest first. Task boosts are capped at `taskBoostMaxStack` here
-// rather than at grant time: capping at grant would silently throw away a boost
-// the user genuinely earned, and if the Admin later raises the cap those boosts
-// should come back. So we grant everything and only ever cap on read.
+// Live boosts, newest first. "task" and "ad" boosts are each capped at their own
+// max-stack setting here rather than at grant time: capping at grant would
+// silently throw away a boost the user genuinely earned, and if the Admin later
+// raises the cap those boosts should come back. So we grant everything and only
+// ever cap on read — the (n+1)th watch/completion simply queues and kicks in
+// once an earlier one expires. "points" (booster) boosts have no entry here and
+// stay uncapped, same as before this cap existed for any kind.
+function boostStackCaps(s: MiningSettings): Record<string, number> {
+  return { task: s.taskBoostMaxStack, ad: s.adBoostMaxStack };
+}
+
+// Shared by the single-user and batch hashrate paths so the cap rule is written
+// once. `rows` must already be newest-first; `groupKey` scopes the per-kind count
+// (a per-user id for the batch path, a constant for a single user).
+function applyStackCaps<T extends { kind: string; multiplier_pct: number }>(
+  rows: T[], caps: Record<string, number>, groupKey: (r: T) => string,
+): T[] {
+  const counts = new Map<string, number>();
+  const out: T[] = [];
+  for (const r of rows) {
+    const cap = caps[r.kind];
+    if (cap !== undefined) {
+      const key = `${groupKey(r)}:${r.kind}`;
+      const n = counts.get(key) ?? 0;
+      if (n >= cap) continue;
+      counts.set(key, n + 1);
+    }
+    out.push(r);
+  }
+  return out;
+}
+
 async function activeBoostPcts(userId: string, s: MiningSettings): Promise<number[]> {
   const rows = await sql.all<{ kind: string; multiplier_pct: number }>(
     "SELECT kind, multiplier_pct FROM user_boosts WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
     userId, now(),
   );
-  const out: number[] = [];
-  let taskCount = 0;
-  for (const r of rows) {
-    if (r.kind === "task") {
-      if (taskCount >= s.taskBoostMaxStack) continue;
-      taskCount++;
-    }
-    out.push(r.multiplier_pct);
-  }
-  return out;
+  return applyStackCaps(rows, boostStackCaps(s), () => "").map((r) => r.multiplier_pct);
 }
 
 // A user's OWN hashrate — everything except the referral component — computed for
@@ -136,15 +155,9 @@ async function ownHashrateBatch(
     rigPowerBy.set(r.user_id, (rigPowerBy.get(r.user_id) ?? 0) + power);
   }
 
-  // Same task-boost stack cap as activeBoostPcts(), applied per user.
+  // Same per-kind stack cap as activeBoostPcts(), scoped per user here.
   const boostsBy = new Map<string, number[]>();
-  const taskCountBy = new Map<string, number>();
-  for (const b of boostRows) {
-    if (b.kind === "task") {
-      const n = taskCountBy.get(b.user_id) ?? 0;
-      if (n >= s.taskBoostMaxStack) continue;
-      taskCountBy.set(b.user_id, n + 1);
-    }
+  for (const b of applyStackCaps(boostRows, boostStackCaps(s), (r) => r.user_id)) {
     const list = boostsBy.get(b.user_id) ?? [];
     list.push(b.multiplier_pct);
     boostsBy.set(b.user_id, list);
