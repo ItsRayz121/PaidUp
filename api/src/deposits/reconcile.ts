@@ -1,9 +1,11 @@
 // Reconciliation — CUSTODY_SPEC.md § 5 step 3 / § 3.5 ("who is accountable at
-// 3am"). This does NOT answer that question. It only makes the data visible
-// when a human looks — there is no paging in this codebase (Sentry declined),
-// so a mismatch found here sits as a flag + a snapshot row until someone
-// opens the staff panel. Recorded plainly rather than implied: "reconciled"
-// here means "checked and written down", not "alerted".
+// 3am"). A shortfall below every tick is written to a snapshot row AND (since
+// alerts.ts) pages a staff Telegram channel via fraud.ts's flagOnce, on the
+// first tick that finds it — later ticks re-detecting the same open flag stay
+// silent (flagOnce's own dedupe), so the page fires once, not every hour the
+// mismatch stays open. That still isn't real on-call paging — Telegram has no
+// escalation, no acknowledgement, no rotation — but it is no longer "nobody
+// finds out until someone opens the panel".
 //
 // ⚠️ REWRITTEN 2026-08-08 for "never sweep" (config.custodySweepEnabled
 // default off). The old version summed treasury balance + SUM(chain_deposits

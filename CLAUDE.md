@@ -917,9 +917,14 @@ These override convenience or speed at every step:
     known-unswept balance vs. what the ledger says we owe, written to
     `treasury_balance_snapshots` every tick; a shortfall raises a
     `reconciliation_mismatch` flag. New staff read endpoint,
-    `GET /staff/mining/reconciliation`. ⚠️ **This IS the alerting** — no
-    Sentry, no paging, so a mismatch at 3am is silent until a human opens the
-    panel. `CUSTODY_SPEC.md` § 3.5's "who is accountable at 3am" is still open.
+    `GET /staff/mining/reconciliation`. ⚠️ **At the time this shipped, this WAS
+    the alerting** — no Sentry, no paging, so a mismatch at 3am was silent
+    until a human opened the panel. **Superseded 2026-08-12 — see the "STAFF
+    PAGING OVER TELEGRAM" entry below**, which pages a staff Telegram group on
+    exactly this flag (and every other high-severity one) the instant it's
+    first raised. `CUSTODY_SPEC.md` § 3.5's "who is accountable at 3am" is
+    narrower now, not closed — Telegram has no escalation, acknowledgement or
+    rotation, so someone still has to be watching that chat.
   - **Withdrawal abuse controls**, shipped alongside (not after) — the
     compensating controls for having no per-request human approval below the
     auto-withdraw ceiling: a **rolling 24h auto-withdraw cap**
@@ -1061,16 +1066,14 @@ These override convenience or speed at every step:
     fail to settle (no gas, nothing to send) and fall back to the manual
     queue via `tryAutoSettle`'s "never throws" guarantee, not lose money.
     This needs real funding before automatic payout does anything visible.
-  - ⚠️ **THE DEPOSIT SCANNER IS FAILING IN PRODUCTION RIGHT NOW, SEPARATELY.**
-    Railway logs show a repeating `Deposit scan tick failed … eth_getLogs
-    failed: limit exceeded` every ~20s — almost certainly the free public
-    BEP20 RPC hitting a block-range/result cap, exactly the risk
-    `RPC_BEP20` (a LIST with failover, `rpc.ts`) was built to reduce by
-    putting a paid endpoint first — which was never done. This does not
-    affect the manual "paste your tx hash" topup flow, but it does mean the
-    newer auto-detect/sweep pipeline (`deposits/scanner.ts`) is not
-    currently doing its job. Not yet fixed — needs a paid RPC endpoint added
-    to `RPC_BEP20` on Railway.
+  - ~~⚠️ THE DEPOSIT SCANNER IS FAILING IN PRODUCTION RIGHT NOW, SEPARATELY.~~
+    **FIXED 2026-08-12 — see the "still blocked on the founder" section
+    further down for the full verification.** Railway logs showed a repeating
+    `Deposit scan tick failed … eth_getLogs failed: limit exceeded` every
+    ~20s; commit `c63d0ed` shrank the block range adaptively and reordered the
+    default endpoints by measured behaviour, and `RPC_BEP20` on Railway now
+    leads with a real Alchemy endpoint. Confirmed live: zero scan-tick errors
+    across 100+ ticks post-deploy.
 
 - **GAS IS THE USER'S OWN RESPONSIBILITY, NOT TREASURY'S, NOT A USDT FEE
   (founder, 2026-08-08, same day, later same evening).** Found by tracing
@@ -1650,6 +1653,54 @@ These override convenience or speed at every step:
   - **Not built, deliberately**: nothing else was pulled forward. The brief's
     task-section list is now complete.
 
+- **STAFF PAGING OVER TELEGRAM — the "who's accountable at 3am" gap gets a
+  cheap, real answer (2026-08-12).** Every dated entry that shipped a
+  fraud-detection or reconciliation feature in this file said the same thing
+  afterward: the flag lands in a queue and sits there until a human opens the
+  panel (Sentry declined). New `api/src/alerts.ts` (`sendStaffAlert`) pages a
+  staff Telegram group instead, reusing the SAME bot token the Telegram
+  login/mini-app feature already uses — no second bot to create or rotate.
+  Verified: api + web typecheck, eslint, and a live end-to-end check against a
+  real (local) server — `POST /staff/alerts/test` correctly reports "not
+  configured" with no env vars set, correctly reaches the send path and
+  returns `ok:true` once `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALERT_CHAT_ID` are set
+  (even pointed at a fake token, confirming the network failure is caught and
+  logged, never thrown), and a genuinely fresh high-severity `flagOnce` call
+  does NOT block its caller (fire-and-forget, confirmed by the response
+  latency staying flat regardless of Telegram's reachability).
+  - **One enforcement point, not one call site per flag type.**
+    `fraud.ts`'s `flagOnce` now returns whether it inserted a NEW row (existing
+    callers ignore the return value, so this is additive) and pages staff
+    itself whenever severity is `"high"` **and** the row is new — not on a
+    dedup no-op of an already-open flag. This means `reconciliation_mismatch`
+    (`deposits/reconcile.ts`), `referral_ring`'s device-sharing case
+    (`fraud.ts`) and `rozi_transfer_ring` (`routes/mining.ts`) are ALL paged
+    automatically, today, with zero changes at those call sites — and any
+    *future* high-severity flag type pages staff the moment it's added, the
+    same reasoning CLAUDE.md already states for guardrail #8's `lockUser()`
+    list: one list to remember beats N call sites to remember individually.
+  - **Ships OFF by default**, same pattern as VAPID push / Monetag / USDT
+    top-up: `alertsEnabled` requires BOTH vars, and while `TELEGRAM_BOT_TOKEN`
+    is already live on Railway (the login feature set it), `TELEGRAM_ALERT_CHAT_ID`
+    is not — so `alerts.ts` is a quiet no-op today until that one is added.
+    `.env.example` has the exact steps to get a group chat id via
+    `getUpdates`. A **"Send test
+    alert" button** ships in `/staff → Features & settings` (new
+    `StaffAlertsPanel`, gated on the admin-only `infra.view` permission) so
+    the wiring can be confirmed live instead of guessed at.
+  - ⚠️ **THIS IS NOT REAL ON-CALL PAGING, AND THE CODE SAYS SO.** No
+    escalation, no acknowledgement, no rotation — a message lands in a group
+    chat and it is still on a human to be watching it. `CUSTODY_SPEC.md`
+    § 3.5's question narrows from "nothing tells anyone" to "someone has to
+    have notifications on for that chat," which is a real improvement and not
+    the same thing as solving it.
+  - **Still blocked on the founder, but only by ONE variable**:
+    `TELEGRAM_BOT_TOKEN` is already set live on Railway (the Telegram login
+    feature already needs it); `TELEGRAM_ALERT_CHAT_ID` is the only thing
+    missing. Getting a chat id is a five-minute Telegram step (create a
+    group, add the existing bot, call `getUpdates`) — see `.env.example` for
+    the exact instructions — then set that one variable on Railway.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
@@ -1673,8 +1724,20 @@ being "on" is not the same as it having anything to pay with — a request
 under the ceiling will simply fail to send if the treasury has no USDT (to
 pay out) or no BNB (for gas). Confirm what's actually funded before assuming
 withdrawals/refunds will succeed.
-(3) **The deposit scanner's RPC issue** (see the entry above) — needs a paid
-`RPC_BEP20` endpoint added on Railway.
+~~(3) The deposit scanner's RPC issue — needs a paid `RPC_BEP20` endpoint.~~
+**RESOLVED, confirmed live 2026-08-12.** Two independent things closed this,
+both already shipped and deployed before this note was written: the
+`eth_getLogs`-refusing/limit-exceeded crash was fixed in code the same day
+(commit `c63d0ed`, adaptive block-range shrinking + reordered public
+fallbacks) — AND, separately, `RPC_BEP20` on Railway now leads with a real
+Alchemy BSC endpoint (not a public node), verified by calling it directly
+(`eth_blockNumber` returned a real, current block). Confirmed by reading
+Railway's live logs: zero `"Deposit scan tick failed"` errors across 100+
+ticks (20s interval) since the last deploy, where before it repeated every
+tick. **Do not re-flag this as an open item** — if it recurs, it's a new
+regression, not the original bug. (Treasury funding, item (2) above, is
+UNCHANGED and still $0/0 BNB — confirmed the same way, via a direct
+`eth_getBalance`/`balanceOf` call against the treasury address.)
 Everything else on the old checklist is done, deferred by decision, or declined.
 
 See `docs/` for the full spec.

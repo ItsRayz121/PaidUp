@@ -22,7 +22,7 @@ import { TasksPanel } from "@/components/tasks-admin";
 import { ProofQueue } from "@/components/proof-queue";
 import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
-import { FeatureFlagsPanel, GlobalSettingsPanel } from "@/components/settings-admin";
+import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
@@ -80,7 +80,7 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "messages", label: "Messages & content", needs: ["notifications.send", "content.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
-  { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage"] },
+  { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage", "infra.view"] },
   { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
 ];
 
@@ -283,6 +283,7 @@ export default function StaffPage() {
             <>
               {may("flags.manage") && <Panel title="Features"><FeatureFlagsPanel /></Panel>}
               {may("settings.manage") && <Panel title="Settings"><GlobalSettingsPanel /></Panel>}
+              {may("infra.view") && <Panel title="Staff alerts"><StaffAlertsPanel /></Panel>}
             </>
           )}
 

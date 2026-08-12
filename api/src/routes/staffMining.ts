@@ -16,6 +16,7 @@ import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
+import { alertsEnabled, sendStaffAlert } from "../alerts.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
@@ -664,10 +665,23 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     return { chain: q.chain, endpoints, results: await rpcHealth(q.chain) };
   }));
 
+  // Staff paging (alerts.ts) — confirms the Telegram channel is actually wired
+  // before relying on it, rather than finding out it's silent the first time a
+  // real high-severity flag needs it. Admin-only: it discloses whether alerting
+  // is armed at all, which is itself sensitive ops information.
+  app.post("/staff/alerts/test", staffGuard("infra.view", async () => {
+    if (!alertsEnabled) {
+      return { ok: false, note: "TELEGRAM_BOT_TOKEN and/or TELEGRAM_ALERT_CHAT_ID is not set — see .env.example." };
+    }
+    await sendStaffAlert("🔔 Test alert from RoziPay staff panel — this channel is wired correctly.");
+    return { ok: true };
+  }));
+
   // Reconciliation timeline (CUSTODY_SPEC.md § 5 step 3 / § 3.5) — treasury +
   // unswept on-chain balance vs what the ledger says we owe, one row per
-  // scheduled check. There is no paging in this codebase; this endpoint IS
-  // the alerting — someone has to open it to see a mismatch.
+  // scheduled check. A mismatch here also pages staff on Telegram the instant
+  // it's first raised (fraud.ts's flagOnce, alerts.ts) — this endpoint is the
+  // detail view for AFTER the page, not the only way to find out anymore.
   app.get("/staff/mining/reconciliation", staffGuard("analytics.view", async (_ctx, req) => {
     const q = z.object({ chain: z.string().min(1).max(20).default("bep20"), limit: z.number().int().min(1).max(200).default(50) })
       .parse((req.query as Record<string, unknown>) ?? {});

@@ -865,6 +865,10 @@ export type Analytics = {
 export const fetchAnalytics = (days = 30) =>
   apiFetch<Analytics>(`/staff/analytics?days=${days}`);
 
+// ---- Staff paging over Telegram (alerts.ts) --------------------------------
+export const testStaffAlert = () =>
+  apiFetch<{ ok: boolean; note?: string }>("/staff/alerts/test", { method: "POST" });
+
 // ---- Admin: global settings (withdrawal fee) -----------------------------
 export const fetchSettings = () =>
   apiFetch<{

@@ -5,7 +5,9 @@
 
 import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import { fetchFlags, setFlag, fetchSettings, updateSettings, type FeatureFlag } from "@/lib/api";
+import {
+  fetchFlags, setFlag, fetchSettings, updateSettings, testStaffAlert, type FeatureFlag,
+} from "@/lib/api";
 
 // ---- Feature flags ---------------------------------------------------------
 export function FeatureFlagsPanel() {
@@ -72,6 +74,49 @@ export function FeatureFlagsPanel() {
             ))}
           </div>
         )}
+    </section>
+  );
+}
+
+// ---- Staff paging over Telegram (alerts.ts) --------------------------------
+// There is no on-call system in this codebase (Sentry declined) — a HIGH-
+// severity fraud or reconciliation flag pages a staff Telegram group instead,
+// the instant it is first raised. This button only confirms the wiring; it
+// does not raise a real flag.
+export function StaffAlertsPanel() {
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "off">("idle");
+  const [note, setNote] = useState("");
+
+  async function send() {
+    setState("sending");
+    try {
+      const r = await testStaffAlert();
+      if (r.ok) { setState("sent"); setNote(""); }
+      else { setState("off"); setNote(r.note ?? "Not configured."); }
+    } catch (e) {
+      setState("off");
+      setNote((e as Error).message);
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <h2 className="mb-1 font-bold text-brand-ink">Staff alerts</h2>
+      <p className="mb-3 text-xs text-muted">
+        A high-severity fraud or reconciliation flag pages a staff Telegram
+        group the instant it is first raised. Set <code>TELEGRAM_BOT_TOKEN</code>{" "}
+        and <code>TELEGRAM_ALERT_CHAT_ID</code> on the server (see{" "}
+        <code>.env.example</code>), then send a test to confirm it reaches the
+        group before relying on it.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={send} disabled={state === "sending"}
+          className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {state === "sending" ? "Sending…" : "Send test alert"}
+        </button>
+        {state === "sent" && <span className="text-sm text-success">Sent — check the group.</span>}
+        {state === "off" && <span className="text-sm text-danger">{note}</span>}
+      </div>
     </section>
   );
 }

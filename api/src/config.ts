@@ -255,6 +255,13 @@ export const config = {
   // must also be set in BotFather to your web origin for the widget to render.
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
 
+  // Staff paging (alerts.ts): the chat id a Telegram group receives
+  // HIGH-severity fraud/reconciliation alerts in, the instant fraud.ts's
+  // flagOnce raises a NEW one. Reuses telegramBotToken above. Empty => a
+  // quiet no-op, same "ships OFF" pattern as every other optional integration
+  // here. See .env.example for how to get a group's chat id.
+  telegramAlertChatId: process.env.TELEGRAM_ALERT_CHAT_ID ?? "",
+
   // Comma-separated founder/admin emails seeded as role=admin on first run.
   adminEmails: (process.env.ADMIN_EMAILS ?? "fazalelahi5577@gmail.com")
     .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),

@@ -4,6 +4,7 @@
 // user; it only records devices and raises fraud_flags that surface to staff.
 import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
+import { sendStaffAlert } from "./alerts.ts";
 
 // How many distinct accounts may share one device before we flag device reuse.
 const DEVICE_REUSE_THRESHOLD = 3;
@@ -28,22 +29,36 @@ function canonicalCountry(c: string): string {
 // queue. `scopeKey` is stored in the device_id column: a real device hash for
 // device-scoped flags, or `ip:<addr>` for IP-scoped ones (kept distinct so a
 // device flag and an IP flag on the same cluster dedupe independently).
+//
+// Returns whether a NEW row was inserted — callers don't need it, but it is
+// what lets this function page staff on the first occurrence of a high-
+// severity flag without re-alerting on every dedup no-op of an issue already
+// sitting in the queue (see the alert below).
 export async function flagOnce(
   flagType: string,
   scopeKey: string,
   userId: string | null,
   severity: string,
   detail: string,
-): Promise<void> {
+): Promise<boolean> {
   const existing = await sql.get<{ id: string }>(
     "SELECT id FROM fraud_flags WHERE flag_type = ? AND device_id = ? AND resolved_by IS NULL LIMIT 1",
     flagType, scopeKey,
   );
-  if (existing) return;
+  if (existing) return false;
   await sql.run(
     "INSERT INTO fraud_flags (id, user_id, device_id, flag_type, severity, detail, created_at) VALUES (?,?,?,?,?,?,?)",
     newId(), userId, scopeKey, flagType, severity, detail, now(),
   );
+  // Page staff on every genuinely NEW high-severity flag — the single
+  // enforcement point for alerting, so a future high-severity flag type gets
+  // paged automatically instead of needing its own call site remembered (the
+  // same reasoning as guardrail #8's lockUser() list). Not awaited: sending
+  // to Telegram must never add latency to a fraud check or a postback.
+  if (severity === "high") {
+    void sendStaffAlert(`⚠️ ${flagType}\n${detail}`);
+  }
+  return true;
 }
 
 // Record that `userId` was seen on `deviceId` from `ip`, then run detection.
