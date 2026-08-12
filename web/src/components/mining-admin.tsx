@@ -111,6 +111,13 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "ROZI value estimate (display only)",
+    note: "Shown on a machine's detail page next to its ROZI cost, so a user pricing a rig sees an approximate dollar figure. NOT A REAL RATE — nothing backs it, ROZI still has no fixed price anywhere (guardrail #7), and it is never offered as a buy-back. 0.10 matches what the wallet's combined USDT balance already implies (100 points = 1 ROZI, 1000 points = 1 USDT), but the two numbers are independent — changing this does not change that ratio.",
+    keys: [
+      ["roziUsdtDisplayRate", "Estimated USDT per 1 ROZI"],
+    ],
+  },
+  {
     title: "USDT top-up (deposits)",
     note: "Ships OFF, and stays off until BOTH usdtTopupEnabled=1 AND usdtTreasuryAddress are set — a top-up screen with no address to send to would take people's money nowhere. This is the setting the Receive/top-up screen checks; without it, no address (personal or shared) is ever shown to any user, regardless of whether the per-user deposit-address system (CUSTODY_XPUB_BEP20) is configured. usdtTreasuryChain must stay \"bep20\" — the API refuses anything else. usdtTreasuryAddress must be the TREASURY wallet's address (the one you funded), never a private key.",
     keys: [

@@ -295,6 +295,26 @@ export const MINING_DEFAULTS = {
   //    21M cap — at the old 1,000,000 a single slip of the hand could mint 4.7%
   //    of the entire supply.
   adminAdjustMaxRozi: 25_000,
+
+  // -- ROZI value estimate, DISPLAY ONLY (founder, 2026-08-12). Shown on the
+  //    machine detail page (/mine/rigs/[id]) so a user pricing a rig purchase
+  //    sees an approximate dollar figure next to the ROZI cost.
+  //
+  //    THIS IS NOT A REAL RATE. There is still no fixed ROZI->USDT conversion
+  //    anywhere (guardrail #7) — this number backs nothing, funds nothing, and
+  //    is never offered as a buy-back price. It is the founder's own arbitrary,
+  //    admin-adjustable figure, same status as a rig's optional base_cost_usdt
+  //    (see the "implied ROZI rate" warning in staffMining's Rigs panel) —
+  //    except this one applies everywhere a machine's ROZI cost is estimated
+  //    in USD, instead of being set per rig.
+  //
+  //    0.10 default is not a coincidence: it matches the rate ALREADY implied
+  //    by POINTS_PER_ROZI + POINTS_PER_USDT in web/src/lib/format.ts (100
+  //    points = 1 ROZI, 1000 points = 1 USDT => 1 ROZI = $0.10), which the
+  //    wallet/home combined balance has published since 2026-07-30. Retuning
+  //    this does NOT retune that ratio — they are two independent admin
+  //    numbers that merely happen to start in agreement.
+  roziUsdtDisplayRate: 0.1,
 };
 
 export type MiningSettings = typeof MINING_DEFAULTS;

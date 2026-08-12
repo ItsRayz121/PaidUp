@@ -223,6 +223,21 @@ export function formatPointsAsRozi(points: number): string {
   return `${formatRozi(pointsToRoziMicro(points))} ROZI`;
 }
 
+// ---- ROZI value estimate (display only, machine detail page) ---------------
+//
+// What a ROZI amount is "worth" at the admin-set roziUsdtDisplayRate
+// (api/src/mining/core.ts) — used on /mine/rigs/[id] so a user pricing a
+// machine sees an approximate dollar figure next to its ROZI cost.
+//
+// THIS IS NOT A REAL RATE. Guardrail #7 stands: there is still no fixed
+// ROZI->USDT conversion, this backs nothing, and it must always be labelled
+// an estimate, never a price. /mine/rigs is already on the list of screens
+// USDT legitimately appears on (see formatPointsAsRozi's comment above) —
+// this extends that to the rig's own detail page.
+export function roziUsdtEstimateMicro(roziMicroAmount: number, ratePerRozi: number): number {
+  return Math.round(roziFromMicro(roziMicroAmount) * ratePerRozi * USDT_SCALE);
+}
+
 // "2 hours ago", "just now" — plain words, no timestamps in the user UI.
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();

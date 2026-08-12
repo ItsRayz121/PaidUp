@@ -100,7 +100,7 @@ export default function RigsPage() {
 
             return (
               <Card key={r.id} className="p-4">
-                <div className="flex items-center gap-3">
+                <Link href={`/mine/rigs/${r.id}`} className="flex items-center gap-3">
                   <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
                     <Icon size={24} />
                   </span>
@@ -115,7 +115,8 @@ export default function RigsPage() {
                       {r.level > 0 && ` · ${t("rigs.speed")} ${r.power.toLocaleString()}`}
                     </p>
                   </div>
-                </div>
+                  <ArrowRightIcon size={18} className="shrink-0 text-muted" />
+                </Link>
 
                 {maxed ? (
                   <p className="mt-3 rounded-lg bg-success-tint px-3 py-2 text-center text-sm font-semibold text-success">

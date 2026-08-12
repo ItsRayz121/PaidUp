@@ -389,6 +389,9 @@ export async function miningRoutes(app: FastifyInstance) {
       // and the whole USDT option stays hidden while top-ups are switched off.
       usdtMicro: await usdtBalanceMicroOf(userId),
       usdtEnabled: Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "",
+      // Display-only estimate for the machine detail page — see the setting's
+      // own comment in mining/core.ts for why this is not a real rate.
+      roziUsdtDisplayRate: s.roziUsdtDisplayRate,
       rigs: rigs.map((r) => {
         const level = owned.get(r.id) ?? 0;
         const def = defOf(r);

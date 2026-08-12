@@ -996,7 +996,10 @@ export type Rig = {
   nextCostUsdtMicro: number | null;
 };
 export const fetchRigs = () => apiFetch<{
-  roziMicro: number; usdtMicro: number; usdtEnabled: boolean; rigs: Rig[];
+  roziMicro: number; usdtMicro: number; usdtEnabled: boolean;
+  // Display-only estimate — see the setting's comment in api/src/mining/core.ts.
+  roziUsdtDisplayRate: number;
+  rigs: Rig[];
 }>("/mining/rigs");
 export const upgradeRig = (id: string, pay: "rozi" | "usdt" = "rozi") =>
   apiFetch<{

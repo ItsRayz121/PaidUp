@@ -6,7 +6,7 @@ import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, VideoIcon,
-  ChartIcon, WalletIcon, GiftIcon,
+  ChartIcon, GiftIcon,
 } from "@/components/icons";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
@@ -271,8 +271,19 @@ export default function MinePage() {
 
         <div className="mt-4">
           {s.session.active ? (
-            <div className="rounded-xl border border-success/30 bg-success-tint/50 p-3">
-              <p className="text-sm font-semibold text-success">{t("mine.running")}</p>
+            <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
+              {/* The mining chamber — see globals.css. Purely decorative: it
+                  reflects that a session is running, nothing more, and never
+                  implies ROZI is ticking up live (settlement is once a day). */}
+              <div className="mining-chamber mx-auto h-16 w-16 text-success">
+                <span className="mining-ring" aria-hidden="true" />
+                <span className="mining-ring" aria-hidden="true" />
+                <span className="mining-ring" aria-hidden="true" />
+                <span className="relative grid h-11 w-11 place-items-center rounded-full bg-success text-white">
+                  <MineIcon size={22} />
+                </span>
+              </div>
+              <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
             </div>
@@ -392,13 +403,18 @@ export default function MinePage() {
           THE ROAD MAP LEADS. It is the only tile that is true for everyone: the
           rest appear and disappear with their flags, so on a fresh instance this
           grid was one rigs tile and a road map hidden behind it. Someone working
-          out whether ROZI is worth their time should meet the plan first. */}
+          out whether ROZI is worth their time should meet the plan first.
+
+          ⚠️ ADD USDT IS NOT HERE ANY MORE (2026-08-12), and that is a
+          duplicate-entry-point cleanup, not a feature removal — the flow is
+          unchanged and still lives at /mine/topup, reachable from the "Your
+          USDT" card the Rigs tile leads to, the one place that actually needs
+          it (buying a machine). Two doors into a screen whose only purpose is
+          buying machines was the duplication, same reasoning as the 2026-08-01
+          Send/Receive move off this exact grid. */}
       <div className="grid grid-cols-3 gap-2.5">
         <Tile href="/mine/roadmap" Icon={ChartIcon} label={t("mine.roadmap.title")} />
         <Tile href="/mine/rigs" Icon={MineIcon} label={t("mine.boost.rigs.title")} />
-        {s.usdtTopup && (
-          <Tile href="/mine/topup" Icon={WalletIcon} label={t("mine.topup.title")} tone="accent" />
-        )}
         {s.convertible && (
           <Tile href="/mine/convert" Icon={StarIcon} label={t("mine.convert.title")} tone="accent" />
         )}

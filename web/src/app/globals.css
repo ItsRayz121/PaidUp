@@ -103,3 +103,33 @@ body {
 }
 .animate-pop { animation: pop-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 .animate-rise { animation: rise 380ms ease-out both; }
+
+/* The mining chamber — a live-feeling visual on /mine's dial while a session
+   is actually running. Rings expand outward from the machine icon, like a
+   signal being sent. Purely decorative: it reflects session state that is
+   already true, never implies anything by itself (guardrail #7 territory —
+   an animation that looked like "earning right now, watch the number climb"
+   would misstate a model where the reward is settled once a day, not ticking
+   live). Reduced-motion users get a static glow instead of movement. */
+@keyframes mining-ring {
+  0% { transform: scale(0.75); opacity: 0.55; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+.mining-chamber { position: relative; display: inline-grid; place-items: center; }
+.mining-chamber .mining-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  animation: mining-ring 2.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+.mining-chamber .mining-ring:nth-child(2) { animation-delay: 0.9s; }
+.mining-chamber .mining-ring:nth-child(3) { animation-delay: 1.8s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mining-chamber .mining-ring {
+    animation: none;
+    opacity: 0.25;
+    transform: scale(1.15);
+  }
+}

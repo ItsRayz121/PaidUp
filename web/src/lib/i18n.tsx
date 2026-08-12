@@ -1025,7 +1025,16 @@ const copy: Record<string, string> = {
   "rigs.payUsdt": "Pay with USDT",
   "rigs.addUsdt": "Add USDT",
   "rigs.roziOnly": "This one is ROZI only.",
+  "rigs.viewDetails": "Details",
   "mine.topup.title": "Add USDT",
+  // ---- Machine detail page (/mine/rigs/[id]) ----
+  "rigDetail.back": "Back to machines",
+  "rigDetail.current": "Current speed",
+  "rigDetail.nextLevel": "After this upgrade",
+  "rigDetail.cost": "Cost to upgrade",
+  "rigDetail.estimateTitle": "About {value}",
+  "rigDetail.estimateBody":
+    "A rough estimate only, at today's admin-set rate. ROZI has no fixed cash price and this number can change at any time — it is not a guarantee of value.",
 
   // ---- The road map ---------------------------------------------------------
   // What is coming, and when. Two rules hold this page together:
