@@ -365,6 +365,23 @@ export const config = {
   // 10-minute-block UTXO chain scanning every 20s is pure wasted RPC calls).
   depositScanIntervalMs: Number(process.env.DEPOSIT_SCAN_INTERVAL_MS ?? 20_000),
 
+  // Kill switch for deposits/adapters/evmNative.ts (the BNB block-by-block
+  // walker). Default OFF (founder, 2026-08-13 — real billing incident: this
+  // scanner calls eth_getBlockByNumber(..., true) once per BLOCK, every
+  // tick, forever, the moment ANY user has a deposit_wallets row — unlike
+  // the USDT scanner's eth_getLogs (one ranged query per tick), there is no
+  // way to batch or shrink this: every block on the chain must be fetched
+  // individually, so its RPC-call volume is driven by the chain's own block
+  // rate, not by real user activity — it burned real Alchemy CU with zero
+  // deposits, zero withdrawals, zero transactions of any kind. And
+  // creditNative.ts's own header says this scan is NOT money-authoritative —
+  // /wallet/bnb's balance is a live eth_getBalance read regardless of
+  // whether this ever runs (bnbWithdraw.ts's userGasWallet). Its only output
+  // is a "BNB received" push notification. Flip this on only behind a
+  // provider that prices/allows it, and only if that notification is worth
+  // the sustained per-block cost.
+  nativeDepositScanEnabled: (process.env.NATIVE_DEPOSIT_SCAN_ENABLED ?? "false") === "true",
+
   // Below this, sweeping a deposit costs more in gas than it moves — CUSTODY_SPEC.md
   // § 2a prices a BEP20 sweep at ~$0.15-0.25. Micro-USDT.
   sweepDustFloorMicro: Number(process.env.SWEEP_DUST_FLOOR_MICRO ?? 500_000), // $0.50

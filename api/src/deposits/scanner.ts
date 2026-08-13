@@ -120,7 +120,12 @@ export async function tickDepositScan(): Promise<{ chain: string; scanned: boole
         continue; // no xpub configured for this chain => no deposit addresses to watch
       }
       await scanOneEvmChain(chain, t, pushes);
-      await scanOneEvmNativeChain(chain, t, nativePushes);
+      // See config.ts's nativeDepositScanEnabled comment: this walker costs
+      // one RPC call per BLOCK, forever, for a non-authoritative push
+      // notification only — off by default after a real billing incident.
+      if (config.nativeDepositScanEnabled) {
+        await scanOneEvmNativeChain(chain, t, nativePushes);
+      }
       results.push({ chain, scanned: true });
     }
     return results;

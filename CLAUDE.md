@@ -1817,6 +1817,60 @@ These override convenience or speed at every step:
     asked, but the copy still states the real percentage/hours/cap rather
     than a 2x/3x/5x ladder that doesn't exist server-side.
 
+- **A REAL BILLING INCIDENT: THE BNB DEPOSIT SCANNER WAS BURNING ALCHEMY CU
+  24/7 WITH ZERO USER ACTIVITY BEHIND IT (founder, 2026-08-13).** The founder
+  saw Alchemy usage climb toward the account's $3 spending cap with no
+  deposits, withdrawals, or any real on-chain activity to explain it — real
+  money spent for nothing. Root cause, confirmed by reading the code, not
+  guessed: `deposits/adapters/evmNative.ts` (the BNB-transfer half of the
+  deposit scanner, separate from the USDT half) calls
+  `eth_getBlockByNumber(blockNum, true)` **once per BLOCK**, every tick
+  (`config.depositScanIntervalMs`, 20s default), forever, the instant any
+  single user has a `deposit_wallets` row — which was already true (custody
+  went live 2026-08-03). Unlike the USDT scanner (`adapters/evm.ts`), which
+  covers a whole block RANGE in one `eth_getLogs` call, there is no
+  range-query equivalent for a plain native-value transfer over JSON-RPC —
+  every block must be fetched individually, so this scanner's call volume is
+  set by the CHAIN'S OWN BLOCK RATE, not by anything a user does. **Slowing
+  the tick interval would not have fixed this** — every block still has to be
+  scanned exactly once eventually, so a slower tick just batches the same
+  total call count into fewer, larger ticks, not fewer calls.
+  - **Fixed by turning it off, not by tuning it.** New
+    `config.nativeDepositScanEnabled` (env `NATIVE_DEPOSIT_SCAN_ENABLED`),
+    **default `false`**, gating the one call site in
+    `deposits/scanner.ts`'s `tickDepositScan()`. Same "ships OFF by default"
+    posture as every other cost/risk switch in this codebase.
+  - ⚠️ **THIS SCANNER WAS NEVER MONEY-AUTHORITATIVE — `creditNative.ts`'s own
+    header already said so.** `/wallet/bnb`'s balance is a live
+    `eth_getBalance` read (`bnbWithdraw.ts`'s `userGasWallet`), completely
+    independent of this scan. Turning it off changes nothing about balance
+    correctness, gas checks, or the real BNB withdraw path.
+  - **The honest cost of turning it off**: incoming BNB deposits stop
+    generating a "BNB received" push notification, and stop appearing as
+    rows in `/wallet/bnb`'s history list (`routes/mining.ts` reads
+    `native_deposits`, which this scan is what populates) — purely
+    cosmetic/notification-only, exactly what `creditNative.ts` already says
+    this table is for. A user's real balance is unaffected and still shows
+    correctly the moment they open the wallet.
+  - Verified: `npm run test:deposits` (33 checks) still green — those tests
+    call `scanEvmNativeChain`/`recordObservedNativeDeposit` directly, not
+    through the now-gated tick, so the fix is proven not to have touched the
+    underlying scan logic itself, only whether it runs unattended. `npx tsc
+    --noEmit` clean.
+  - **The $3 Alchemy spending cap the founder already had configured is what
+    kept this from being worse** — worth keeping in place as a backstop
+    regardless of this fix, the same reasoning as every other spending
+    ceiling already in this file (`autoWithdrawMaxPoints`,
+    `autoRefundMaxMicro`, etc.): one ceiling that holds even when a specific
+    safeguard turns out to have a gap.
+  - **If BNB deposit notifications/history are wanted back**, the fix is not
+    "turn this back on" — re-enabling reproduces the exact same per-block
+    cost. It needs either a much smarter mechanism (an indexed
+    provider-specific API instead of walking raw blocks — a bigger
+    architectural change this codebase has deliberately avoided so far to
+    stay provider-agnostic across the RPC failover list, see `rpc.ts`'s own
+    header) or an explicit, informed decision that the cost is worth it.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
