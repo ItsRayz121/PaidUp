@@ -82,13 +82,24 @@ body {
   }
 }
 
-/* The whole app is framed like a phone, centered on larger screens */
+/* The whole app is framed like a phone, centered on larger screens.
+   z-index:0 is load-bearing, not decorative (found 2026-08-13 while adding
+   the liquid ambient background to more screens): `position: relative` alone
+   does NOT create a stacking context without a z-index. Without one, this
+   div's own background is painted as ordinary in-flow content in the ROOT
+   stacking context, which comes AFTER (on top of) any negative-z-index
+   descendant anywhere inside it — so .ambient-bg's -z-10 spans were painting
+   fully behind this background and were invisible on every screen that used
+   them, since the day ambient-bg shipped. z-index:0 makes .app-frame its own
+   stacking context, so a -z-10 child now correctly paints between this div's
+   background and its normal content, instead of underneath the background. */
 .app-frame {
   max-width: 480px;
   margin-inline: auto;
   min-height: 100dvh;
   background: var(--color-bg);
   position: relative;
+  z-index: 0;
 }
 
 /* Restrained "earned" pop — used on confirmation screens only */
@@ -134,24 +145,24 @@ body {
   }
 }
 
-/* Claim card (founder, 2026-08-12): mined ROZI is settled but sits unclaimed
-   until the user taps Claim — a gentle glint says "ready", never "ticking up
-   live" (that would misstate the model, same guardrail as the mining chamber
-   above). claim-burst is one-shot, added on tap and removed once it finishes. */
-@keyframes gem-glint {
-  0%, 100% { transform: rotate(-6deg) scale(1); }
-  50% { transform: rotate(6deg) scale(1.08); }
-}
-.gem-glint { animation: gem-glint 2.2s ease-in-out infinite; transform-origin: center; }
-
+/* Claim card (founder, 2026-08-12, visual redone 2026-08-13 — see
+   components/HourglassClaim.tsx): mined ROZI is settled but sits unclaimed
+   until the user taps Claim. claim-burst is one-shot, added on tap and
+   removed once it finishes — a small ring at the CENTER of the claim visual,
+   not sized to fill it (the claim visual is now the tall, rectangular
+   hourglass below; the old inset:0 circle assumed a square icon and would
+   draw an oval here instead of a burst). */
 @keyframes claim-burst {
-  0% { transform: scale(0.6); opacity: 0; }
-  40% { transform: scale(1.25); opacity: 1; }
-  100% { transform: scale(1.9); opacity: 0; }
+  0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  40% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.9); opacity: 0; }
 }
 .claim-burst {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 64px;
   border-radius: 9999px;
   border: 2px solid currentColor;
   animation: claim-burst 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
@@ -159,14 +170,53 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gem-glint { animation: none; }
   .claim-burst { animation: none; opacity: 0; }
 }
 
-/* Home screen ambient background (founder, 2026-08-12): slow, low-opacity
-   drifting glow behind the content, purely decorative — never interactive,
-   never a data visualisation. Reduced-motion users get the gradient frozen in
-   place rather than removed, so the screen keeps its warmth without movement. */
+/* The hourglass claim visual itself — components/HourglassClaim.tsx builds
+   the wood/metal/glass/coins in plain SVG (no CSS needed for those), so
+   what's left here is the coin face gradients, the "ready" glow once the
+   pour finishes, and a gem-sparkle twinkle carried over from the old
+   gem-glint moment this replaced. */
+.hg-wrap { width: 108px; height: 166px; transition: filter 300ms; }
+.hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
+.hg-coin-ring { fill: url(#hgCoinGrad); stroke: #a86400; stroke-width: 0.6; }
+.hg-coin-face { fill: url(#hgCoinFaceGrad); }
+.hg-splash { opacity: 0; }
+.hg-splash.play { animation: hg-splash 550ms ease-out; }
+@keyframes hg-splash {
+  0% { opacity: 0.9; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+.hg-sparkle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--color-accent);
+  clip-path: polygon(50% 0%, 63% 38%, 100% 50%, 63% 62%, 50% 100%, 37% 62%, 0% 50%, 37% 38%);
+}
+.hg-wrap.ready .hg-sparkle { animation: hg-twinkle 1.6s ease-in-out infinite; }
+.hg-sparkle.s1 { top: 40%; left: -6%; animation-delay: 0s; }
+.hg-sparkle.s2 { top: 24%; right: -8%; animation-delay: 0.4s; }
+.hg-sparkle.s3 { top: 58%; right: -2%; animation-delay: 0.8s; }
+@keyframes hg-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1) rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-wrap.ready .hg-sparkle { animation: none; opacity: 0; }
+}
+
+/* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13),
+   used on Home/Mine/Wallet/Profile: slow, low-opacity morphing blobs behind
+   the content, purely decorative — never interactive, never a data
+   visualisation. Started as plain drifting circles (2026-08-12); the
+   border-radius keyframe below is what turns them into organic, liquid-looking
+   blobs instead of two blurred dots. Reduced-motion users get the animation
+   compressed to one step (global rule further down), so they land on the
+   blob's own shape frozen in place rather than a bare circle. */
 @keyframes drift-a {
   0%, 100% { transform: translate(-6%, -4%) scale(1); }
   50% { transform: translate(4%, 6%) scale(1.12); }
@@ -174,6 +224,11 @@ body {
 @keyframes drift-b {
   0%, 100% { transform: translate(5%, 3%) scale(1.05); }
   50% { transform: translate(-5%, -5%) scale(0.95); }
+}
+@keyframes liquid-blob-shape {
+  0%, 100% { border-radius: 42% 58% 63% 37% / 41% 44% 56% 59%; }
+  33% { border-radius: 63% 37% 41% 59% / 55% 40% 60% 45%; }
+  66% { border-radius: 37% 63% 55% 45% / 63% 55% 45% 37%; }
 }
 .ambient-bg {
   position: absolute;
@@ -183,19 +238,19 @@ body {
 }
 .ambient-bg span {
   position: absolute;
-  border-radius: 9999px;
+  border-radius: 42% 58% 63% 37% / 41% 44% 56% 59%;
   filter: blur(50px);
   opacity: 0.35;
 }
 .ambient-bg span:nth-child(1) {
   top: -10%; left: -10%; width: 60%; height: 60%;
   background: var(--color-brand);
-  animation: drift-a 22s ease-in-out infinite;
+  animation: drift-a 22s ease-in-out infinite, liquid-blob-shape 13s ease-in-out infinite;
 }
 .ambient-bg span:nth-child(2) {
   bottom: -15%; right: -10%; width: 55%; height: 55%;
   background: var(--color-accent);
-  animation: drift-b 26s ease-in-out infinite;
+  animation: drift-b 26s ease-in-out infinite, liquid-blob-shape 16s ease-in-out infinite reverse;
 }
 @media (prefers-reduced-motion: reduce) {
   .ambient-bg span { animation: none; }

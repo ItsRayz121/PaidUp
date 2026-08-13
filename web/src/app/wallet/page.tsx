@@ -86,7 +86,12 @@ export default function WalletPage() {
   const hidden = filtered.length - visible.length;
 
   return (
-    <div className="px-4 pt-5 pb-8 space-y-5">
+    <div className="relative px-4 pt-5 pb-8 space-y-5">
+      {/* Purely decorative — see the ambient-bg comment in globals.css. */}
+      <div className="ambient-bg -z-10" aria-hidden="true">
+        <span />
+        <span />
+      </div>
       <header>
         <h1 className="text-xl font-bold text-brand-ink">{t("nav.wallet")}</h1>
         <p className="text-sm text-muted">{t("wallet.subtitle")}</p>

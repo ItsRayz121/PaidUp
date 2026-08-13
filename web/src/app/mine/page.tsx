@@ -8,6 +8,7 @@ import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
+import { HourglassClaim } from "@/components/HourglassClaim";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
@@ -229,7 +230,12 @@ export default function MinePage() {
   const activityLoading = ledgerHistory.loading || roziHistory.loading;
 
   return (
-    <div className="px-4 pt-5 pb-8 space-y-5">
+    <div className="relative px-4 pt-5 pb-8 space-y-5">
+      {/* Purely decorative — see the ambient-bg comment in globals.css. */}
+      <div className="ambient-bg -z-10" aria-hidden="true">
+        <span />
+        <span />
+      </div>
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-brand-ink">{t("mine.title")}</h1>
@@ -342,11 +348,13 @@ export default function MinePage() {
           settlement or a tap. */}
       {s.claimableMicro > 0 && (
         <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
-          <div className="relative mx-auto grid h-16 w-16 place-items-center">
+          <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
             {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
-            <span className="gem-glint relative grid h-14 w-14 place-items-center rounded-full bg-accent text-white">
-              <GemIcon size={26} />
-            </span>
+            {/* Wood/metal/glass hourglass, filled with real RoziPay-mark
+                coins — see components/HourglassClaim.tsx. Pours once on
+                mount (this card only ever mounts when claimableMicro is
+                already > 0), then settles into a static glow. */}
+            <HourglassClaim />
           </div>
           <p className="mt-3 text-sm font-semibold text-accent-ink">{t("mine.claim.title")}</p>
           <p className="num mt-1 text-3xl font-extrabold text-brand-ink">
