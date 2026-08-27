@@ -365,6 +365,15 @@ export async function staffRoutes(app: FastifyInstance) {
       id,
     );
 
+    // Devices + IPs this account has signed in from (user_devices, the same
+    // table the device-reuse / IP-reuse fraud rules read). A support agent
+    // resolving "is this really them" or a fraud review both need this, and
+    // today it lived nowhere on this screen.
+    const devices = await sql.all(
+      "SELECT device_id, ip, first_seen, last_seen FROM user_devices WHERE user_id = ? ORDER BY last_seen DESC LIMIT 20",
+      id,
+    );
+
     return {
       user: {
         ...user,
@@ -382,6 +391,7 @@ export async function staffRoutes(app: FastifyInstance) {
       invitees,
       inviteeCount,
       tickets,
+      devices,
     };
   }));
 
@@ -940,20 +950,39 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // ---- Admin: find users --------------------------------------------------
   // Search by email or id. Balance is summed from the ledger, never stored.
+  // ⚠️ PAGINATED, DEFAULT PAGE SIZE 10 (founder, 2026-08-27): the dashboard
+  // list used to hand back up to 200 rows in one screen. `offset` + `total`
+  // let the panel show a short first page with a real "See more" rather than
+  // a wall of rows — OFFSET is fine here (unlike the audit log) because this
+  // list is read interactively, one page at a time, never scanned end to end.
   app.get("/staff/users", staffGuard("users.list", async (_ctx, req) => {
     const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
-    const limit = Math.min(Number((req.query as { limit?: string }).limit ?? 50) || 50, 200);
+    const query = req.query as { limit?: string; offset?: string };
+    const limit = Math.min(Number(query.limit ?? 10) || 10, 200);
+    const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
 
-    const rows = await sql.all<{ id: string; email: string; country: string; status: string; created_at: string; balance: number }>(
-      `SELECT u.id, u.email, u.country, u.status, u.created_at,
-              COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance
-       FROM users u
-       WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
-       ORDER BY u.created_at DESC
-       LIMIT ?`,
-      q, `%${q}%`, q, limit,
-    );
-    return { users: rows };
+    const [rows, totalRow] = await Promise.all([
+      sql.all<{
+        id: string; email: string; country: string; status: string; created_at: string; balance: number;
+        openFlags: number; held: boolean;
+      }>(
+        `SELECT u.id, u.email, u.country, u.status, u.created_at,
+                COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
+                COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS "openFlags",
+                (u.withdrawal_hold_reason IS NOT NULL
+                  AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held
+         FROM users u
+         WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
+         ORDER BY u.created_at DESC
+         LIMIT ? OFFSET ?`,
+        now(), q, `%${q}%`, q, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM users u WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)`,
+        q, `%${q}%`, q,
+      ),
+    ]);
+    return { users: rows, total: Number(totalRow?.n ?? rows.length), offset, limit };
   }));
 
   // ---- Admin: suspend / restore an account --------------------------------
@@ -1194,7 +1223,7 @@ export async function staffRoutes(app: FastifyInstance) {
   // Every figure is derived from the ledger, so it cannot drift from reality.
   // `outstanding` is the liability that matters: points users hold that they can
   // still cash out. Compare it against the treasury before you spend.
-  app.get("/staff/money", staffGuard("money.view", async () => {
+  app.get("/staff/money", staffGuard("money.view", async (_ctx, req) => {
     const one = async (text: string, ...p: unknown[]) =>
       (await sql.get<{ v: number }>(text, ...p))?.v ?? 0;
 
@@ -1207,14 +1236,22 @@ export async function staffRoutes(app: FastifyInstance) {
       one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE source_type = 'admin_adjustment'"),
     ]);
 
-    const recentAudit = await sql.all(
-      `SELECT a.action, a.detail, a.created_at, a.actor_role,
-              actor.email AS actor_email, target.email AS target_email
-       FROM admin_audit_log a
-       JOIN users actor ON actor.id = a.actor_user_id
-       LEFT JOIN users target ON target.id = a.target_user_id
-       ORDER BY a.created_at DESC LIMIT 50`,
-    );
+    // ⚠️ Default 10, not the old flat 50 (founder, 2026-08-27): this widget is
+    // meant to be a glance, not the log — "See more" on the panel jumps to the
+    // full, cursor-paginated Audit section (GET /staff/audit) instead.
+    const limit = Math.min(Math.max(Number((req.query as { limit?: string }).limit ?? 10) || 10, 1), 100);
+    const [recentAudit, auditTotal] = await Promise.all([
+      sql.all(
+        `SELECT a.action, a.detail, a.created_at, a.actor_role,
+                actor.email AS actor_email, target.email AS target_email
+         FROM admin_audit_log a
+         JOIN users actor ON actor.id = a.actor_user_id
+         LEFT JOIN users target ON target.id = a.target_user_id
+         ORDER BY a.created_at DESC LIMIT ?`,
+        limit,
+      ),
+      one("SELECT COUNT(*)::int AS v FROM admin_audit_log"),
+    ]);
 
     return {
       points: {
@@ -1228,6 +1265,7 @@ export async function staffRoutes(app: FastifyInstance) {
         pending: pointsToUsdt(pendingPoints),
       },
       recentAudit,
+      auditTotal,
     };
   }));
 

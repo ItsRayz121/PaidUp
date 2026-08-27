@@ -26,6 +26,7 @@ import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/comp
 import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
+import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -47,9 +48,6 @@ const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "reje
 // job-shaped roles there is no "minimum" — Finance is not above or below Task
 // Manager — and every new role would need this file edited before it could see
 // anything. Now a role's sections fall out of what it may do.
-type SectionId =
-  | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "messages"
-  | "support" | "audit" | "settings" | "team";
 const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "dashboard", label: "Dashboard", needs: ["analytics.view"] },
   // ⚠️ `deposits.view` / `refunds.view` are listed here and that is a FIX, not
@@ -179,6 +177,7 @@ export default function StaffPage() {
         <nav className="sticky top-20 hidden w-44 shrink-0 space-y-1 md:block">{nav}</nav>
 
         <main className="min-w-0 flex-1">
+        <StaffNavContext.Provider value={{ goToSection: go, openUser: openLedger }}>
           {section === "dashboard" && may("analytics.view") && (
             <>
               <Panel title="Dashboard"><AnalyticsDashboard /></Panel>
@@ -290,6 +289,7 @@ export default function StaffPage() {
           {section === "team" && may("staff.manage") && (
             <Panel title="Staff & roles"><StaffRolesPanel /></Panel>
           )}
+        </StaffNavContext.Provider>
         </main>
       </div>
     </div>
@@ -727,6 +727,33 @@ function UserLookup({ target }: { target: string | null }) {
               </ul>
             </div>
           )}
+
+          {/* Devices + IPs this account has signed in from — the same table the
+              device-reuse / IP-reuse fraud rules read (guardrail #5). Useful for
+              "is this really them" and for a fraud review, and it lived nowhere
+              on this screen before. */}
+          {(res.data.devices ?? []).length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted">Devices &amp; IP addresses</p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-xs">
+                  <thead className="text-left text-muted">
+                    <tr><th className="p-1.5">Device</th><th className="p-1.5">IP</th><th className="p-1.5">First seen</th><th className="p-1.5">Last seen</th></tr>
+                  </thead>
+                  <tbody>
+                    {(res.data.devices ?? []).map((d, i) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="num max-w-[140px] truncate p-1.5 text-muted" title={String(d.device_id)}>{String(d.device_id)}</td>
+                        <td className="num p-1.5">{String(d.ip ?? "—")}</td>
+                        <td className="p-1.5 text-muted">{timeAgo(String(d.first_seen))}</td>
+                        <td className="p-1.5 text-muted">{timeAgo(String(d.last_seen))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -735,6 +762,7 @@ function UserLookup({ target }: { target: string | null }) {
 
 function FraudPanel({ canResolve }: { canResolve: boolean }) {
   const fraud = useApi(fetchFraud, []);
+  const { openUser } = useStaffNav();
   return (
     <section>
       <h2 className="mb-2 font-bold text-brand-ink">Open fraud flags</h2>
@@ -751,7 +779,15 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
               <tbody>
                 {fraud.data!.flags.map((f, i) => (
                   <tr key={i} className="border-t border-line">
-                    <td className="p-2.5">{String(f.user_email ?? f.user_id ?? "—")}</td>
+                    <td className="p-2.5">
+                      {f.user_id ? (
+                        <button onClick={() => openUser(String(f.user_id))} className="text-brand hover:underline">
+                          {String(f.user_email ?? f.user_id)}
+                        </button>
+                      ) : (
+                        String(f.user_email ?? "—")
+                      )}
+                    </td>
                     <td className="p-2.5">{String(f.flag_type)}</td>
                     <td className="p-2.5">{String(f.severity)}</td>
                     <td className="p-2.5 text-muted">{String(f.detail ?? "")}</td>

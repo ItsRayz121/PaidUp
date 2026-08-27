@@ -365,6 +365,13 @@ export const config = {
   // 10-minute-block UTXO chain scanning every 20s is pure wasted RPC calls).
   depositScanIntervalMs: Number(process.env.DEPOSIT_SCAN_INTERVAL_MS ?? 20_000),
 
+  // Support tickets sitting in 'answered' (staff replied last, user never
+  // came back) auto-close after this many days — see ticketAutoClose.ts. 0
+  // turns it off. A ticket a user never replies to is not the same as an
+  // unresolved one; leaving it open forever just pads the "open" count staff
+  // watch on the dashboard.
+  ticketAutoCloseDays: Number(process.env.TICKET_AUTO_CLOSE_DAYS ?? 7),
+
   // Kill switch for deposits/adapters/evmNative.ts (the BNB block-by-block
   // walker). Default OFF (founder, 2026-08-13 — real billing incident: this
   // scanner calls eth_getBlockByNumber(..., true) once per BLOCK, every

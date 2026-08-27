@@ -29,7 +29,10 @@ export function AuditPanel() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const log = useApi(() => fetchAudit(q), [q.actor, q.target, q.action]);
+  // Ten at a time (founder, 2026-08-27): the panel used to open with up to 100
+  // rows loaded. "Load older" below fetches the next ten.
+  const PAGE = "10";
+  const log = useApi(() => fetchAudit({ ...q, limit: PAGE }), [q.actor, q.target, q.action]);
   const actions = useApi(fetchAuditActions, []);
 
   function apply() {
@@ -42,7 +45,7 @@ export function AuditPanel() {
     if (!from) return;
     setLoadingMore(true);
     try {
-      const page = await fetchAudit({ ...q, cursor: from });
+      const page = await fetchAudit({ ...q, cursor: from, limit: PAGE });
       setExtra((rows) => [...rows, ...page.entries]);
       setCursor(page.nextCursor);
     } finally {

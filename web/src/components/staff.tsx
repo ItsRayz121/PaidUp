@@ -11,10 +11,12 @@ import {
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { useStaffNav } from "@/lib/staffNav";
 
 // ---- KPI dashboard --------------------------------------------------------
 export function KpiDashboard() {
   const kpis = useApi(fetchKpis, []);
+  const { goToSection } = useStaffNav();
   if (kpis.loading) return <p className="p-4 text-sm text-muted">Loading numbers…</p>;
   if (kpis.error) return <p className="p-4 text-sm text-danger">{kpis.error}</p>;
   const k = kpis.data!;
@@ -23,14 +25,14 @@ export function KpiDashboard() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Tile label="Verified users" value={String(k.users.total)} sub={`+${k.users.new7d} this week`} />
-        <Tile label="Pending payouts" value={String(k.withdrawals.pendingCount)} sub={`${formatPoints(k.withdrawals.pendingPoints)} pts held`} warn={k.withdrawals.pendingCount > 0} />
-        <Tile label="Paid (7 days)" value={String(k.withdrawals.paidCount7d)} sub={formatMoney(k.withdrawals.paidPoints7d)} />
-        <Tile label="Completions today" value={String(k.earning.completionsToday)} />
-        <Tile label="Points to users" value={formatPoints(k.earning.taskPointsAll)} sub="from tasks, all time" />
-        <Tile label="Referral points" value={formatPoints(k.earning.referralPointsAll)} sub="all time" />
-        <Tile label="Open fraud flags" value={String(k.risk.openFraud)} warn={k.risk.openFraud > 0} />
-        <Tile label="Open tickets" value={String(k.risk.openTickets)} warn={k.risk.openTickets > 0} />
+        <Tile label="Verified users" value={String(k.users.total)} sub={`+${k.users.new7d} this week`} onClick={() => goToSection("users")} />
+        <Tile label="Pending payouts" value={String(k.withdrawals.pendingCount)} sub={`${formatPoints(k.withdrawals.pendingPoints)} pts held`} warn={k.withdrawals.pendingCount > 0} onClick={() => goToSection("money")} />
+        <Tile label="Paid (7 days)" value={String(k.withdrawals.paidCount7d)} sub={formatMoney(k.withdrawals.paidPoints7d)} onClick={() => goToSection("money")} />
+        <Tile label="Completions today" value={String(k.earning.completionsToday)} onClick={() => goToSection("tasks")} />
+        <Tile label="Points to users" value={formatPoints(k.earning.taskPointsAll)} sub="from tasks, all time" onClick={() => goToSection("money")} />
+        <Tile label="Referral points" value={formatPoints(k.earning.referralPointsAll)} sub="all time" onClick={() => goToSection("growth")} />
+        <Tile label="Open fraud flags" value={String(k.risk.openFraud)} warn={k.risk.openFraud > 0} onClick={() => goToSection("users")} />
+        <Tile label="Open tickets" value={String(k.risk.openTickets)} warn={k.risk.openTickets > 0} onClick={() => goToSection("support")} />
       </div>
 
       <div className="rounded-lg border border-line bg-card p-4">
@@ -54,14 +56,19 @@ export function KpiDashboard() {
   );
 }
 
-function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${warn ? "border-danger/30 bg-danger-tint/40" : "border-line bg-card"}`}>
+function Tile(
+  { label, value, sub, warn, onClick }:
+  { label: string; value: string; sub?: string; warn?: boolean; onClick?: () => void },
+) {
+  const cls = `rounded-lg border p-3 text-left ${warn ? "border-danger/30 bg-danger-tint/40" : "border-line bg-card"} ${onClick ? "transition-colors hover:border-brand" : ""}`;
+  const inner = (
+    <>
       <p className="num text-2xl font-bold text-brand-ink">{value}</p>
       <p className="text-xs font-medium text-brand-ink">{label}</p>
       {sub && <p className="text-[11px] text-muted">{sub}</p>}
-    </div>
+    </>
   );
+  return onClick ? <button onClick={onClick} className={cls}>{inner}</button> : <div className={cls}>{inner}</div>;
 }
 
 // ---- Support-ticket queue (agent+, brief part 40) -------------------------

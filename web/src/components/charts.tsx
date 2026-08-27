@@ -208,22 +208,34 @@ export function FunnelBars(
   );
 }
 
-/** A labelled number. Not a chart — a single value's job is to be read. */
+/** A labelled number. Not a chart — a single value's job is to be read.
+ *  Pass `onClick` to make it jump to the screen the number counts (e.g. "Open
+ *  fraud flags" -> the fraud queue) — a plain <button> so it stays keyboard-
+ *  and screen-reader reachable, styled to look exactly like the static tile. */
 export function StatTile(
-  { label, value, sub, tone = "normal" }:
-  { label: string; value: string; sub?: string; tone?: "normal" | "warn" | "bad" },
+  { label, value, sub, tone = "normal", onClick }:
+  { label: string; value: string; sub?: string; tone?: "normal" | "warn" | "bad"; onClick?: () => void },
 ) {
   const toneCls =
     tone === "bad" ? "text-danger" : tone === "warn" ? "text-pending" : "text-brand-ink";
-  return (
-    <div className="rounded-lg border border-line bg-card p-3">
+  const inner = (
+    <>
       <p className="text-xs text-muted">{label}</p>
       {/* Proportional figures, not tabular: tabular-nums gives every digit the
           width of a zero, which makes a large standalone number look gappy. */}
       <p className={`num text-xl font-bold ${toneCls}`}>{value}</p>
       {sub && <p className="text-xs text-muted">{sub}</p>}
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button onClick={onClick}
+        className="rounded-lg border border-line bg-card p-3 text-left transition-colors hover:border-brand hover:bg-brand-tint/30">
+        {inner}
+      </button>
+    );
+  }
+  return <div className="rounded-lg border border-line bg-card p-3">{inner}</div>;
 }
 
 export { compact };

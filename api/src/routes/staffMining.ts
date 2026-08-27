@@ -165,7 +165,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     const s = await loadMiningSettings();
     const epoch = epochOf();
 
-    const [emitted, circulatingRow, sinkBurns, feeBurns, activeMiners, hashRow, epochs, lastWindow] =
+    const [emitted, circulatingRow, sinkBurns, feeBurns, activeMiners, hashRow, epochs, lastWindow, topMinerRows] =
       await Promise.all([
         totalEmittedMicro(),
         // Circulating float, straight from the ledger. This is the ONLY definition
@@ -189,6 +189,19 @@ export async function staffMiningRoutes(app: FastifyInstance) {
           "SELECT * FROM mining_epochs ORDER BY epoch DESC LIMIT 14"),
         sql.get<{ pot_points: number; total_burned: string }>(
           "SELECT pot_points, total_burned FROM conversion_windows WHERE status = 'settled' ORDER BY settled_at DESC LIMIT 1"),
+        // Top 10 miners by LIFETIME MINED ROZI (source_type = 'mining' only —
+        // not received-by-transfer, and not their current balance, which a rig
+        // purchase or a conversion burn would move around with no change in how
+        // much mining they've actually done). This is a leaderboard for staff,
+        // real emails, click-through to the same user detail screen everything
+        // else here links to.
+        sql.all<{ id: string; email: string; mined: string }>(
+          `SELECT u.id, u.email, SUM(r.amount) AS mined
+           FROM rozi_ledger r JOIN users u ON u.id = r.user_id
+           WHERE r.source_type = 'mining' AND r.amount > 0
+           GROUP BY u.id, u.email
+           ORDER BY mined DESC LIMIT 10`,
+        ),
       ]);
 
     // All four are MICRO here — they come straight off the ledger.
@@ -255,6 +268,9 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         activeSessions: Number(activeMiners?.n ?? 0),
       },
       poolCoveragePoints: poolCoverage,
+      topMiners: topMinerRows.map((r, i) => ({
+        rank: i + 1, id: r.id, email: r.email, mined: fromMicro(Number(r.mined)),
+      })),
       epochs: epochs.map((e: Record<string, unknown>) => ({
         ...e,
         emission: fromMicro(Number(e.emission)),

@@ -26,6 +26,7 @@ import { tickSweep } from "./deposits/sweep.ts";
 import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
 import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
+import { tickTicketAutoClose } from "./ticketAutoClose.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -269,6 +270,13 @@ setInterval(tickPayoutRelayJob, config.depositScanIntervalMs).unref();
 const RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 setInterval(() => {
   void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
+}, RECONCILE_INTERVAL_MS).unref();
+
+// ---- Support tickets: auto-close a stale 'answered' ticket — ticketAutoClose.ts
+// Same cadence as reconciliation above: not time-critical, one pass an hour is
+// plenty for a days-long staleness window.
+setInterval(() => {
+  void tickTicketAutoClose().catch((err) => app.log.error({ err }, "Ticket auto-close tick failed"));
 }, RECONCILE_INTERVAL_MS).unref();
 
 try {

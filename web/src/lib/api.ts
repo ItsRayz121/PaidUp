@@ -475,6 +475,9 @@ export type StaffUserDetail = {
   invitees: Record<string, unknown>[];
   inviteeCount: number;
   tickets: Record<string, unknown>[];
+  // Devices/IPs this account has signed in from (user_devices) — the same
+  // table the device-reuse / IP-reuse fraud rules read.
+  devices: { device_id: string; ip: string | null; first_seen: string; last_seen: string }[];
 };
 export const fetchStaffUser = (id: string) =>
   apiFetch<StaffUserDetail>(`/staff/users/${id}`);
@@ -483,9 +486,15 @@ export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("
 // ---- Super-admin ----------------------------------------------------------
 export type AdminUserRow = {
   id: string; email: string; country: string; status: string; created_at: string; balance: number;
+  // Open fraud flags on this account, and whether AUTOMATIC payouts are
+  // currently held (guardrail #8 territory — a hold is not a suspension, see
+  // UserHeader). Both are computed server-side so the list never needs one
+  // request per row to show them.
+  openFlags: number; held: boolean;
 };
-export const searchUsers = (q = "") =>
-  apiFetch<{ users: AdminUserRow[] }>(`/staff/users?q=${encodeURIComponent(q)}`);
+export const searchUsers = (q = "", limit = 10, offset = 0) =>
+  apiFetch<{ users: AdminUserRow[]; total: number; offset: number; limit: number }>(
+    `/staff/users?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`);
 export const setUserStatus = (id: string, status: "active" | "suspended", reason: string) =>
   apiFetch<{ ok: true; status: string }>(`/staff/users/${id}/status`, {
     method: "POST", body: JSON.stringify({ status, reason }),
@@ -522,7 +531,7 @@ export type AuditEntry = {
   ip: string | null;
 };
 export const fetchAudit = (q: {
-  actor?: string; action?: string; target?: string; since?: string; cursor?: string;
+  actor?: string; action?: string; target?: string; since?: string; cursor?: string; limit?: string;
 } = {}) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v) p.set(k, v);
@@ -542,8 +551,12 @@ export type MoneyView = {
   // Parse before doing arithmetic or formatting — a string has no .toFixed.
   usdt: { outstanding: string; paid: string; pending: string };
   recentAudit: Record<string, unknown>[];
+  // How many audit rows exist in total — lets the widget offer "See more"
+  // (which jumps to the full, paginated Audit section) only when there
+  // really is more than the short list shown here.
+  auditTotal: number;
 };
-export const fetchMoney = () => apiFetch<MoneyView>("/staff/money");
+export const fetchMoney = (limit = 10) => apiFetch<MoneyView>(`/staff/money?limit=${limit}`);
 
 // CSV export can't be a plain <a href>: the API authenticates with a Bearer
 // header, which a browser navigation won't send. Fetch it as a blob instead.
@@ -1272,6 +1285,10 @@ export type MiningStats = {
   supply: { cap: number; emitted: number; burned: number; circulating: number; remaining: number };
   today: { miners: number; totalShares: number; activeSessions: number };
   poolCoveragePoints: number | null;
+  // Top 10 by LIFETIME MINED ROZI (never received-by-transfer, never current
+  // balance — see the query's own comment in staffMining.ts). Clicking a row
+  // jumps to that user's full detail screen.
+  topMiners: { rank: number; id: string; email: string; mined: number }[];
   epochs: {
     epoch: number; emission: number; total_shares: number; miners: number;
     emitted: number; withheld: number; settled_at: string;

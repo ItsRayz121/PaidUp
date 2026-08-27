@@ -8,10 +8,11 @@ import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, adjustUserPoints,
   fetchStaffMembers, setStaffRole,
-  fetchMoney, downloadExport,
+  fetchMoney, downloadExport, fetchStaffUser,
   type AdminUserRow, type StaffRole,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtAmount, timeAgo } from "@/lib/format";
+import { useStaffNav } from "@/lib/staffNav";
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -24,15 +25,26 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 // ---- Users: search, suspend, adjust points -------------------------------
+// ⚠️ SHOWS 10 AT A TIME, "SEE MORE" GROWS THE PAGE (founder, 2026-08-27):
+// this used to hand back up to 200 rows on load. `limit` grows by 10 on each
+// click rather than a real offset-paged view, which keeps rows already on
+// screen in place (no "page 2 replaced page 1" disorientation) at the cost of
+// re-fetching the whole visible set each time — fine at this row count.
 export function UsersPanel() {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
-  const users = useApi(() => searchUsers(query), [query]);
+  const [limit, setLimit] = useState(10);
+  const users = useApi(() => searchUsers(query, limit, 0), [query, limit]);
+
+  function search(next: string) {
+    setQuery(next);
+    setLimit(10); // a new search starts from a short first page again
+  }
 
   return (
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Users</h2>
-      <form onSubmit={(e) => { e.preventDefault(); setQuery(q.trim()); }} className="mb-2 flex gap-2">
+      <form onSubmit={(e) => { e.preventDefault(); search(q.trim()); }} className="mb-2 flex gap-2">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -47,20 +59,29 @@ export function UsersPanel() {
         : (users.data?.users.length ?? 0) === 0 ? (
           <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No users found.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-line">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
-                <tr>
-                  <th className="p-2.5">Email</th><th className="p-2.5">Balance</th>
-                  <th className="p-2.5">Value</th><th className="p-2.5">Status</th>
-                  <th className="p-2.5">Joined</th><th className="p-2.5">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.data!.users.map((u) => <UserRow key={u.id} u={u} onChanged={users.reload} />)}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto rounded-lg border border-line">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
+                  <tr>
+                    <th className="p-2.5">Email</th><th className="p-2.5">Balance</th>
+                    <th className="p-2.5">Value</th><th className="p-2.5">Status</th>
+                    <th className="p-2.5">Joined</th><th className="p-2.5">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.data!.users.map((u) => <UserRow key={u.id} u={u} onChanged={users.reload} />)}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              Showing {users.data!.users.length} of {users.data!.total}
+              {users.data!.users.length < users.data!.total && (
+                <button onClick={() => setLimit((l) => l + 10)}
+                  className="ms-2 font-semibold text-brand hover:underline">See more</button>
+              )}
+            </p>
+          </>
         )}
     </section>
   );
@@ -68,6 +89,7 @@ export function UsersPanel() {
 
 function UserRow({ u, onChanged }: { u: AdminUserRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
+  const { openUser } = useStaffNav();
   const suspended = u.status !== "active";
 
   async function toggleStatus() {
@@ -106,6 +128,32 @@ function UserRow({ u, onChanged }: { u: AdminUserRow; onChanged: () => void }) {
     finally { setBusy(false); }
   }
 
+  // "Flagged" / "payouts held" don't carry their reason on this row — the
+  // list endpoint deliberately doesn't fetch per-row fraud detail (that's an
+  // N+1 query for a list of 10-200). Clicking either jumps to the full user
+  // detail screen, which has the real fraud flag text and the hold reason.
+  async function showReason(kind: "flag" | "hold") {
+    setBusy(true);
+    try {
+      const d = await fetchStaffUser(u.id);
+      if (kind === "hold") {
+        window.alert(
+          d.user.withdrawal_hold_reason
+            ? `Payouts held: ${String(d.user.withdrawal_hold_reason)}`
+            : "No hold reason on file.",
+        );
+      } else {
+        const open = d.fraudFlags.filter((f) => !f.resolution_note);
+        window.alert(
+          open.length
+            ? open.map((f) => `${String(f.flag_type)} (${String(f.severity)}): ${String(f.detail ?? "no detail")}`).join("\n\n")
+            : "No open flags.",
+        );
+      }
+    } catch (e) { window.alert((e as Error).message); }
+    finally { setBusy(false); openUser(u.id); }
+  }
+
   return (
     <tr className={`border-t border-line ${suspended ? "bg-danger-tint/40" : ""}`}>
       <td className="p-2.5">
@@ -115,13 +163,36 @@ function UserRow({ u, onChanged }: { u: AdminUserRow; onChanged: () => void }) {
       <td className="num p-2.5">{formatPoints(u.balance)}</td>
       <td className="p-2.5 text-muted">{formatMoney(u.balance)}</td>
       <td className="p-2.5">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-          suspended ? "bg-danger text-white" : "bg-success-tint text-success"
-        }`}>{u.status}</span>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+            suspended ? "bg-danger text-white" : "bg-success-tint text-success"
+          }`}>{suspended ? "banned" : "active"}</span>
+          {/* Open fraud flags on an otherwise active account — the "suspect"
+              state the founder asked for. Not a real status column: nothing
+              stops them earning, it's a signal, same as everywhere else fraud
+              flags appear in this panel (guardrail: flag-only, never a block
+              unless a real block is applied). */}
+          {u.openFlags > 0 && (
+            <button disabled={busy} onClick={() => showReason("flag")}
+              className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending hover:underline">
+              suspect ({u.openFlags})
+            </button>
+          )}
+          {u.held && (
+            <button disabled={busy} onClick={() => showReason("hold")}
+              className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending hover:underline">
+              payouts held
+            </button>
+          )}
+        </div>
       </td>
       <td className="p-2.5 text-muted">{timeAgo(u.created_at)}</td>
       <td className="p-2.5">
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => openUser(u.id)}
+            className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
+            View
+          </button>
           <button disabled={busy} onClick={adjust}
             className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
             Adjust
@@ -251,7 +322,8 @@ export function StaffRolesPanel() {
 
 // ---- Money view + export -------------------------------------------------
 export function MoneyPanel() {
-  const money = useApi(fetchMoney, []);
+  const money = useApi(() => fetchMoney(10), []);
+  const { goToSection } = useStaffNav();
 
   async function exportCsv(what: "ledger" | "withdrawals" | "audit") {
     try { await downloadExport(what); }
@@ -290,7 +362,16 @@ export function MoneyPanel() {
         not earned from a network — they come straight off your margin.
       </p>
 
-      <h3 className="mb-1.5 mt-4 font-semibold text-brand-ink">Recent staff actions</h3>
+      <div className="mb-1.5 mt-4 flex items-center justify-between">
+        <h3 className="font-semibold text-brand-ink">Recent staff actions</h3>
+        {/* The full, paginated log lives in the Audit section — this is a
+            glance, not the log (founder, 2026-08-27). */}
+        {m.auditTotal > m.recentAudit.length && (
+          <button onClick={() => goToSection("audit")} className="text-xs font-semibold text-brand hover:underline">
+            See more ({m.auditTotal} total)
+          </button>
+        )}
+      </div>
       {m.recentAudit.length === 0 ? (
         <p className="rounded-lg border border-line bg-card p-3 text-sm text-muted">Nothing yet.</p>
       ) : (

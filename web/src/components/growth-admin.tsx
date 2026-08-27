@@ -15,6 +15,7 @@ import {
   type ReferralAdmin,
 } from "@/lib/api";
 import { formatPoints, timeAgo } from "@/lib/format";
+import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -196,6 +197,7 @@ function NetworkRates({ d }: { d: ReferralAdmin }) {
 }
 
 function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
+  const { openUser } = useStaffNav();
   return (
     <div className="rounded-lg border border-line bg-card p-3">
       <h3 className="font-bold text-brand-ink">Top inviters</h3>
@@ -218,7 +220,7 @@ function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
                 return (
                   <tr key={r.id} className="border-t border-line">
                     <td className="py-1.5">
-                      <span className="text-brand-ink">{r.email}</span>
+                      <button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button>
                       {r.status !== "active" && <span className="ms-1 text-danger">({r.status})</span>}
                     </td>
                     <td className="font-mono">{formatPoints(r.points)}</td>
@@ -333,6 +335,7 @@ function Board(
     showInvites?: boolean;
   },
 ) {
+  const { openUser } = useStaffNav();
   return (
     <div className="rounded-lg border border-line bg-card p-3">
       <h3 className="font-bold text-brand-ink">{title}</h3>
@@ -351,7 +354,7 @@ function Board(
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="py-1.5 font-mono text-muted">{r.rank}</td>
-                  <td className="text-brand-ink">{r.email}</td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button></td>
                   <td className="font-mono">{formatPoints(r.points)}</td>
                   {showInvites && <td className="font-mono">{r.invites ?? 0}</td>}
                   <td className="text-right">

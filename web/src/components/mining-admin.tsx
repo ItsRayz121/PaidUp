@@ -20,6 +20,7 @@ import {
 // ledger is reconciled, and hiding the underlying unit from the people checking
 // the numbers would make them harder to check, not easier.
 import { formatPoints, timeAgo } from "@/lib/format";
+import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString();
 
@@ -179,6 +180,8 @@ export function MiningPanel() {
   return (
     <div className="space-y-6">
       {stats.data && <StatsHeader s={stats.data} onSettle={onSettle} />}
+
+      {stats.data && <TopMinersTable rows={stats.data.topMiners} />}
 
       <ConversionPanel />
 
@@ -365,6 +368,37 @@ function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) 
                   <td>{n(e.miners)}</td>
                   <td>{n(e.emitted)}</td>
                   <td className={e.withheld > 0 ? "text-danger" : ""}>{n(e.withheld)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Top 10 by lifetime mined ROZI (never transfers-in, never current balance —
+// see the query's own comment in staffMining.ts). Rows jump to the same user
+// detail screen every other clickable row in this panel jumps to.
+function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
+  const { openUser } = useStaffNav();
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <h3 className="font-bold text-brand-ink">Top miners</h3>
+      <p className="mt-1 text-xs text-muted">By lifetime mined ROZI — not current balance, so a rig purchase or a burn doesn&apos;t move a rank.</p>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">Nobody has mined anything yet.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[360px] text-xs">
+            <thead className="text-left uppercase text-muted"><tr><th className="py-1">#</th><th>Miner</th><th>Mined (lifetime)</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line">
+                  <td className="py-1.5 font-mono text-muted">{r.rank}</td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button></td>
+                  <td className="font-mono">{r.mined.toLocaleString(undefined, { maximumFractionDigits: 3 })} ROZI</td>
                 </tr>
               ))}
             </tbody>
@@ -966,8 +1000,11 @@ function BoosterPanel() {
 // `refunds.view` but not `refunds.decide` (api/src/permissions.ts), so they can
 // read this queue and must not be shown buttons that 403. The server is still
 // the authority — this only stops offering an action that cannot succeed.
+const REFUND_STATUSES = ["pending", "sending", "paid", "rejected"];
+
 export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
-  const refunds = useApi(() => fetchAdminRefunds("pending"), []);
+  const [status, setStatus] = useState("pending");
+  const refunds = useApi(() => fetchAdminRefunds(status), [status]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -1020,7 +1057,17 @@ export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
 
   return (
     <div className="rounded-lg border border-line bg-card p-3">
-      <h3 className="font-bold text-brand-ink">USDT refunds waiting to be sent</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-bold text-brand-ink">USDT refunds</h3>
+        <div className="flex flex-wrap gap-1">
+          {REFUND_STATUSES.map((s) => (
+            <button key={s} onClick={() => setStatus(s)}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="mt-1 text-xs text-muted">
         This is a user asking for the deposit they have not spent. It is their own money
         coming back, not their task earnings — those go out through the withdrawal queue.
@@ -1029,7 +1076,7 @@ export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
       {msg && <p className="mt-2 text-xs text-brand-ink">{msg}</p>}
 
       {rows.length === 0 ? (
-        <p className="mt-2 text-xs text-muted">Nothing waiting.</p>
+        <p className="mt-2 text-xs text-muted">No {status} refunds.</p>
       ) : (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full min-w-[640px] text-xs">
@@ -1064,7 +1111,11 @@ export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
                   </td>
                   <td className="text-muted">{timeAgo(r.created_at)}</td>
                   <td className="whitespace-nowrap">
-                    {canDecide ? (
+                    {r.status !== "pending" ? (
+                      <span className="text-[10px] text-muted">
+                        {r.status === "paid" ? r.tx_hash ?? "—" : r.reject_reason ?? "—"}
+                      </span>
+                    ) : canDecide ? (
                       <>
                         <button disabled={busy === r.id} onClick={() => pay(r.id, r.netAmount, r.address)}
                           className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">
@@ -1099,8 +1150,11 @@ export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
 //
 // ⚠️ `canDecide` IS A REAL GATE — see the note on RefundPanel above. Manager and
 // Operations read this queue without holding `deposits.decide`.
+const TOPUP_STATUSES = ["pending", "confirmed", "rejected"];
+
 export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
-  const topups = useApi(() => fetchAdminTopups("pending"), []);
+  const [status, setStatus] = useState("pending");
+  const topups = useApi(() => fetchAdminTopups(status), [status]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -1147,7 +1201,17 @@ export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
 
   return (
     <div className="rounded-lg border border-line bg-card p-3">
-      <h3 className="font-bold text-brand-ink">USDT deposits waiting to be checked</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-bold text-brand-ink">USDT deposits</h3>
+        <div className="flex flex-wrap gap-1">
+          {TOPUP_STATUSES.map((s) => (
+            <button key={s} onClick={() => setStatus(s)}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
       {treasuryAddress ? (
         <p className="mt-1 text-xs text-muted">
           Deposits should land at{" "}
@@ -1171,7 +1235,7 @@ export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
       {msg && <p className="mt-2 text-xs text-brand-ink">{msg}</p>}
 
       {rows.length === 0 ? (
-        <p className="mt-2 text-xs text-muted">Nothing waiting.</p>
+        <p className="mt-2 text-xs text-muted">No {status} deposits.</p>
       ) : (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full min-w-[640px] text-xs">
@@ -1188,7 +1252,9 @@ export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
                   <td className="max-w-[220px] break-all font-mono text-[10px]">{r.tx_hash}</td>
                   <td className="text-muted">{timeAgo(r.created_at)}</td>
                   <td className="whitespace-nowrap">
-                    {canDecide ? (
+                    {r.status !== "pending" ? (
+                      <span className="text-[10px] text-muted">{r.reject_reason ?? "—"}</span>
+                    ) : canDecide ? (
                       <>
                         <button disabled={busy === r.id} onClick={() => confirm(r.id, r.amount)}
                           className="rounded bg-success px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">

@@ -11,6 +11,7 @@ import { useApi } from "@/lib/hooks";
 import { fetchAnalytics, type Analytics } from "@/lib/api";
 import { formatUsdtMicro, formatPoints } from "@/lib/format";
 import { TimeChart, FunnelBars, StatTile, compact } from "@/components/charts";
+import { useStaffNav } from "@/lib/staffNav";
 
 const RANGES = [7, 30, 90];
 
@@ -18,6 +19,7 @@ export function AnalyticsDashboard() {
   const [days, setDays] = useState(30);
   const [asTable, setAsTable] = useState(false);
   const report = useApi(() => fetchAnalytics(days), [days]);
+  const { goToSection } = useStaffNav();
 
   if (report.loading) return <p className="mb-8 text-sm text-muted">Loading the numbers…</p>;
   if (report.error) return <p className="mb-8 text-sm text-danger">{report.error}</p>;
@@ -63,34 +65,34 @@ export function AnalyticsDashboard() {
 
       <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <StatTile label="All accounts" value={compact(a.users.total)}
-          sub={`${compact(a.users.verified)} verified`} />
+          sub={`${compact(a.users.verified)} verified`} onClick={() => goToSection("users")} />
         <StatTile label="New today" value={compact(a.users.newToday)}
-          sub={`${compact(a.users.new7d)} in 7 days`} />
+          sub={`${compact(a.users.new7d)} in 7 days`} onClick={() => goToSection("users")} />
         <StatTile label="Tasks paid today" value={compact(a.tasks.completionsToday)}
-          sub={`${a.tasks.completionRate}% of attempts pay out`} />
+          sub={`${a.tasks.completionRate}% of attempts pay out`} onClick={() => goToSection("tasks")} />
         <StatTile label="Miners right now" value={compact(a.mining.activeMiners)}
-          sub={`${compact(a.mining.sessions)} sessions in ${days} days`} />
+          sub={`${compact(a.mining.sessions)} sessions in ${days} days`} onClick={() => goToSection("mining")} />
 
         <StatTile label={`Revenue (${days}d, estimated)`} value={pts(a.money.revenuePoints)}
-          sub={`${a.money.revenuePerActiveUser} pts per active user`} />
+          sub={`${a.money.revenuePerActiveUser} pts per active user`} onClick={() => goToSection("money")} />
         <StatTile label={`Paid to users (${days}d)`} value={pts(a.money.rewardCostPoints)}
-          sub={`${formatPoints(a.money.referralCostPoints)} of it referrals`} />
+          sub={`${formatPoints(a.money.referralCostPoints)} of it referrals`} onClick={() => goToSection("money")} />
         <StatTile label="Waiting to be paid" value={pts(a.money.withdrawPendingPoints)}
           sub={`${formatPoints(a.money.withdrawnPointsAll)} paid all time`}
-          tone={a.money.withdrawPendingPoints > 0 ? "warn" : "normal"} />
+          tone={a.money.withdrawPendingPoints > 0 ? "warn" : "normal"} onClick={() => goToSection("money")} />
         <StatTile label={`Deposits (${days}d)`} value={usdt(a.money.depositMicro30d)}
-          sub={`${usdt(a.money.depositMicroAll)} all time`} />
+          sub={`${usdt(a.money.depositMicroAll)} all time`} onClick={() => goToSection("money")} />
 
         <StatTile label="Proofs waiting" value={compact(a.tasks.proofsPending)}
           sub={`${a.tasks.approvalRate}% approved`}
-          tone={a.tasks.proofsPending > 20 ? "warn" : "normal"} />
+          tone={a.tasks.proofsPending > 20 ? "warn" : "normal"} onClick={() => goToSection("tasks")} />
         <StatTile label="Open fraud flags" value={compact(a.risk.openFraud)}
-          tone={a.risk.openFraud > 0 ? "bad" : "normal"} />
+          tone={a.risk.openFraud > 0 ? "bad" : "normal"} onClick={() => goToSection("users")} />
         <StatTile label="Open tickets" value={compact(a.risk.openTickets)}
-          tone={a.risk.openTickets > 0 ? "warn" : "normal"} />
+          tone={a.risk.openTickets > 0 ? "warn" : "normal"} onClick={() => goToSection("support")} />
         <StatTile label="Invites that became earners"
           value={`${a.referrals.conversion}%`}
-          sub={`${compact(a.referrals.activated)} of ${compact(a.referrals.signups)}`} />
+          sub={`${compact(a.referrals.activated)} of ${compact(a.referrals.signups)}`} onClick={() => goToSection("growth")} />
       </div>
 
       {/* The revenue estimate is labelled everywhere it appears. We store what
