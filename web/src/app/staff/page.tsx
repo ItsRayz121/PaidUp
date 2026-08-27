@@ -12,7 +12,7 @@ import {
 import { formatPoints, formatMoney, formatUsdtMicro, timeAgo } from "@/lib/format";
 import {
   KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton,
-  TreasuryPanel, WithdrawalFeePanel,
+  TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
 import { MiningPanel, TopupPanel, RefundPanel } from "@/components/mining-admin";
@@ -301,7 +301,8 @@ function WithdrawalQueue(
   { onViewLedger, canOpenLedger }: { onViewLedger: (userId: string) => void; canOpenLedger: boolean },
 ) {
   const [status, setStatus] = useState("pending");
-  const queue = useApi(() => fetchStaffQueue(status), [status]);
+  const [auto, setAuto] = useState(true);
+  const queue = useApi(() => fetchStaffQueue(status), [status], true, auto ? QUEUE_POLL_MS : undefined);
   // Treasury wallet for the chains in the queue — so whoever pays sends from
   // the right wallet. Set by an admin under Money & payouts → Treasury wallet.
   const treasury = queue.data?.treasury;
@@ -347,7 +348,7 @@ function WithdrawalQueue(
 
   return (
     <section className="mb-8">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold text-brand-ink">Withdrawals</h2>
         <div className="flex flex-wrap gap-1">
           {STATUSES.map((s) => (
@@ -359,6 +360,7 @@ function WithdrawalQueue(
             </button>
           ))}
         </div>
+        <RefreshBar updatedAt={queue.updatedAt} loading={queue.loading} onRefresh={queue.reload} auto={auto} setAuto={setAuto} />
       </div>
 
       {/* What this view will cost the treasury if every row is paid. The USDT
@@ -513,6 +515,11 @@ function UserHeader({ d }: { d: StaffUserDetail }) {
             earns. Saying "held" without that is how it gets mistaken for a
             suspension. */}
         {u.withdrawalHeld && <Badge tone="warn">payouts held</Badge>}
+        {/* A real, staff-SET triage label — see the Users panel's "Mark for
+            review" action. Distinct from the fraud-flag-count "suspect" badge,
+            which is not shown on this screen at all (fraudFlags are listed
+            below in full). */}
+        {u.underReview && <Badge tone="warn">under review</Badge>}
         <Badge tone={String(u.kyc_status) === "approved" ? "ok" : "mute"}>id: {String(u.kyc_status ?? "none")}</Badge>
         {u.telegram_id ? <Badge tone="mute">telegram</Badge> : null}
         {u.country ? <Badge tone="mute">{String(u.country)}</Badge> : null}
@@ -525,6 +532,14 @@ function UserHeader({ d }: { d: StaffUserDetail }) {
           Automatic payouts are held: {String(u.withdrawal_hold_reason)}
           {u.withdrawal_hold_until ? ` (until ${String(u.withdrawal_hold_until).slice(0, 10)})` : " (no end date)"}.
           They can still mine and earn.
+        </p>
+      )}
+      {u.underReview && (
+        <p className="mt-2 rounded bg-pending-tint p-2 text-xs text-pending">
+          Marked for review: {String(u.under_review_reason)}
+          {u.under_review_by_email ? ` — by ${String(u.under_review_by_email)}` : ""}
+          {u.under_review_at ? ` (${timeAgo(String(u.under_review_at))})` : ""}. This is a triage
+          note only — it does not stop anything the account can do.
         </p>
       )}
       {String(u.status) !== "active" && (
@@ -761,11 +776,15 @@ function UserLookup({ target }: { target: string | null }) {
 }
 
 function FraudPanel({ canResolve }: { canResolve: boolean }) {
-  const fraud = useApi(fetchFraud, []);
+  const [auto, setAuto] = useState(true);
+  const fraud = useApi(fetchFraud, [], true, auto ? QUEUE_POLL_MS : undefined);
   const { openUser } = useStaffNav();
   return (
     <section>
-      <h2 className="mb-2 font-bold text-brand-ink">Open fraud flags</h2>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-bold text-brand-ink">Open fraud flags</h2>
+        <RefreshBar updatedAt={fraud.updatedAt} loading={fraud.loading} onRefresh={fraud.reload} auto={auto} setAuto={setAuto} />
+      </div>
       {fraud.loading ? <p className="text-sm text-muted">Loading…</p>
         : fraud.error ? <p className="text-sm text-danger">{fraud.error}</p>
         : (fraud.data?.flags.length ?? 0) === 0 ? (

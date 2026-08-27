@@ -21,6 +21,7 @@ import {
 // the numbers would make them harder to check, not easier.
 import { formatPoints, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 
 const n = (v: number) => v.toLocaleString();
 
@@ -1004,7 +1005,8 @@ const REFUND_STATUSES = ["pending", "sending", "paid", "rejected"];
 
 export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
   const [status, setStatus] = useState("pending");
-  const refunds = useApi(() => fetchAdminRefunds(status), [status]);
+  const [auto, setAuto] = useState(true);
+  const refunds = useApi(() => fetchAdminRefunds(status), [status], true, auto ? QUEUE_POLL_MS : undefined);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -1067,6 +1069,7 @@ export function RefundPanel({ canDecide = false }: { canDecide?: boolean }) {
             </button>
           ))}
         </div>
+        <RefreshBar updatedAt={refunds.updatedAt} loading={refunds.loading} onRefresh={refunds.reload} auto={auto} setAuto={setAuto} />
       </div>
       <p className="mt-1 text-xs text-muted">
         This is a user asking for the deposit they have not spent. It is their own money
@@ -1154,7 +1157,8 @@ const TOPUP_STATUSES = ["pending", "confirmed", "rejected"];
 
 export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
   const [status, setStatus] = useState("pending");
-  const topups = useApi(() => fetchAdminTopups(status), [status]);
+  const [auto, setAuto] = useState(true);
+  const topups = useApi(() => fetchAdminTopups(status), [status], true, auto ? QUEUE_POLL_MS : undefined);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -1211,6 +1215,7 @@ export function TopupPanel({ canDecide = false }: { canDecide?: boolean }) {
             </button>
           ))}
         </div>
+        <RefreshBar updatedAt={topups.updatedAt} loading={topups.loading} onRefresh={topups.reload} auto={auto} setAuto={setAuto} />
       </div>
       {treasuryAddress ? (
         <p className="mt-1 text-xs text-muted">

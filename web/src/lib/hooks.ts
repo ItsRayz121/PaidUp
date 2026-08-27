@@ -78,12 +78,19 @@ export function useStaffSession(): { user: SessionUser | null; ready: boolean } 
 // It exists for /wallet's USDT row: top-ups ship OFF, so that request was a
 // round trip on the second-most-visited screen to render 0.00 for ~100% of
 // users. The gate flips it on with the feature.
-export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true): {
-  data: T | null; error: string | null; loading: boolean; reload: () => void;
+// `pollMs` is optional and additive: omit it and this hook behaves exactly as
+// before. When set, it re-runs `fn` on that interval — but ONLY while the tab
+// is actually visible. This app has twice shipped a real billing incident
+// (see CLAUDE.md's Alchemy entries) from something polling unattended in the
+// background forever; a staff queue left open overnight in a background tab
+// must not repeat that shape against our own API.
+export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true, pollMs?: number): {
+  data: T | null; error: string | null; loading: boolean; reload: () => void; updatedAt: number | null;
 } {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
 
   // fn identity changes each render; we intentionally key off caller-provided
   // deps, exactly like useEffect's second argument. That opts this hook out of
@@ -96,7 +103,7 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = 
     setLoading(true);
     setError(null);
     fn()
-      .then((d) => setData(d))
+      .then((d) => { setData(d); setUpdatedAt(Date.now()); })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
@@ -104,7 +111,21 @@ export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = 
 
   useEffect(() => { run(); }, [run]);
 
-  return { data, error, loading, reload: run };
+  // A background refetch never shows the loading state — that would blank a
+  // queue someone is actively reading every time the interval ticks. It's a
+  // silent reload; the row count and "updated Xs ago" changing is the signal.
+  useEffect(() => {
+    if (!pollMs || !enabled) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fn().then((d) => { setData(d); setUpdatedAt(Date.now()); }).catch(() => {});
+      }
+    }, pollMs);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollMs, enabled, ...deps]);
+
+  return { data, error, loading, reload: run, updatedAt };
 }
 
 // Time left until an ISO timestamp, in words, ticking once a second. Null once

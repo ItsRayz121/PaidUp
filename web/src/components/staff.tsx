@@ -3,7 +3,7 @@
 // Internal staff panels: KPI dashboard (manager/admin), support-ticket queue
 // (agent+), and ad-network config (admin). Density over friendliness — this is
 // an internal tool, so jargon is allowed here (DESIGN_BRIEF), unlike the earner app.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApi, useStaffSession } from "@/lib/hooks";
 import {
   fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
@@ -12,6 +12,52 @@ import {
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+
+// ---- Live refresh bar (founder, 2026-08-27) --------------------------------
+// The money/fraud queues were pull-on-load only — open the panel, see a
+// snapshot, and the only way to see anything new was a manual browser reload.
+// During an active incident (a payout burst, a fraud spike) that is exactly
+// the wrong moment to be stale. This bar drops into each of those queues: a
+// manual Refresh button (always available, even with auto off) plus an
+// auto-refresh toggle, ON by default, polling every `QUEUE_POLL_MS`.
+//
+// ⚠️ POLLING PAUSES WHEN THE TAB IS HIDDEN — see useApi's `pollMs` handling in
+// hooks.ts. This app has shipped two real billing incidents from something
+// polling forever in the background with nobody watching (CLAUDE.md's Alchemy
+// entries); a staff tab left open overnight must not repeat that shape against
+// our own API, even though the cost here is a cheap DB read, not a paid RPC.
+export const QUEUE_POLL_MS = 20_000;
+
+export function RefreshBar(
+  { updatedAt, loading, onRefresh, auto, setAuto }:
+  { updatedAt: number | null; loading: boolean; onRefresh: () => void; auto: boolean; setAuto: (v: boolean) => void },
+) {
+  // Forces a re-render once a second purely so the "Xs ago" text stays honest
+  // between polls — the fetch itself only lands every QUEUE_POLL_MS.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  // The tick interval above re-renders us once a second precisely so this
+  // render-time Date.now() is fresh — same pattern as useCountdown in hooks.ts.
+  // eslint-disable-next-line react-hooks/purity
+  const secs = updatedAt === null ? null : Math.max(0, Math.round((Date.now() - updatedAt) / 1000));
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+      <span className="num">{secs === null ? "" : secs < 3 ? "Updated just now" : `Updated ${secs}s ago`}</span>
+      <button onClick={onRefresh} disabled={loading}
+        className="rounded-md bg-brand-tint px-2 py-1 font-semibold text-brand disabled:opacity-50">
+        {loading ? "Refreshing…" : "Refresh"}
+      </button>
+      <label className="flex items-center gap-1">
+        <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+        Auto-refresh
+      </label>
+    </div>
+  );
+}
 
 // ---- KPI dashboard --------------------------------------------------------
 export function KpiDashboard() {

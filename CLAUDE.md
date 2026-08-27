@@ -1941,6 +1941,68 @@ These override convenience or speed at every step:
     config-only, no code touched. `railway variables` confirms
     `DEPOSIT_SCAN_INTERVAL_MS=90000` live.
 
+- **STAFF PANEL: LIVE QUEUE REFRESH, BULK USER ACTIONS, AND A REAL "UNDER
+  REVIEW" STATE (founder, 2026-08-27).** Three asks from a recommendations
+  list, built one at a time with a cross-check after each. Verified per
+  phase, then all together at the end: api + web typecheck, eslint, web
+  production build (36 routes) all clean; `test:usersadmin` (new, 32 checks)
+  + `test:admin` (15) + `test:permissions` (16) + `test:stage4` (48) all
+  green; `security-review` — no findings.
+  - ⚠️ **A FOURTH ITEM ON THE SAME LIST — "campaign budgets" — TURNED OUT TO
+    ALREADY BE SHIPPED.** `api/src/taskBudget.ts` (advisory-locked spend
+    check, auto-pause to `exhausted`) and its 46-check e2e suite already
+    exist; the CLAUDE.md audit note calling it "the highest-value gap" was
+    stale, superseded by work that landed without an explicit write-up back
+    to this file. No code changed for this item — recorded here so the
+    stale note stops being repeated as a recommendation.
+  - **Live refresh on the money/fraud queues** — Withdrawals, USDT deposits,
+    USDT refunds, and Open fraud flags were pull-on-load only; during an
+    active incident that is exactly the wrong moment to be stale. `useApi`
+    (`web/src/lib/hooks.ts`) gained an optional `pollMs` param; a shared
+    `RefreshBar` (`web/src/components/staff.tsx`) gives each queue a manual
+    Refresh button, an "Updated Xs ago" readout, and an auto-refresh toggle,
+    ON by default at 20s.
+    ⚠️ **POLLING PAUSES WHEN THE TAB IS HIDDEN, ON PURPOSE.** This app has
+    shipped two real billing incidents (see the Alchemy entries above) from
+    something polling forever in the background with nobody watching; a
+    staff tab left open overnight must not repeat that shape against our own
+    API, even though the actual cost here is a cheap DB read, not a paid RPC.
+    A background poll never flips the loading state — it would blank a queue
+    someone is actively reading every 20 seconds.
+  - **Bulk actions on the Users list** — checkboxes + "N selected" bar for
+    Suspend/Restore, plus an Export-to-CSV button for the current search
+    (not just the loaded page).
+    ⚠️ **A BULK DECISION IS N SEPARATE DECISIONS, NOT ONE** — the exact rule
+    Stage 7's proof-queue bulk-decide already established, applied here for
+    the first time to user status. `POST /staff/users/bulk-status` and the
+    existing single-row route now share one helper, `setUserStatusOne`
+    (`api/src/routes/staff.ts`), so the two can never drift into different
+    suspend/restore rules. Each id in a batch gets its own outcome: the
+    actor's own id in the selection fails on its own row (not the whole
+    batch), a not-found id fails on its own row, and duplicate ids collapse
+    to one decision. `GET /staff/export/:what` gained a `users` type, reusing
+    the exact search filter `GET /staff/users` already applies, gated on the
+    existing `export.data` (admin-tier) permission.
+  - **A formal "under review" state** — new `under_review_reason` /
+    `under_review_by` / `under_review_at` columns, a `users.review`
+    permission (manager-tier, same as `users.hold`), and
+    `POST /staff/users/:id/review` (`reason: null` clears).
+    ⚠️ **THIS GATES NOTHING, AND THAT IS THE ENTIRE POINT.** It is a triage
+    label, the same shape as `withdrawal_hold_*`, not a third value squeezed
+    into `status` — `requireActiveUser` (`auth.ts`) treats any status other
+    than `'active'` as suspended, so a real third status value would
+    silently lock the account out the moment it was set. The founder's own
+    framing — "distinct from active/suspended" — meant this must NOT gate
+    anything; a regression test (`test:usersadmin`) asserts `status` stays
+    `'active'` after marking a user for review.
+    ⚠️ **REPLACES THE "SUSPECT (N)" BADGE'S JOB, NOT THE BADGE ITSELF.** The
+    fraud-flag-count badge is a live count and clears itself the instant
+    every flag happens to resolve — it cannot say "we are looking into this"
+    across a multi-day investigation. The new "under review" badge is a
+    second, differently-coloured badge next to it: a person turns it on and
+    off deliberately, and it survives flags resolving in between. Both stay
+    on the row because they answer different questions.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

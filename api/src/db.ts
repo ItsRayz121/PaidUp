@@ -1001,6 +1001,24 @@ const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_by TEXT REFERENCES users(id);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_hold_at TEXT;
 
+  -- A formal "under review" state (founder, 2026-08-27) — distinct from BOTH
+  -- active and suspended, and from the Users panel's "suspect (N)" badge, which
+  -- is only a live COUNT of open fraud flags: it clears itself the instant those
+  -- flags resolve, so it cannot record "we are looking into this" across a
+  -- multi-day investigation. This is the opposite — a real, staff-SETTABLE
+  -- marker a person turns on and off deliberately. NULL reason = not under
+  -- review.
+  --
+  -- ⚠️ THIS DOES NOT GATE ANYTHING, ON PURPOSE. It is a triage label, the exact
+  -- same shape as withdrawal_hold_* just above, not a third value squeezed into
+  -- status — requireActiveUser (auth.ts) treats any status other than
+  -- 'active' as suspended, so a real third status value would silently lock the
+  -- account out the moment it was set. "Distinct from active/suspended" means
+  -- this must NOT do that.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS under_review_reason TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS under_review_by TEXT REFERENCES users(id);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS under_review_at TEXT;
+
   -- CUSTODY_SPEC.md § 5 steps 2-3: the chain listener + sweeper. This is where
   -- deposits stop needing a staff member to paste a tx hash.
 

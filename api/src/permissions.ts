@@ -56,6 +56,7 @@ export const PERMISSIONS = {
   "users.list": R("manager"),
   "users.status": W("admin"),              // suspend / unsuspend
   "users.hold": W("manager"),              // stop automatic payouts on one account
+  "users.review": W("manager"),            // mark/clear a staff triage label — never a hold or a suspension
   "users.adjust": W("admin"),              // mint or burn points — the sharpest tool here
   "users.notify": W("manager"),            // send one user a message
   // Identity
@@ -130,7 +131,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   operations: [
     "withdrawals.view", "withdrawals.decide", "withdrawals.decide_any",
     "deposits.view", "refunds.view",
-    "users.view", "users.list", "users.hold", "users.notify",
+    "users.view", "users.list", "users.hold", "users.review", "users.notify",
     "fraud.view", "fraud.resolve",
     "tasks.view", "tasks.review",
     "mining.view", "store.view", "store.redemptions.view", "store.redemptions.decide",

@@ -461,6 +461,7 @@ export type StaffUserDetail = {
     // rate gets quoted to a user in a dispute.
     balancePoints: number; roziMicro: number; usdtMicro: number;
     withdrawalHeld: boolean;
+    underReview: boolean;
   };
   ledger: Record<string, unknown>[]; fraudFlags: Record<string, unknown>[];
   // Deposit refunds ("Get your USDT back") and top-ups — a SEPARATE money
@@ -491,6 +492,10 @@ export type AdminUserRow = {
   // UserHeader). Both are computed server-side so the list never needs one
   // request per row to show them.
   openFlags: number; held: boolean;
+  // A real, staff-SET triage label — distinct from the auto-derived
+  // `openFlags` count above, which clears itself the moment flags resolve.
+  // See POST /staff/users/:id/review in api/src/routes/staff.ts.
+  underReview: boolean;
 };
 export const searchUsers = (q = "", limit = 10, offset = 0) =>
   apiFetch<{ users: AdminUserRow[]; total: number; offset: number; limit: number }>(
@@ -498,6 +503,21 @@ export const searchUsers = (q = "", limit = 10, offset = 0) =>
 export const setUserStatus = (id: string, status: "active" | "suspended", reason: string) =>
   apiFetch<{ ok: true; status: string }>(`/staff/users/${id}/status`, {
     method: "POST", body: JSON.stringify({ status, reason }),
+  });
+// N separate decisions, not one — see setUserStatusOne in api/src/routes/staff.ts.
+// `results` carries a per-id outcome so a partial failure (one row already in
+// that state, the actor's own id in the selection) is visible, not silently
+// swallowed into a single ok/fail.
+export type BulkStatusResult = { done: number; failed: number; results: { id: string; ok: boolean; error?: string }[] };
+export const bulkSetUserStatus = (ids: string[], status: "active" | "suspended", reason: string) =>
+  apiFetch<BulkStatusResult>("/staff/users/bulk-status", {
+    method: "POST", body: JSON.stringify({ ids, status, reason }),
+  });
+// A staff triage label, distinct from suspend/hold — see the route's own
+// comment in api/src/routes/staff.ts. `reason: null` clears the mark.
+export const setUserReview = (id: string, reason: string | null) =>
+  apiFetch<{ ok: true; underReview: boolean; reason: string | null }>(`/staff/users/${id}/review`, {
+    method: "POST", body: JSON.stringify({ reason }),
   });
 // Mints/burns points. `points` is signed: positive credits, negative debits.
 export const adjustUserPoints = (id: string, points: number, reason: string) =>
@@ -560,9 +580,12 @@ export const fetchMoney = (limit = 10) => apiFetch<MoneyView>(`/staff/money?limi
 
 // CSV export can't be a plain <a href>: the API authenticates with a Bearer
 // header, which a browser navigation won't send. Fetch it as a blob instead.
-export async function downloadExport(what: "ledger" | "withdrawals" | "audit"): Promise<void> {
+// `q` (users only) carries the same search filter the panel is showing, so
+// "Export" pulls the whole matching set, not just the short page on screen.
+export async function downloadExport(what: "ledger" | "withdrawals" | "audit" | "users", q = ""): Promise<void> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}/staff/export/${what}`, {
+  const qs = what === "users" && q ? `?q=${encodeURIComponent(q)}` : "";
+  const res = await fetch(`${API_BASE}/staff/export/${what}${qs}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new ApiError("Export failed.", res.status);

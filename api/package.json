@@ -40,7 +40,8 @@
     "test:stage5": "tsx src/tests/stage5.e2e.ts",
     "test:stage6": "tsx src/tests/stage6.e2e.ts",
     "test:stage7": "tsx src/tests/stage7.e2e.ts",
-    "test:taskmarketplace": "tsx src/tests/taskMarketplace.e2e.ts"
+    "test:taskmarketplace": "tsx src/tests/taskMarketplace.e2e.ts",
+    "test:usersadmin": "tsx src/tests/usersAdmin.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

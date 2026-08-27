@@ -287,7 +287,9 @@ export async function staffRoutes(app: FastifyInstance) {
     const user = await sql.get<Record<string, unknown>>(
       `SELECT id, email, username, display_name, country, referral_code, status, created_at,
               kyc_status, telegram_id,
-              withdrawal_hold_reason, withdrawal_hold_until, withdrawal_hold_at
+              withdrawal_hold_reason, withdrawal_hold_until, withdrawal_hold_at,
+              under_review_reason, under_review_at,
+              (SELECT email FROM users r WHERE r.id = users.under_review_by) AS under_review_by_email
          FROM users WHERE id = ?`, id,
     );
     if (!user) return reply.code(404).send({ error: "User not found." });
@@ -384,6 +386,9 @@ export async function staffRoutes(app: FastifyInstance) {
         // still in force" from a date string and get it wrong.
         withdrawalHeld: Boolean(user.withdrawal_hold_reason)
           && (!user.withdrawal_hold_until || String(user.withdrawal_hold_until) > now()),
+        // Same treatment for the review mark: a decided boolean, never a raw
+        // column, so the panel can't get "is this still marked" wrong either.
+        underReview: Boolean(user.under_review_reason),
       },
       ledger, fraudFlags: flags, usdtRefunds, usdtTopups, withdrawals,
       paidSummary: { count: Number(paid?.n ?? 0), totalPoints: Number(paid?.total ?? 0) },
@@ -964,13 +969,14 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow] = await Promise.all([
       sql.all<{
         id: string; email: string; country: string; status: string; created_at: string; balance: number;
-        openFlags: number; held: boolean;
+        openFlags: number; held: boolean; underReview: boolean;
       }>(
         `SELECT u.id, u.email, u.country, u.status, u.created_at,
                 COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
                 COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS "openFlags",
                 (u.withdrawal_hold_reason IS NOT NULL
-                  AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held
+                  AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held,
+                (u.under_review_reason IS NOT NULL) AS "underReview"
          FROM users u
          WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
          ORDER BY u.created_at DESC
@@ -996,26 +1002,43 @@ export async function staffRoutes(app: FastifyInstance) {
     const parsed = statusSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Pick a status and give a reason." });
     const targetId = (req.params as { id: string }).id;
-
-    const target = await sql.get<{ id: string; status: string }>("SELECT id, status FROM users WHERE id = ?", targetId);
-    if (!target) return reply.code(404).send({ error: "User not found." });
-
-    // Locking yourself out of your own product is a bad afternoon.
-    if (targetId === actorId && parsed.data.status === "suspended") {
-      return reply.code(400).send({ error: "You cannot suspend your own account." });
-    }
-
-    await sql.tx(async (t) => {
-      await t.run("UPDATE users SET status = ? WHERE id = ?", parsed.data.status, targetId);
-      await logAudit({
-        actorUserId: actorId, actorRole: role,
-        action: parsed.data.status === "suspended" ? "user_suspended" : "user_restored",
-        targetUserId: targetId, detail: parsed.data.reason,
-        previousValue: target.status, newValue: parsed.data.status,
-        actorIp: req.ip,
-      }, t);
-    });
+    const r = await setUserStatusOne(
+      { actorId, role, actorIp: req.ip }, targetId, parsed.data.status, parsed.data.reason,
+    );
+    if (!r.ok) return reply.code(r.error === "User not found." ? 404 : 400).send({ error: r.error });
     return { ok: true, status: parsed.data.status };
+  }));
+
+  // ---- Admin: suspend / restore several accounts at once ------------------
+  //
+  // ⚠️ A BULK DECISION IS N SEPARATE DECISIONS, NOT ONE — the same rule
+  // `/staff/task-proofs/bulk` follows (staffTasks.ts). Each id goes through
+  // exactly `setUserStatusOne`, the identical path a single click takes, and
+  // gets its own outcome back: one row already suspended, or the actor's own
+  // id sitting in the selection, must not silently undo every other row in
+  // the batch, and a single ok/error would tell staff a batch succeeded when
+  // part of it did not.
+  app.post("/staff/users/bulk-status", staffGuard("users.status", async ({ userId: actorId, role }, req, reply) => {
+    const parsed = z.object({
+      ids: z.array(z.string().max(64)).min(1).max(200),
+      status: z.enum(["active", "suspended"]),
+      reason: z.string().trim().min(3, "Say why.").max(500),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick a status, some users, and give a reason." });
+
+    const results: { id: string; ok: boolean; error?: string }[] = [];
+    for (const id of [...new Set(parsed.data.ids)]) {
+      const r = await setUserStatusOne(
+        { actorId, role, actorIp: req.ip }, id, parsed.data.status, parsed.data.reason,
+      );
+      results.push({ id, ok: r.ok, error: r.ok ? undefined : r.error });
+    }
+    return {
+      ok: true,
+      done: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
   }));
 
   // ---- Manager/Admin: hold a user's withdrawals ---------------------------
@@ -1069,6 +1092,55 @@ export async function staffRoutes(app: FastifyInstance) {
       }, t);
     });
     return { ok: true, held: reason !== null, reason, until: until ?? null };
+  }));
+
+  // ---- Manager/Admin: mark/clear an account for staff review --------------
+  // Replaces the Users panel's "suspect (N)" badge as the way to say "we are
+  // looking into this account" — that badge is a live COUNT of open fraud
+  // flags, so it clears itself the instant every flag happens to resolve, even
+  // mid-investigation. This is the opposite: a deliberate, staff-SET label that
+  // stays exactly where a person left it.
+  //
+  // ⚠️ THIS GATES NOTHING. Same shape as the withdrawal-hold route just above,
+  // and the same reason: a status column already exists for locking an account
+  // out (users.status), and re-using this one for that would silently suspend
+  // people the moment they were flagged for review, which is precisely what
+  // "distinct from active/suspended" rules out.
+  const reviewSchema = z.object({
+    // null clears the mark. A reason is mandatory when SETTING one — same rule
+    // as the hold and the suspend routes: an unexplained "why is this person
+    // flagged" is the thing a review mark exists to prevent.
+    reason: z.string().trim().max(500).nullable(),
+  });
+  app.post("/staff/users/:id/review", staffGuard("users.review", async ({ userId: actorId, role }, req, reply) => {
+    const parsed = reviewSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Say why, or clear the mark." });
+    const { reason } = parsed.data;
+    if (reason !== null && reason.length < 3) {
+      return reply.code(400).send({ error: "Say why — a few words is enough." });
+    }
+    const targetId = (req.params as { id: string }).id;
+
+    const target = await sql.get<{ id: string; under_review_reason: string | null }>(
+      "SELECT id, under_review_reason FROM users WHERE id = ?", targetId,
+    );
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    await sql.tx(async (t) => {
+      await t.run(
+        `UPDATE users SET under_review_reason = ?, under_review_by = ?, under_review_at = ? WHERE id = ?`,
+        reason, reason ? actorId : null, reason ? now() : null, targetId,
+      );
+      await logAudit({
+        actorUserId: actorId, actorRole: role,
+        action: reason ? "user_marked_under_review" : "user_review_cleared",
+        targetUserId: targetId, detail: reason ?? undefined,
+        previousValue: target.under_review_reason ? "under review" : "not under review",
+        newValue: reason ? "under review" : "not under review",
+        actorIp: req.ip,
+      }, t);
+    });
+    return { ok: true, underReview: reason !== null, reason };
   }));
 
   // ---- Admin: adjust a user's points by hand ------------------------------
@@ -1315,6 +1387,24 @@ export async function staffRoutes(app: FastifyInstance) {
          LEFT JOIN users target ON target.id = a.target_user_id
          ORDER BY a.created_at DESC LIMIT 10000`,
       );
+    } else if (what === "users") {
+      // Same search filter as GET /staff/users (email or exact id), so
+      // "Export" on the Users panel exports the WHOLE matching set, not just
+      // the short page currently on screen. Balance/open-flags/held computed
+      // the same way that list endpoint does, for the same reason: a number
+      // here that disagrees with the one on screen is worse than no number.
+      const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
+      rows = await sql.all(
+        `SELECT u.created_at, u.email, u.id, u.country, u.status,
+                COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
+                COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS open_flags,
+                (u.withdrawal_hold_reason IS NOT NULL
+                  AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS payouts_held
+         FROM users u
+         WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
+         ORDER BY u.created_at DESC LIMIT 10000`,
+        now(), q, `%${q}%`, q,
+      );
     } else {
       return reply.code(404).send({ error: "Unknown export." });
     }
@@ -1445,4 +1535,35 @@ export async function staffRoutes(app: FastifyInstance) {
     );
     return { actions: rows.map((r) => ({ action: r.action, count: r.n })) };
   }));
+}
+
+// One decision, shared by the single-click suspend/restore route and the bulk
+// route above, so the two can never drift into different rules about what a
+// status change means (same pattern as staffTasks.ts's decideProof).
+async function setUserStatusOne(
+  ctx: { actorId: string; role: Role; actorIp?: string },
+  targetId: string,
+  status: "active" | "suspended",
+  reason: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Locking yourself out of your own product is a bad afternoon — and in a
+  // bulk batch, this must reject ONLY the actor's own row, not the whole
+  // selection.
+  if (targetId === ctx.actorId && status === "suspended") {
+    return { ok: false, error: "You cannot suspend your own account." };
+  }
+  const target = await sql.get<{ id: string; status: string }>("SELECT id, status FROM users WHERE id = ?", targetId);
+  if (!target) return { ok: false, error: "User not found." };
+
+  await sql.tx(async (t) => {
+    await t.run("UPDATE users SET status = ? WHERE id = ?", status, targetId);
+    await logAudit({
+      actorUserId: ctx.actorId, actorRole: ctx.role,
+      action: status === "suspended" ? "user_suspended" : "user_restored",
+      targetUserId: targetId, detail: reason,
+      previousValue: target.status, newValue: status,
+      actorIp: ctx.actorIp,
+    }, t);
+  });
+  return { ok: true };
 }
