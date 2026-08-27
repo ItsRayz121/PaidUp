@@ -20,7 +20,7 @@ import { custodyEnabled } from "../custody.ts";
 import { tryAutoSettleRefund } from "../autoRefund.ts";
 import { getGasFeeRate, gasFeeMicro } from "../fees.ts";
 import { sendPushToUser } from "../push.ts";
-import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
+import { relayAvailable, hasEnoughGas, hasEnoughGasForDisplay } from "../payoutRelay.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, hashrateOf, grantBoost,
@@ -599,7 +599,7 @@ export async function miningRoutes(app: FastifyInstance) {
     // (nothing changes there; the old direct-treasury fallback pays its own
     // gas, same as always).
     const relayReady = enabled && relayAvailable(s.usdtTreasuryChain);
-    const gas = relayReady ? await hasEnoughGas(userId, s.usdtTreasuryChain as "bep20") : null;
+    const gas = relayReady ? await hasEnoughGasForDisplay(userId, s.usdtTreasuryChain as "bep20") : null;
     return {
       enabled,
       balanceMicro: await usdtBalanceMicroOf(userId),

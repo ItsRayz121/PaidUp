@@ -92,6 +92,19 @@ export function microToDecimalString(micro: number): string {
   return (micro / 1_000_000).toFixed(6);
 }
 
+// This is a DISPLAY read, not the money-moving one: advanceRelayJob's
+// defensive re-check before signing (this file, the eth_getBalance call
+// inside the job loop) calls rpcCall directly and never goes through this
+// cache, so a stale badge here can never cause a wrong on-chain send — worst
+// case is a job that discovers the real balance and fails/retries, same as
+// it always could. That is what makes it safe to cache: /wallet/balance and
+// /usdt were each doing a live chain read on every load of Home, Wallet,
+// Mine, and every USDT/BNB sub-screen — real, user-visible lag whenever the
+// lead RPC endpoint was slow, for a number that is a "signal, never a gate"
+// (see hasEnoughGas's own callers) anyway (2026-08-27, performance pass).
+const GAS_BALANCE_CACHE_MS = 20_000;
+const gasBalanceCache = new Map<string, { balanceWei: bigint; expiresAt: number }>();
+
 // The user's own derived deposit address for `chain`, and its live native
 // balance (wei, as a bigint) — used by routes/withdrawals.ts and
 // routes/mining.ts to refuse a request BEFORE any debit when the user has
@@ -103,8 +116,18 @@ export async function userGasWallet(
   userId: string, chain: "bep20",
 ): Promise<{ address: string; addrIndex: number; balanceWei: bigint }> {
   const wallet = await getOrCreateDepositWallet(userId, chain);
-  const raw = (await rpcCall(chain, "eth_getBalance", [wallet.address, "latest"])) as string;
-  return { address: wallet.address, addrIndex: wallet.addrIndex, balanceWei: BigInt(raw) };
+  const cacheKey = `${chain}:${wallet.address}`;
+  const cached = gasBalanceCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { address: wallet.address, addrIndex: wallet.addrIndex, balanceWei: cached.balanceWei };
+  }
+  // A shorter-than-default timeout: this value is only ever a UI signal, so
+  // failing fast to "can't check right now" beats making a page load wait
+  // out the full failover chain (up to DEFAULT_TIMEOUT_MS per endpoint).
+  const raw = (await rpcCall(chain, "eth_getBalance", [wallet.address, "latest"], { timeoutMs: 4_000 })) as string;
+  const balanceWei = BigInt(raw);
+  gasBalanceCache.set(cacheKey, { balanceWei, expiresAt: Date.now() + GAS_BALANCE_CACHE_MS });
+  return { address: wallet.address, addrIndex: wallet.addrIndex, balanceWei };
 }
 
 // Required BNB balance floor for a single ERC-20 transfer, reusing
@@ -136,6 +159,20 @@ export async function hasEnoughGas(userId: string, chain: "bep20"): Promise<GasC
   const { address, balanceWei } = await userGasWallet(userId, chain);
   const requiredWei = requiredGasWei();
   return { ok: balanceWei >= requiredWei, address, balanceWei, requiredWei };
+}
+
+// For DISPLAY call sites only (GET /wallet/balance, GET /usdt) — a page load
+// must never 500 just because the chain was briefly unreachable. Returns
+// null on failure, same shape those routes already use for "can't check
+// yet". Request-time gates (withdrawals.ts, mining.ts's transfer/refund
+// submit paths) deliberately do NOT use this — they must keep failing closed
+// on a real RPC outage rather than silently waving a debit through.
+export async function hasEnoughGasForDisplay(userId: string, chain: "bep20"): Promise<GasCheckResult | null> {
+  try {
+    return await hasEnoughGas(userId, chain);
+  } catch {
+    return null;
+  }
 }
 
 type CreateJobParams = {

@@ -6,7 +6,7 @@ import { config } from "../config.ts";
 import { getUserId, requireActiveUser } from "../auth.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import { getGasFeeRate } from "../fees.ts";
-import { relayAvailable, hasEnoughGas } from "../payoutRelay.ts";
+import { relayAvailable, hasEnoughGasForDisplay } from "../payoutRelay.ts";
 import { pointsToUsdt } from "../payout.ts";
 import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
 import { minWithdrawPointsNow } from "../settingsRuntime.ts";
@@ -346,7 +346,7 @@ export async function appRoutes(app: FastifyInstance) {
     // (chains.ts), so this preview endpoint can check it directly without
     // waiting for the user to pick one.
     const relayReady = relayAvailable("bep20");
-    const gas = relayReady ? await hasEnoughGas(userId, "bep20") : null;
+    const gas = relayReady ? await hasEnoughGasForDisplay(userId, "bep20") : null;
     const points = await balanceOf(userId);
     // ---- Wallet Total Balance (founder, wallet overhaul) --------------------
     // Reverses the 2026-07-30/08-03 "ROZI-only" display decisions: the wallet's
