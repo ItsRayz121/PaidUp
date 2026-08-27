@@ -725,6 +725,7 @@ const copy: Record<string, string> = {
   "mine.claim.cta": "Claim my gems",
   "mine.claim.done": "Claimed! {n} ROZI added to your balance.",
   "mine.start": "Start mining for {hours} hours",
+  "mine.started.pour": "Mining started! Filling up your session…",
   "mine.running": "You are mining now",
   "mine.running.note": "Come back when the time runs out and start again.",
   "mine.device.blocked":

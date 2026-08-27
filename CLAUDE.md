@@ -1871,6 +1871,76 @@ These override convenience or speed at every step:
     stay provider-agnostic across the RPC failover list, see `rpc.ts`'s own
     header) or an explicit, informed decision that the cost is worth it.
 
+- **THE SAME BILL, A DIFFERENT SCANNER: THE USDT SCANNER'S OWN STEADY-STATE
+  COST (founder, 2026-08-27).** The entry above closed the BNB-native leak,
+  but the founder reported Alchemy usage still climbing days later with no
+  real deposit activity. Root cause is different and, unlike the native
+  scanner, not a bug: `deposits/adapters/evm.ts`'s USDT scanner (the one
+  that's supposed to run) calls `eth_blockNumber` + `eth_getLogs` on
+  **every single tick, forever**, the moment `CUSTODY_XPUB_BEP20` is set —
+  which it has been, live, since 2026-08-03. This is inherent to polling a
+  chain for new deposits, not a defect: the server cannot know a block is
+  empty without checking it. Confirmed live on Railway that `RPC_BEP20` leads
+  with the Alchemy key and `DEPOSIT_SCAN_INTERVAL_MS` was unset (default
+  20s) — so this was 2 Alchemy calls every 20 seconds, 24/7, ~8,600+
+  calls/day, completely independent of whether anyone deposited.
+  - **Fixed the same way as the interval config already documents it should
+    be tuned: `DEPOSIT_SCAN_INTERVAL_MS` raised 20,000 → 90,000 (90s) on
+    Railway**, ~4.5x fewer calls, applied live. Deposit-credit latency goes
+    from a worst case of ~20-65s to ~90-135s — still well inside the
+    `depositConfirmations` (15 blocks ≈ 45s) window that already gates
+    crediting, and nobody watches a live countdown on a manual top-up.
+    ⚠️ **This is a dial, not a fix for the underlying shape** — any nonzero
+    interval still burns CU forever at a rate set by the interval, not by
+    activity. Lower it further only if a founder decision explicitly accepts
+    slower deposit detection for less cost, same tradeoff already recorded
+    for the native scanner above.
+  - **Tested five free public BSC endpoints for the real address-filtered
+    `eth_getLogs` shape this scanner actually sends** (Ankr now requires a
+    signup key even for the public tier; dRPC/NodeReal's shared demo
+    key/OMNIA rate-limit or error from a datacenter IP) — none reliably beat
+    what the 2026-08-12 investigation already found (`config.ts`'s own
+    comment): the free dataseed/public nodes either refuse this exact
+    query shape outright or cap it far below what a single Railway-origin
+    scanner needs. **Alchemy stays first in `RPC_BEP20` for a real reason,
+    not inertia** — swapping it out was tested and would reintroduce the
+    2026-08-12 crash-loop, not just move the cost.
+  - **DONE, same day**: the founder signed up for a real NodeReal key
+    (`bsc-mainnet.nodereal.io/v1/…`, free tier). Tested against the EXACT
+    production query — USDT contract + `Transfer` topic + the `to`-address OR
+    filter this scanner actually sends, over a full 5,000-block range
+    (`MAX_BLOCK_RANGE`) — and it answered cleanly, no rate limit, no range
+    error, unlike every shared/public endpoint tested above. `RPC_BEP20` now
+    leads with NodeReal; Alchemy is demoted to first fallback (still there,
+    still paid, but now only spends if NodeReal has an outage) — confirmed
+    live via `railway logs` post-redeploy: clean boot, zero scan-tick errors.
+    NodeReal's free daily CU allowance is well above this scanner's call
+    volume even at the pre-90s 20s interval, so the steady-state cost this
+    whole entry is about should now land on a free tier instead of a metered
+    one with a $3 cap.
+  - A `wss://bsc-mainnet.nodereal.io/ws/v1/…` endpoint was also issued with
+    the same key. **Not wired in** — `rpc.ts` is a plain HTTP JSON-RPC client
+    (fetch, one request/response), not a WebSocket client, so using it would
+    need a real architecture change: a persistent `eth_subscribe("logs", …)`
+    connection per instance, reconnect/resubscribe handling for drops, and
+    almost certainly a slower polling pass kept alongside it as a safety net
+    for whatever a reconnect gap misses. That is the actual answer to
+    "credits spent only when there's something to report" — a push
+    subscription only costs something when a matching log really occurs,
+    where polling always costs something every tick by construction, no
+    matter how the interval is tuned. Worth building if the WS free-tier
+    numbers justify it; not started.
+  - **Not a chain problem, a provider problem — recorded because it was
+    asked**: switching the deposit chain itself (e.g. to Tron/TRC20) does not
+    address this. The cost driver is which JSON-RPC PROVIDER answers a
+    BEP20 poll, not which chain is polled; a Tron listener would need its own
+    RPC provider with its own pricing and would be a genuinely new build
+    (custody derivation, adapter, treasury — see `CUSTODY_SPEC.md` § 5's
+    five-chain plan, phases 2+, not started), not a cost fix.
+  - Verified: `npm run test:deposits` (33) unaffected — this change is
+    config-only, no code touched. `railway variables` confirms
+    `DEPOSIT_SCAN_INTERVAL_MS=90000` live.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

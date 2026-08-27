@@ -48,6 +48,12 @@ export default function MinePage() {
   // one-shot, not a persistent state.
   const [justClaimed, setJustClaimed] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  // Plays the same coin-pour the claim card uses, right after a session
+  // starts — a real state transition (mining just began), same "decorative
+  // motion reflecting something true" rule as the claim pour and the mining
+  // rings. Cleared a moment after the pour settles, so it hands off to the
+  // real running-session view rather than sitting there as a second claim card.
+  const [startPour, setStartPour] = useState(false);
   // A direct-link ad the user opened and has not claimed yet. `readyAt` is when
   // the server's minimum watch time will have passed and the claim can succeed.
   const [adClaim, setAdClaim] = useState<{ nonce: string; readyAt: number } | null>(null);
@@ -107,12 +113,19 @@ export default function MinePage() {
             .replace("{hours}", String(res.boost.hours)),
         );
       }
+      setStartPour(true);
       mining.reload();
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // Holds the settled glow for a beat so the pour doesn't just vanish, then
+  // hands off to the real running-session chamber below.
+  function onStartPourSettled() {
+    setTimeout(() => setStartPour(false), 900);
   }
 
   // Inside the Telegram Mini App, with a rewarded zone configured, the boost
@@ -298,7 +311,20 @@ export default function MinePage() {
         </div>
 
         <div className="mt-4">
-          {s.session.active ? (
+          {startPour ? (
+            <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
+              {/* Same hourglass the claim card uses (components/HourglassClaim.tsx)
+                  — coins dropping from the upper glass to the lower one — played
+                  once right after a session starts, not just on claim. Priority
+                  over the running-session view below: mining.reload() flips
+                  s.session.active to true while this is still playing, and this
+                  branch must win that race so the pour is not skipped. */}
+              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+                <HourglassClaim onSettled={onStartPourSettled} />
+              </div>
+              <p className="mt-3 text-sm font-semibold text-success">{t("mine.started.pour")}</p>
+            </div>
+          ) : s.session.active ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
               {/* The mining chamber — see globals.css. Purely decorative: it
                   reflects that a session is running, nothing more, and never

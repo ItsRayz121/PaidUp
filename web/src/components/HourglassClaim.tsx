@@ -91,7 +91,17 @@ function makeCoin(): SVGGElement {
   return g;
 }
 
-export function HourglassClaim({ className = "" }: { className?: string }) {
+export function HourglassClaim({
+  className = "",
+  onSettled,
+}: {
+  className?: string;
+  // Fires once, the moment the pour finishes and the glass settles into its
+  // static "ready" glow — lets a caller (e.g. the Start Mining button) swap
+  // this decorative overlay back out for the real state view without
+  // duplicating this file's pour-duration math anywhere else.
+  onSettled?: () => void;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const topGroupRef = useRef<SVGGElement>(null);
   const botGroupRef = useRef<SVGGElement>(null);
@@ -120,6 +130,7 @@ export function HourglassClaim({ className = "" }: { className?: string }) {
         botGroup.appendChild(coin);
       });
       wrap.classList.add("ready");
+      onSettled?.();
       return;
     }
 
@@ -182,7 +193,10 @@ export function HourglassClaim({ className = "" }: { className?: string }) {
         if (intervalId) clearInterval(intervalId);
         intervalId = null;
         setTimeout(() => {
-          if (!cancelled) wrap.classList.add("ready");
+          if (!cancelled) {
+            wrap.classList.add("ready");
+            onSettled?.();
+          }
         }, 380);
       }
     }, dropEveryMs);
@@ -191,6 +205,10 @@ export function HourglassClaim({ className = "" }: { className?: string }) {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
+    // Deliberately []: the pour is a one-time mount effect (this file's own
+    // header), so onSettled is read from the closure captured at mount, not
+    // re-subscribed if a caller passes a new function identity on re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
