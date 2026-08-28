@@ -163,8 +163,11 @@ const copy: Record<string, string> = {
   // contradicting every item it introduces.
   "tasks.subtitle": "Complete tasks and earn rewards.",
   "tasks.empty.title": "More ways to earn are coming",
-  "tasks.empty.body":
-    "Surveys are open now — tap “Surveys” above to earn today. New task types are added soon.",
+  // Used to point at the Surveys card that sat on this same screen — that
+  // entry point is hidden now (founder, 2026-08-28), so this can no longer
+  // send someone looking for a button that isn't there. Points at Mine
+  // instead, which is always available.
+  "tasks.empty.body": "New task types are added soon. Meanwhile, keep your ROZI mining going on the Mine tab.",
   "tasks.seeAll": "See all",
   // home
   //
