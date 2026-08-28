@@ -118,20 +118,28 @@ function TaskRowBody({ task }: { task: Task }) {
       ) : (
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><Icon size={22} /></span>
       )}
+      {/* The title gets its OWN row, at the card's full width, rather than
+          sharing one line with the reward pill (2026-08-28: long titles like
+          "Join the RoziPay Telegram channel" wrapped to 3 lines when squeezed
+          next to the pill). Time/reward/status move to a second row below —
+          same information, just given room to sit under the title instead of
+          fighting it for space. */}
       <span className="min-w-0 flex-1">
         <span className="block font-semibold text-brand-ink leading-snug">
           {task.title}
         </span>
-        <span className="mt-1 flex items-center gap-2 text-xs text-muted">
-          <ClockIcon size={13} />
-          About {task.minutes} min
+        <span className="mt-1.5 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <ClockIcon size={13} />
+            About {task.minutes} min
+          </span>
+          <span className="flex items-center gap-1.5">
+            <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
+            {task.lockedReason ? <LockIcon size={16} className="text-pending" />
+              : task.proofStatus ? <ProofBadge status={task.proofStatus} />
+              : <ArrowRightIcon size={18} className="text-muted" />}
+          </span>
         </span>
-      </span>
-      <span className="flex flex-col items-end gap-1.5">
-        <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
-        {task.lockedReason ? <LockIcon size={16} className="text-pending" />
-          : task.proofStatus ? <ProofBadge status={task.proofStatus} />
-          : <ArrowRightIcon size={18} className="text-muted" />}
       </span>
     </>
   );

@@ -932,7 +932,7 @@ const copy: Record<string, string> = {
   // row on /mine, so this screen only needs to sell it.
   "boosters.title": "Speed boosters",
   "boosters.subtitle": "Spend money you have earned to mine faster for a while.",
-  "boosters.yourMoney": "Your money",
+  "boosters.yourMoney": "Your task and referral earnings",
   "boosters.effect": "+{pct}% speed for {hours} hours",
   "boosters.get": "Get this",
   "boosters.notEnough": "Not enough yet",
@@ -1114,7 +1114,7 @@ const copy: Record<string, string> = {
   "roadmap.subtitle": "Where RoziPay is going, and when.",
   "roadmap.live.title": "Working today",
   "roadmap.live.mining": "Mine ROZI every day",
-  "roadmap.live.tasks": "Answer surveys and earn",
+  "roadmap.live.tasks": "Complete tasks — earn and mine faster",
   "roadmap.live.rigs": "Buy machines to mine faster",
   // ⚠️ THE QUALIFIER IS LOAD-BEARING. Sending requires the ID check
   // (transferRequireKyc = 1), and the "What is next" section below dates the ID

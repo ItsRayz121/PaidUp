@@ -8,7 +8,7 @@ import { ArrowRightIcon, CheckIcon, BoltIcon, ClockIcon } from "@/components/ico
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBoosters, buyBooster, type Booster } from "@/lib/api";
-import { formatMoney } from "@/lib/format";
+import { formatPointsAsRozi } from "@/lib/format";
 
 // Spend Points on a temporary mining-speed multiplier.
 //
@@ -18,6 +18,17 @@ import { formatMoney } from "@/lib/format";
 // route (POST /mining/boosters/:id/buy) already applies the boost the moment
 // it debits; the effect shows up on /mine's existing "Boosts" row, so this
 // screen only needs to sell the thing, not also render the result.
+//
+// ⚠️ DISPLAYED AS ROZI, NOT USDT (fixed 2026-08-28) — this screen used to call
+// formatMoney() on the points balance, which rendered it as a dollar figure.
+// /mine/rigs shows a REAL, separately-topped-up USDT balance a few taps away,
+// so a user bounced between the two screens and saw two different "USDT"
+// numbers with no explanation (a points-derived estimate here vs. real
+// deposited credit there). This screen was never on formatPointsAsRozi's own
+// documented exception list (@/lib/format.ts) of screens allowed to show
+// USDT — it was a leftover from before the 2026-07-30 "ONE CURRENCY ON
+// SCREEN" pass, not an intentional exception. Fixed to match every other
+// points-earned figure in the app.
 export default function BoostersPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
@@ -34,7 +45,7 @@ export default function BoostersPage() {
   const { points, boosters: items } = boosters.data;
 
   async function buy(item: Booster) {
-    if (!window.confirm(t("boosters.confirm", { n: formatMoney(item.price_points), title: item.name }))) return;
+    if (!window.confirm(t("boosters.confirm", { n: formatPointsAsRozi(item.price_points), title: item.name }))) return;
     setBusy(item.id);
     setError(null);
     setNotice(null);
@@ -61,7 +72,7 @@ export default function BoostersPage() {
 
       <Card className="flex items-center justify-between p-4">
         <span className="text-sm text-muted">{t("boosters.yourMoney")}</span>
-        <span className="num font-bold text-brand-ink">{formatMoney(points)}</span>
+        <span className="num font-bold text-brand-ink">{formatPointsAsRozi(points)}</span>
       </Card>
 
       {notice && (
@@ -91,7 +102,7 @@ export default function BoostersPage() {
                         <ClockIcon size={14} className="shrink-0" />
                         {t("boosters.effect", { pct: String(item.multiplier_pct), hours: String(item.hours) })}
                       </p>
-                      <p className="num mt-1 font-bold text-accent-ink">{formatMoney(item.price_points)}</p>
+                      <p className="num mt-1 font-bold text-accent-ink">{formatPointsAsRozi(item.price_points)}</p>
                     </div>
                   </div>
                   <div className="mt-3">
