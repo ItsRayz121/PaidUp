@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import Link from "next/link";
 import { TaskFlow } from "@/components/TaskFlow";
-import { Card, Button } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
-import { ArrowRightIcon, StarIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView } from "@/lib/api";
@@ -69,20 +67,8 @@ export default function TasksPage() {
           a list screen can be scrolled past. Removing that sheet too was
           explicitly NOT part of this change; it is the load-bearing one. */}
 
-      {/* Surveys (CPX) are the live earner — they pay real points today, while
-          the task catalog below may be empty. Lead with them, don't bury them. */}
-      {view === "available" && <Link href="/surveys" className="block">
-        <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-4">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand text-white">
-            <StarIcon size={24} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-bold text-brand-ink">{t("surveys.title")}</p>
-            <p className="text-sm text-muted">{t("surveys.subtitle")}</p>
-          </div>
-          <ArrowRightIcon size={22} className="text-brand" />
-        </Card>
-      </Link>}
+      {/* The Surveys (CPX) entry point is hidden here (founder, 2026-08-28) —
+          /surveys itself is untouched, just not linked from this list. */}
 
       {present.length > 1 && (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">

@@ -8,7 +8,7 @@ import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
-import { HourglassClaim } from "@/components/HourglassClaim";
+import { HourglassClaim, HOURGLASS_COIN_COUNT, hourglassDroppedCount } from "@/components/HourglassClaim";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
@@ -42,6 +42,11 @@ export default function MinePage() {
   const ledgerHistory = useApi(fetchLedger, []);
   const roziHistory = useApi(fetchRoziHistory, []);
   const [openTx, setOpenTx] = useState<Row | null>(null);
+  // Recent activity defaults to the newest 3 rows, with a "See more" toggle —
+  // the full list used to render unconditionally (up to 10), which was still
+  // a wall of "Mined +0.02 ROZI" rows on a screen whose real job is the dial
+  // above it (founder, 2026-08-28).
+  const [showAllActivity, setShowAllActivity] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // Set right after a claim lands, cleared a moment later — the burst ring is
@@ -235,11 +240,29 @@ export default function MinePage() {
     s.ads.gateOnStart &&
     (rewardedZone !== "" || s.ads.monetagDirectLink !== "" || s.ads.monetagZoneId !== "");
 
-  const activity = rewardsHistory({
+  // How far through the CURRENT session we are, 0..1 — drives the persistent
+  // hourglass below. Derived from expiresAt + sessionHours (no separate
+  // "startedAt" field exists, and none is needed: expiresAt - sessionHours is
+  // exactly that). Recomputed fresh every render — the same interval inside
+  // useCountdown() above is what re-renders this component once a second
+  // while a session is active, so this render-time Date.now() is current.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+  const sessionProgress = s.session.active && s.session.expiresAt
+    ? Math.min(1, Math.max(
+        0,
+        1 - (Date.parse(s.session.expiresAt) - nowMs) / (s.session.sessionHours * 3_600_000),
+      ))
+    : 0;
+
+  const activityAll = rewardsHistory({
     ledger: ledgerHistory.data?.entries ?? [],
     rozi: roziHistory.data?.entries ?? [],
     t,
-  }).slice(0, 10);
+  });
+  const ACTIVITY_PREVIEW = 3;
+  const activity = showAllActivity ? activityAll : activityAll.slice(0, ACTIVITY_PREVIEW);
+  const activityHidden = activityAll.length - activity.length;
   const activityLoading = ledgerHistory.loading || roziHistory.loading;
 
   return (
@@ -326,19 +349,25 @@ export default function MinePage() {
             </div>
           ) : s.session.active ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
-              {/* The mining chamber — see globals.css. Purely decorative: it
-                  reflects that a session is running, nothing more, and never
-                  implies ROZI is ticking up live (settlement is once a day). */}
-              <div className="mining-chamber mx-auto h-16 w-16 text-success">
-                <span className="mining-ring" aria-hidden="true" />
-                <span className="mining-ring" aria-hidden="true" />
-                <span className="mining-ring" aria-hidden="true" />
-                <span className="relative grid h-11 w-11 place-items-center rounded-full bg-success text-white">
-                  <MineIcon size={22} />
-                </span>
+              {/* The session hourglass (founder, 2026-08-28): stays on screen
+                  for the WHOLE session — not just a few seconds of pour — with
+                  coins settling from the top bulb to the bottom bulb in step
+                  with elapsed time, one coin roughly every sessionHours/14.
+                  Same component the claim card uses, in its controlled
+                  "progress" mode (see HourglassClaim.tsx's own header): purely
+                  decorative, reflects elapsed TIME, never a reading of the
+                  real ROZI amount — that number is the text above, unchanged. */}
+              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+                <HourglassClaim progress={sessionProgress} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
+              <p className="num mt-1 text-xs font-semibold text-success">
+                {t("mine.running.coins", {
+                  dropped: String(hourglassDroppedCount(sessionProgress)),
+                  total: String(HOURGLASS_COIN_COUNT),
+                })}
+              </p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
             </div>
           ) : (
@@ -404,16 +433,23 @@ export default function MinePage() {
       <div>
         <SectionTitle>{t("mine.boost.title")}</SectionTitle>
         <div className="space-y-2">
-          {/* Do a task -> boost. THE loop: mining recruits for the offerwall
-              rather than competing with it. */}
-          <Link href="/surveys" className="block">
+          {/* Do a task -> boost. THE loop: mining recruits for the task list
+              rather than competing with it. Links to /tasks (not /surveys,
+              which is hidden as of 2026-08-28) and states the real numbers
+              from s.taskBoost — the API's own rule, never invented copy. */}
+          <Link href="/tasks" className="block">
             <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-4">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand text-white">
                 <BoltIcon size={22} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="font-bold text-brand-ink">{t("mine.boost.task.title")}</p>
-                <p className="text-sm text-muted">{t("mine.boost.task.body")}</p>
+                <p className="text-sm text-muted">
+                  {t("mine.boost.task.body", {
+                    pct: String(s.taskBoost.pct),
+                    hours: String(s.taskBoost.hours),
+                  })}
+                </p>
               </div>
               <ArrowRightIcon size={22} className="text-brand" />
             </Card>
@@ -553,6 +589,15 @@ export default function MinePage() {
           activity.length === 0
             ? <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody")} />
             : <HistoryList rows={activity} onOpen={setOpenTx} />
+        )}
+        {!activityLoading && (activityHidden > 0 || showAllActivity) && (
+          <div className="mt-3">
+            <Button onClick={() => setShowAllActivity(!showAllActivity)} variant="ghost" size="md">
+              {showAllActivity
+                ? t("wallet.history.less")
+                : t("wallet.history.seeAll", { count: String(activityHidden) })}
+            </Button>
+          </div>
         )}
       </div>
 

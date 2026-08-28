@@ -109,6 +109,8 @@ const copy: Record<string, string> = {
   "settings.save": "Save",
   // Payout wallet is gone from this screen (founder, 2026-08-12) — set it
   // inline on the withdraw screen instead, where it is auto-saved.
+  // Moved here from the main Profile tab (founder, 2026-08-28).
+  "settings.accountEmail": "Account email",
   "settings.security": "Account security",
   "settings.forgotPassword": "Forgot your password?",
   "settings.forgotPasswordHint": "Get a code by email to set a new one.",
@@ -727,12 +729,21 @@ const copy: Record<string, string> = {
   "mine.start": "Start mining for {hours} hours",
   "mine.started.pour": "Mining started! Filling up your session…",
   "mine.running": "You are mining now",
+  // The persistent session hourglass's counter (founder, 2026-08-28) — purely
+  // decorative, reflects elapsed time, never the real ROZI amount (the
+  // number above it). See HourglassClaim.tsx's own header.
+  "mine.running.coins": "{dropped} of {total} coins dropped",
   "mine.running.note": "Come back when the time runs out and start again.",
   "mine.device.blocked":
     "Someone already mined on this phone today with a different account. So this account earns nothing today. One phone, one miner.",
   "mine.boost.title": "Mine faster",
-  "mine.boost.task.title": "Finish a survey",
-  "mine.boost.task.body": "Get paid, and mine faster for 2 days.",
+  // The task-completion boost is real and already fires automatically on any
+  // credited task (see grantTaskBoost in api/src/credit.ts) — this card just
+  // explains it and links to the task list. {pct}/{hours} come from the API
+  // (s.taskBoost), never hardcoded (founder, 2026-08-28: the survey-specific
+  // version of this card is gone along with the Surveys entry point).
+  "mine.boost.task.title": "Complete tasks to mine faster",
+  "mine.boost.task.body": "Finish any task and mine {pct}% faster for {hours} hours.",
   "mine.boost.ad.title": "Watch an ad",
   // Anchored to the user's actual current speed so "{pct}% faster" has a
   // number to be faster THAN, instead of floating on its own (audit 2026-08-12).

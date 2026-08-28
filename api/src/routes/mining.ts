@@ -283,6 +283,13 @@ export async function miningRoutes(app: FastifyInstance) {
         monetagBannerZone: s.monetagBannerZone,
         monetagRewardedZone: s.monetagRewardedZone,
       },
+      // The task-completion boost RULE (any credited task grants this), so the
+      // "Mine faster" card on /mine can state the real numbers instead of
+      // copy hardcoded in the deck — same "advertised rate comes from the
+      // API" rule the referral cards already follow (CLAUDE.md). The boost
+      // ITSELF still shows up in `boosts[]`/`breakdown.boostPct` above once
+      // granted; this is the static rule, before any task is done.
+      taskBoost: { pct: s.taskBoostPct, hours: s.taskBoostHours },
       // Told plainly, and repeated in the UI. Pretending otherwise is the
       // fastest way to burn the brand.
       convertible: Boolean(s.conversionEnabled),

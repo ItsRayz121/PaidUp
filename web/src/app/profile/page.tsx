@@ -8,7 +8,6 @@ import Link from "next/link";
 import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ConnectTelegramCard } from "@/components/ConnectTelegramCard";
-import { ConnectEmailCard } from "@/components/ConnectEmailCard";
 import { Loading } from "@/components/state";
 import {
   ProfileIcon,
@@ -112,17 +111,9 @@ export default function ProfilePage() {
         />
       </div>
 
-      {user?.hasEmail !== false && user?.email && (
-        <Card className="p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("profile.accountEmail")}</p>
-          <p className="mt-1 break-all font-semibold text-brand-ink">{user.email}</p>
-        </Card>
-      )}
-
-      {/* Same account through both doors: Telegram-first users add an email
-          (works on the website), email-first users connect Telegram. Each
-          card renders nothing when there is nothing to do. */}
-      {user && <ConnectEmailCard user={user} />}
+      {/* Account email (display + the "add your email" flow for Telegram-only
+          accounts) moved to Edit Profile (founder, 2026-08-28) — everything
+          about the account's email now lives in one place instead of two. */}
       {user && <ConnectTelegramCard user={user} />}
 
       {/* Turn notifications on/off. The card renders nothing when push can't

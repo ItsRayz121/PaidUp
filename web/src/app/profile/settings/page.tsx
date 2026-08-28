@@ -17,6 +17,7 @@ import { Card, Button, SectionTitle } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { ArrowRightIcon, ProfileIcon, LockIcon, CheckIcon } from "@/components/icons";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { ConnectEmailCard } from "@/components/ConnectEmailCard";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -274,6 +275,22 @@ export default function ProfileSettingsPage() {
         {!locked && (
           <p className="mt-1 px-1 text-xs text-muted">{t("settings.usernameRules")}</p>
         )}
+      </div>
+
+      {/* ---- Account email ----
+          Moved here from the main Profile tab (founder, 2026-08-28): every
+          piece of UI about the account's email — the address itself, and the
+          "add your email" flow for Telegram-only accounts — now lives in one
+          place instead of two. */}
+      <div>
+        <SectionTitle>{t("settings.accountEmail")}</SectionTitle>
+        {user?.hasEmail !== false && user?.email && (
+          <Card className="p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("profile.accountEmail")}</p>
+            <p className="mt-1 break-all font-semibold text-brand-ink">{user.email}</p>
+          </Card>
+        )}
+        {user && <ConnectEmailCard user={user} />}
       </div>
 
       {/* ---- Account security ----

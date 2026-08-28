@@ -995,6 +995,9 @@ export type MiningState = {
     // offers it inside Telegram Mini Apps, so it is used only there.
     monetagRewardedZone: string;
   };
+  // The task-completion boost rule (any credited task grants it) — real
+  // numbers from the API, not copy hardcoded in the deck.
+  taskBoost: { pct: number; hours: number };
   convertible: boolean;
   // The shop has something in stock. Drives whether /mine links to it at all.
   storeOpen: boolean;
