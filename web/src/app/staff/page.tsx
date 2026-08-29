@@ -27,7 +27,7 @@ import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
-import { StaffSearch } from "@/components/staff-search";
+import { StaffSearch, SectionToc } from "@/components/staff-search";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -201,6 +201,8 @@ export default function StaffPage() {
 
         <main className="min-w-0 flex-1">
         <StaffNavContext.Provider value={{ goToSection: go, openUser: openLedger }}>
+          {/* Map of what's in the current section — jumps to each panel. */}
+          {section && <SectionToc section={section} has={may} onJump={(a) => goToDest(section, a)} />}
           {section === "dashboard" && may("analytics.view") && (
             <>
               <Panel title="Dashboard"><AnalyticsDashboard /></Panel>
@@ -240,7 +242,7 @@ export default function StaffPage() {
               )}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
               {may("treasury.view") && <Panel id="p-treasury" title="Treasury wallet"><TreasuryPanel /></Panel>}
-              {may("settings.manage") && <Panel id="p-withdrawal-fee" title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
+              {may("settings.manage") && <Panel id="p-withdrawal-fee" title="Withdrawal fee & auto-approve limits"><WithdrawalFeePanel /></Panel>}
               {/* What you owe users vs what you've paid. */}
               {may("money.view") && <Panel id="p-money" title="Money"><MoneyPanel /></Panel>}
             </>

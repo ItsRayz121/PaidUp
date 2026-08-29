@@ -20,6 +20,8 @@ export type SearchDest = {
   section: SectionId;
   /** Panel id (see <Panel id="…">) to scroll to after switching section. */
   anchor?: string;
+  /** Short chip label for the in-section table of contents. Falls back to `label`. */
+  short?: string;
   /** Small grey text on the right — which section it lives in. */
   hint?: string;
   /** Extra words to match on, beyond the label. */
@@ -43,52 +45,60 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers" },
 
   // --- deep links to individual panels -------------------------------------
-  { label: "Withdrawals queue", section: "money", anchor: "p-withdrawals", hint: "Money & payouts",
+  { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals", hint: "Money & payouts",
     keywords: "withdraw payout cash out pay approve reject mark paid", needs: ["withdrawals.view"] },
-  { label: "USDT deposits", section: "money", anchor: "p-usdt-deposits", hint: "Money & payouts",
+  { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-usdt-deposits", hint: "Money & payouts",
     keywords: "topup top up deposit confirm tx hash credit", needs: ["deposits.view"] },
-  { label: "USDT refunds", section: "money", anchor: "p-usdt-refunds", hint: "Money & payouts",
+  { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-usdt-refunds", hint: "Money & payouts",
     keywords: "refund get money back return deposit", needs: ["refunds.view"] },
-  { label: "Treasury wallet", section: "money", anchor: "p-treasury", hint: "Money & payouts",
+  { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury", hint: "Money & payouts",
     keywords: "hot wallet balance gas fund bnb address", needs: ["treasury.view"] },
-  { label: "Withdrawal fee & auto-approve limit", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
-    keywords: "fee gas ceiling auto withdraw refund limit approval 100 usdt step up", needs: ["settings.manage"] },
-  { label: "Money owed vs paid", section: "money", anchor: "p-money", hint: "Money & payouts",
+  { label: "Withdrawal fee & auto-approve limits", short: "Fees & limits", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
+    keywords: "fee fees gas ceiling auto withdraw refund limit approval 100 usdt step up charge", needs: ["settings.manage"] },
+  { label: "Money owed vs paid", short: "Money", section: "money", anchor: "p-money", hint: "Money & payouts",
     keywords: "balance owed liability reconcile", needs: ["money.view"] },
 
-  { label: "Users list", section: "users", anchor: "p-users", hint: "Users & IDs",
+  { label: "Users list", short: "Users", section: "users", anchor: "p-users", hint: "Users & IDs",
     keywords: "search find user suspend restore export csv bulk review hold", needs: ["users.list"] },
-  { label: "Verify IDs (KYC)", section: "users", anchor: "p-kyc", hint: "Users & IDs",
+  { label: "Verify IDs (KYC)", short: "IDs (KYC)", section: "users", anchor: "p-kyc", hint: "Users & IDs",
     keywords: "kyc id card verify identity document approve reject", needs: ["kyc.view"] },
-  { label: "Look up a user", section: "users", anchor: "p-lookup", hint: "Users & IDs",
+  { label: "Look up a user", short: "Look up", section: "users", anchor: "p-lookup", hint: "Users & IDs",
     keywords: "dispute ledger find account id email handle balances devices", needs: ["users.view"] },
-  { label: "Fraud flags", section: "users", anchor: "p-fraud", hint: "Users & IDs",
+  { label: "Fraud flags", short: "Fraud", section: "users", anchor: "p-fraud", hint: "Users & IDs",
     keywords: "fraud abuse ring device ip velocity resolve", needs: ["fraud.view"] },
 
-  { label: "Our own tasks", section: "tasks", anchor: "p-tasks", hint: "Tasks & networks",
+  { label: "Our own tasks", short: "Our tasks", section: "tasks", anchor: "p-tasks", hint: "Tasks & networks",
     keywords: "custom task social whatsapp telegram reward rozi budget campaign", needs: ["tasks.view"] },
-  { label: "Task proofs", section: "tasks", anchor: "p-proofs", hint: "Tasks & networks",
+  { label: "Task proofs", short: "Proofs", section: "tasks", anchor: "p-proofs", hint: "Tasks & networks",
     keywords: "proof review approve reject screenshot answers", needs: ["tasks.review"] },
-  { label: "Ad networks", section: "tasks", anchor: "p-networks", hint: "Tasks & networks",
+  { label: "Ad networks", short: "Networks", section: "tasks", anchor: "p-networks", hint: "Tasks & networks",
     keywords: "cpx offerwall postback commission split referral bonus", needs: ["networks.manage"] },
 
-  { label: "Referral rates", section: "growth", anchor: "p-referrals", hint: "Growth",
+  { label: "Referral rates", short: "Referrals", section: "growth", anchor: "p-referrals", hint: "Growth",
     keywords: "referral bonus l1 l2 percent invite reward first task", needs: ["referrals.manage"] },
-  { label: "Leaderboard", section: "growth", anchor: "p-leaderboard", hint: "Growth",
+  { label: "Leaderboard", short: "Leaderboard", section: "growth", anchor: "p-leaderboard", hint: "Growth",
     keywords: "leaderboard top earners inviters exclude hide", needs: ["leaderboard.manage"] },
 
-  { label: "Send a message", section: "messages", anchor: "p-broadcast", hint: "Messages & content",
+  { label: "Send a message", short: "Messages", section: "messages", anchor: "p-broadcast", hint: "Messages & content",
     keywords: "broadcast announcement inbox push audience", needs: ["notifications.send"] },
-  { label: "Home screen cards", section: "messages", anchor: "p-content", hint: "Messages & content",
+  { label: "Home screen cards", short: "Home cards", section: "messages", anchor: "p-content", hint: "Messages & content",
     keywords: "content block banner home card schedule", needs: ["content.manage"] },
 
-  { label: "Feature flags", section: "settings", anchor: "p-flags", hint: "Features & settings",
+  { label: "Feature flags", short: "Flags", section: "settings", anchor: "p-flags", hint: "Features & settings",
     keywords: "flag toggle enable disable transfers ads deposits conversion kyc", needs: ["flags.manage"] },
-  { label: "Global settings", section: "settings", anchor: "p-settings", hint: "Features & settings",
+  { label: "Global settings", short: "Settings", section: "settings", anchor: "p-settings", hint: "Features & settings",
     keywords: "settings minimum withdrawal points config value", needs: ["settings.manage"] },
-  { label: "Staff alerts (Telegram)", section: "settings", anchor: "p-alerts", hint: "Features & settings",
+  { label: "Staff alerts (Telegram)", short: "Alerts", section: "settings", anchor: "p-alerts", hint: "Features & settings",
     keywords: "alert telegram paging chat test notify", needs: ["infra.view"] },
 ];
+
+// The panels inside one section, in order — for the in-section table of
+// contents (SectionToc). Same permission filter as the sidebar and the search.
+export function panelsInSection(section: SectionId, has: (p: UiPermission) => boolean): SearchDest[] {
+  return DESTINATIONS.filter(
+    (d) => d.section === section && d.anchor && (!d.needs || d.needs.every(has)),
+  );
+}
 
 function score(d: SearchDest, words: string[]): number {
   const label = d.label.toLowerCase();
@@ -218,6 +228,37 @@ export function StaffSearch({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// A row of chips at the top of a multi-panel section — "this section contains:
+// Withdrawals · Deposits · Refunds · Treasury · Fees & limits · Money" — each
+// scrolling to its panel. Solves "I clicked the section but the thing I want
+// is a long scroll down and nothing told me it was there".
+export function SectionToc({
+  section, has, onJump,
+}: {
+  section: SectionId;
+  has: (p: UiPermission) => boolean;
+  onJump: (anchor: string) => void;
+}) {
+  const panels = panelsInSection(section, has);
+  if (panels.length < 2) return null; // one panel: nothing to navigate within
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-1.5 border-b border-line pb-3">
+      <span className="mr-1 text-xs font-semibold uppercase text-muted">In this section</span>
+      {panels.map((d) => (
+        <button
+          key={d.anchor}
+          type="button"
+          onClick={() => onJump(d.anchor!)}
+          className="rounded-full border border-line bg-card px-3 py-1 text-xs font-semibold text-brand hover:bg-brand-tint"
+        >
+          {d.short ?? d.label}
+        </button>
+      ))}
     </div>
   );
 }

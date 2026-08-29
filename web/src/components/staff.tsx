@@ -457,7 +457,13 @@ export function WithdrawalFeePanel() {
 
   return (
     <section className="mb-8">
-      <h2 className="mb-2 font-bold text-brand-ink">Withdrawal fee</h2>
+      <h2 className="mb-2 font-bold text-brand-ink">Withdrawal fee &amp; auto-approve limits</h2>
+      <p className="mb-3 rounded-lg border border-line bg-brand-tint/40 p-2 text-xs text-muted">
+        This panel controls: the <b>flat withdrawal fee</b>, the <b>gas fee</b> (% + fixed) on
+        withdrawals and deposit refunds, and the <b>auto-approve limit</b> — a withdrawal or refund
+        at or under this amount is sent with no staff step; above it, it waits for manual approval.
+      </p>
+      <h3 className="mb-1 font-bold text-brand-ink">Flat withdrawal fee</h3>
       <p className="mb-2 text-xs text-muted">Flat points fee taken out of every withdrawal (covers network/gas cost). 0 = no fee. The user sees the fee and the net amount before they confirm.</p>
       <div className="flex items-center gap-2 rounded-lg border border-line p-3">
         <input type="number" min={0} max={1000000} value={value}
