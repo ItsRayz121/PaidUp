@@ -1860,19 +1860,26 @@ const MINING_SCHEMA = `
 // moment of the debit).
 //
 // ⚠️ RIG PRICES ARE A FUNCTION OF piBaseRate AND MUST MOVE WITH IT. They have
-// been rescaled twice for exactly this reason: 10x down when the rate dropped
-// 100 -> 10, and 20x down again when it dropped 10 -> 0.5 (2026-07-29, with the
-// 21M cap). The invariant being held is that the FIRST rig costs about five days
-// of baseline mining. Retune the rate without retuning these and the entire ROZI
-// sink silently becomes unreachable — nobody can afford the first rung, so
-// nothing is ever burned. See migrateRigCosts21m below for existing rows.
-const SEED_RIGS: [string, string, string, number, number, number][] = [
-  // id, name, icon, base_cost, base_power, sort
-  ["old_phone", "Old Phone", "phone", 3, 5, 1],
-  ["laptop", "Laptop", "laptop", 15, 25, 2],
-  ["rig", "Mining Rig", "chip", 100, 150, 3],
-  ["server", "Server Rack", "server", 600, 800, 4],
-  ["datacentre", "Data Centre", "building", 3_750, 5_000, 5],
+// been rescaled three times: 10x down when the rate dropped 100 -> 10, 20x down
+// again when it dropped 10 -> 0.5 (2026-07-29, with the 21M cap), and 10x UP on
+// 2026-08-29.
+//
+// ⚠️ THE OLD "first rig ≈ five days of baseline mining" INVARIANT IS DELIBERATELY
+// SET ASIDE (founder, 2026-08-29). The ROZI price is now an aspirational /
+// "future" number; USDT (base_cost_usdt) is the real purchase path today. This
+// knowingly re-opens guardrail #7 (a USDT price on a rig that also has a ROZI
+// price publishes an implied ROZI value) — recorded as a dated founder override
+// in CLAUDE.md. See migrateRigPrices2026Usdt below for existing rows.
+//
+// base_cost / base_cost_usdt_micro are BOTH seeded here; base_cost is WHOLE ROZI
+// (converted to micro at the debit), base_cost_usdt_micro is MICRO-USDT.
+const SEED_RIGS: [string, string, string, number, number, number, number][] = [
+  // id, name, icon, base_cost, base_power, sort, base_cost_usdt_micro
+  ["old_phone", "Old Phone", "phone", 30, 5, 1, 5_000_000],
+  ["laptop", "Laptop", "laptop", 150, 25, 2, 15_000_000],
+  ["rig", "Mining Rig", "chip", 1_000, 150, 3, 40_000_000],
+  ["server", "Server Rack", "server", 6_000, 800, 4, 120_000_000],
+  ["datacentre", "Data Centre", "building", 37_500, 5_000, 5, 400_000_000],
 ];
 
 // ONE-TIME: rescale every ROZI amount from whole ROZI to micro-ROZI (x1e6).
@@ -1950,17 +1957,50 @@ async function migrateRigCosts21m(): Promise<void> {
   console.log("MINING: rescaled rig prices for the 21M supply (/20). This runs once.");
 }
 
+// ONE-TIME: 10x the ROZI rig prices and give the launch rigs a USDT price
+// (founder, 2026-08-29). See the SEED_RIGS comment: the ROZI price becomes an
+// aspirational number and USDT becomes the real way to buy a machine. Only
+// fills base_cost_usdt where it is still NULL, so an Admin's own USDT price is
+// never stomped. Gated on a marker in the same transaction, same reason as the
+// migrations above — running it twice would 100x the ROZI prices.
+async function migrateRigPrices2026Usdt(): Promise<void> {
+  const done = await sql.get<{ value: string }>(
+    "SELECT value FROM app_settings WHERE key = 'rig_prices_2026_usdt'");
+  if (done) return;
+
+  await sql.tx(async (t) => {
+    await t.run("SELECT pg_advisory_xact_lock(hashtext('rig-prices-2026-usdt'))");
+    const already = await t.get<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'rig_prices_2026_usdt'");
+    if (already) return;
+
+    await t.run("UPDATE rigs SET base_cost = base_cost * 10");
+    for (const [id, , , , , , usdtMicro] of SEED_RIGS) {
+      await t.run(
+        "UPDATE rigs SET base_cost_usdt = ? WHERE id = ? AND base_cost_usdt IS NULL",
+        usdtMicro, id,
+      );
+    }
+    await t.run(
+      "INSERT INTO app_settings (key, value, updated_at) VALUES ('rig_prices_2026_usdt','1',?)",
+      now(),
+    );
+  });
+  console.log("MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.");
+}
+
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
   await driver.exec(MINING_SCHEMA);
   await migrateRoziToMicro();
   await migrateRigCosts21m();
-  for (const [id, name, icon, baseCost, basePower, sort] of SEED_RIGS) {
+  await migrateRigPrices2026Usdt();
+  for (const [id, name, icon, baseCost, basePower, sort, baseCostUsdtMicro] of SEED_RIGS) {
     await sql.run(
-      `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, created_at)
-       VALUES (?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`,
-      id, name, icon, baseCost, basePower, sort, now(),
+      `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, base_cost_usdt, created_at)
+       VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`,
+      id, name, icon, baseCost, basePower, sort, baseCostUsdtMicro, now(),
     );
   }
   // Ensure the known adapter networks have a config row in every environment,

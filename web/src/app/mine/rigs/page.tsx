@@ -173,29 +173,19 @@ export default function RigsPage() {
                       </p>
                     )}
 
-                    <div className="flex items-center gap-3">
-                      <p className="num min-w-0 flex-1 text-sm font-semibold text-brand">
-                        {formatRozi(r.nextCostMicro ?? 0)} ROZI
-                      </p>
-                      <Button
-                        onClick={() => onUpgrade(r.id, "rozi")}
-                        disabled={busy === r.id || !affordable}
-                        size="md"
-                        full={false}
-                        variant={affordable ? "primary" : "ghost"}
-                      >
-                        {usdtPayable ? t("rigs.payRozi") : r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
-                      </Button>
-                    </div>
-
-                    {/* The second way to pay, only on rigs an Admin has actually
-                        priced in USDT and only while top-ups are on. Most rigs
-                        have no USDT price at all, and that is the default. */}
+                    {/* USDT is the real way to buy a machine now (founder,
+                        2026-08-29): when a rig has a USDT price and top-ups are
+                        on, the USDT button leads and the ROZI price sits below
+                        it as a "later" option. When there is no USDT price (the
+                        old default, and dev instances), ROZI stays primary. */}
                     {usdtPayable && (
                       <div className="flex items-center gap-3">
-                        <p className="num min-w-0 flex-1 text-sm font-semibold text-accent-ink">
-                          {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
-                        </p>
+                        <div className="min-w-0 flex-1">
+                          <p className="num text-sm font-semibold text-accent-ink">
+                            {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
+                          </p>
+                          <p className="text-[11px] text-muted">{t("rigs.buyNow")}</p>
+                        </div>
                         <Button
                           onClick={() => onUpgrade(r.id, "usdt")}
                           disabled={busy === r.id || !usdtAffordable}
@@ -203,10 +193,30 @@ export default function RigsPage() {
                           full={false}
                           variant={usdtAffordable ? "accent" : "ghost"}
                         >
-                          {t("rigs.payUsdt")}
+                          {r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
                         </Button>
                       </div>
                     )}
+
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="num text-sm font-semibold text-brand">
+                          {formatRozi(r.nextCostMicro ?? 0)} ROZI
+                        </p>
+                        {usdtPayable && (
+                          <p className="text-[11px] text-muted">{t("rigs.roziFuture")}</p>
+                        )}
+                      </div>
+                      <Button
+                        onClick={() => onUpgrade(r.id, "rozi")}
+                        disabled={busy === r.id || !affordable}
+                        size="md"
+                        full={false}
+                        variant={usdtPayable ? "ghost" : affordable ? "primary" : "ghost"}
+                      >
+                        {usdtPayable ? t("rigs.payRozi") : r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </Card>
@@ -220,7 +230,7 @@ export default function RigsPage() {
           themselves after spending feels like a trick. */}
       <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/40 p-3 text-xs text-muted">
         <InfoIcon size={14} className="mt-0.5 shrink-0 text-brand" />
-        {t("rigs.treadmill")}
+        {t("rigs.treadmill")} {t("rigs.rateNote")}
       </p>
     </div>
   );

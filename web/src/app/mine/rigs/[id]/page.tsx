@@ -131,38 +131,15 @@ export default function RigDetailPage() {
         <div>
           <SectionTitle>{t("rigDetail.cost")}</SectionTitle>
           <Card className="p-4 space-y-3">
-            <div className="flex items-center gap-3">
-              <p className="num min-w-0 flex-1 text-lg font-bold text-brand-ink">
-                {formatRozi(r.nextCostMicro ?? 0)} ROZI
-              </p>
-              <Button
-                onClick={() => onUpgrade("rozi")}
-                disabled={busy || !affordable}
-                size="md"
-                full={false}
-                variant={affordable ? "primary" : "ghost"}
-              >
-                {usdtPayable ? t("rigs.payRozi") : r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
-              </Button>
-            </div>
-
-            {/* The estimate — display only, never called a price. See the
-                setting's comment in api/src/mining/core.ts. */}
-            <div className="rounded-lg border border-line bg-brand-tint/40 p-3">
-              <p className="text-sm font-semibold text-brand-ink">
-                {t("rigDetail.estimateTitle", { value: formatUsdtMicro(estimateMicro) })}
-              </p>
-              <p className="mt-1 flex gap-1.5 text-xs text-muted">
-                <InfoIcon size={13} className="mt-0.5 shrink-0" />
-                {t("rigDetail.estimateBody")}
-              </p>
-            </div>
-
+            {/* USDT leads when it is available (founder, 2026-08-29). */}
             {usdtPayable && (
-              <div className="flex items-center gap-3 border-t border-line pt-3">
-                <p className="num min-w-0 flex-1 text-sm font-semibold text-accent-ink">
-                  {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
-                </p>
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="num text-lg font-bold text-accent-ink">
+                    {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
+                  </p>
+                  <p className="text-xs text-muted">{t("rigs.buyNow")}</p>
+                </div>
                 <Button
                   onClick={() => onUpgrade("usdt")}
                   disabled={busy || !usdtAffordable}
@@ -170,8 +147,40 @@ export default function RigDetailPage() {
                   full={false}
                   variant={usdtAffordable ? "accent" : "ghost"}
                 >
-                  {t("rigs.payUsdt")}
+                  {r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
                 </Button>
+              </div>
+            )}
+
+            <div className={`flex items-center gap-3${usdtPayable ? " border-t border-line pt-3" : ""}`}>
+              <div className="min-w-0 flex-1">
+                <p className="num text-lg font-bold text-brand-ink">
+                  {formatRozi(r.nextCostMicro ?? 0)} ROZI
+                </p>
+                {usdtPayable && <p className="text-xs text-muted">{t("rigs.roziFuture")}</p>}
+              </div>
+              <Button
+                onClick={() => onUpgrade("rozi")}
+                disabled={busy || !affordable}
+                size="md"
+                full={false}
+                variant={usdtPayable ? "ghost" : affordable ? "primary" : "ghost"}
+              >
+                {usdtPayable ? t("rigs.payRozi") : r.level === 0 ? t("rigs.buy") : t("rigs.upgrade")}
+              </Button>
+            </div>
+
+            {/* The ROZI->USD estimate — display only, never a price. Hidden when
+                there is a real USDT price to avoid showing two USD numbers. */}
+            {!usdtPayable && (
+              <div className="rounded-lg border border-line bg-brand-tint/40 p-3">
+                <p className="text-sm font-semibold text-brand-ink">
+                  {t("rigDetail.estimateTitle", { value: formatUsdtMicro(estimateMicro) })}
+                </p>
+                <p className="mt-1 flex gap-1.5 text-xs text-muted">
+                  <InfoIcon size={13} className="mt-0.5 shrink-0" />
+                  {t("rigDetail.estimateBody")}
+                </p>
               </div>
             )}
           </Card>
@@ -180,7 +189,7 @@ export default function RigDetailPage() {
 
       <p className="flex gap-2 rounded-xl border border-line bg-brand-tint/40 p-3 text-xs text-muted">
         <InfoIcon size={14} className="mt-0.5 shrink-0 text-brand" />
-        {t("rigs.treadmill")}
+        {t("rigs.treadmill")} {t("rigs.rateNote")}
       </p>
     </div>
   );

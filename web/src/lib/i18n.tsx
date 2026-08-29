@@ -772,7 +772,7 @@ const copy: Record<string, string> = {
   // rigs
   "rigs.back": "Back to mining",
   "rigs.title": "Mining machines",
-  "rigs.subtitle": "Spend ROZI now to mine faster from now on.",
+  "rigs.subtitle": "Buy a machine now to mine faster from now on.",
   // MINED ONLY — see the label block at home.rozi.label.
   "rigs.yourRozi": "Your mined ROZI",
   "rigs.available": "Machines",
@@ -784,6 +784,11 @@ const copy: Record<string, string> = {
   "rigs.upgrade": "Upgrade",
   "rigs.maxed": "Fully upgraded",
   "rigs.bought": "Done. Your machine is now level {level}.",
+  // USDT is the real way to buy a machine now; the ROZI price is shown as a
+  // future option (founder, 2026-08-29).
+  "rigs.buyNow": "Buy now",
+  "rigs.roziFuture": "Or later, with mined ROZI",
+  "rigs.rateNote": "Mining speed drops over time as ROZI halvings happen.",
   "rigs.treadmill":
     "Every level costs more than the last, and gives a little less speed for the price. Buy the cheap machines first. Machines never expire or wear out — an upgrade is permanent.",
   // The number version of the arrow ("450 → 540") on the list card and the
