@@ -1390,9 +1390,6 @@ const MIGRATIONS = `
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS featured INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS logo_asset_id TEXT;
-  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_type_check;
-  ALTER TABLE tasks ADD CONSTRAINT tasks_reward_type_check
-    CHECK (reward_type IN ('points','usdt','both'));
   -- ---- ROZI TASK REWARDS (founder, 2026-08-29) --------------------------
   -- The word "points" is gone from the earner app. A custom/RoziPay task's
   -- reward is now set in whole ROZI and/or USDT. ROZI here is the REAL mined
