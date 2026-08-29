@@ -414,39 +414,37 @@ export default function MinePage() {
               which is hidden as of 2026-08-28) and states the real numbers
               from s.taskBoost — the API's own rule, never invented copy. */}
           <Link href="/tasks" className="block">
-            <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand text-white">
-                <BoltIcon size={22} />
+            <Card className="flex items-center gap-3 border-brand/30 bg-brand-tint/60 p-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand text-white">
+                <BoltIcon size={20} />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="font-bold text-brand-ink">{t("mine.boost.task.title")}</p>
-                <p className="text-sm text-muted">
+                <p className="text-[15px] font-bold text-brand-ink">{t("mine.boost.task.title")}</p>
+                <p className="text-xs text-muted">
                   {t("mine.boost.task.body", {
                     pct: String(s.taskBoost.pct),
                     hours: String(s.taskBoost.hours),
                   })}
                 </p>
               </div>
-              <ArrowRightIcon size={22} className="text-brand" />
+              <ArrowRightIcon size={20} className="text-brand" />
             </Card>
           </Link>
 
           {s.ads.enabled && (s.ads.monetagDirectLink !== "" || rewardedZone !== "") && (
-            <Card className="flex items-center gap-3 p-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
-                <RocketIcon size={22} />
+            <Card className="flex items-center gap-3 p-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent text-brand-ink">
+                <RocketIcon size={20} />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>
-                <p className="text-sm text-muted">
+                <p className="text-[15px] font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>
+                <p className="text-xs text-muted">
                   {t("mine.boost.ad.body", {
                     speed: s.hashrate.toLocaleString(),
                     pct: String(s.ads.boostPct),
                     hours: String(s.ads.boostHours),
+                    n: String(adsLeft),
                   })}
-                </p>
-                <p className="mt-0.5 text-xs text-muted">
-                  {t("mine.boost.ad.left").replace("{n}", String(adsLeft))}
                 </p>
               </div>
               {adClaim ? (

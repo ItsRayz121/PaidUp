@@ -746,12 +746,12 @@ const copy: Record<string, string> = {
   // explains it and links to the task list. {pct}/{hours} come from the API
   // (s.taskBoost), never hardcoded (founder, 2026-08-28: the survey-specific
   // version of this card is gone along with the Surveys entry point).
-  "mine.boost.task.title": "Complete tasks to mine faster",
-  "mine.boost.task.body": "Finish any task and mine {pct}% faster for {hours} hours.",
+  // Kept short (founder, 2026-08-29): these cards were 4-5 lines tall each.
+  "mine.boost.task.title": "Do a task, mine faster",
+  "mine.boost.task.body": "Any task → +{pct}% speed for {hours}h.",
   "mine.boost.ad.title": "Watch an ad",
-  // Anchored to the user's actual current speed so "{pct}% faster" has a
-  // number to be faster THAN, instead of floating on its own (audit 2026-08-12).
-  "mine.boost.ad.body": "You mine at {speed} now. Watch an ad to add {pct}% for {hours} hours.",
+  // The "{n} left today" count is folded in here now — it was its own line.
+  "mine.boost.ad.body": "+{pct}% speed for {hours}h · {n} left today",
   "mine.boost.ad.left": "{n} left today",
   "mine.boost.ad.cta": "Watch",
   "mine.ad.done": "Done. You now mine {pct}% faster for {hours} hours.",
@@ -948,7 +948,7 @@ const copy: Record<string, string> = {
   "boosters.bought": "Done. Your mining is faster now.",
 
   "mine.store.title": "Spend your ROZI",
-  "mine.boosters.title": "Speed up mining",
+  "mine.boosters.title": "Speed up",
 
   // ---- Add USDT (top-up credit) ---------------------------------------------
   // THE HARDEST PROMISE TO GET RIGHT ON THIS SCREEN is what the money can and

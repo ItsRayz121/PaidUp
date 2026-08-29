@@ -34,10 +34,10 @@ export function TaskFlow({ tasks }: { tasks: Task[] }) {
 
   return (
     <>
-      <ul className="space-y-3">
+      <ul className="space-y-2.5">
         {tasks.map((task) => (
           <li key={task.id}>
-            <Card className={`p-3.5 ${task.lockedReason ? "opacity-70" : ""}`}>
+            <Card className={`p-3 ${task.lockedReason ? "opacity-70" : ""}`}>
               {task.source === "custom" ? (
                 <Link href={`/tasks/${task.id}`} onClick={() => { void startTask(task.id); }}
                   className="flex w-full items-center gap-3 text-left">
@@ -118,14 +118,13 @@ function TaskRowBody({ task }: { task: Task }) {
       ) : (
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><Icon size={22} /></span>
       )}
-      {/* The title gets its OWN row, at the card's full width, rather than
-          sharing one line with the reward pill (2026-08-28: long titles like
-          "Join the RoziPay Telegram channel" wrapped to 3 lines when squeezed
-          next to the pill). Time/reward/status move to a second row below —
-          same information, just given room to sit under the title instead of
-          fighting it for space. */}
+      {/* The title gets its own row at full width, then time/reward/status on a
+          second row. ⚠️ ONE LINE, truncated (founder, 2026-08-29 — reversing
+          the 2026-08-28 "let it wrap to two lines" change): a wrapping title
+          pushed the list down to ~3 cards a screen. The full title is on the
+          task's own detail page. */}
       <span className="min-w-0 flex-1">
-        <span className="block font-semibold text-brand-ink leading-snug">
+        <span className="block truncate font-semibold text-brand-ink">
           {task.title}
         </span>
         <span className="mt-1.5 flex items-center justify-between gap-2">
@@ -147,7 +146,7 @@ function TaskRowBody({ task }: { task: Task }) {
 
 function TaskCardFooter({ task }: { task: Task }) {
   return (
-    <div className="mt-3 border-t border-line pt-2.5">
+    <div className="mt-2.5 border-t border-line pt-2">
       {/* Our own tasks aren't sponsored — no third-party disclosure. */}
       {task.source === "custom"
         ? <span className="text-xs font-medium text-brand">RoziPay task</span>
