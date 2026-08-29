@@ -448,6 +448,15 @@ export type StaffWithdrawal = {
   // fee it just charged. Optional for the same mid-deploy reason as above.
   feePoints?: number;
   netUsdt?: string;
+  sourceKind?: "points" | "earned_usdt";
+  earnedUsdtMicro?: number;
+  // The on-chain relay job behind a 'sending' row, when there is one — its
+  // phase and the three tx hashes, so a relayed payout doesn't look stuck.
+  relay?: {
+    phase: string; fromAddress: string | null;
+    gasTxHash: string | null; prefundTxHash: string | null;
+    forwardTxHash: string | null; lastError: string | null;
+  } | null;
 };
 // Treasury (hot wallet) address per chain — where payouts are sent FROM.
 export type TreasuryAddresses = { bep20: string; base: string; aptos: string };
@@ -455,10 +464,68 @@ export type TreasuryAddresses = { bep20: string; base: string; aptos: string };
 // this as "to send", which is only true while the money is still owed — on a
 // paid tab it would be an instruction to fund a payout that already left.
 export type PendingTotal = { count: number; points: number; usdt: string };
-export const fetchStaffQueue = (status = "pending") =>
-  apiFetch<{ requests: StaffWithdrawal[]; treasury: TreasuryAddresses; pendingTotal?: PendingTotal | null }>(
-    `/staff/withdrawals?status=${encodeURIComponent(status)}`,
-  );
+
+// Shared shape for the Phase C money queues: status tab + free text + sort +
+// page. Every queue endpoint takes the same params and returns `total`.
+export type MoneyListParams = {
+  status?: string; q?: string;
+  sort?: string; dir?: "asc" | "desc";
+  limit?: number; offset?: number;
+  purpose?: string; // relay jobs only
+};
+function moneyQs(p: MoneyListParams): string {
+  const qs = new URLSearchParams();
+  if (p.status) qs.set("status", p.status);
+  if (p.q) qs.set("q", p.q);
+  if (p.sort) { qs.set("sort", p.sort); qs.set("dir", p.dir ?? "desc"); }
+  qs.set("limit", String(p.limit ?? 25));
+  qs.set("offset", String(p.offset ?? 0));
+  if (p.purpose) qs.set("purpose", p.purpose);
+  return qs.toString();
+}
+
+export const fetchStaffQueue = (p: MoneyListParams | string = "pending") => {
+  const o: MoneyListParams = typeof p === "string" ? { status: p } : p;
+  return apiFetch<{
+    requests: StaffWithdrawal[]; treasury: TreasuryAddresses;
+    pendingTotal?: PendingTotal | null; total: number; offset: number; limit: number;
+  }>(`/staff/withdrawals?${moneyQs({ status: "pending", ...o })}`);
+};
+
+// BNB withdrawals — a user pulling their own on-chain gas balance out. Read-only
+// staff view (a failed native send is terminal; see api/src/db.ts).
+export type StaffBnbWithdrawalRow = {
+  id: string; userId: string; userEmail: string;
+  chain: string; address: string; amountWei: string;
+  status: string; txHash: string | null; attempts: number;
+  lastError: string | null; at: string; completedAt: string | null;
+};
+export const fetchStaffBnbWithdrawals = (p: MoneyListParams = {}) =>
+  apiFetch<{ rows: StaffBnbWithdrawalRow[]; total: number; offset: number; limit: number }>(
+    `/staff/bnb-withdrawals?${moneyQs({ status: "failed", ...p })}`);
+
+// Payout relay jobs — the per-user signing jobs behind an on-chain withdrawal
+// or refund. Read-only (a failed job is terminal).
+export type RelayJobRow = {
+  id: string; purpose: "withdrawal" | "refund"; requestId: string;
+  userId: string; userEmail: string; chain: string;
+  fromAddress: string; toAddress: string; amountMicro: number; needsPrefund: boolean;
+  status: string; gasTxHash: string | null; prefundTxHash: string | null;
+  forwardTxHash: string | null; attempts: number; lastError: string | null;
+  at: string; completedAt: string | null;
+};
+export const fetchRelayJobs = (p: MoneyListParams = {}) =>
+  apiFetch<{ rows: RelayJobRow[]; total: number; offset: number; limit: number }>(
+    `/staff/relay-jobs?${moneyQs({ status: "failed", ...p })}`);
+
+// Reconciliation history: treasury + unswept on-chain balance vs the ledger,
+// one row per scheduled check. A negative delta is a shortfall.
+export type ReconSnapshot = {
+  checked_at: string; onchainBalance: number; ledgerTotal: number; delta: number;
+};
+export const fetchReconciliation = (chain = "bep20", limit = 50) =>
+  apiFetch<{ chain: string; snapshots: ReconSnapshot[] }>(
+    `/staff/mining/reconciliation?chain=${encodeURIComponent(chain)}&limit=${limit}`);
 export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
   apiFetch<{ ok: true; status: string; txHash?: string; usdt?: string }>(`/staff/withdrawals/${id}/decision`, {
     method: "POST", body: JSON.stringify({ action, note, txHash }),
@@ -1474,9 +1541,13 @@ export type AdminTopup = {
   chain: string; tx_hash: string; amount: number; status: string;
   reject_reason: string | null; created_at: string;
 };
-export const fetchAdminTopups = (status = "pending") =>
-  apiFetch<{ treasuryAddress: string; treasuryChain: string; topups: AdminTopup[] }>(
-    `/staff/mining/topups?status=${status}`);
+export const fetchAdminTopups = (p: MoneyListParams | string = "pending") => {
+  const o: MoneyListParams = typeof p === "string" ? { status: p } : p;
+  return apiFetch<{
+    treasuryAddress: string; treasuryChain: string; topups: AdminTopup[];
+    total: number; offset: number; limit: number;
+  }>(`/staff/mining/topups?${moneyQs({ status: "pending", ...o })}`);
+};
 export const confirmTopup = (id: string, amount: number) =>
   apiFetch<{ ok: true; balanceMicro: number }>(
     `/staff/mining/topups/${id}/confirm`, { method: "POST", body: JSON.stringify({ amount }) });
@@ -1499,8 +1570,11 @@ export type AdminRefund = {
   status: string; tx_hash: string | null; reject_reason: string | null;
   addressVerified: boolean; created_at: string;
 };
-export const fetchAdminRefunds = (status = "pending") =>
-  apiFetch<{ refunds: AdminRefund[] }>(`/staff/mining/refunds?status=${status}`);
+export const fetchAdminRefunds = (p: MoneyListParams | string = "pending") => {
+  const o: MoneyListParams = typeof p === "string" ? { status: p } : p;
+  return apiFetch<{ refunds: AdminRefund[]; total: number; offset: number; limit: number }>(
+    `/staff/mining/refunds?${moneyQs({ status: "pending", ...o })}`);
+};
 export const payRefund = (id: string, txHash: string) =>
   apiFetch<{ ok: true }>(
     `/staff/mining/refunds/${id}/paid`, { method: "POST", body: JSON.stringify({ txHash }) });

@@ -5,17 +5,18 @@ import { useEffect, useState } from "react";
 import { useStaffSession, useApi } from "@/lib/hooks";
 import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
-import {
-  fetchStaffQueue, decideWithdrawal, fetchFraud,
-  type StaffWithdrawal,
-} from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { fetchFraud } from "@/lib/api";
+import { timeAgo } from "@/lib/format";
 import {
   KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton,
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
-import { MiningPanel, TopupPanel, RefundPanel } from "@/components/mining-admin";
+import { MiningPanel } from "@/components/mining-admin";
+import {
+  WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
+  RelayJobsPanel, ReconciliationPanel,
+} from "@/components/staff/MoneyQueues";
 import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
 import { TasksPanel } from "@/components/tasks-admin";
@@ -34,7 +35,6 @@ import { DashboardOverview } from "@/components/staff/DashboardOverview";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
-const STATUSES = ["pending", "agent_approved", "manager_approved", "paid", "rejected"];
 
 // ---- Sidebar sections -------------------------------------------------------
 // Grouped deliberately COARSE (founder request: "proper side panels, not too
@@ -234,7 +234,7 @@ export default function StaffPage() {
           {section === "money" && (
             <>
               {may("withdrawals.view") && (
-                <Panel id="p-withdrawals" title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} canOpenLedger={may("users.view")} /></Panel>
+                <Panel id="p-withdrawals" title="Withdrawals"><WithdrawalsPanel canOpenLedger={may("users.view")} /></Panel>
               )}
               {/* Money IN. Confirming a pasted tx hash credits real USDT, so it
                   is gated on `deposits.view` and the buttons inside on
@@ -247,14 +247,26 @@ export default function StaffPage() {
                   Confirm/Reject buttons that 403 on click — a staff member told
                   they can act on real money, then refused after clicking. */}
               {may("deposits.view") && (
-                <Panel id="p-usdt-deposits" title="USDT deposits"><TopupPanel canDecide={may("deposits.decide")} /></Panel>
+                <Panel id="p-usdt-deposits" title="USDT deposits"><DepositsPanel canDecide={may("deposits.decide")} /></Panel>
               )}
               {/* Money back OUT: a user's own unspent deposit, returned. */}
               {may("refunds.view") && (
-                <Panel id="p-usdt-refunds" title="USDT refunds"><RefundPanel canDecide={may("refunds.decide")} /></Panel>
+                <Panel id="p-usdt-refunds" title="USDT refunds"><RefundsPanel canDecide={may("refunds.decide")} /></Panel>
+              )}
+              {/* Failed-money surfaces that never had a screen before Phase C —
+                  the dashboard only ever counted them. Read-only: a failed
+                  native send / relay job is terminal and needs a human on the
+                  chain, not a retry button. */}
+              {may("withdrawals.view") && (
+                <Panel id="p-bnb-withdrawals" title="BNB withdrawals"><BnbWithdrawalsPanel /></Panel>
+              )}
+              {may("withdrawals.view") && (
+                <Panel id="p-relay-jobs" title="Payout relay jobs"><RelayJobsPanel /></Panel>
               )}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
               {may("treasury.view") && <Panel id="p-treasury" title="Treasury wallet"><TreasuryPanel /></Panel>}
+              {/* Treasury vs. what the ledger says we owe, one row per hourly check. */}
+              {may("analytics.view") && <Panel id="p-reconciliation" title="Reconciliation history"><ReconciliationPanel /></Panel>}
               {may("settings.manage") && <Panel id="p-withdrawal-fee" title="Withdrawal fee & auto-approve limits"><WithdrawalFeePanel /></Panel>}
               {/* What you owe users vs what you've paid. */}
               {may("money.view") && <Panel id="p-money" title="Money"><MoneyPanel /></Panel>}
@@ -332,194 +344,6 @@ export default function StaffPage() {
       </div>
     </div>
     </ToastProvider>
-  );
-}
-
-// ---- Withdrawal queue -------------------------------------------------------
-function WithdrawalQueue(
-  { onViewLedger, canOpenLedger }: { onViewLedger: (userId: string) => void; canOpenLedger: boolean },
-) {
-  const [status, setStatus] = useState("pending");
-  const [auto, setAuto] = useState(true);
-  const queue = useApi(() => fetchStaffQueue(status), [status], true, auto ? QUEUE_POLL_MS : undefined);
-  // Treasury wallet for the chains in the queue — so whoever pays sends from
-  // the right wallet. Set by an admin under Money & payouts → Treasury wallet.
-  const treasury = queue.data?.treasury;
-  const total = queue.data?.pendingTotal;
-
-  async function act(id: string, action: "approve" | "reject" | "pay") {
-    let note: string | undefined;
-    let txHash: string | undefined;
-    if (action === "reject") {
-      const reason = window.prompt("Reason for rejecting (the user will see this):");
-      if (reason === null) return; // cancelled
-      note = reason;
-    }
-    if (action === "pay") {
-      // v1 is manual: send the USDT from the treasury wallet, then paste the
-      // on-chain transaction hash here so the user gets proof of payment.
-      //
-      // ⚠️ THE PROMPT NAMES THE AMOUNT AND THE ADDRESS. It used to ask only for
-      // a hash, which left "how much do I send?" to whatever the person read
-      // off the row — and the row showed the GROSS. The refund queue has
-      // always stated its net here; this is the same fix on the payout side.
-      const row = queue.data?.requests.find((x) => x.id === id);
-      // ⚠️ netUsdt or NOTHING — never fall back to the gross. The whole defect
-      // this fixed was a human sending the gross and the platform eating the
-      // fee, so a fallback that quietly prints the gross recreates it on any
-      // build where the field is missing (an older API, mid-deploy). Say the
-      // figure is unknown instead; a blank is a question, a wrong number is not.
-      const amount = row?.netUsdt ? `${row.netUsdt} USDT` : "the NET amount shown on the row";
-      const hash = window.prompt(
-        `Send ${amount} to:\n\n${row?.address ?? "(no address on this request)"}\n\n` +
-        "Send the payment FIRST, then paste the transaction hash (0x…) here.",
-      );
-      if (hash === null) return; // cancelled
-      txHash = hash.trim();
-    }
-    try {
-      await decideWithdrawal(id, action, note, txHash);
-      queue.reload();
-    } catch (e) {
-      window.alert((e as Error).message);
-    }
-  }
-
-  return (
-    <section className="mb-8">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Withdrawals</h2>
-        <div className="flex flex-wrap gap-1">
-          {STATUSES.map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"
-              }`}>
-              {s.replace("_", " ")}
-            </button>
-          ))}
-        </div>
-        <RefreshBar updatedAt={queue.updatedAt} loading={queue.loading} onRefresh={queue.reload} auto={auto} setAuto={setAuto} />
-      </div>
-
-      {/* What this view will cost the treasury if every row is paid. The USDT
-          figure is NET of fees — it is the number to fund the wallet with. */}
-      {total && total.count > 0 && (
-        <p className="mb-2 rounded-lg border border-line bg-card p-2 text-xs text-muted">
-          <span className="font-semibold text-brand-ink">{total.count}</span> request{total.count === 1 ? "" : "s"} ·{" "}
-          <span className="num font-semibold text-brand-ink">{formatPoints(total.points)}</span> pts ·{" "}
-          to send <span className="num font-semibold text-brand">{total.usdt} USDT</span>
-        </p>
-      )}
-
-      {treasury && (treasury.bep20 || treasury.base || treasury.aptos) && (
-        <p className="mb-2 rounded-lg border border-line bg-brand-tint/40 p-2 text-xs text-muted">
-          Pay from the treasury wallet:{" "}
-          {(["bep20", "base", "aptos"] as const).filter((c) => treasury[c]).map((c) => (
-            <span key={c} className="me-2">
-              <span className="font-semibold uppercase">{c}</span>{" "}
-              <span className="num">{treasury[c].slice(0, 10)}…{treasury[c].slice(-6)}</span>
-            </span>
-          ))}
-        </p>
-      )}
-
-      {queue.loading ? (
-        <p className="p-4 text-sm text-muted">Loading…</p>
-      ) : queue.error ? (
-        <p className="p-4 text-sm text-danger">{queue.error}</p>
-      ) : (queue.data?.requests.length ?? 0) === 0 ? (
-        <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">
-          No {status.replace("_", " ")} withdrawals.
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
-              <tr>
-                <th className="p-2.5">User</th>
-                <th className="p-2.5">Amount</th>
-                <th className="p-2.5">Network</th>
-                <th className="p-2.5">Send to (USDT address)</th>
-                <th className="p-2.5">Requested</th>
-                <th className="p-2.5">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {queue.data!.requests.map((r: StaffWithdrawal) => (
-                <tr key={r.id} className="border-t border-line">
-                  <td className="p-2.5">
-                    <div className="font-medium text-brand-ink">{r.userEmail}</div>
-                    {/* Hidden rather than disabled: it jumps to a panel this
-                        role cannot open, so there is nothing to explain. */}
-                    {canOpenLedger && (
-                      <button onClick={() => onViewLedger(r.userId)} className="text-xs text-brand">view ledger</button>
-                    )}
-                  </td>
-                  <td className="p-2.5">
-                    {/* Gross debited, then what actually gets SENT. Whoever pays
-                        by hand reads this cell, so the net is the emphasised
-                        one when a fee applies. */}
-                    <div className="num font-semibold text-brand-ink">{formatPoints(r.amount)}</div>
-                    {r.feePoints ? (
-                      <>
-                        <div className="text-xs text-muted">− {formatPoints(r.feePoints)} fee</div>
-                        <div className="num text-xs font-semibold text-brand">send {r.netUsdt} USDT</div>
-                      </>
-                    ) : (
-                      <div className="text-xs text-muted">{formatMoney(r.amount)}</div>
-                    )}
-                  </td>
-                  <td className="p-2.5 uppercase">{r.chain}</td>
-                  <td className="p-2.5">
-                    {r.address ? (
-                      <button onClick={() => navigator.clipboard?.writeText(r.address!)}
-                        title="Click to copy" className="num break-all text-left text-xs text-brand hover:underline">
-                        {r.address}
-                      </button>
-                    ) : <span className="text-xs text-muted">—</span>}
-                    {/* Did the user sign for this exact address with the wallet?
-                        The most decision-relevant thing on the row: an on-chain
-                        payout cannot be undone, and the way users lose money
-                        here is being talked into pasting someone else's
-                        address. Both states are stated in words — "not checked"
-                        is not the same as an absent badge, which reads as a
-                        column that failed to load. */}
-                    {r.address && (
-                      <div className={`mt-1 text-xs font-semibold ${r.addressVerified ? "text-success" : "text-pending"}`}>
-                        {r.addressVerified
-                          ? "✓ signed by the user's wallet"
-                          : "not checked — typed in"}
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-2.5 text-muted">{timeAgo(r.at)}</td>
-                  <td className="p-2.5">
-                    <Actions status={r.status} onAct={(a) => act(r.id, a)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Actions({ status, onAct }: { status: string; onAct: (a: "approve" | "reject" | "pay") => void }) {
-  const ready = status === "agent_approved" || status === "manager_approved";
-  if (status === "paid" || status === "rejected") return <span className="text-xs text-muted">—</span>;
-  return (
-    <div className="flex gap-1.5">
-      {status === "pending" && (
-        <button onClick={() => onAct("approve")} className="rounded-md bg-success px-2.5 py-1 text-xs font-semibold text-white">Approve</button>
-      )}
-      {ready && (
-        <button onClick={() => onAct("pay")} className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white">Mark paid</button>
-      )}
-      <button onClick={() => onAct("reject")} className="rounded-md bg-danger px-2.5 py-1 text-xs font-semibold text-white">Reject</button>
-    </div>
   );
 }
 

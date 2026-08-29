@@ -451,18 +451,45 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // manual since launch. The reviewer types the amount THEY saw on-chain, not
   // the one the user claimed — see below, it is the whole point of the screen.
   app.get("/staff/mining/topups", staffGuard("deposits.view", async (_ctx, req) => {
-    const q = z.object({ status: z.enum(["pending", "confirmed", "rejected"]).default("pending") })
-      .parse((req.query as Record<string, unknown>) ?? {});
-    const rows = await sql.all<Record<string, unknown>>(
-      `SELECT t.*, u.email, u.username FROM usdt_topups t
-       JOIN users u ON u.id = t.user_id
-       WHERE t.status = ? ORDER BY t.created_at LIMIT 200`,
-      q.status,
-    );
-    const s = await loadMiningSettings();
+    // Server-side search / sort / paginate (admin rebuild, Phase C). `topups`,
+    // `treasuryAddress`, `treasuryChain` are unchanged; `total`/`offset`/`limit`
+    // are additive.
+    const p = z.object({
+      status: z.enum(["pending", "confirmed", "rejected"]).default("pending"),
+      q: z.string().max(120).optional(),
+      sort: z.enum(["created_at", "amount", "status"]).optional(),
+      dir: z.enum(["asc", "desc"]).optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(25),
+      offset: z.coerce.number().int().min(0).default(0),
+    }).parse((req.query as Record<string, unknown>) ?? {});
+
+    const where = ["t.status = ?"];
+    const wp: unknown[] = [p.status];
+    const term = (p.q ?? "").trim().toLowerCase();
+    if (term) {
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(t.id) = ? OR LOWER(t.tx_hash) LIKE ?)");
+      wp.push(`%${term}%`, `%${term}%`, term, `%${term}%`);
+    }
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const sortCol = { created_at: "t.created_at", amount: "t.amount", status: "t.status" }[p.sort ?? "created_at"];
+    const dir = p.dir === "asc" ? "ASC" : "DESC";
+
+    const [rows, totalRow, s] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT t.*, u.email, u.username FROM usdt_topups t
+         JOIN users u ON u.id = t.user_id
+         ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...wp, p.limit, p.offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM usdt_topups t JOIN users u ON u.id = t.user_id ${whereSql}`, ...wp,
+      ),
+      loadMiningSettings(),
+    ]);
     return {
       treasuryAddress: s.usdtTreasuryAddress,
       treasuryChain: s.usdtTreasuryChain,
+      total: Number(totalRow?.n ?? rows.length), offset: p.offset, limit: p.limit,
       topups: rows.map((r) => ({ ...r, amount: usdtFromMicro(Number(r.amount)) })),
     };
   }));
@@ -560,24 +587,50 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // Getting that backwards in either direction is a double-debit or a free
   // top-up, so the two handlers below say which one they are doing out loud.
   app.get("/staff/mining/refunds", staffGuard("refunds.view", async (_ctx, req) => {
-    const q = z.object({ status: z.enum(["pending", "sending", "paid", "rejected"]).default("pending") })
-      .parse((req.query as Record<string, unknown>) ?? {});
+    // Server-side search / sort / paginate (admin rebuild, Phase C). `refunds`
+    // is unchanged; `total`/`offset`/`limit` are additive.
+    const p = z.object({
+      status: z.enum(["pending", "sending", "paid", "rejected"]).default("pending"),
+      q: z.string().max(120).optional(),
+      sort: z.enum(["created_at", "amount", "status"]).optional(),
+      dir: z.enum(["asc", "desc"]).optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(25),
+      offset: z.coerce.number().int().min(0).default(0),
+    }).parse((req.query as Record<string, unknown>) ?? {});
+
+    const where = ["r.status = ?"];
+    const wp: unknown[] = [p.status];
+    const term = (p.q ?? "").trim().toLowerCase();
+    if (term) {
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(r.id) = ? OR LOWER(r.address) LIKE ? OR LOWER(r.tx_hash) LIKE ?)");
+      wp.push(`%${term}%`, `%${term}%`, term, `%${term}%`, `%${term}%`);
+    }
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const sortCol = { created_at: "r.created_at", amount: "r.amount", status: "r.status" }[p.sort ?? "created_at"];
+    const dir = p.dir === "asc" ? "ASC" : "DESC";
+
     // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay signing
     // straight from the user's OWN address — see payoutRelay.ts, the one
     // place that's genuinely real rather than a pass-through) shows its
     // in-flight phase instead of looking stuck.
-    const rows = await sql.all<Record<string, unknown>>(
-      `SELECT r.*, u.email, u.username,
-              j.status AS relay_status, j.from_address AS relay_from_address,
-              j.gas_tx_hash AS relay_gas_tx_hash, j.forward_tx_hash AS relay_forward_tx_hash,
-              j.last_error AS relay_last_error
-       FROM usdt_refund_requests r
-       JOIN users u ON u.id = r.user_id
-       LEFT JOIN payout_relay_jobs j ON j.purpose = 'refund' AND j.request_id = r.id
-       WHERE r.status = ? ORDER BY r.created_at LIMIT 200`,
-      q.status,
-    );
+    const [rows, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT r.*, u.email, u.username,
+                j.status AS relay_status, j.from_address AS relay_from_address,
+                j.gas_tx_hash AS relay_gas_tx_hash, j.forward_tx_hash AS relay_forward_tx_hash,
+                j.last_error AS relay_last_error
+         FROM usdt_refund_requests r
+         JOIN users u ON u.id = r.user_id
+         LEFT JOIN payout_relay_jobs j ON j.purpose = 'refund' AND j.request_id = r.id
+         ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...wp, p.limit, p.offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id ${whereSql}`, ...wp,
+      ),
+    ]);
     return {
+      total: Number(totalRow?.n ?? rows.length), offset: p.offset, limit: p.limit,
       refunds: rows.map((r) => ({
         ...r,
         amount: usdtFromMicro(Number(r.amount)),
@@ -720,8 +773,12 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // it's first raised (fraud.ts's flagOnce, alerts.ts) — this endpoint is the
   // detail view for AFTER the page, not the only way to find out anymore.
   app.get("/staff/mining/reconciliation", staffGuard("analytics.view", async (_ctx, req) => {
-    const q = z.object({ chain: z.string().min(1).max(20).default("bep20"), limit: z.number().int().min(1).max(200).default(50) })
-      .parse((req.query as Record<string, unknown>) ?? {});
+    // z.coerce — query params arrive as strings, so a bare z.number() 400s on
+    // any `?limit=…` (which is every call the Phase C panel makes).
+    const q = z.object({
+      chain: z.string().min(1).max(20).default("bep20"),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+    }).parse((req.query as Record<string, unknown>) ?? {});
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT * FROM treasury_balance_snapshots WHERE chain = ? ORDER BY checked_at DESC LIMIT ?`,
       q.chain, q.limit,

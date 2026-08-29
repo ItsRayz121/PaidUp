@@ -48,40 +48,83 @@ const decisionSchema = z.object({
 
 export async function staffRoutes(app: FastifyInstance) {
   // Withdrawal queue. Agents only see requests within their approval limit.
+  //
+  // ⚠️ SERVER-SIDE SEARCH / SORT / PAGINATION (admin rebuild, Phase C). Same
+  // idiom as GET /staff/users: `sort`/`dir` map through a fixed whitelist to a
+  // column literal (never interpolated), and one WHERE clause drives the row
+  // page, the COUNT, and the pendingTotal aggregate so all three agree. The
+  // agent approval cap is pushed INTO that WHERE, not a JS filter after the
+  // fetch — otherwise `total` and the page size would be wrong for a capped
+  // approver. Existing fields (`treasury`, `pendingTotal`, `requests`) are
+  // unchanged; `total`/`offset`/`limit` are additive.
   app.get("/staff/withdrawals", staffGuard("withdrawals.view", async ({ role }, req) => {
-    const status = (req.query as { status?: string }).status ?? "pending";
+    const query = req.query as Record<string, string | undefined>;
+    const status = query.status ?? "pending";
+    const q = (query.q ?? "").trim().toLowerCase();
+    const limit = Math.min(Number(query.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
+
+    const where: string[] = ["w.status = ?"];
+    const wp: unknown[] = [status];
+    if (q) {
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(w.id) = ? OR LOWER(w.user_id) = ? OR LOWER(w.payout_address) LIKE ? OR LOWER(w.tx_hash) LIKE ?)");
+      wp.push(`%${q}%`, q, q, `%${q}%`, `%${q}%`);
+    }
+    // The capped-approver cap, as a bound WHERE condition. See the note above
+    // on why this cannot be a post-fetch filter.
+    if (!hasPermission(role, "withdrawals.decide_any")) {
+      where.push("w.amount <= ?");
+      wp.push(config.agentApprovalMaxPoints);
+    }
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+
+    const SORTS: Record<string, string> = {
+      created_at: "w.created_at", amount: "w.amount", status: "w.status",
+    };
+    const sortCol = SORTS[query.sort ?? ""] ?? "w.created_at";
+    const dir = query.dir === "asc" ? "ASC" : "DESC";
+
     // LEFT JOIN payout_relay_jobs so a 'sending' row (the relay pass-through
     // routing THROUGH the user's own address — see payoutRelay.ts) shows its
     // in-flight phase and tx hashes instead of looking stuck to staff.
-    let rows = await sql.all<Record<string, unknown>>(
-      `SELECT w.*, u.email AS user_email,
-              j.status AS relay_status, j.from_address AS relay_from_address,
-              j.gas_tx_hash AS relay_gas_tx_hash, j.prefund_tx_hash AS relay_prefund_tx_hash,
-              j.forward_tx_hash AS relay_forward_tx_hash, j.last_error AS relay_last_error
-       FROM withdrawal_requests w
-       JOIN users u ON u.id = w.user_id
-       LEFT JOIN payout_relay_jobs j ON j.purpose = 'withdrawal' AND j.request_id = w.id
-       WHERE w.status = ? ORDER BY w.created_at ASC`,
-      status,
-    );
+    const [rows, totalRow, owed, treasuryB, treasuryBa, treasuryAp] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT w.*, u.email AS user_email,
+                j.status AS relay_status, j.from_address AS relay_from_address,
+                j.gas_tx_hash AS relay_gas_tx_hash, j.prefund_tx_hash AS relay_prefund_tx_hash,
+                j.forward_tx_hash AS relay_forward_tx_hash, j.last_error AS relay_last_error
+         FROM withdrawal_requests w
+         JOIN users u ON u.id = w.user_id
+         LEFT JOIN payout_relay_jobs j ON j.purpose = 'withdrawal' AND j.request_id = w.id
+         ${whereSql}
+         ORDER BY ${sortCol} ${dir}
+         LIMIT ? OFFSET ?`,
+        ...wp, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM withdrawal_requests w JOIN users u ON u.id = w.user_id ${whereSql}`, ...wp,
+      ),
+      // pendingTotal is over the WHOLE filtered set, not the current page.
+      OWED_STATUSES.includes(status)
+        ? sql.get<{ c: string | number; pts: string | number; net: string | number }>(
+            `SELECT COUNT(*) AS c, COALESCE(SUM(w.amount), 0) AS pts,
+                    COALESCE(SUM(w.amount - COALESCE(w.fee_points, 0)), 0) AS net
+             FROM withdrawal_requests w JOIN users u ON u.id = w.user_id ${whereSql}`, ...wp,
+          )
+        : Promise.resolve(null),
+      getSetting("treasury_address_bep20", ""),
+      getSetting("treasury_address_base", ""),
+      getSetting("treasury_address_aptos", ""),
+    ]);
 
-    // A capped approver (agent, support) only sees what they could act on.
-    // Asked as a PERMISSION, not as `role === "agent"`: the cap belongs to
-    // whoever lacks `withdrawals.decide_any`, and hardcoding the one role that
-    // happened to lack it in 2026 is how a new role silently gets shown — and
-    // then allowed to approve — payouts above its limit.
-    if (!hasPermission(role, "withdrawals.decide_any")) {
-      rows = rows.filter((r) => (r.amount as number) <= config.agentApprovalMaxPoints);
-    }
     return {
       // The hot wallet each chain's payouts are sent FROM (admin sets it in
       // Settings). Shown beside the queue so whoever is paying sends from the
       // right wallet. Public information once a payout has ever been made.
-      treasury: {
-        bep20: await getSetting("treasury_address_bep20", ""),
-        base: await getSetting("treasury_address_base", ""),
-        aptos: await getSetting("treasury_address_aptos", ""),
-      },
+      treasury: { bep20: treasuryB, base: treasuryBa, aptos: treasuryAp },
+      total: Number(totalRow?.n ?? rows.length),
+      offset,
+      limit,
       // What this queue will cost the treasury if every row is paid. Whoever
       // funds the wallet is otherwise adding up a column by hand, and NET is
       // the figure that matters — see netUsdt on each row below.
@@ -92,10 +135,10 @@ export async function staffRoutes(app: FastifyInstance) {
       // on `rejected` as an instruction to send money nobody is owed. A total
       // is only a funding number while the rows are unpaid; served as null
       // otherwise so there is nothing for the panel to mislabel.
-      pendingTotal: OWED_STATUSES.includes(status) ? {
-        count: rows.length,
-        points: rows.reduce((a, r) => a + Number(r.amount), 0),
-        usdt: pointsToUsdt(rows.reduce((a, r) => a + (Number(r.amount) - Number(r.fee_points ?? 0)), 0)),
+      pendingTotal: owed ? {
+        count: Number(owed.c),
+        points: Number(owed.pts),
+        usdt: pointsToUsdt(Number(owed.net)),
       } : null,
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
@@ -279,6 +322,116 @@ export async function staffRoutes(app: FastifyInstance) {
     // Committed — now it is safe (and fire-and-forget) to tell the user.
     if (notify.job) void sendPushToUser(notify.job.userId, notify.job.note);
     return outcome;
+  }));
+
+  // ---- BNB withdrawal queue (admin rebuild, Phase C) ---------------------
+  //
+  // A user pulling their OWN on-chain gas balance out of their derived custody
+  // address (routes/withdrawals.ts). It has never had a staff screen — the
+  // dashboard only ever counted the `failed` rows. Read-only on purpose: a
+  // failed native send is terminal and needs a human to check the chain, not a
+  // retry button that could double-spend a live balance (db.ts's note on this
+  // table). Same server-side search/sort/paginate shape as the withdrawal
+  // queue above.
+  const BNB_STATUSES = ["pending", "sending", "paid", "failed"];
+  app.get("/staff/bnb-withdrawals", staffGuard("withdrawals.view", async (_ctx, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const q = (query.q ?? "").trim().toLowerCase();
+    const limit = Math.min(Number(query.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
+
+    // No status = the "needs attention" view: failed jobs only. An explicit
+    // unknown value (e.g. "all") drops the filter and shows every status.
+    const status = query.status ?? "failed";
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (BNB_STATUSES.includes(status)) { where.push("b.status = ?"); wp.push(status); }
+    if (q) {
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(b.id) = ? OR LOWER(b.user_id) = ? OR LOWER(b.address) LIKE ? OR LOWER(b.tx_hash) LIKE ?)");
+      wp.push(`%${q}%`, q, q, `%${q}%`, `%${q}%`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const sortCol = query.sort === "status" ? "b.status" : "b.created_at";
+    const dir = query.dir === "asc" ? "ASC" : "DESC";
+
+    const [rows, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT b.*, u.email AS user_email FROM bnb_withdrawal_requests b
+         JOIN users u ON u.id = b.user_id
+         ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...wp, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM bnb_withdrawal_requests b JOIN users u ON u.id = b.user_id ${whereSql}`, ...wp,
+      ),
+    ]);
+    return {
+      total: Number(totalRow?.n ?? rows.length), offset, limit,
+      rows: rows.map((r) => ({
+        id: r.id, userId: r.user_id, userEmail: r.user_email,
+        chain: r.chain, address: r.address, amountWei: String(r.amount_wei),
+        status: r.status, txHash: r.tx_hash ?? null, attempts: Number(r.attempts ?? 0),
+        lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
+      })),
+    };
+  }));
+
+  // ---- Payout relay job queue (admin rebuild, Phase C) ------------------
+  //
+  // The per-user signing jobs behind an on-chain withdrawal or refund
+  // (payoutRelay.ts). Also never had a staff screen — the dashboard only
+  // counted `failed`. Read-only: a failed relay job is terminal (db.ts) and
+  // the compensating action (return the held money / re-check the chain) is
+  // decided per case, not by a button here.
+  const RELAY_STATUSES = [
+    "pending", "gas_sent", "gas_confirmed", "prefund_sent", "prefund_confirmed",
+    "forward_sent", "forward_confirmed", "failed",
+  ];
+  app.get("/staff/relay-jobs", staffGuard("withdrawals.view", async (_ctx, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const q = (query.q ?? "").trim().toLowerCase();
+    const limit = Math.min(Number(query.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
+
+    // No status = failed jobs only (the "needs attention" view). "active" = the
+    // in-flight jobs; an unknown value drops the filter.
+    const status = query.status ?? "failed";
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (RELAY_STATUSES.includes(status)) { where.push("j.status = ?"); wp.push(status); }
+    else if (status === "active") where.push("j.status NOT IN ('forward_confirmed', 'failed')");
+    if (query.purpose === "withdrawal" || query.purpose === "refund") { where.push("j.purpose = ?"); wp.push(query.purpose); }
+    if (q) {
+      where.push("(LOWER(u.email) LIKE ? OR LOWER(j.id) = ? OR LOWER(j.request_id) = ? OR LOWER(j.to_address) LIKE ?)");
+      wp.push(`%${q}%`, q, q, `%${q}%`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const sortCol = query.sort === "status" ? "j.status" : "j.created_at";
+    const dir = query.dir === "asc" ? "ASC" : "DESC";
+
+    const [rows, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT j.*, u.email AS user_email FROM payout_relay_jobs j
+         JOIN users u ON u.id = j.user_id
+         ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...wp, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM payout_relay_jobs j JOIN users u ON u.id = j.user_id ${whereSql}`, ...wp,
+      ),
+    ]);
+    return {
+      total: Number(totalRow?.n ?? rows.length), offset, limit,
+      rows: rows.map((r) => ({
+        id: r.id, purpose: r.purpose, requestId: r.request_id,
+        userId: r.user_id, userEmail: r.user_email,
+        chain: r.chain, fromAddress: r.from_address, toAddress: r.to_address,
+        amountMicro: Number(r.amount_micro), needsPrefund: Boolean(r.needs_prefund),
+        status: r.status, gasTxHash: r.gas_tx_hash ?? null, prefundTxHash: r.prefund_tx_hash ?? null,
+        forwardTxHash: r.forward_tx_hash ?? null, attempts: Number(r.attempts ?? 0),
+        lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
+      })),
+    };
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.

@@ -2268,6 +2268,52 @@ These override convenience or speed at every step:
   - **Next: Phase C** — Money & payouts: all five queues on `DataTable` +
     detail pages + reconciliation history.
 
+- **ADMIN CONSOLE REBUILD — PHASE C: MONEY & PAYOUTS (founder, 2026-08-29).**
+  All five money queues on the shared `DataTable`, plus two surfaces that
+  never had a screen before, plus reconciliation history. New
+  `web/src/components/staff/MoneyQueues.tsx` (`WithdrawalsPanel`,
+  `DepositsPanel`, `RefundsPanel`, `BnbWithdrawalsPanel`, `RelayJobsPanel`,
+  `ReconciliationPanel`); the old inline `WithdrawalQueue` in `staff/page.tsx`
+  and `TopupPanel` / `RefundPanel` in `mining-admin.tsx` are deleted.
+  Verified: api + web typecheck, eslint, web production build clean;
+  new `npm run test:moneyadmin` (**31 checks**) + `test:usersadmin` (50) +
+  `test:stage4` (48) + `test:analytics` (45) + `test:usdt` (85) +
+  `test:withdrawcontrols` (21) + `test:autowithdraw` (16) + `test:autorefund`
+  (8) + `test:admin` (15) + `test:permissions` (16) + `test:stage6` (70) +
+  `test:stage7` (78) + `test:payoutrelay` (48) + `test:deposits` (37) +
+  `test:fees` (24) all green.
+  - ⚠️ **THE DECISION PATHS ARE UNCHANGED — this is a presentation migration.**
+    Approve / reject / mark-paid / confirm still `POST` the same endpoints with
+    the same prompts and the same "net is what gets sent, gross is what was
+    debited" wording. Row-click opens a `DetailLayout` detail built **from the
+    row already in hand** (no new `:id` endpoint), with the decision buttons in
+    its Danger zone and an "Open this user" jump.
+  - **`GET /staff/withdrawals`, `/staff/mining/topups`, `/staff/mining/refunds`
+    grew server-side `q` / `sort` / `dir` / `limit` / `offset` and now return
+    `total`** — same idiom as `GET /staff/users` (sort whitelist → column
+    literal, one WHERE for the row page AND the count). Existing fields
+    (`treasury`, `pendingTotal`, `topups`, `refunds`, …) are untouched;
+    `total`/`offset`/`limit` are additive.
+    ⚠️ **The agent-approval cap is now a bound WHERE condition, not a
+    post-fetch JS filter** — otherwise `total` and the page size are wrong for
+    a capped approver. `pendingTotal` is a dedicated aggregate over the whole
+    filtered set, never the current page.
+  - **NEW: `GET /staff/bnb-withdrawals` + `GET /staff/relay-jobs`**
+    (`withdrawals.view`). BNB gas-out requests and the per-user payout relay
+    jobs had no staff screen — the dashboard only ever counted their `failed`
+    rows. Both default to the `failed` tab (the needs-attention view) and are
+    **read-only on purpose**: a failed native send / relay job is terminal
+    (`db.ts`) and the compensating action is decided per case, never a retry
+    button that could double-spend a live on-chain balance.
+  - ⚠️ **`GET /staff/mining/reconciliation` had a latent bug: `limit` was
+    `z.number()`, so any `?limit=…` 400'd** — which is every call the new
+    panel makes. Fixed to `z.coerce.number()`. The panel is a table over that
+    endpoint (bep20), with shortfall rows highlighted.
+  - ⚠️ **Still not looked at in a browser** — same standing caveat as every
+    dashboard entry since Stage 3. Numerically covered; the visual layer wants
+    a logged-in admin session.
+  - **Next: Phase D** — Tasks & offers.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
