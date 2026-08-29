@@ -114,13 +114,16 @@ export const config = {
   // refuses to send (falls back to requiring a manual hash), same as before.
   treasuryKeyEncrypted: process.env.TREASURY_KEY_ENCRYPTED ?? "",
   treasuryKeySecret: process.env.TREASURY_KEY_SECRET ?? "",
-  // Ceiling for FULLY AUTOMATIC withdrawal (founder, 2026-08-05) — a request at
-  // or under this settles the instant it's made, no staff step at all. Above
-  // it, or if the account is held (users.withdrawal_hold_reason), it drops
-  // into the same manual queue every withdrawal used to go through — nothing
-  // about the manual path changed. The default is 50 USDT (50,000 internal
-  // points), and an Admin can tune it without a deploy.
-  autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 50000),
+  // Ceiling for FULLY AUTOMATIC withdrawal (founder, 2026-08-05; raised to
+  // $100 on 2026-08-29) — a request at or under this settles the instant it's
+  // made, no staff step at all, no KYC, no emailed code. Above it, or if the
+  // account is held (users.withdrawal_hold_reason), it drops into the same
+  // manual queue every withdrawal used to go through — nothing about the
+  // manual path changed. The default is 100 USDT (100,000 internal points):
+  // the founder's rule is "straight in and out of the user's own wallet, no
+  // approval, unless it is more than $100". An Admin can tune it without a
+  // deploy (autoSettleSettings.ts, /staff).
+  autoWithdrawMaxPoints: Number(process.env.AUTO_WITHDRAW_MAX_POINTS ?? 100000),
   // The same automatic-settlement idea, applied to a refund of a user's OWN
   // USDT deposit (routes/mining.ts POST /usdt/refunds) instead of a points
   // withdrawal (founder, 2026-08-06: "money he deposited, he can withdraw it
@@ -136,8 +139,10 @@ export const config = {
   autoRefundMaxMicro: Number(process.env.AUTO_REFUND_MAX_MICRO ?? 100_000_000), // $100
   // Rolling 24h cap on auto-settled refunds, same reasoning as
   // autoWithdrawMaxPointsPer24h below: the per-request ceiling above bounds
-  // ONE request, this bounds the SUM of many.
-  autoRefundMaxMicroPer24h: Number(process.env.AUTO_REFUND_MAX_MICRO_PER_24H ?? 15_000_000), // $15
+  // ONE request, this bounds the SUM of many. Raised to $100 on 2026-08-29 to
+  // match the per-request ceiling — the founder's rule is a single $100 line,
+  // not a lower daily total that would still send an honest user to the queue.
+  autoRefundMaxMicroPer24h: Number(process.env.AUTO_REFUND_MAX_MICRO_PER_24H ?? 100_000_000), // $100
   // Per-chain JSON-RPC endpoints. A LIST, not one URL (founder, 2026-08-01):
   // set RPC_BEP20 to a comma-separated list and callers try them in order,
   // moving to the next on a network error, a 429, or a 5xx.
@@ -281,10 +286,19 @@ export const config = {
   // 2-5MB; the web compresses before upload, and this is the hard backstop.
   kycMaxImageBytes: Number(process.env.KYC_MAX_IMAGE_BYTES ?? 4_000_000),
 
-  // Require an approved KYC before a withdrawal can be requested. On by default:
-  // you should know who you are sending money to.
+  // Require an approved KYC before a withdrawal or a deposit refund can be
+  // requested.
+  //
+  // ⚠️ OFF by default since 2026-08-29 (founder decision). The rule now is:
+  // USDT in and out of a user's OWN RoziPay wallet address is straight-through
+  // — no KYC, no staff queue, no fee — for anything up to $100. The only gates
+  // left are (a) amount over $100 -> manual admin approval, and (b) a staff
+  // withdrawal-hold on the account -> manual admin approval. This reverses the
+  // 2026-07-13 "KYC gate" decision for these paths; it does NOT touch ROZI
+  // transfers, which have their own `transferRequireKyc`. Set
+  // KYC_REQUIRED_FOR_WITHDRAWAL=true to bring the ID check back.
   kycRequiredForWithdrawal:
-    (process.env.KYC_REQUIRED_FOR_WITHDRAWAL ?? "true").toLowerCase() === "true",
+    (process.env.KYC_REQUIRED_FOR_WITHDRAWAL ?? "false").toLowerCase() === "true",
 
   // ---- Per-user deposit addresses (docs/CUSTODY_SPEC.md § 5, step 1) --------
   // ONE public extended key (xpub) per chain, at the account-derivation branch
@@ -437,14 +451,18 @@ export const config = {
   // autoWithdrawMaxPoints ceiling above — closes "many requests just under the
   // limit". A request that would push the user's own trailing-24h auto-paid
   // total over this falls back to the manual queue, same as any other refusal.
-  autoWithdrawMaxPointsPer24h: Number(process.env.AUTO_WITHDRAW_MAX_POINTS_PER_24H ?? 50000),
+  // Aligned to the $100 per-request ceiling on 2026-08-29 (one line, not two).
+  autoWithdrawMaxPointsPer24h: Number(process.env.AUTO_WITHDRAW_MAX_POINTS_PER_24H ?? 100000),
   // Soft flag (never blocks): this many withdrawal REQUESTS from one user in
   // 24h gets a staff-review flag, regardless of amount or auto/manual outcome.
   withdrawalVelocityFlagCount: Number(process.env.WITHDRAWAL_VELOCITY_FLAG_COUNT ?? 4),
   // At or above this amount, a withdrawal needs a fresh email code before it
   // can be created at all — reusing the exact email_codes machinery every
   // login/reset already relies on, not a new channel. 0 = never required.
-  stepUpMinPoints: Number(process.env.STEP_UP_MIN_POINTS ?? 4000),
+  // Set to $100 (100,000 points) on 2026-08-29 to match the auto-withdraw
+  // ceiling: anything that can settle automatically does so with no code, and
+  // anything above that is going to a human in the manual queue anyway.
+  stepUpMinPoints: Number(process.env.STEP_UP_MIN_POINTS ?? 100000),
 };
 
 export const isProdSecretsMissing =

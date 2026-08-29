@@ -166,11 +166,11 @@ console.log("\n-- signer configured, under the ceiling, but the account is HELD 
 // crossing that line; the manual-queue reject/paid behaviour for a refund
 // that never attempted auto-settle is already covered by usdt.e2e.ts.
 
-// Put the gate back so a re-run and the other suites start clean.
+// Put the gates back so a re-run and the other suites start clean.
 config.payoutMode = "manual";
 config.treasuryKeyEncrypted = "";
 config.treasuryKeySecret = "";
-config.kycRequiredForWithdrawal = true;
+config.kycRequiredForWithdrawal = false; // default is off since 2026-08-29
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

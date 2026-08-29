@@ -2106,6 +2106,45 @@ These override convenience or speed at every step:
     bonuses (~20%+100 ROZI). Unreachable at launch emission (~0). Tighten if
     real volume ever approaches the cap.
 
+- **USDT IN AND OUT OF A USER'S OWN WALLET IS STRAIGHT-THROUGH UP TO $100
+  (founder, 2026-08-29).** The founder's rule, stated plainly: a user deposits
+  to their own RoziPay wallet address and withdraws from it with **no KYC, no
+  staff queue, no fee, any amount, any time** — the *only* exceptions are
+  **amount over $100 → manual admin approval**, and **a staff withdrawal-hold
+  on the account → manual admin approval**. Implemented as four config
+  defaults in `api/src/config.ts` (no route logic changed — the gates were
+  already there, only their thresholds moved):
+  - `kycRequiredForWithdrawal` **true → false**. This **reverses the
+    2026-07-13 "KYC gate" decision** for `POST /withdrawals` (points +
+    earned-USDT) and `POST /usdt/refunds`. It does **not** touch ROZI
+    transfers (`transferRequireKyc`, separate) or the KYC feature itself
+    (`/staff → Verify IDs` still works; `kyc.ts` unchanged). Set
+    `KYC_REQUIRED_FOR_WITHDRAWAL=true` on Railway to bring it back.
+  - `autoWithdrawMaxPoints` **50000 → 100000** ($50 → $100) and
+    `autoWithdrawMaxPointsPer24h` **50000 → 100000** — one $100 line, per
+    request and per rolling 24h. Above it, the request stays `pending` in the
+    **unchanged** manual Agent→Manager queue (`/staff` withdrawal queue) —
+    that is the "goes for admin approval" path, nothing about it changed.
+  - `autoRefundMaxMicroPer24h` **$15 → $100** (per-request `autoRefundMaxMicro`
+    was already $100).
+  - `stepUpMinPoints` **4000 → 100000** — the emailed step-up code now never
+    fires below the auto ceiling; anything above it is going to a human anyway.
+  - ⚠️ **THIS ONLY CHANGES BEHAVIOUR ONCE THE MONEY EXISTS TO SEND.**
+    (a) `getAutoWithdrawMaxPoints()` / `getAutoRefundMaxMicro()` read
+    `app_settings` FIRST, falling back to the config default — if the ceiling
+    was ever set in `/staff → Withdrawal fee`, that row still wins; confirm it
+    reads 100000 / $100 there. (b) The **deposit-refund** path signs from the
+    user's own derived address and needs no treasury — it works now. (c) The
+    **earned-USDT / points withdrawal** path still prefunds from the treasury,
+    which holds **$0/0 BNB** — those still fail-and-return until it is funded.
+    (d) Fees: the relay refund path is already $0; for `/withdrawals` confirm
+    `withdrawal_fee_points` + gas fee read 0/0%/$0 in `/staff`.
+  - Verified: `test:usdt` (85), `test:autowithdraw` (16), `test:autorefund`
+    (8), `test:withdrawcontrols` (21), `test:fees` (24), `test:payoutrelay`
+    (48), `test:kyc` (43), `test:wallet` (52), `test:stage4` (48),
+    `test:deposits` (37), `test:mining:e2e` (62) — all green; api + web
+    typecheck clean.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

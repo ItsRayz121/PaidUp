@@ -361,14 +361,16 @@ check("the ledger still refuses a 'withdrawal' row outright (database-level)",
 
 const ADDR = "0x1234567890123456789012345678901234567890";
 
-// The ID check gates a refund exactly like it gates a withdrawal: we are sending
-// real money to a real address, and a refund is the obvious laundering shape
-// (deposit, ask for it back somewhere else).
+// The ID check, WHEN TURNED ON, gates a refund exactly like it gates a
+// withdrawal. It is off by default since 2026-08-29 (founder: straight in/out
+// of the user's own wallet, no KYC, up to $100) — so this flips it on to prove
+// the gate still works, then off again for the money-maths tests below.
+config.kycRequiredForWithdrawal = true;
 res = await app.inject({
   method: "POST", url: "/usdt/refunds", headers: tok(user),
   payload: { amount: 1, address: ADDR },
 });
-check("a refund is refused until the ID check passes", res.statusCode === 403, res.body);
+check("a refund is refused while the ID check is on", res.statusCode === 403, res.body);
 
 config.kycRequiredForWithdrawal = false; // rest of the suite tests the money maths
 
@@ -451,7 +453,7 @@ res = await app.inject({
 check("a user with ROZI but no deposit cannot refund a cent",
   res.statusCode === 400, res.body);
 
-config.kycRequiredForWithdrawal = true; // leave the gate as we found it
+config.kycRequiredForWithdrawal = false; // back to the default (off since 2026-08-29)
 
 console.log("\n-- ONE CHAIN IN, ONE CHAIN OUT: payouts are BEP20 only --");
 

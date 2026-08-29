@@ -117,8 +117,8 @@ console.log("\n-- onchain mode + signer configured, above the auto ceiling => st
     "0x0000000000000000000000000000000000000000000000000000000000000001",
   );
   const u = await mkUser("autow3");
-  await fund(u, 100_000);
   const overCeiling = config.autoWithdrawMaxPoints + 1000;
+  await fund(u, overCeiling + 10_000); // enough balance to actually place an over-ceiling request
   const r = await app.inject({
     method: "POST", url: "/withdrawals", headers: tok(u),
     payload: { amountPoints: overCeiling, chain: "bep20", address: testAddress() },
