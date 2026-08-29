@@ -397,6 +397,18 @@ export const config = {
   // the sustained per-block cost.
   nativeDepositScanEnabled: (process.env.NATIVE_DEPOSIT_SCAN_ENABLED ?? "false") === "true",
 
+  // How many blocks the native (BNB) walker covers per tick. Tunable without a
+  // redeploy because BSC's block rate is not fixed: post-Maxwell (2025) it
+  // produces ~200k blocks/day (≈0.45s/block), so the old hard-coded 100 could
+  // not keep pace with the chain even in steady state — the cursor would fall
+  // progressively further behind. At the default DEPOSIT_SCAN_INTERVAL_MS this
+  // needs to be ≳ (blocks/day ÷ ticks/day) to stay caught up; 600 gives margin.
+  // ⚠️ Every unit here is one more eth_getBlockByNumber(..., true) per tick,
+  // 24/7 — the exact cost the nativeDepositScanEnabled comment above is about.
+  // Raise it only as far as the RPC provider's free allowance actually
+  // sustains, and watch the provider dashboard after changing it.
+  nativeDepositScanBlockRange: Math.max(1, Number(process.env.NATIVE_DEPOSIT_SCAN_BLOCK_RANGE ?? 100)),
+
   // Below this, sweeping a deposit costs more in gas than it moves — CUSTODY_SPEC.md
   // § 2a prices a BEP20 sweep at ~$0.15-0.25. Micro-USDT.
   sweepDustFloorMicro: Number(process.env.SWEEP_DUST_FLOOR_MICRO ?? 500_000), // $0.50

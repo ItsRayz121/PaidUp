@@ -16,9 +16,13 @@
 // tick; this cap only matters after downtime.
 import { rpcCall } from "../../rpc.ts";
 import { sql } from "../../db.ts";
+import { config } from "../../config.ts";
 import type { ObservedNativeDeposit } from "../types.ts";
 
-const MAX_NATIVE_BLOCK_RANGE = 100;
+// Per-tick block budget. Configurable (NATIVE_DEPOSIT_SCAN_BLOCK_RANGE) because
+// BSC's block rate is not fixed — see the comment on nativeDepositScanBlockRange
+// in config.ts. Default 100.
+const MAX_NATIVE_BLOCK_RANGE = config.nativeDepositScanBlockRange;
 
 type EvmTx = { hash: string; from: string; to: string | null; value: string; blockHash: string };
 type EvmBlockWithTxs = { number: string; hash: string; transactions: EvmTx[] } | null;
