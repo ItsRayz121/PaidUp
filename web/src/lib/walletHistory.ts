@@ -23,7 +23,7 @@ import {
 } from "@/components/icons";
 import {
   type LedgerEntry, type RoziEntry, type Withdrawal, type BnbWithdrawal, type UsdtTopup, type UsdtRefund,
-  type UsdtTaskReward, type BnbDeposit,
+  type UsdtTaskReward, type BnbDeposit, type BnbOnchainRow,
 } from "@/lib/api";
 import { formatRozi, usdtFromMicro, pointsToRoziMicro, pointsToUsdt, formatBnbWei } from "@/lib/format";
 
@@ -51,7 +51,7 @@ export type Row = {
   };
 };
 
-const HISTORY_PREVIEW = 2;
+const HISTORY_PREVIEW = 3;
 
 // The two newest rows, plus anything still in flight — a pending/sending row
 // is real money in flight and must never disappear just because newer rows
@@ -130,10 +130,14 @@ export function unifyHistory(args: {
   refunds: UsdtRefund[];
   bnb: BnbWithdrawal[];
   bnbDeposits?: BnbDeposit[];
+  // On-demand BscScan rows for the user's own BNB address (founder,
+  // 2026-08-29) — the only way incoming BNB shows up, since the native
+  // deposit scanner is off. Deduped against our own withdrawal rows by hash.
+  bnbOnchain?: BnbOnchainRow[];
   taskUsdt?: UsdtTaskReward[];
   t: (key: string, vars?: Record<string, string>) => string;
 }): Row[] {
-  const { rozi, withdrawals, topups, refunds, bnb, bnbDeposits = [], taskUsdt = [], t } = args;
+  const { rozi, withdrawals, topups, refunds, bnb, bnbDeposits = [], bnbOnchain = [], taskUsdt = [], t } = args;
 
   const roziRows: Row[] = rozi
     .filter((e) => WALLET_ROZI_SOURCES.has(e.source_type))
@@ -219,8 +223,32 @@ export function unifyHistory(args: {
     };
   });
 
+  // BscScan rows for the user's own BNB address. A hash we already show from
+  // our own bnb withdrawal / native-deposit rows wins (it carries our status),
+  // so those are filtered out here.
+  const knownHashes = new Set(
+    [...bnb, ...bnbDeposits].map((r) => ("txHash" in r ? r.txHash : undefined)).filter(Boolean).map((h) => (h as string).toLowerCase()),
+  );
+  const bnbOnchainRows: Row[] = bnbOnchain
+    .filter((r) => !knownHashes.has(r.hash.toLowerCase()))
+    .map((r) => {
+      const credit = r.direction === "in";
+      const amountText = `${credit ? "+" : "−"}${formatBnbWei(r.amountWei)}`;
+      return {
+        key: `bo:${r.hash}`,
+        label: credit ? t("wallet.tx.bnbDeposit") : t("wallet.tx.bnbWithdrawal"),
+        at: r.at, token: "BNB" as const, kind: (credit ? "received" : "sent") as Row["kind"],
+        amountText, credit, status: "paid" as const, Icon: credit ? ReceiveIcon : SendIcon,
+        detail: {
+          amountText, statusText: "Completed", network: "bep20",
+          from: credit ? r.from : undefined, to: credit ? undefined : r.to, txHash: r.hash,
+        },
+      };
+    });
+
   return [
-    ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows, ...bnbDepositRows, ...taskUsdtRows,
+    ...roziRows, ...withdrawalRows, ...topupRows, ...refundRows, ...bnbRows, ...bnbDepositRows,
+    ...bnbOnchainRows, ...taskUsdtRows,
   ].sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
 }
 

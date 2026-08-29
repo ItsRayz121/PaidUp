@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, SectionTitle } from "@/components/ui";
+import { Card, SectionTitle, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { ArrowRightIcon, CopyIcon, CheckIcon } from "@/components/icons";
 import { UsdtLogo } from "@/components/tokenIcons";
@@ -30,6 +30,7 @@ export default function UsdtWalletPage() {
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
   const [copied, setCopied] = useState(false);
   const [openTx, setOpenTx] = useState<Row | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -40,10 +41,13 @@ export default function UsdtWalletPage() {
   const address = usdt.data?.personalAddress ?? usdt.data?.treasuryAddress ?? null;
   const chain = usdt.data?.treasuryChain ?? "bep20";
 
-  const rows = unifyHistory({
+  const allRows = unifyHistory({
     ledger: led.data?.entries ?? [], rozi: [], withdrawals: withdrawals.data?.requests ?? [],
     topups: usdt.data?.topups ?? [], refunds: usdt.data?.refunds ?? [], bnb: [], t,
-  }).filter((r) => r.token === "USDT").slice(0, 4);
+  }).filter((r) => r.token === "USDT");
+  const PREVIEW = 3;
+  const rows = showAll ? allRows : allRows.slice(0, PREVIEW);
+  const hiddenCount = allRows.length - rows.length;
 
   function copyAddress() {
     if (!address) return;
@@ -100,6 +104,13 @@ export default function UsdtWalletPage() {
           <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.usdt")} />
         ) : (
           <HistoryList rows={rows} onOpen={setOpenTx} />
+        )}
+        {!led.loading && !led.error && (hiddenCount > 0 || showAll) && (
+          <div className="mt-3">
+            <Button onClick={() => setShowAll(!showAll)} variant="ghost" size="md">
+              {showAll ? t("wallet.history.less") : t("wallet.history.more")}
+            </Button>
+          </div>
         )}
       </section>
 

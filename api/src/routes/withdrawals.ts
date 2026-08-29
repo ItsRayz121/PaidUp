@@ -2,8 +2,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { parseEther } from "viem";
-import { sql, now, newId, balanceOf, postLedger, getSetting, earnedUsdtBalanceMicroOf, postEarnedUsdt } from "../db.ts";
+import { sql, now, newId, balanceOf, postLedger, getSetting, earnedUsdtBalanceMicroOf, postEarnedUsdt, getOrCreateDepositAddress } from "../db.ts";
 import { config } from "../config.ts";
+import { custodyEnabled } from "../custody.ts";
+import { fetchBnbAddressHistory } from "../bscscan.ts";
 import { getUserId, requireActiveUser, issueCode, consumeCode } from "../auth.ts";
 import { validateAddress, chainIsOffered, chainById, type ChainId } from "../chains.ts";
 import { checkPayoutAddressReuse } from "../fraud.ts";
@@ -588,6 +590,23 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       requests: rows.map((r) => ({
         id: r.id, address: r.address, amountWei: r.amount_wei, status: r.status,
         txHash: r.tx_hash ?? undefined, at: r.created_at, completedAt: r.completed_at ?? undefined,
+      })),
+    };
+  }));
+
+  // On-demand BNB history for /wallet/bnb (founder, 2026-08-29). The native BNB
+  // deposit scanner is off (it cost real money running 24/7), so incoming BNB
+  // never lands in native_deposits and the screen looked empty even with a
+  // balance. This reads the chain HERE — only when the user opens that screen —
+  // for their own derived address, cached 60s, never throws (see bscscan.ts).
+  app.get("/wallet/bnb/history", guard(async (userId) => {
+    if (!custodyEnabled("bep20")) return { rows: [] };
+    const address = await getOrCreateDepositAddress(userId, "bep20");
+    const rows = await fetchBnbAddressHistory(address);
+    return {
+      rows: rows.map((r) => ({
+        hash: r.hash, from: r.from, to: r.to, amountWei: r.valueWei,
+        at: r.at, direction: r.direction,
       })),
     };
   }));

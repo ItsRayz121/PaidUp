@@ -15,7 +15,7 @@ import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
-  fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards,
+  fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards, fetchBnbOnchainHistory,
 } from "@/lib/api";
 import { usdtFromMicro, formatUsdtMicro, formatBnbWei } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
@@ -39,6 +39,7 @@ export default function WalletPage() {
   const mining = useApi(fetchMiningState, []);
   const withdrawals = useApi(fetchWithdrawals, []);
   const bnbWithdrawals = useApi(fetchBnbWithdrawals, []);
+  const bnbOnchain = useApi(fetchBnbOnchainHistory, []);
   const taskUsdt = useApi(fetchUsdtTaskRewards, []);
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
@@ -75,6 +76,7 @@ export default function WalletPage() {
     refunds: usdt.data?.refunds ?? [],
     bnb: bnbWithdrawals.data?.requests ?? [],
     bnbDeposits: usdt.data?.nativeDeposits ?? [],
+    bnbOnchain: bnbOnchain.data?.rows ?? [],
     taskUsdt: taskUsdt.data?.rewards ?? [],
     t,
   });

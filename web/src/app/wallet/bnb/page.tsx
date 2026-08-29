@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, SectionTitle } from "@/components/ui";
+import { Card, SectionTitle, Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { ArrowRightIcon, CopyIcon, CheckIcon } from "@/components/icons";
 import { BnbLogo } from "@/components/tokenIcons";
@@ -11,7 +11,7 @@ import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchMiningState, fetchUsdt, fetchBnbWithdrawals } from "@/lib/api";
+import { fetchMiningState, fetchUsdt, fetchBnbWithdrawals, fetchBnbOnchainHistory } from "@/lib/api";
 import { formatBnbWei } from "@/lib/format";
 import { chainLabel } from "@/lib/chains";
 import { unifyHistory, type Row } from "@/lib/walletHistory";
@@ -28,8 +28,10 @@ export default function BnbWalletPage() {
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
   const bnbWithdrawals = useApi(fetchBnbWithdrawals, []);
+  const onchain = useApi(fetchBnbOnchainHistory, []);
   const [copied, setCopied] = useState(false);
   const [openTx, setOpenTx] = useState<Row | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -37,10 +39,14 @@ export default function BnbWalletPage() {
   const depositAddress = usdt.data?.personalAddress ?? null;
   const chain = usdt.data?.treasuryChain ?? "bep20";
 
-  const rows = unifyHistory({
+  const allRows = unifyHistory({
     ledger: [], rozi: [], withdrawals: [], topups: [], refunds: [],
-    bnb: bnbWithdrawals.data?.requests ?? [], bnbDeposits: usdt.data?.nativeDeposits ?? [], t,
-  }).slice(0, 4);
+    bnb: bnbWithdrawals.data?.requests ?? [], bnbDeposits: usdt.data?.nativeDeposits ?? [],
+    bnbOnchain: onchain.data?.rows ?? [], t,
+  });
+  const PREVIEW = 3;
+  const rows = showAll ? allRows : allRows.slice(0, PREVIEW);
+  const hiddenCount = allRows.length - rows.length;
 
   function copyAddress() {
     if (!depositAddress) return;
@@ -94,6 +100,13 @@ export default function BnbWalletPage() {
           <EmptyState title={t("wallet.noHistoryTitle")} body={t("wallet.noHistoryBody.bnb")} />
         ) : (
           <HistoryList rows={rows} onOpen={setOpenTx} />
+        )}
+        {!bnbWithdrawals.loading && !bnbWithdrawals.error && (hiddenCount > 0 || showAll) && (
+          <div className="mt-3">
+            <Button onClick={() => setShowAll(!showAll)} variant="ghost" size="md">
+              {showAll ? t("wallet.history.less") : t("wallet.history.more")}
+            </Button>
+          </div>
         )}
       </section>
 

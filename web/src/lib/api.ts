@@ -405,6 +405,16 @@ export type BnbWithdrawal = {
 };
 export const fetchBnbWithdrawals = () =>
   apiFetch<{ requests: BnbWithdrawal[] }>("/wallet/bnb/withdrawals");
+
+// On-demand chain history for the user's derived BNB address (founder,
+// 2026-08-29). Fetched only when /wallet/bnb opens; empty when no BscScan key
+// is set. Never throws server-side — an empty list, not an error.
+export type BnbOnchainRow = {
+  hash: string; from: string; to: string; amountWei: string;
+  at: string; direction: "in" | "out";
+};
+export const fetchBnbOnchainHistory = () =>
+  apiFetch<{ rows: BnbOnchainRow[] }>("/wallet/bnb/history");
 export const createBnbWithdrawal = (address: string, amountBnb: string) =>
   apiFetch<{ ok: true; id: string; status: "pending" }>("/wallet/bnb/withdraw", {
     method: "POST", body: JSON.stringify({ address, amountBnb }),

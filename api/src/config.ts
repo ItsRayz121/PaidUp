@@ -310,6 +310,14 @@ export const config = {
     bep20: process.env.CUSTODY_XPUB_BEP20 ?? "",
   },
 
+  // BscScan API key — used ONLY for the on-demand BNB history lookup on
+  // /wallet/bnb (api/src/bscscan.ts), when a user opens that screen. Never on
+  // a timer: the native BNB deposit scanner is deliberately off (it cost real
+  // money running 24/7), so this read-when-asked lookup is how incoming BNB
+  // shows up in history at all. Empty => the BNB screen just shows our own
+  // withdrawal rows, no error. Free key at bscscan.com/myapikey.
+  bscscanApiKey: process.env.BSCSCAN_API_KEY ?? "",
+
   // ---- Sweep signing (docs/CUSTODY_SPEC.md § 5, steps 2-4) -------------------
   // ⚠️ THIS IS A STRICTLY BIGGER SECRET THAN THE TREASURY KEY. Where the
   // treasury key can only move the treasury's own balance and is rotatable

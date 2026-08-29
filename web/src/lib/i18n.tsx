@@ -259,6 +259,7 @@ const copy: Record<string, string> = {
   // opening. Money still waiting is never inside that count: see the wallet
   // screen's preview() note.
   "wallet.history.seeAll": "See all {count}",
+  "wallet.history.more": "See more",
   "wallet.history.less": "Show less",
   // ---- What each kind of ROZI transaction is called ------------------------
   // ⚠️ ONE PLAIN SENTENCE PER SOURCE TYPE, and the list must cover every value
