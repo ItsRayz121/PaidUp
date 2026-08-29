@@ -25,7 +25,7 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
 
 const empty: CustomTaskInput = {
-  title: "", points: 100, rewardType: "points", rewardUsdtMicro: 0, verifyMode: "proof",
+  title: "", rewardType: "rozi", rewardRoziMicro: 50_000_000, rewardUsdtMicro: 0, verifyMode: "proof",
   instructions: "", proofLabel: "", proofHeading: "Submit your proof", proofHelp: "", proofRequired: true,
   actionUrl: "", buttonLabel: "Open task", icon: "", logoAssetId: null,
   minutes: 1, country: "Pakistan", status: "draft", startsAt: null, endsAt: null,
@@ -71,7 +71,11 @@ export function TasksPanel() {
   function startEdit(t: CustomTask) {
     setEditId(t.id);
     setForm({
-      title: t.title, points: t.points, rewardType: t.reward_type,
+      // Legacy custom rows migrate to reward_type 'rozi'; anything still
+      // reading 'points'/'both' with only points is shown as ROZI.
+      title: t.title,
+      rewardType: (t.reward_type === "usdt" ? "usdt" : t.reward_type === "both" ? "both" : "rozi"),
+      rewardRoziMicro: Number(t.reward_rozi_micro ?? 0),
       rewardUsdtMicro: Number(t.reward_usdt_micro), verifyMode: t.verify_mode,
       instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
       proofHeading: t.proof_heading ?? "Submit your proof", proofHelp: t.proof_help ?? "",
@@ -190,23 +194,24 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
               <select className={I} value={value.rewardType} onChange={(e) => {
                 const kind = e.target.value as CustomTaskInput["rewardType"];
                 onChange({ ...value, rewardType: kind,
-                  points: kind === "usdt" ? 0 : Math.max(1, value.points),
-                  rewardUsdtMicro: kind === "points" ? 0 : Math.max(1, value.rewardUsdtMicro) });
+                  rewardRoziMicro: kind === "usdt" ? 0 : Math.max(1_000_000, value.rewardRoziMicro),
+                  rewardUsdtMicro: kind === "rozi" ? 0 : Math.max(1, value.rewardUsdtMicro) });
               }}>
-                <option value="points">Points only</option><option value="usdt">USDT only</option>
-                <option value="both">Points + USDT</option>
+                <option value="rozi">ROZI only</option><option value="usdt">USDT only</option>
+                <option value="both">ROZI + USDT</option>
               </select></label>
-            {value.rewardType !== "usdt" && <label><span className={L}>Points</span>
-              <input type="number" min={1} className={I} value={value.points}
-                onChange={(e) => set("points", Number(e.target.value))} /></label>}
-            {value.rewardType !== "points" && <label><span className={L}>USDT</span>
+            {value.rewardType !== "usdt" && <label><span className={L}>ROZI</span>
+              <input type="number" min={1} step="1" className={I}
+                value={(value.rewardRoziMicro / 1_000_000).toString()}
+                onChange={(e) => set("rewardRoziMicro", Math.round(Number(e.target.value) * 1_000_000))} /></label>}
+            {value.rewardType !== "rozi" && <label><span className={L}>USDT</span>
               <input type="number" min="0.000001" step="0.000001" className={I}
                 value={(value.rewardUsdtMicro / 1_000_000).toString()}
                 onChange={(e) => set("rewardUsdtMicro", Math.round(Number(e.target.value) * 1_000_000))} /></label>}
           </div>
           <p className="mt-2 text-xs font-semibold text-brand-ink">
-            User receives {value.points > 0 ? `${formatPoints(value.points)} points` : ""}
-            {value.points > 0 && value.rewardUsdtMicro > 0 ? " + " : ""}
+            User receives {value.rewardRoziMicro > 0 ? `${(value.rewardRoziMicro / 1_000_000).toLocaleString()} ROZI` : ""}
+            {value.rewardRoziMicro > 0 && value.rewardUsdtMicro > 0 ? " + " : ""}
             {value.rewardUsdtMicro > 0 ? formatUsdtMicro(value.rewardUsdtMicro) : ""}
           </p>
         </div>
@@ -373,7 +378,7 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
                 value={value.budgetConversions ?? ""}
                 onChange={(e) => set("budgetConversions",
                   e.target.value === "" ? null : Number(e.target.value))} /></label>
-            <label><span className={L}>Max points to pay</span>
+            <label><span className={L}>Max ROZI to pay</span>
               <input type="number" min={1} className={I} placeholder="no limit"
                 value={value.budgetPoints ?? ""}
                 onChange={(e) => set("budgetPoints",
@@ -434,7 +439,7 @@ function CampaignBudget({ t }: { t: CustomTask }) {
         {t.budget_points !== null && (
           <span>
             <span className="num font-semibold text-brand-ink">{formatPoints(t.spentPoints)}</span>
-            {" / "}<span className="num">{formatPoints(t.budget_points)}</span> pts
+            {" / "}<span className="num">{formatPoints(t.budget_points)}</span> ROZI
           </span>
         )}
         {t.budget_usdt_micro !== null && (
@@ -512,8 +517,8 @@ function TaskCard({ t, onEdit, onLifecycle }: {
           <p className="font-semibold text-brand-ink">{t.title}</p>
           <p className="mt-0.5 text-xs text-muted">
             <span className="num font-semibold text-brand">
-              {t.points > 0 ? `${formatPoints(t.points)} pts` : ""}
-              {t.points > 0 && Number(t.reward_usdt_micro) > 0 ? " + " : ""}
+              {Number(t.reward_rozi_micro) > 0 ? `${(Number(t.reward_rozi_micro) / 1_000_000).toLocaleString()} ROZI` : ""}
+              {Number(t.reward_rozi_micro) > 0 && Number(t.reward_usdt_micro) > 0 ? " + " : ""}
               {Number(t.reward_usdt_micro) > 0 ? formatUsdtMicro(Number(t.reward_usdt_micro)) : ""}
             </span> ·{" "}
             {t.verify_mode === "proof"

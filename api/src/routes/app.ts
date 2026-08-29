@@ -112,6 +112,7 @@ export async function appRoutes(app: FastifyInstance) {
         return [{
           id: t.id, type: t.type, title: t.title, points: t.points,
           rewardType: t.reward_type ?? "points",
+          rewardRoziMicro: Number(t.reward_rozi_micro ?? 0),
           rewardUsdtMicro: Number(t.reward_usdt_micro ?? 0),
           network: t.network, advertiser: t.advertiser, minutes: t.minutes,
           requirement: t.requirement ?? undefined,
@@ -205,9 +206,9 @@ export async function appRoutes(app: FastifyInstance) {
 
     const proof = await sql.get<{
       status: string; review_note: string | null; created_at: string;
-      reward_points: number | null; reward_usdt_micro: string | number | null;
+      reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
     }>(
-      `SELECT status, review_note, created_at, reward_points, reward_usdt_micro FROM task_proofs
+      `SELECT status, review_note, created_at, reward_points, reward_rozi_micro, reward_usdt_micro FROM task_proofs
        WHERE task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1`, id, userId,
     );
 
@@ -217,6 +218,7 @@ export async function appRoutes(app: FastifyInstance) {
         id: t.id, type: t.type, title: t.title,
         points: proof?.reward_points ?? t.points,
         rewardType: t.reward_type ?? "points",
+        rewardRoziMicro: Number(proof?.reward_rozi_micro ?? t.reward_rozi_micro ?? 0),
         rewardUsdtMicro: Number(proof?.reward_usdt_micro ?? t.reward_usdt_micro ?? 0),
         network: t.network, advertiser: t.advertiser, minutes: t.minutes,
         requirement: t.requirement ?? undefined,
@@ -322,11 +324,12 @@ export async function appRoutes(app: FastifyInstance) {
       const at = now();
       await tx.run(
         `INSERT INTO task_proofs
-          (id, task_id, user_id, proof_text, answers, status, reward_points, reward_usdt_micro,
+          (id, task_id, user_id, proof_text, answers, status, reward_points, reward_rozi_micro, reward_usdt_micro,
            task_title_snapshot, task_icon_snapshot, task_logo_asset_snapshot, created_at)
-         VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?)`,
         newId(), taskId, userId, proofText, answersJson,
-        Number(task.points ?? 0), Number(task.reward_usdt_micro ?? 0), String(task.title ?? "Task"),
+        Number(task.points ?? 0), Number(task.reward_rozi_micro ?? 0), Number(task.reward_usdt_micro ?? 0),
+        String(task.title ?? "Task"),
         task.icon ?? null, task.logo_asset_id ?? null, at,
       );
       await tx.run(

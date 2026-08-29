@@ -84,7 +84,7 @@ function TaskDetail({ task, fields, onSent }: {
               {category && <span className="rounded-full bg-brand-tint px-2 py-0.5 font-semibold text-brand">{category}</span>}
             </p>
           </div>
-          <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
+          <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
         </div>
 
         {task.instructions && (
@@ -205,7 +205,7 @@ function ProofForm({ task, fields, onSent }: {
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2">
-        <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
+        <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
         <span className="text-sm text-muted">when we check your answer</span>
       </div>
 

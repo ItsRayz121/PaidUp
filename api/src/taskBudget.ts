@@ -61,8 +61,13 @@ export function lockCampaign(t: Pick<TxApi, "run">, taskId: string) {
 export async function campaignSpend(
   t: Pick<TxApi, "get">, taskId: string,
 ): Promise<{ conversions: number; points: number; usdtMicro: number }> {
+  // `pts` folds in a custom/RoziPay task's ROZI reward as whole ROZI (founder,
+  // 2026-08-29 — custom tasks pay real mined-token ROZI now, `points` is 0 for
+  // them). A network task has reward_rozi_micro = 0, so this adds nothing there.
+  // Keeps "Max ROZI/points to pay" a live cap for both kinds of task.
   const row = await t.get<{ n: number; pts: number; usdt: string | number }>(
-    `SELECT COUNT(*)::int AS n, COALESCE(SUM(points), 0)::int AS pts,
+    `SELECT COUNT(*)::int AS n,
+            COALESCE(SUM(points), 0)::int + (COALESCE(SUM(reward_rozi_micro), 0) / 1000000)::int AS pts,
             COALESCE(SUM(usdt_micro), 0) AS usdt
        FROM task_completions WHERE task_id = ? AND status = 'credited'`,
     taskId,
@@ -144,7 +149,7 @@ export async function campaignMoney(pointsPerUsdt: number): Promise<Map<string, 
   }>(
     `SELECT c.task_id,
             COUNT(*)::int AS n,
-            COALESCE(SUM(c.points), 0)::int AS pts,
+            COALESCE(SUM(c.points), 0)::int + (COALESCE(SUM(c.reward_rozi_micro), 0) / 1000000)::int AS pts,
             COALESCE(SUM(c.usdt_micro), 0) AS usdt,
             COALESCE((
               SELECT SUM(l.amount) FROM ledger_entries l

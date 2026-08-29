@@ -440,7 +440,6 @@ export default function MinePage() {
                 <p className="text-[15px] font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>
                 <p className="text-xs text-muted">
                   {t("mine.boost.ad.body", {
-                    speed: s.hashrate.toLocaleString(),
                     pct: String(s.ads.boostPct),
                     hours: String(s.ads.boostHours),
                     n: String(adsLeft),

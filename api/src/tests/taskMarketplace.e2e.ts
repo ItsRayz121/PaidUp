@@ -31,7 +31,7 @@ const earner = await user("earner");
 
 console.log("\n-- lifecycle, reward snapshots and earned USDT --");
 const made = await app.inject({ method: "POST", url: "/staff/tasks", headers: auth(admin), payload: {
-  title: "Verify an EVM wallet", points: 25, rewardType: "both", rewardUsdtMicro: 125_000,
+  title: "Verify an EVM wallet", rewardRoziMicro: 25_000_000, rewardType: "both", rewardUsdtMicro: 125_000,
   verifyMode: "proof", proofRequired: true, proofHeading: "Payment wallet",
   proofHelp: "Paste an address you control.", status: "active", countries: ["ALL"],
 } });
@@ -54,9 +54,9 @@ const filed = await app.inject({ method: "POST", url: `/tasks/${taskId}/proof`, 
   proof: "wallet", answers: { [fieldId]: "0x000000000000000000000000000000000000dEaD" },
 } });
 check("valid checksummed wallet proof is filed", filed.statusCode === 200, filed.body);
-const proof = await sql.get<{ id: string; reward_points: number; reward_usdt_micro: string | number }>(
-  "SELECT id,reward_points,reward_usdt_micro FROM task_proofs WHERE task_id=? AND user_id=?", taskId, earner);
-check("both reward amounts are snapshotted", proof?.reward_points === 25 && Number(proof?.reward_usdt_micro) === 125_000);
+const proof = await sql.get<{ id: string; reward_rozi_micro: string | number; reward_usdt_micro: string | number }>(
+  "SELECT id,reward_rozi_micro,reward_usdt_micro FROM task_proofs WHERE task_id=? AND user_id=?", taskId, earner);
+check("both reward amounts are snapshotted", Number(proof?.reward_rozi_micro) === 25_000_000 && Number(proof?.reward_usdt_micro) === 125_000);
 
 await app.inject({ method: "POST", url: `/staff/tasks/${taskId}/lifecycle`, headers: auth(admin), payload: { action: "pause" } });
 const available = await app.inject({ method: "GET", url: "/tasks?view=available", headers: auth(earner) });
@@ -64,7 +64,7 @@ check("paused task leaves Available", !available.json().tasks.some((t: { id: str
 
 const approved = await app.inject({ method: "POST", url: `/staff/task-proofs/${proof?.id}/decision`, headers: auth(admin), payload: { action: "approve" } });
 check("a proof filed before pause remains payable", approved.statusCode === 200 && approved.json().creditedUsdtMicro === 125_000, approved.body);
-check("points portion credited", Number((await sql.get<{ bal: number }>("SELECT COALESCE(SUM(amount),0)::int AS bal FROM ledger_entries WHERE user_id=?", earner))?.bal) === 25);
+check("ROZI portion credited", Number((await sql.get<{ bal: number }>("SELECT COALESCE(SUM(amount),0)::int AS bal FROM rozi_ledger WHERE user_id=? AND source_type='task_reward'", earner))?.bal) === 25_000_000);
 check("USDT portion credited to earned ledger", await earnedUsdtBalanceMicroOf(earner) === 125_000);
 
 const history = await app.inject({ method: "GET", url: "/tasks?view=history", headers: auth(earner) });

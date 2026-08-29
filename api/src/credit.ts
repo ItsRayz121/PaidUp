@@ -11,7 +11,7 @@
 // It is only ever called from something that has ALREADY verified the completion
 // — a signed network postback, or a staff member approving a proof (a real human
 // decision, audit-logged, never the user's own click).
-import { sql, now, newId, postLedger, postEarnedUsdt } from "./db.ts";
+import { sql, now, newId, postLedger, postEarnedUsdt, postRozi } from "./db.ts";
 import { config } from "./config.ts";
 import {
   lockCampaign, campaignSpend, overBudget, markExhausted,
@@ -19,7 +19,8 @@ import {
 } from "./taskBudget.ts";
 import { checkGeoMismatch } from "./fraud.ts";
 import { accrue, grantBoost } from "./mining/engine.ts";
-import { loadMiningSettings } from "./mining/settings.ts";
+import { loadMiningSettings, totalEmittedMicro } from "./mining/settings.ts";
+import { toMicro } from "./mining/core.ts";
 import { enabled as flagEnabled } from "./flags.ts";
 
 type Logger = { error: (obj: unknown, msg?: string) => void };
@@ -42,7 +43,11 @@ export type CreditRequest = {
   points: number;
   /** Direct task reward in micro-USDT, kept separate from deposited USDT. */
   usdtMicro?: number;
-  rewardType?: "points" | "usdt" | "both";
+  /** Direct task reward in MICRO-ROZI — the real mined token (rozi_ledger,
+   *  non-withdrawable, counts against the 21M cap). Custom/RoziPay tasks only;
+   *  network postbacks never set this. Founder, 2026-08-29. */
+  roziMicro?: number;
+  rewardType?: "points" | "rozi" | "usdt" | "both";
   offerType: string;
   /** Stored on the completion so an Agent can resolve a dispute later. */
   payload: unknown;
@@ -72,7 +77,7 @@ export type CreditOutcome =
   // A refusal, not a deferral: the campaign is now paused and this completion
   // will not become creditable by waiting.
   | { status: "budget_exhausted"; reason: "conversions" | "points" | "usdt"; used: number; cap: number }
-  | { status: "credited"; completionId: string; points: number; usdtMicro: number };
+  | { status: "credited"; completionId: string; points: number; usdtMicro: number; roziMicro: number };
 
 // A credited task boosts the user's mining hashrate for a while. Accrue first so
 // the seconds already mined this session are paid at the OLD rate — the boost
@@ -87,7 +92,11 @@ async function grantTaskBoost(userId: string, completionId: string): Promise<voi
 export async function creditCompletion(req: CreditRequest, log: Logger): Promise<CreditOutcome> {
   const { userId, network, externalId, taskId, points, offerType, payload, net } = req;
   const usdtMicro = Math.max(0, Math.trunc(req.usdtMicro ?? 0));
-  const rewardType = req.rewardType ?? (usdtMicro > 0 ? (points > 0 ? "both" : "usdt") : "points");
+  const roziMicro = Math.max(0, Math.trunc(req.roziMicro ?? 0));
+  const rewardType = req.rewardType
+    ?? (roziMicro > 0 && points === 0 && usdtMicro === 0 ? "rozi"
+      : usdtMicro > 0 ? (points > 0 ? "both" : "usdt")
+      : "points");
 
   // ---- Idempotency — already processed this completion? Don't re-credit.
   const dup = await sql.get<{ status: string }>(
@@ -163,7 +172,11 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
         "SELECT budget_conversions, budget_points, budget_usdt_micro FROM tasks WHERE id = ?", taskId,
       );
       if (budget) {
-        const v = overBudget(budget, await campaignSpend(t, taskId), points, usdtMicro);
+        // The "points" cap now also caps whole-ROZI spend on a custom task
+        // (see campaignSpend). Pass the ROZI reward of THIS completion, as
+        // whole ROZI, as part of the incremental amount.
+        const pointsInc = points + Math.floor(roziMicro / 1_000_000);
+        const v = overBudget(budget, await campaignSpend(t, taskId), pointsInc, usdtMicro);
         if (!v.ok) {
           // Auto-pause: the whole point of a budget. It stops being offered and
           // stops crediting without anyone having to notice a number climbing.
@@ -186,9 +199,9 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
 
     await t.run(
       `INSERT INTO task_completions (id, user_id, task_id, network, external_id, status, points, usdt_micro,
-                                    reward_type, offer_type, postback_payload, created_at, verified_at)
-       VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?,?,?)`,
-      completionId, userId, taskId ?? null, network, externalId, points, usdtMicro, rewardType, offerType,
+                                    reward_rozi_micro, reward_type, offer_type, postback_payload, created_at, verified_at)
+       VALUES (?,?,?,?,?, 'credited', ?,?,?,?,?,?,?,?)`,
+      completionId, userId, taskId ?? null, network, externalId, points, usdtMicro, roziMicro, rewardType, offerType,
       JSON.stringify(payload), now(), now(),
     );
 
@@ -204,6 +217,50 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
         sourceType: "task_reward", sourceRefId: completionId, note: "Task reward",
       }, t);
     }
+
+    // Real mined-token ROZI reward for a custom/RoziPay task (founder,
+    // 2026-08-29). It counts against the 21M cap — totalEmittedMicro() now
+    // sums 'task_reward' rows — so mint only if there is room. If the cap is
+    // full the task still completes and any points/USDT portion still pays;
+    // only the ROZI portion is skipped.
+    let roziPaid = 0;
+    if (roziMicro > 0) {
+      const capMicro = toMicro((await loadMiningSettings()).supplyCap);
+      const emitted = await totalEmittedMicro(t);
+      if (emitted + roziMicro <= capMicro) {
+        await postRozi({
+          userId, micro: roziMicro, direction: "credit",
+          sourceType: "task_reward", sourceRefId: completionId, note: "Task reward",
+        }, t);
+        roziPaid = roziMicro;
+      } else {
+        log.error(
+          { userId, completionId, roziMicro, emitted, capMicro },
+          "Task ROZI reward skipped — 21M supply cap reached",
+        );
+      }
+    }
+
+    // Referral bonuses are paid in the SAME currency as the task's main
+    // reward: ROZI for a ROZI task (via rozi_ledger, also counted by the cap),
+    // points otherwise. `roziReferral` is false when the cap blocked the main
+    // ROZI mint, so a blocked task pays no referral ROZI either.
+    const roziReferral = roziPaid > 0;
+    const refBase = roziReferral ? roziMicro : points;
+    const payReferral = async (target: string, amount: number, note: string) => {
+      if (amount <= 0) return;
+      if (roziReferral) {
+        await postRozi({
+          userId: target, micro: amount, direction: "credit",
+          sourceType: "task_reward", sourceRefId: completionId, note,
+        }, t);
+      } else {
+        await postLedger({
+          userId: target, points: amount, direction: "credit",
+          sourceType: "referral_bonus", sourceRefId: completionId, note,
+        }, t);
+      }
+    };
 
     // Referral commission (2-level): the inviter (L1) and the inviter's inviter
     // (L2) each earn a share of this user's task points. Shares are the network's
@@ -242,14 +299,7 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     if (l1 && inviteeIsValid) {
       if (withinWindow) {
         const pct1 = net ? net.referral_bonus_pct / 100 : config.referralCommissionPct;
-        const bonus1 = Math.floor(points * pct1);
-        if (bonus1 > 0) {
-          await postLedger({
-            userId: l1, points: bonus1, direction: "credit",
-            sourceType: "referral_bonus", sourceRefId: completionId,
-            note: "Referral bonus from your invite",
-          }, t);
-        }
+        await payReferral(l1, Math.floor(refBase * pct1), "Referral bonus from your invite");
 
         const pct2 = net ? net.referral_bonus_pct_l2 / 100 : config.referralCommissionL2Pct;
         if (pct2 > 0) {
@@ -259,14 +309,7 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
           const l2 = l1Row?.referred_by;
           // Guard against a self/loop referral crediting the same account twice.
           if (l2 && l2 !== userId && l2 !== l1) {
-            const bonus2 = Math.floor(points * pct2);
-            if (bonus2 > 0) {
-              await postLedger({
-                userId: l2, points: bonus2, direction: "credit",
-                sourceType: "referral_bonus", sourceRefId: completionId,
-                note: "Referral bonus (level 2)",
-              }, t);
-            }
+            await payReferral(l2, Math.floor(refBase * pct2), "Referral bonus (level 2)");
           }
         }
       }
@@ -295,13 +338,10 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
         );
         if ((priorSinceApproval?.n ?? 0) === 0) {
           const firstBonus = net ? net.referral_first_task_bonus : config.referralFirstTaskBonusPoints;
-          if (firstBonus > 0) {
-            await postLedger({
-              userId: l1, points: firstBonus, direction: "credit",
-              sourceType: "referral_bonus", sourceRefId: completionId,
-              note: "Bonus — your invite finished their first task",
-            }, t);
-          }
+          // The flat bonus is a whole number — whole ROZI for a ROZI task
+          // (converted to micro), whole points otherwise.
+          const firstAmount = roziReferral ? toMicro(firstBonus) : firstBonus;
+          await payReferral(l1, firstAmount, "Bonus — your invite finished their first task");
         }
       }
     }
@@ -332,5 +372,5 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
     log.error({ err, userId, completionId }, "Failed to grant mining boost for a credited task");
   }
 
-  return { status: "credited", completionId, points, usdtMicro };
+  return { status: "credited", completionId, points, usdtMicro, roziMicro };
 }

@@ -78,9 +78,11 @@ const ROZI_ICON: Record<string, IconComp> = {
   mining: MineIcon, rig_purchase: ChipIcon, transfer_in: ReceiveIcon,
   transfer_out: SendIcon, transfer_fee: BoltIcon, conversion_burn: WalletIcon,
   store_redemption: GiftIcon, bonus: GiftIcon, admin_adjustment: BoltIcon,
+  task_reward: StarIcon,
 };
 const ROZI_KIND: Record<string, Row["kind"]> = {
   mining: "mining", transfer_in: "received", transfer_out: "sent",
+  task_reward: "reward",
 };
 const ROZI_NOTE_SOURCES = new Set(["rig_purchase", "store_redemption", "transfer_out"]);
 // The only rozi_ledger source types that are genuinely a wallet

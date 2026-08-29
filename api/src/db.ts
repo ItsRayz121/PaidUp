@@ -1393,12 +1393,36 @@ const MIGRATIONS = `
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_type_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_reward_type_check
     CHECK (reward_type IN ('points','usdt','both'));
+  -- ---- ROZI TASK REWARDS (founder, 2026-08-29) --------------------------
+  -- The word "points" is gone from the earner app. A custom/RoziPay task's
+  -- reward is now set in whole ROZI and/or USDT. ROZI here is the REAL mined
+  -- token (rozi_ledger, non-withdrawable, counts against the 21M cap — see
+  -- totalEmittedMicro), credited by creditCompletion(). Network offerwall
+  -- tasks are untouched: they keep reward_type='points' and the points
+  -- ledger, which is what the earn->withdraw loop runs on.
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reward_rozi_micro BIGINT NOT NULL DEFAULT 0;
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS reward_rozi_micro BIGINT;
+  ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS reward_rozi_micro BIGINT NOT NULL DEFAULT 0;
+
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_type_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_reward_type_check
+    CHECK (reward_type IN ('points','rozi','usdt','both'));
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_reward_amounts_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_reward_amounts_check CHECK (
-    (reward_type = 'points' AND points > 0 AND reward_usdt_micro = 0) OR
-    (reward_type = 'usdt' AND points = 0 AND reward_usdt_micro > 0) OR
-    (reward_type = 'both' AND points > 0 AND reward_usdt_micro > 0)
+    (reward_type = 'points' AND points > 0 AND reward_usdt_micro = 0 AND reward_rozi_micro = 0) OR
+    (reward_type = 'rozi'   AND reward_rozi_micro > 0 AND reward_usdt_micro = 0) OR
+    (reward_type = 'usdt'   AND points = 0 AND reward_usdt_micro > 0 AND reward_rozi_micro = 0) OR
+    (reward_type = 'both'   AND (reward_rozi_micro > 0 OR points > 0) AND reward_usdt_micro > 0)
   );
+
+  -- Migrate existing custom tasks 1:1 — "50 points" becomes "50 ROZI"
+  -- (founder's own framing). Idempotent: after it runs there is no
+  -- source='custom' + reward_type='points' row left to re-match.
+  UPDATE tasks
+     SET reward_type = 'rozi',
+         reward_rozi_micro = points * 1000000,
+         points = 0
+   WHERE source = 'custom' AND reward_type = 'points' AND points > 0;
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
     CHECK (status IN ('draft','scheduled','active','paused','disabled','exhausted','ended'));
@@ -1851,7 +1875,7 @@ const MINING_SCHEMA = `
   ALTER TABLE rozi_ledger ADD CONSTRAINT rozi_ledger_source_type_check
     CHECK (source_type IN ('mining','rig_purchase','transfer_in','transfer_out',
                            'transfer_fee','conversion_burn','admin_adjustment',
-                           'bonus','store_redemption'));
+                           'bonus','store_redemption','task_reward'));
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
@@ -2182,7 +2206,10 @@ export type RoziSource =
   | "mining" | "rig_purchase" | "transfer_in" | "transfer_out"
   | "transfer_fee" | "conversion_burn" | "admin_adjustment" | "bonus"
   // Store: debit when a redemption is requested, credit back if staff reject it.
-  | "store_redemption";
+  | "store_redemption"
+  // Custom/RoziPay task reward (founder, 2026-08-29). Real mined-token ROZI,
+  // credited by creditCompletion(); counts against the 21M cap.
+  | "task_reward";
 
 // Amounts are MICRO-ROZI (millionths). The parameter is named `micro`, not
 // `rozi`, on purpose: it is the one thing that makes a unit mistake a compile

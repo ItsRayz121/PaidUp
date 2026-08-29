@@ -276,6 +276,7 @@ const copy: Record<string, string> = {
   "wallet.tx.transfer_fee": "Sending fee",
   "wallet.tx.conversion_burn": "Changed into money",
   "wallet.tx.store_redemption": "Store order",
+  "wallet.tx.task_reward": "Task reward",
   "wallet.tx.bonus": "Bonus",
   "wallet.tx.admin_adjustment": "Changed by our team",
   "wallet.needHelp": "Need help with a payment?",

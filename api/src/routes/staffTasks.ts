@@ -81,8 +81,15 @@ export const TASK_CATEGORIES = ["social", "signup", "app", "survey", "video", "s
 
 const upsertSchema = z.object({
   title: z.string().min(3).max(120),
-  points: z.number().int().min(0).max(1_000_000),
-  rewardType: z.enum(["points", "usdt", "both"]).default("points"),
+  // Custom/RoziPay tasks are set in ROZI and/or USDT now (founder,
+  // 2026-08-29) — the word "points" is gone from the earner app. `points` is
+  // kept only so an older client that still sends it does not 400; a custom
+  // task always stores points = 0.
+  points: z.number().int().min(0).max(1_000_000).default(0),
+  rewardRoziMicro: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  // "points" is accepted for back-compat and normalised to a ROZI reward
+  // (whole points -> whole ROZI, 1:1) by normalizeReward() below.
+  rewardType: z.enum(["points", "rozi", "usdt", "both"]).default("rozi"),
   rewardUsdtMicro: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   verifyMode: z.enum(["proof", "postback"]),
   instructions: z.string().max(2000).optional(),
@@ -172,14 +179,34 @@ const fieldSchema = z.object({
   maxLen: z.number().int().min(1).max(4000).nullable().optional(),
 });
 
-function validateReward(rewardType: "points" | "usdt" | "both", points: number, usdtMicro: number) {
-  const ok = rewardType === "points" ? points > 0 && usdtMicro === 0
-    : rewardType === "usdt" ? points === 0 && usdtMicro > 0
-      : points > 0 && usdtMicro > 0;
+// Fold a legacy "points" reward into the ROZI model (founder, 2026-08-29 — the
+// word "points" is gone from the earner app). Whole points become whole ROZI,
+// 1:1. `rozi`/`usdt`/`both` pass straight through.
+function normalizeReward(
+  rewardType: "points" | "rozi" | "usdt" | "both",
+  points: number,
+  roziMicro: number,
+  usdtMicro: number,
+): { rewardType: "rozi" | "usdt" | "both"; rewardRoziMicro: number } {
+  // Legacy: a caller that sent whole `points` and no ROZI amount — those
+  // points are whole ROZI, 1:1. (Also covers rewardType left at its default.)
+  if (points > 0 && roziMicro === 0) {
+    return { rewardType: usdtMicro > 0 ? "both" : "rozi", rewardRoziMicro: points * 1_000_000 };
+  }
+  if (rewardType === "points") {
+    return { rewardType: usdtMicro > 0 ? "both" : "rozi", rewardRoziMicro: roziMicro };
+  }
+  return { rewardType, rewardRoziMicro: roziMicro };
+}
+
+function validateReward(rewardType: "rozi" | "usdt" | "both", roziMicro: number, usdtMicro: number) {
+  const ok = rewardType === "rozi" ? roziMicro > 0 && usdtMicro === 0
+    : rewardType === "usdt" ? roziMicro === 0 && usdtMicro > 0
+      : roziMicro > 0 && usdtMicro > 0;
   if (!ok) throw Object.assign(new Error(
-    rewardType === "points" ? "A points reward needs points and no USDT."
-      : rewardType === "usdt" ? "A USDT reward needs USDT and no points."
-        : "A combined reward needs both points and USDT.",
+    rewardType === "rozi" ? "A ROZI reward needs a ROZI amount and no USDT."
+      : rewardType === "usdt" ? "A USDT reward needs USDT and no ROZI."
+        : "A combined reward needs both ROZI and USDT.",
   ), { statusCode: 400 });
 }
 
@@ -235,7 +262,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- List every custom task (admin) -------------------------------------
   app.get("/staff/tasks", staffGuard("tasks.view", async () => {
     const tasks = await sql.all<Record<string, unknown>>(
-      `SELECT t.id, t.title, t.points, t.reward_type, t.reward_usdt_micro, t.type,
+      `SELECT t.id, t.title, t.points, t.reward_type, t.reward_usdt_micro, t.reward_rozi_micro, t.type,
               t.verify_mode, t.instructions, t.proof_label, t.proof_heading, t.proof_help,
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
               t.button_label, t.logo_asset_id, t.starts_at, t.ends_at, t.featured, t.priority,
@@ -288,7 +315,8 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- Create a custom task -----------------------------------------------
   app.post("/staff/tasks", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const b = upsertSchema.parse(req.body ?? {});
-    validateReward(b.rewardType, b.points, b.rewardUsdtMicro);
+    const reward = normalizeReward(b.rewardType, b.points, b.rewardRoziMicro, b.rewardUsdtMicro);
+    validateReward(reward.rewardType, reward.rewardRoziMicro, b.rewardUsdtMicro);
     validateSchedule(b.startsAt, b.endsAt);
     if (b.logoAssetId) {
       const asset = await sql.get<{ id: string }>("SELECT id FROM task_assets WHERE id = ?", b.logoAssetId);
@@ -316,11 +344,11 @@ export async function staffTaskRoutes(app: FastifyInstance) {
          source, verify_mode, instructions, proof_label, proof_required, action_url, icon,
          postback_secret, budget_conversions, budget_points, revenue_per_conversion_micro,
          category, target_countries, target_min_account_days, target_max_account_days,
-         target_min_completed, reward_type, reward_usdt_micro, budget_usdt_micro,
+         target_min_completed, reward_type, reward_usdt_micro, reward_rozi_micro, budget_usdt_micro,
          proof_heading, proof_help, button_label, logo_asset_id, starts_at, ends_at,
          featured, priority, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, "custom", b.title, b.points, CUSTOM_NETWORK, "RoziPay", b.minutes,
+       VALUES (?,?,?,?,?,?,?,?,?,?, 'custom', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, "custom", b.title, 0, CUSTOM_NETWORK, "RoziPay", b.minutes,
       b.instructions ?? null, countryLabel, b.status,
       b.verifyMode, b.instructions ?? null, b.proofLabel ?? null,
       b.proofRequired === false ? 0 : 1,
@@ -330,7 +358,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       b.revenuePerConversionMicro ?? 0,
       b.category && b.category.length > 0 ? b.category : null,
       packed, b.targetMinAccountDays ?? null, b.targetMaxAccountDays ?? null,
-      b.targetMinCompleted ?? null, b.rewardType, b.rewardUsdtMicro,
+      b.targetMinCompleted ?? null, reward.rewardType, b.rewardUsdtMicro, reward.rewardRoziMicro,
       b.budgetUsdtMicro ?? null, b.proofHeading || null, b.proofHelp || null,
       b.buttonLabel || null, b.logoAssetId ?? null, b.startsAt ?? null, b.endsAt ?? null,
       b.featured ? 1 : 0, b.priority ?? 0, now(),
@@ -338,7 +366,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
 
     await logAudit({
       actorUserId: userId, actorRole: role, action: "custom_task_create",
-      detail: `${b.title} (${b.verifyMode}, ${b.points} pts, ${b.rewardUsdtMicro} micro-USDT)`,
+      detail: `${b.title} (${b.verifyMode}, ${reward.rewardRoziMicro} micro-ROZI, ${b.rewardUsdtMicro} micro-USDT)`,
     });
     return { ok: true, id };
   }));
@@ -349,18 +377,32 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const b = upsertSchema.partial().parse(req.body ?? {});
 
     const existing = await sql.get<{
-      verify_mode: string; postback_secret: string | null; reward_type: "points" | "usdt" | "both";
-      points: number; reward_usdt_micro: string | number; starts_at: string | null; ends_at: string | null;
+      verify_mode: string; postback_secret: string | null;
+      reward_type: "points" | "rozi" | "usdt" | "both";
+      points: number; reward_rozi_micro: string | number; reward_usdt_micro: string | number;
+      starts_at: string | null; ends_at: string | null;
     }>(
-      `SELECT verify_mode, postback_secret, reward_type, points, reward_usdt_micro, starts_at, ends_at
+      `SELECT verify_mode, postback_secret, reward_type, points, reward_rozi_micro, reward_usdt_micro, starts_at, ends_at
        FROM tasks WHERE id = ? AND source = 'custom'`, id,
     );
     if (!existing) return { ok: false, error: "not found" };
 
-    const nextRewardType = b.rewardType ?? existing.reward_type;
-    const nextPoints = b.points ?? existing.points;
-    const nextUsdt = b.rewardUsdtMicro ?? Number(existing.reward_usdt_micro);
-    validateReward(nextRewardType, nextPoints, nextUsdt);
+    // Only touch/validate the reward when the request actually changes one —
+    // an existing row is already valid, and a plain budget PATCH must not have
+    // to re-satisfy the reward rules.
+    const rewardTouched = b.rewardType !== undefined || b.rewardRoziMicro !== undefined
+      || b.rewardUsdtMicro !== undefined || (b.points !== undefined && b.points > 0);
+    let reward: { rewardType: "rozi" | "usdt" | "both"; rewardRoziMicro: number } | null = null;
+    if (rewardTouched) {
+      const nextUsdt = b.rewardUsdtMicro ?? Number(existing.reward_usdt_micro);
+      reward = normalizeReward(
+        b.rewardType ?? existing.reward_type,
+        b.points ?? existing.points ?? 0,
+        b.rewardRoziMicro ?? Number(existing.reward_rozi_micro),
+        nextUsdt,
+      );
+      validateReward(reward.rewardType, reward.rewardRoziMicro, nextUsdt);
+    }
     validateSchedule(b.startsAt === undefined ? existing.starts_at : b.startsAt,
       b.endsAt === undefined ? existing.ends_at : b.endsAt);
     if (b.logoAssetId) {
@@ -379,9 +421,12 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const vals: unknown[] = [];
     const set = (col: string, v: unknown) => { sets.push(`${col} = ?`); vals.push(v); };
     if (b.title !== undefined) set("title", b.title);
-    if (b.points !== undefined) set("points", b.points);
-    if (b.rewardType !== undefined) set("reward_type", b.rewardType);
-    if (b.rewardUsdtMicro !== undefined) set("reward_usdt_micro", b.rewardUsdtMicro);
+    if (reward) {
+      set("reward_type", reward.rewardType);
+      set("reward_rozi_micro", reward.rewardRoziMicro);
+      set("reward_usdt_micro", b.rewardUsdtMicro ?? Number(existing.reward_usdt_micro));
+      set("points", 0);
+    }
     if (b.minutes !== undefined) set("minutes", b.minutes);
     if (b.status !== undefined) set("status", b.status);
     // ⚠️ THE TWO COUNTRY COLUMNS MOVE TOGETHER OR NOT AT ALL — see the note on
@@ -590,6 +635,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
               u.created_at AS user_joined,
               COALESCE(p.task_title_snapshot, t.title) AS task_title,
               COALESCE(p.reward_points, t.points) AS task_points,
+              COALESCE(p.reward_rozi_micro, t.reward_rozi_micro) AS task_rozi_micro,
               COALESCE(p.reward_usdt_micro, t.reward_usdt_micro) AS task_usdt_micro,
               t.proof_label, t.category,
               COALESCE(p.task_logo_asset_snapshot, t.logo_asset_id) AS task_logo_asset_id,
@@ -681,17 +727,18 @@ export async function staffTaskRoutes(app: FastifyInstance) {
       note: z.string().max(500).optional(),
     }).parse(req.body ?? {});
 
-    const results: { id: string; ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number }[] = [];
+    const results: { id: string; ok: boolean; error?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number }[] = [];
     for (const id of [...new Set(b.ids)]) {
       const r = await decideProof(app, { userId, role }, id, b.action, b.note) as
-        { ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number };
-      results.push({ id, ok: r.ok, error: r.error, credited: r.credited, creditedUsdtMicro: r.creditedUsdtMicro });
+        { ok: boolean; error?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number };
+      results.push({ id, ok: r.ok, error: r.error, credited: r.credited, creditedRoziMicro: r.creditedRoziMicro, creditedUsdtMicro: r.creditedUsdtMicro });
     }
     return {
       ok: true,
       done: results.filter((r) => r.ok).length,
       failed: results.filter((r) => !r.ok).length,
       creditedPoints: results.reduce((s, r) => s + (r.credited ?? 0), 0),
+      creditedRoziMicro: results.reduce((s, r) => s + (r.creditedRoziMicro ?? 0), 0),
       creditedUsdtMicro: results.reduce((s, r) => s + (r.creditedUsdtMicro ?? 0), 0),
       results,
     };
@@ -713,8 +760,8 @@ async function decideProof(
 
     const proof = await sql.get<{
       id: string; task_id: string; user_id: string; status: string;
-      reward_points: number | null; reward_usdt_micro: string | number | null;
-    }>(`SELECT id, task_id, user_id, status, reward_points, reward_usdt_micro
+      reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
+    }>(`SELECT id, task_id, user_id, status, reward_points, reward_rozi_micro, reward_usdt_micro
          FROM task_proofs WHERE id = ?`, proofId);
     if (!proof) return { ok: false, error: "not found" };
     if (proof.status !== "pending") return { ok: false, error: "already reviewed" };
@@ -735,15 +782,24 @@ async function decideProof(
     // the SHARED credit path. externalId ties the credit to the proof, so a
     // re-submission after this can't double-pay (idempotency on network+external_id).
     const task = await sql.get<{
-      points: number; reward_usdt_micro: string | number; reward_type: "points" | "usdt" | "both";
+      points: number; reward_rozi_micro: string | number; reward_usdt_micro: string | number;
+      reward_type: "points" | "rozi" | "usdt" | "both";
     }>(
-      "SELECT points, reward_usdt_micro, reward_type FROM tasks WHERE id = ? AND source = 'custom'", proof.task_id,
+      "SELECT points, reward_rozi_micro, reward_usdt_micro, reward_type FROM tasks WHERE id = ? AND source = 'custom'",
+      proof.task_id,
     );
     if (!task) return { ok: false, error: "task missing" };
-    const rewardPoints = proof.reward_points ?? task.points;
+    // Snapshot on the proof wins — an edit after submission must not change
+    // what a waiting user was promised (same rule as fee_points on a
+    // withdrawal). Custom tasks pay real mined-token ROZI now (founder,
+    // 2026-08-29); `points` stays 0 for them.
+    const rewardPoints = proof.reward_points ?? task.points ?? 0;
+    const rewardRoziMicro = Number(proof.reward_rozi_micro ?? task.reward_rozi_micro ?? 0);
     const rewardUsdtMicro = Number(proof.reward_usdt_micro ?? task.reward_usdt_micro ?? 0);
-    const rewardType = rewardPoints > 0 && rewardUsdtMicro > 0 ? "both"
-      : rewardUsdtMicro > 0 ? "usdt" : "points";
+    const rewardType = rewardRoziMicro > 0 && rewardUsdtMicro > 0 ? "both"
+      : rewardUsdtMicro > 0 ? "usdt"
+      : rewardRoziMicro > 0 ? "rozi"
+      : "points";
 
     const net = await sql.get<NetworkRow>(
       `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
@@ -753,6 +809,7 @@ async function decideProof(
     const outcome = await creditCompletion({
       userId: proof.user_id, network: CUSTOM_NETWORK, externalId: `proof:${proofId}`,
       taskId: proof.task_id, points: rewardPoints, usdtMicro: rewardUsdtMicro,
+      roziMicro: rewardRoziMicro,
       rewardType, offerType: "custom",
       payload: { proofId, approvedBy: userId },
       net,
@@ -796,8 +853,11 @@ async function decideProof(
     await logAudit({
       actorUserId: userId, actorRole: role, action: "task_proof_approve",
       targetUserId: proof.user_id,
-      detail: `proof ${proofId} -> ${outcome.points} pts + ${outcome.usdtMicro} micro-USDT`,
+      detail: `proof ${proofId} -> ${outcome.roziMicro} micro-ROZI + ${outcome.usdtMicro} micro-USDT`,
     });
-    return { ok: true, status: "approved", credited: outcome.points, creditedUsdtMicro: outcome.usdtMicro };
+    return {
+      ok: true, status: "approved",
+      credited: outcome.points, creditedRoziMicro: outcome.roziMicro, creditedUsdtMicro: outcome.usdtMicro,
+    };
   }
 }

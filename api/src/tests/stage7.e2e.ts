@@ -431,13 +431,14 @@ console.log("\n-- ⚠️ A BULK DECISION IS N SEPARATE DECISIONS --");
     payload: { ids, action: "approve" },
   });
   const b = bulk.json() as {
-    done: number; failed: number; creditedPoints: number;
+    done: number; failed: number; creditedPoints: number; creditedRoziMicro: number;
     results: { id: string; ok: boolean; error?: string }[];
   };
   check("the two still open are approved", b.done === 2, JSON.stringify(b));
   check("the one already decided is reported as NOT done, not silently counted", b.failed === 1);
   check("...with its own reason", b.results.find((x) => !x.ok)?.error === "already reviewed");
-  check("the points credited are reported", b.creditedPoints === 50, String(b.creditedPoints));
+  // The task pays 25 ROZI; two approvals => 50 ROZI (50,000,000 micro).
+  check("the ROZI credited is reported", b.creditedRoziMicro === 50_000_000, String(b.creditedRoziMicro));
 
   // Every approval went through the shared credit path, so the ledger moved.
   for (const u of users) {

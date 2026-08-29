@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CheckIcon, ClockIcon, XIcon, StarIcon, InfoIcon } from "./icons";
-import { formatPoints, formatPointsAsRozi, formatUsdtMicro } from "@/lib/format";
+import { formatPointsAsRozi, formatUsdtMicro, formatRozi } from "@/lib/format";
 
 // Matches the backend's ledger row status (see @/lib/api LedgerEntry), plus
 // "refunded" — a frontend-only status (see walletHistory.ts) for a rejected
@@ -77,13 +77,20 @@ export function PointsPill({ points }: { points: number }) {
   );
 }
 
-export function RewardPill({ points = 0, usdtMicro = 0 }: { points?: number; usdtMicro?: number }) {
+// The reward on a task card. Custom/RoziPay tasks carry `roziMicro` (real
+// mined-token ROZI, shown in whole ROZI); network tasks carry `points`, shown
+// as ROZI via the app-wide 100:1 display convention (formatPointsAsRozi). The
+// word "points" is gone from the earner app (founder, 2026-08-29).
+export function RewardPill({ points = 0, roziMicro = 0, usdtMicro = 0 }: { points?: number; roziMicro?: number; usdtMicro?: number }) {
+  const roziText = roziMicro > 0
+    ? `${formatRozi(roziMicro)} ROZI`
+    : points > 0 ? formatPointsAsRozi(points) : "";
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2.5 py-1 text-accent-ink font-semibold text-sm whitespace-nowrap">
       <StarIcon size={15} />
       <span className="num">
-        +{points > 0 ? `${formatPoints(points)} points` : ""}
-        {points > 0 && usdtMicro > 0 ? " + " : ""}
+        +{roziText}
+        {roziText && usdtMicro > 0 ? " + " : ""}
         {usdtMicro > 0 ? formatUsdtMicro(usdtMicro) : ""}
       </span>
     </span>

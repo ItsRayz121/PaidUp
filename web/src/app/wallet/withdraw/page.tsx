@@ -221,7 +221,7 @@ export default function WithdrawPage() {
         <div className="grid grid-cols-2 gap-2">
           <button type="button" onClick={() => setSource("points")}
             className={`rounded-xl border p-3 text-left ${source === "points" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
-            <span className="block text-sm font-semibold">Points balance</span>
+            <span className="block text-sm font-semibold">Main balance</span>
             <span className="text-xs text-muted">{formatMoney(balance)}</span>
           </button>
           <button type="button" onClick={() => setSource("earned_usdt")}

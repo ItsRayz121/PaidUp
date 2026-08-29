@@ -7,8 +7,16 @@ import { BottomSheet, useDialogBehaviour } from "./BottomSheet";
 import {
   offerIcon, taskIcon, CheckIcon, ClockIcon, XIcon, StarIcon, ArrowRightIcon, LockIcon,
 } from "./icons";
-import { formatPoints, formatUsdtMicro } from "@/lib/format";
+import { formatPointsAsRozi, formatUsdtMicro, formatRozi } from "@/lib/format";
 import { startTask, taskAssetUrl, type Task } from "@/lib/api";
+
+// The ROZI half of a task reward, as text: custom tasks carry roziMicro,
+// network tasks carry points (shown as ROZI at the app-wide 100:1 rate).
+function rewardRozi(task: Task): string {
+  if ((task.rewardRoziMicro ?? 0) > 0) return `${formatRozi(task.rewardRoziMicro ?? 0)} ROZI`;
+  if (task.points > 0) return formatPointsAsRozi(task.points);
+  return "";
+}
 
 // Renders the task list + the two interactive steps that build trust:
 //   1. Sponsored disclosure sheet (guardrail #3) shown BEFORE a task starts.
@@ -133,7 +141,7 @@ function TaskRowBody({ task }: { task: Task }) {
             About {task.minutes} min
           </span>
           <span className="flex items-center gap-1.5">
-            <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
+            <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
             {task.lockedReason ? <LockIcon size={16} className="text-pending" />
               : task.proofStatus ? <ProofBadge status={task.proofStatus} />
               : <ArrowRightIcon size={18} className="text-muted" />}
@@ -206,7 +214,7 @@ function DisclosureSheet({
         <h2 id="sheet-title" className="pe-10 text-lg font-bold text-brand-ink">{task.title}</h2>
 
         <div className="mt-3 flex items-center gap-2">
-          <RewardPill points={task.points} usdtMicro={task.rewardUsdtMicro} />
+          <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
           <span className="text-sm text-muted">for finishing this</span>
         </div>
 
@@ -260,8 +268,8 @@ function TaskStartedInfo({ task, onDone }: { task: Task; onDone: () => void }) {
       <p className="animate-rise mt-2 flex items-center gap-2 text-white/90">
         <StarIcon size={20} className="text-accent" />
         <span>You will get <span className="num font-bold">
-          {task.points > 0 ? `${formatPoints(task.points)} points` : ""}
-          {task.points > 0 && (task.rewardUsdtMicro ?? 0) > 0 ? " + " : ""}
+          {rewardRozi(task)}
+          {rewardRozi(task) && (task.rewardUsdtMicro ?? 0) > 0 ? " + " : ""}
           {(task.rewardUsdtMicro ?? 0) > 0 ? formatUsdtMicro(task.rewardUsdtMicro ?? 0) : ""}
         </span></span>
       </p>

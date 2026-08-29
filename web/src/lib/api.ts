@@ -147,7 +147,10 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
 export type Task = {
   id: string; type: "install" | "survey" | "video" | "custom"; title: string;
   points: number; network: string; advertiser: string; minutes: number; requirement?: string;
-  rewardType?: "points" | "usdt" | "both";
+  rewardType?: "points" | "rozi" | "usdt" | "both";
+  // Custom/RoziPay tasks pay real mined-token ROZI now (founder, 2026-08-29).
+  // Network tasks leave this 0 and keep `points`.
+  rewardRoziMicro?: number;
   rewardUsdtMicro?: number;
   // Present only on our OWN tasks (source === "custom").
   source?: "network" | "custom";
@@ -723,7 +726,7 @@ export const updateAllNetworkReferrals = (patch: {
 // ---- Admin: our own custom tasks -----------------------------------------
 export type CustomTask = {
   id: string; title: string; points: number; type: string;
-  reward_type: "points" | "usdt" | "both"; reward_usdt_micro: number;
+  reward_type: "points" | "rozi" | "usdt" | "both"; reward_usdt_micro: number; reward_rozi_micro: number;
   verify_mode: "proof" | "postback"; instructions: string | null; proof_label: string | null;
   proof_heading: string | null; proof_help: string | null;
   // Postgres INTEGER: 1 = ask the user for evidence, 0 = a tap-to-confirm task.
@@ -770,8 +773,8 @@ export type CustomTask = {
   fieldCount: number;
 };
 export type CustomTaskInput = {
-  title: string; points: number; verifyMode: "proof" | "postback";
-  rewardType: "points" | "usdt" | "both"; rewardUsdtMicro: number;
+  title: string; points?: number; verifyMode: "proof" | "postback";
+  rewardType: "rozi" | "usdt" | "both"; rewardRoziMicro: number; rewardUsdtMicro: number;
   instructions?: string; proofLabel?: string; proofHeading?: string; proofHelp?: string; proofRequired?: boolean;
   actionUrl?: string; buttonLabel?: string; icon?: string; logoAssetId?: string | null;
   minutes?: number; country?: string; status?: "draft" | "scheduled" | "active" | "paused" | "disabled" | "ended";
