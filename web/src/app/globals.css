@@ -49,7 +49,10 @@ html {
 }
 
 body {
-  background: var(--color-bg);
+  /* Not flat white any more (founder, 2026-08-29) — a soft top-to-bottom teal
+     wash so the app reads as a made thing, not a blank page. The .app-frame
+     below carries the same gradient for the phone-width column on desktop. */
+  background: linear-gradient(180deg, #eff5f5 0%, #e6f0ef 58%, #ddebe9 100%);
   color: var(--color-ink);
   font-family: var(--font-sans);
   /* Never let the app scroll sideways on small phones */
@@ -97,7 +100,10 @@ body {
   max-width: 480px;
   margin-inline: auto;
   min-height: 100dvh;
-  background: var(--color-bg);
+  /* Opaque on purpose (see the stacking-context note above): the ambient-bg
+     spans are -z-10 children and paint BETWEEN this background and the page
+     content. Matches body's gradient so the seam is invisible. */
+  background: linear-gradient(180deg, #eff5f5 0%, #e6f0ef 58%, #ddebe9 100%);
   position: relative;
   z-index: 0;
 }
@@ -209,14 +215,15 @@ body {
   .hg-wrap.ready .hg-sparkle { animation: none; opacity: 0; }
 }
 
-/* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13),
-   used on Home/Mine/Wallet/Profile: slow, low-opacity morphing blobs behind
-   the content, purely decorative — never interactive, never a data
+/* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13;
+   richer premium pass 2026-08-29), used on Home/Mine/Wallet/Profile via
+   components/AmbientBg.tsx. Four layers: three morphing aurora blobs, a
+   faint static circuit tile, and twelve slow "mining energy" motes rising
+   up the screen. Purely decorative — never interactive, never a data
    visualisation. Started as plain drifting circles (2026-08-12); the
-   border-radius keyframe below is what turns them into organic, liquid-looking
-   blobs instead of two blurred dots. Reduced-motion users get the animation
-   compressed to one step (global rule further down), so they land on the
-   blob's own shape frozen in place rather than a bare circle. */
+   border-radius keyframe below is what turns the blobs organic instead of
+   blurred dots. Every animated property here is transform/opacity so it
+   runs on the compositor; reduced-motion freezes all of it. */
 @keyframes drift-a {
   0%, 100% { transform: translate(-6%, -4%) scale(1); }
   50% { transform: translate(4%, 6%) scale(1.12); }
@@ -243,25 +250,89 @@ body {
   overflow: hidden;
   pointer-events: none;
 }
-.ambient-bg span {
+
+/* --- Layer 2: aurora blobs (was two bare spans; now .ab-blob, +a third) --- */
+.ambient-bg .ab-blob {
   position: absolute;
   border-radius: 42% 58% 63% 37% / 41% 44% 56% 59%;
-  /* 50px -> 36px: blur cost grows with the radius, and at opacity 0.35 the
-     softer edge is not visually distinguishable from the original. */
-  filter: blur(36px);
-  opacity: 0.35;
+  /* blur cost grows with the radius; 40px is the softest edge still worth
+     paying for at this opacity. */
+  filter: blur(40px);
+  opacity: 0.3;
   will-change: transform;
 }
-.ambient-bg span:nth-child(1) {
-  top: -10%; left: -10%; width: 60%; height: 60%;
+.ambient-bg .ab-blob-1 {
+  top: -12%; left: -12%; width: 62%; height: 62%;
   background: var(--color-brand);
   animation: drift-a 22s ease-in-out infinite, liquid-blob-shape 13s steps(6, end) infinite;
 }
-.ambient-bg span:nth-child(2) {
-  bottom: -15%; right: -10%; width: 55%; height: 55%;
+.ambient-bg .ab-blob-2 {
+  bottom: -16%; right: -12%; width: 58%; height: 58%;
   background: var(--color-accent);
   animation: drift-b 26s ease-in-out infinite, liquid-blob-shape 16s steps(6, end) infinite reverse;
 }
+.ambient-bg .ab-blob-3 {
+  top: 28%; left: 32%; width: 48%; height: 48%;
+  background: #1aa5b0; /* cool cyan — one step brighter than brand */
+  opacity: 0.16;
+  animation: drift-a 31s ease-in-out infinite reverse, liquid-blob-shape 19s steps(6, end) infinite;
+}
+
+/* --- Layer 3: faint circuit texture — static, one tiny inline SVG tile --- */
+.ambient-bg .ab-grid {
+  position: absolute;
+  inset: -2px;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46' viewBox='0 0 46 46'%3E%3Cg fill='none' stroke='%23082f36' stroke-width='1'%3E%3Cpath d='M0 23h13m7 0h6m7 0h13M23 0v13m0 7v6m0 7v13'/%3E%3Ccircle cx='23' cy='23' r='3'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 46px 46px;
+}
+
+/* --- Layer 4: rising "mining energy" motes -------------------------------
+   Small diamonds drifting slowly up the screen, fading in and out. Twelve
+   of them (AmbientBg.tsx renders the <i>s and sets --i per mote). Only
+   transform + opacity animate, so this runs on the compositor. */
+.ambient-bg .ab-motes { position: absolute; inset: 0; }
+.ambient-bg .ab-motes i {
+  position: absolute;
+  bottom: -8%;
+  width: 7px;
+  height: 7px;
+  background: var(--color-brand);
+  opacity: 0;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  will-change: transform, opacity;
+  /* spread across the width, staggered start + pace from --i (0..11) */
+  left: calc(4% + (var(--i) * 8.4%));
+  animation: rise-mote calc(13s + (var(--i) * 0.9s)) linear infinite;
+  animation-delay: calc(var(--i) * -1.7s);
+}
+.ambient-bg .ab-motes i:nth-child(3n) { background: var(--color-accent); }
+.ambient-bg .ab-motes i:nth-child(4n) { width: 5px; height: 5px; }
+
+@keyframes rise-mote {
+  0%   { transform: translateY(0) scale(0.55) rotate(0deg); opacity: 0; }
+  12%  { opacity: 0.55; }
+  55%  { opacity: 0.7; }
+  88%  { opacity: 0.3; }
+  100% { transform: translateY(-112vh) scale(1) rotate(180deg); opacity: 0; }
+}
+
+/* --- /mine gets a touch more: brighter blobs, a few faster motes, and a
+   soft marigold glow sitting behind the mining dial. --- */
+.ambient-bg--mine .ab-blob { opacity: 0.36; }
+.ambient-bg--mine .ab-motes i { animation-duration: calc(10s + (var(--i) * 0.7s)); }
+.ambient-bg--mine::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 210px;
+  width: 340px;
+  height: 340px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(242, 164, 23, 0.18), transparent 70%);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .ambient-bg span { animation: none; }
+  .ambient-bg .ab-blob { animation: none; }
+  .ambient-bg .ab-motes i { animation: none; opacity: 0.16; }
 }

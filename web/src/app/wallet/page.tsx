@@ -10,6 +10,7 @@ import { UsdtLogo, BnbLogo, RoziMark } from "@/components/tokenIcons";
 import { TxDetailSheet, FilterChip } from "@/components/TxDetailSheet";
 import { BottomSheet } from "@/components/BottomSheet";
 import { HistoryList } from "@/components/HistoryList";
+import { AmbientBg } from "@/components/AmbientBg";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -87,11 +88,8 @@ export default function WalletPage() {
 
   return (
     <div className="relative px-4 pt-5 pb-8 space-y-5">
-      {/* Purely decorative — see the ambient-bg comment in globals.css. */}
-      <div className="ambient-bg -z-10" aria-hidden="true">
-        <span />
-        <span />
-      </div>
+      <AmbientBg />
+
       <header>
         <h1 className="text-xl font-bold text-brand-ink">{t("nav.wallet")}</h1>
         <p className="text-sm text-muted">{t("wallet.subtitle")}</p>

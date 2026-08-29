@@ -9,6 +9,7 @@ import {
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
 import { HourglassClaim, HOURGLASS_COIN_COUNT, hourglassDroppedCount } from "@/components/HourglassClaim";
+import { AmbientBg } from "@/components/AmbientBg";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
@@ -267,11 +268,8 @@ export default function MinePage() {
 
   return (
     <div className="relative px-4 pt-5 pb-8 space-y-5">
-      {/* Purely decorative — see the ambient-bg comment in globals.css. */}
-      <div className="ambient-bg -z-10" aria-hidden="true">
-        <span />
-        <span />
-      </div>
+      <AmbientBg variant="mine" />
+
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-brand-ink">{t("mine.title")}</h1>

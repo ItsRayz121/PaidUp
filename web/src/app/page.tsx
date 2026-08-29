@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { TaskPreview } from "@/components/TaskFlow";
 import { HomeContent } from "@/components/HomeContent";
+import { AmbientBg } from "@/components/AmbientBg";
 import { Loading, ErrorState } from "@/components/state";
 import {
   ArrowRightIcon, GiftIcon, ShieldIcon, MineIcon, TasksIcon, WalletIcon,
@@ -69,13 +70,8 @@ export default function HomePage() {
 
   return (
     <div className="relative px-4 pt-5 pb-8 space-y-5">
-      {/* Purely decorative — a slow drift, never a data visualisation, and
-          -z-10 keeps it behind every real element no matter how those are
-          positioned. See the ambient-bg comment in globals.css. */}
-      <div className="ambient-bg -z-10" aria-hidden="true">
-        <span />
-        <span />
-      </div>
+      <AmbientBg />
+
 
       {/* `break-all` used to sit on the name, which splits an ordinary word
           wherever the line happens to end — "Muhamm / ad". `break-words` only

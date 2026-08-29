@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { AmbientBg } from "@/components/AmbientBg";
 import { ConnectTelegramCard } from "@/components/ConnectTelegramCard";
 import { Loading } from "@/components/state";
 import {
@@ -43,11 +44,8 @@ export default function ProfilePage() {
 
   return (
     <div className="relative px-4 pt-5 pb-8 space-y-5">
-      {/* Purely decorative — see the ambient-bg comment in globals.css. */}
-      <div className="ambient-bg -z-10" aria-hidden="true">
-        <span />
-        <span />
-      </div>
+      <AmbientBg />
+
       <header className="flex items-center gap-3">
         <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-tint text-brand">
           {picture ? (
