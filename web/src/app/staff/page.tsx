@@ -27,6 +27,7 @@ import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
+import { StaffSearch } from "@/components/staff-search";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -106,6 +107,20 @@ export default function StaffPage() {
     setSection(id);
     window.history.replaceState(null, "", `#${id}`);
   }
+  // Search result picked: switch section, then (once the new section's panels
+  // have mounted) scroll the chosen panel into view. The timeout waits out the
+  // state update + remount — the target does not exist in the DOM yet when go()
+  // returns.
+  function goToDest(id: SectionId, anchor?: string) {
+    go(id);
+    if (anchor) {
+      setTimeout(() => {
+        document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
   // "view ledger" on a withdrawal jumps to the Users section with the search
   // pre-filled — the lookup lives there now.
   function openLedger(userId: string) {
@@ -169,6 +184,14 @@ export default function StaffPage() {
         <div className="shrink-0"><LogoutButton /></div>
       </header>
 
+      {/* Jump straight to any section or panel (founder request). Only rendered
+          once the role has at least one visible section. */}
+      {visible.length > 0 && (
+        <div className="mb-4">
+          <StaffSearch visibleSections={visible.map((s) => s.id)} has={may} onGo={goToDest} />
+        </div>
+      )}
+
       {/* Mobile: sections as a horizontal chip bar */}
       <nav className="mb-4 flex gap-1 overflow-x-auto pb-1 md:hidden">{nav}</nav>
 
@@ -196,7 +219,7 @@ export default function StaffPage() {
           {section === "money" && (
             <>
               {may("withdrawals.view") && (
-                <Panel title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} canOpenLedger={may("users.view")} /></Panel>
+                <Panel id="p-withdrawals" title="Withdrawals"><WithdrawalQueue onViewLedger={openLedger} canOpenLedger={may("users.view")} /></Panel>
               )}
               {/* Money IN. Confirming a pasted tx hash credits real USDT, so it
                   is gated on `deposits.view` and the buttons inside on
@@ -209,41 +232,41 @@ export default function StaffPage() {
                   Confirm/Reject buttons that 403 on click — a staff member told
                   they can act on real money, then refused after clicking. */}
               {may("deposits.view") && (
-                <Panel title="USDT deposits"><TopupPanel canDecide={may("deposits.decide")} /></Panel>
+                <Panel id="p-usdt-deposits" title="USDT deposits"><TopupPanel canDecide={may("deposits.decide")} /></Panel>
               )}
               {/* Money back OUT: a user's own unspent deposit, returned. */}
               {may("refunds.view") && (
-                <Panel title="USDT refunds"><RefundPanel canDecide={may("refunds.decide")} /></Panel>
+                <Panel id="p-usdt-refunds" title="USDT refunds"><RefundPanel canDecide={may("refunds.decide")} /></Panel>
               )}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
-              {may("treasury.view") && <Panel title="Treasury wallet"><TreasuryPanel /></Panel>}
-              {may("settings.manage") && <Panel title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
+              {may("treasury.view") && <Panel id="p-treasury" title="Treasury wallet"><TreasuryPanel /></Panel>}
+              {may("settings.manage") && <Panel id="p-withdrawal-fee" title="Withdrawal fee"><WithdrawalFeePanel /></Panel>}
               {/* What you owe users vs what you've paid. */}
-              {may("money.view") && <Panel title="Money"><MoneyPanel /></Panel>}
+              {may("money.view") && <Panel id="p-money" title="Money"><MoneyPanel /></Panel>}
             </>
           )}
 
           {section === "users" && (
             <>
               {/* Find, pay, suspend a user. */}
-              {may("users.list") && <Panel title="Users"><UsersPanel /></Panel>}
+              {may("users.list") && <Panel id="p-users" title="Users"><UsersPanel /></Panel>}
               {/* ID review. Deliberately narrower than the rest of the panel:
                   nobody else needs to see a stranger's national ID card. */}
-              {may("kyc.view") && <Panel title="Verify IDs"><KycPanel /></Panel>}
+              {may("kyc.view") && <Panel id="p-kyc" title="Verify IDs"><KycPanel /></Panel>}
               {/* Dispute lookup. */}
-              {may("users.view") && <Panel title="Look up a user"><UserLookup target={lookupTarget} /></Panel>}
-              {may("fraud.view") && <Panel title="Fraud flags"><FraudPanel canResolve={may("fraud.resolve")} /></Panel>}
+              {may("users.view") && <Panel id="p-lookup" title="Look up a user"><UserLookup target={lookupTarget} /></Panel>}
+              {may("fraud.view") && <Panel id="p-fraud" title="Fraud flags"><FraudPanel canResolve={may("fraud.resolve")} /></Panel>}
             </>
           )}
 
           {section === "tasks" && (
             <>
               {/* Our own custom tasks. */}
-              {may("tasks.view") && <Panel title="Our own tasks"><TasksPanel /></Panel>}
+              {may("tasks.view") && <Panel id="p-tasks" title="Our own tasks"><TasksPanel /></Panel>}
               {/* Task proof review. */}
-              {may("tasks.review") && <Panel title="Task proofs"><ProofQueue /></Panel>}
+              {may("tasks.review") && <Panel id="p-proofs" title="Task proofs"><ProofQueue /></Panel>}
               {/* Ad-network config. */}
-              {may("networks.manage") && <Panel title="Ad networks"><NetworkPanel /></Panel>}
+              {may("networks.manage") && <Panel id="p-networks" title="Ad networks"><NetworkPanel /></Panel>}
             </>
           )}
 
@@ -258,15 +281,15 @@ export default function StaffPage() {
 
           {section === "growth" && (
             <>
-              {may("referrals.manage") && <Panel title="Referrals"><ReferralPanel /></Panel>}
-              {may("leaderboard.manage") && <Panel title="Leaderboard"><LeaderboardPanel /></Panel>}
+              {may("referrals.manage") && <Panel id="p-referrals" title="Referrals"><ReferralPanel /></Panel>}
+              {may("leaderboard.manage") && <Panel id="p-leaderboard" title="Leaderboard"><LeaderboardPanel /></Panel>}
             </>
           )}
 
           {section === "messages" && (
             <>
-              {may("notifications.send") && <Panel title="Send a message"><BroadcastPanel /></Panel>}
-              {may("content.manage") && <Panel title="Home screen cards"><ContentPanel /></Panel>}
+              {may("notifications.send") && <Panel id="p-broadcast" title="Send a message"><BroadcastPanel /></Panel>}
+              {may("content.manage") && <Panel id="p-content" title="Home screen cards"><ContentPanel /></Panel>}
             </>
           )}
 
@@ -280,9 +303,9 @@ export default function StaffPage() {
 
           {section === "settings" && (
             <>
-              {may("flags.manage") && <Panel title="Features"><FeatureFlagsPanel /></Panel>}
-              {may("settings.manage") && <Panel title="Settings"><GlobalSettingsPanel /></Panel>}
-              {may("infra.view") && <Panel title="Staff alerts"><StaffAlertsPanel /></Panel>}
+              {may("flags.manage") && <Panel id="p-flags" title="Features"><FeatureFlagsPanel /></Panel>}
+              {may("settings.manage") && <Panel id="p-settings" title="Settings"><GlobalSettingsPanel /></Panel>}
+              {may("infra.view") && <Panel id="p-alerts" title="Staff alerts"><StaffAlertsPanel /></Panel>}
             </>
           )}
 

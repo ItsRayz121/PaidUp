@@ -93,6 +93,9 @@ export const HelpIcon = (p: IconProps) => (
 export const ChartIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M4 20V4" /><path d="M4 20h16" /><rect x="7" y="11" width="3" height="6" /><rect x="12.5" y="7" width="3" height="10" /><rect x="18" y="13" width="3" height="4" /></svg>
 );
+export const SearchIcon = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+);
 export const SlidersIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M18 18h2" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></svg>
 );

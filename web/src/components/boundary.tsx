@@ -8,7 +8,7 @@
 // number was formatted wrong. Blast radius is now one panel.
 import { Component, type ReactNode } from "react";
 
-type Props = { title: string; children: ReactNode };
+type Props = { title: string; children: ReactNode; id?: string };
 type State = { error: Error | null };
 
 export class Panel extends Component<Props, State> {
@@ -26,10 +26,17 @@ export class Panel extends Component<Props, State> {
 
   render() {
     const { error } = this.state;
-    if (!error) return this.props.children;
+    // `id` is a scroll target for the staff-panel search ("jump to this
+    // panel"). scroll-mt-24 keeps the panel clear of the sticky header when
+    // scrollIntoView lands on it.
+    if (!error) {
+      return this.props.id
+        ? <div id={this.props.id} className="scroll-mt-24">{this.props.children}</div>
+        : this.props.children;
+    }
 
     return (
-      <section className="mb-8">
+      <section id={this.props.id} className="mb-8 scroll-mt-24">
         <div className="rounded-lg border border-danger/30 bg-danger-tint/40 p-4">
           <h2 className="font-bold text-brand-ink">{this.props.title} — failed to load</h2>
           <p className="mt-1 text-sm text-muted">

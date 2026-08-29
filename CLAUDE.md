@@ -2145,6 +2145,21 @@ These override convenience or speed at every step:
     `test:deposits` (37), `test:mining:e2e` (62) — all green; api + web
     typecheck clean.
 
+- **STAFF-PANEL SEARCH (founder, 2026-08-29: "the admin panel is confusing —
+  a search box so I can go straight to the thing I want").** New
+  `web/src/components/staff-search.tsx` — a box in the `/staff` header that
+  filters a flat index of ~30 destinations (every section + every sub-panel)
+  and, on pick, switches section and scrolls the panel into view. Focus it
+  from anywhere with `/` or Ctrl/Cmd+K; arrow keys + Enter; Esc clears.
+  - **The index is filtered exactly like the sidebar** — a destination whose
+    section the role can't see, or whose own `needs` it lacks, is never
+    offered, so search can't send anyone to a screen that 403s.
+  - `Panel` (`components/boundary.tsx`) gained an optional `id` — the scroll
+    target (`scroll-mt-24` keeps it clear of the sticky header). Every panel
+    in `staff/page.tsx` now has a `p-*` id.
+  - New `SearchIcon` in `components/icons.tsx`. Verified: web typecheck,
+    eslint, production build all clean.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
