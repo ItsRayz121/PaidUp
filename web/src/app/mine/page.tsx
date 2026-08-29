@@ -8,7 +8,7 @@ import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
-import { HourglassClaim, HOURGLASS_COIN_COUNT, hourglassDroppedCount } from "@/components/HourglassClaim";
+import { HourglassClaim } from "@/components/HourglassClaim";
 import { AmbientBg } from "@/components/AmbientBg";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
@@ -241,20 +241,6 @@ export default function MinePage() {
     s.ads.gateOnStart &&
     (rewardedZone !== "" || s.ads.monetagDirectLink !== "" || s.ads.monetagZoneId !== "");
 
-  // How far through the CURRENT session we are, 0..1 — drives the persistent
-  // hourglass below. Derived from expiresAt + sessionHours (no separate
-  // "startedAt" field exists, and none is needed: expiresAt - sessionHours is
-  // exactly that). Recomputed fresh every render — the same interval inside
-  // useCountdown() above is what re-renders this component once a second
-  // while a session is active, so this render-time Date.now() is current.
-  // eslint-disable-next-line react-hooks/purity
-  const nowMs = Date.now();
-  const sessionProgress = s.session.active && s.session.expiresAt
-    ? Math.min(1, Math.max(
-        0,
-        1 - (Date.parse(s.session.expiresAt) - nowMs) / (s.session.sessionHours * 3_600_000),
-      ))
-    : 0;
 
   const activityAll = rewardsHistory({
     ledger: ledgerHistory.data?.entries ?? [],
@@ -347,25 +333,17 @@ export default function MinePage() {
             </div>
           ) : s.session.active ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
-              {/* The session hourglass (founder, 2026-08-28): stays on screen
-                  for the WHOLE session — not just a few seconds of pour — with
-                  coins settling from the top bulb to the bottom bulb in step
-                  with elapsed time, one coin roughly every sessionHours/14.
-                  Same component the claim card uses, in its controlled
-                  "progress" mode (see HourglassClaim.tsx's own header): purely
-                  decorative, reflects elapsed TIME, never a reading of the
-                  real ROZI amount — that number is the text above, unchanged. */}
+              {/* The session hourglass (founder, 2026-08-29): coins sit SETTLED
+                  in the bottom bulb for the whole session, with a breathing
+                  glow and a spark trickling through the neck. It used to drain
+                  one coin an hour from the top bulb, which read as a broken,
+                  half-empty glass. Purely decorative — "the machine is
+                  running"; the countdown below is what says how far in. */}
               <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
-                <HourglassClaim progress={sessionProgress} />
+                <HourglassClaim working />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
-              <p className="num mt-1 text-xs font-semibold text-success">
-                {t("mine.running.coins", {
-                  dropped: String(hourglassDroppedCount(sessionProgress)),
-                  total: String(HOURGLASS_COIN_COUNT),
-                })}
-              </p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
             </div>
           ) : (

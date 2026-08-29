@@ -186,6 +186,37 @@ body {
    gem-glint moment this replaced. */
 .hg-wrap { width: 108px; height: 166px; transition: filter 300ms; }
 .hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
+
+/* "Working" state (founder, 2026-08-29): coins sit settled in the bottom bulb
+   while a mining session runs. A gentle breathing glow + a spark trickling
+   down through the neck says "running" without draining the glass. */
+.hg-wrap.hg-working { animation: hg-working-glow 3.2s ease-in-out infinite; }
+.hg-wrap.hg-working::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  pointer-events: none;
+  animation: hg-working-trickle 1.5s ease-in infinite;
+}
+@keyframes hg-working-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(242, 164, 23, 0.35)); }
+  50% { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.7)); }
+}
+@keyframes hg-working-trickle {
+  0% { transform: translateY(0) scale(0.8); opacity: 0; }
+  30% { opacity: 0.9; }
+  100% { transform: translateY(18px) scale(0.5); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-wrap.hg-working { animation: none; filter: drop-shadow(0 0 10px rgba(242, 164, 23, 0.5)); }
+  .hg-wrap.hg-working::after { animation: none; opacity: 0; }
+}
 .hg-coin-ring { fill: url(#hgCoinGrad); stroke: #a86400; stroke-width: 0.6; }
 .hg-coin-face { fill: url(#hgCoinFaceGrad); }
 .hg-splash { opacity: 0; }

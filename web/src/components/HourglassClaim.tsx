@@ -112,6 +112,7 @@ export function HourglassClaim({
   className = "",
   onSettled,
   progress,
+  working = false,
 }: {
   className?: string;
   // Fires once, the moment the pour finishes and the glass settles into its
@@ -124,6 +125,12 @@ export function HourglassClaim({
   // session elapsed) and the split updates as the value changes across
   // re-renders; omit for the original one-shot pour.
   progress?: number;
+  // "Working" mode (founder, 2026-08-29): while a mining session is running,
+  // the coins sit SETTLED in the bottom bulb — the same low, full look as the
+  // "ready" state — with a gentle looping glow and a spark trickling through
+  // the neck, instead of draining one coin an hour from the top bulb (which
+  // read as a broken, half-empty glass). Overrides `progress`.
+  working?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const topGroupRef = useRef<SVGGElement>(null);
@@ -137,8 +144,9 @@ export function HourglassClaim({
   // and rebuilding it on every one-second tick from the parent's countdown.
   const applyProgressRef = useRef<((p: number) => void) | null>(null);
   // Captured once: which mode this mount is in never changes mid-life, since
-  // callers pass `progress` consistently for a given usage site.
+  // callers pass `progress` / `working` consistently for a given usage site.
   const initialProgressRef = useRef(progress);
+  const workingRef = useRef(working);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -153,6 +161,20 @@ export function HourglassClaim({
 
     const topSlots = generateSlots(HOURGLASS_COIN_COUNT, TOP_BULB);
     const botSlots = generateSlots(HOURGLASS_COIN_COUNT, BOT_BULB);
+
+    // "Working" mode: every coin settled in the bottom bulb, no pour, plus a
+    // looping glow + neck trickle (CSS on .hg-working). The countdown text
+    // beside this widget is what tells the user how far through the session
+    // they are — this visual only says "the machine is running".
+    if (workingRef.current) {
+      botSlots.forEach((pos) => {
+        const coin = makeCoin();
+        coin.setAttribute("transform", `translate(${pos.x},${pos.y})`);
+        botGroup.appendChild(coin);
+      });
+      wrap.classList.add("hg-working");
+      return;
+    }
 
     // Shared by both modes: animate one coin falling from `start` (a top-bulb
     // slot) through the neck to `destPos` (a bottom-bulb slot), then settle it
