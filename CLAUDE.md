@@ -2003,6 +2003,109 @@ These override convenience or speed at every step:
     off deliberately, and it survives flags resolving in between. Both stay
     on the row because they answer different questions.
 
+- **A "FINAL TOUCH" PASS: PREMIUM BACKGROUND, USDT-BOUGHT MACHINES, TASK
+  REWARDS IN ROZI, AND FIVE SCREEN CLEANUPS (founder, 2026-08-29).** A phone
+  review turned into a nine-item list. Verified: full backend matrix re-run
+  from a fresh DB (stage7 78, taskbudget 46, taskmarketplace 10, mining e2e
+  62, referrals 14, stage4 48, stage5 55, stage6 70, analytics 40, admin 15,
+  usersadmin 32, kyc 43, usdt 85, wallet 52, deposits 33, + every other suite;
+  6 unit suites incl. mining 41) — all green; api + web typecheck, eslint, web
+  production build; `security-review` — no findings.
+  - **Premium animated background.** `components/AmbientBg.tsx` replaces the
+    flat near-white page + two faint blobs on Home/Mine/Wallet/Profile: a soft
+    teal page gradient, three morphing aurora blobs (teal/marigold/cyan), a
+    faint static circuit-tile texture, and twelve slow "mining energy" motes
+    rising up the screen. `/mine` gets brighter blobs, faster motes and a
+    marigold glow behind the dial. All motion is transform/opacity only
+    (compositor-safe); `prefers-reduced-motion` freezes every layer. One shared
+    component so the four screens cannot drift.
+  - ⚠️ **MACHINES ARE BOUGHT WITH USDT NOW, AND THIS RE-OPENS GUARDRAIL #7 ON
+    PURPOSE.** `SEED_RIGS` ROZI prices ×10 (Old Phone next-upgrade 40 → 400,
+    Laptop 150 → 1500) via a one-time `migrateRigPrices2026Usdt`, which also
+    fills `base_cost_usdt` for the five launch rigs (Old Phone $5 → Data Centre
+    $400) where an admin has not set one. `/mine/rigs` + `/mine/rigs/[id]`: when
+    a rig has a USDT price **and** top-ups are on, the USDT button leads
+    (accent) and the raised ROZI price sits under it as a "later" option; ROZI
+    stays primary where there is no USDT price (dev / un-configured instances).
+    The founder was told, again, that a USDT price on a rig that also has a
+    ROZI price publishes an implied ROZI value (~$210k against the 21M cap at
+    $0.01/ROZI) — the exact thing #7 and the 2026-08-12 "rig prices are NOT set
+    to a fixed rate" entry exist to prevent — and chose it. **The old "first
+    rig ≈ five days of baseline mining" invariant in `SEED_RIGS` is
+    deliberately set aside**: the ROZI price is now aspirational, USDT is the
+    real purchase path. **USDT-buy needs `usdtTopupEnabled` + a treasury
+    address**, same as the top-up feature it spends.
+  - **"Expected ROZI" on a machine card = per-day only, no lifetime total**
+    (founder's own choice when asked). The existing `extraRoziPerDayMicro` line
+    stays; a `rigs.rateNote` caveat ("speed drops as halvings happen") was
+    added. No projected total — it would read as a promise.
+  - **The USDT withdraw screen (`/wallet/withdraw`) now matches the BNB
+    withdraw screen**: logo + title + the single payout chain as a subtitle
+    (not a picker card), a compact success card (not a full-screen
+    celebration), the "gas ready" box shown only when gas is actually missing,
+    and "Pay from" as a plain two-chip row that appears only when the user has
+    task USDT to choose. **No server call changed** — KYC / step-up / gas /
+    ConnectWallet logic is all preserved.
+  - **Per-token history lists cap at 3 + "See more"** (`/wallet/usdt`,
+    `/wallet/bnb`; `/wallet`'s merged preview 2 → 3 to match).
+  - ⚠️ **BNB HISTORY IS NOW AN ON-DEMAND BscScan READ, NOT A SCANNER.**
+    `GET /wallet/bnb/history` (`api/src/bscscan.ts`) looks up the user's own
+    derived BEP20 address on BscScan **only when they open the BNB screen** —
+    25 rows, 60s per-address cache, never throws. This is how incoming BNB
+    shows up at all: the native BNB deposit scanner stays **off** (the
+    2026-08-13 billing entry). Needs a free `BSCSCAN_API_KEY`; empty key → the
+    screen just shows our own withdrawal rows, no error. `unifyHistory` folds
+    the rows in, deduped against our own withdrawal / native-deposit rows by
+    tx hash.
+  - **The mining hourglass sits full while a session runs.** New
+    `HourglassClaim working` mode: every coin settled in the bottom bulb (the
+    "ready" look), a breathing glow, a spark through the neck. It used to drain
+    one coin an hour from the top bulb, which read as a broken half-empty
+    glass. The countdown text still says how far in; the "0 of 14 coins
+    dropped" line is gone.
+  - **`/mine` "Mine faster" cards are half the height** (smaller padding/icon,
+    15px title, xs body, the "N left today" count folded into the ad card's one
+    body line). "Speed up mining" tile → "Speed up".
+  - ⚠️ **TASK TITLES ARE BACK TO ONE LINE**, truncated — reversing the
+    2026-08-28 "wrap to two lines" change (founder). A wrapping title pushed
+    `/tasks` down to ~3 cards a screen; the full title lives on the task detail
+    page.
+  - ⚠️ **CUSTOM/RoziPay TASK REWARDS ARE SET IN ROZI AND/OR USDT NOW, AND ROZI
+    HERE IS THE REAL MINED TOKEN.** The word "points" is gone from the earner
+    app. A custom task's ROZI reward credits **`rozi_ledger`**
+    (`source_type='task_reward'`, non-withdrawable), and it **counts against
+    the 21M cap** — `totalEmittedMicro()` folds in `task_reward`, and
+    `creditCompletion()` mints it only if there is room (the task still
+    completes and any USDT portion still pays if the cap is full). **Network
+    offerwall postbacks (CPX etc.) are untouched** — they still credit
+    withdrawable points/earned-USDT, or the earn→withdraw loop breaks.
+    - `db.ts`: `reward_rozi_micro` on `tasks` / `task_proofs` /
+      `task_completions`; `reward_type` CHECK gains `'rozi'`; a one-time
+      migration folds every existing `source='custom'` "N points" row into
+      "N ROZI" 1:1 (the founder's own framing) and zeroes its `points`;
+      `rozi_ledger` CHECK + `RoziSource` gain `'task_reward'`.
+    - `credit.ts`: `roziMicro` path → `postRozi` under the cap; referral
+      L1/L2/first-task bonuses are paid **in the same currency as the task's
+      main reward** (ROZI → ROZI via `task_reward`, points/USDT otherwise).
+      ⚠️ **The first-task flat bonus (`referral_first_task_bonus`, default
+      100) is now 100 ROZI on a ROZI task** — proportionally the same as the
+      old 100-points-vs-50-points ratio, admin-tunable per network in `/staff`.
+    - `staffTasks.ts`: the reward selector is **ROZI only / USDT only /
+      ROZI + USDT**; `"points"` is still accepted on the wire and normalised
+      to ROZI 1:1 (`normalizeReward`) so an older client / test does not 400.
+    - `taskBudget.ts`: the "Max ROZI to pay" cap (`budget_points`, relabelled
+      in the admin panel) now counts a custom task's `reward_rozi_micro` as
+      whole ROZI — it previously counted only `points`, which is 0 for a ROZI
+      task, so a points budget on a ROZI task did nothing.
+    - Earner display: `RewardPill` / `TaskFlow` / `tasks-admin` /
+      `walletHistory` all show ROZI, never "points". Network-task `points`
+      still render as ROZI via the app-wide 100:1 `formatPointsAsRozi`.
+  - ⚠️ **KNOWN, ACCEPTED at launch scale:** `credit.ts` cap-checks the *main*
+    task ROZI reward before minting but not the referral ROZI bonuses stacked
+    on top, so cumulative emission can exceed 21M by one task's referral
+    bonuses (~20%+100 ROZI). Unreachable at launch emission (~0). Tighten if
+    real volume ever approaches the cap.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
