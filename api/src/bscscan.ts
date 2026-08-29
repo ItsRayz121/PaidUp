@@ -9,6 +9,13 @@
 // own derived deposit address, 25 rows, with a 60s per-address cache. It never
 // throws — a BscScan hiccup returns an empty list (or the last cached one),
 // never an error on a money screen.
+//
+// ⚠️ ENDPOINT: the old standalone host `api.bscscan.com/api` (Etherscan API V1)
+// was retired in 2025 — it now answers every request with a "migrate to V2"
+// error, which this code read as `status !== "1"` and silently turned into an
+// empty history. We call Etherscan's V2 multichain endpoint instead
+// (`api.etherscan.io/v2/api` + `chainid=56` for BNB Smart Chain); a free
+// BscScan/Etherscan key works on it unchanged. Same `{status, result}` shape.
 import { config } from "./config.ts";
 
 export type BnbAddressTx = {
@@ -25,7 +32,10 @@ type CacheEntry = { at: number; rows: BnbAddressTx[] };
 
 const cache = new Map<string, CacheEntry>();
 const TTL_MS = 60_000;
-const API = "https://api.bscscan.com/api";
+// Etherscan V2 multichain — chainid 56 is BNB Smart Chain. See the endpoint
+// note in this file's header for why the old api.bscscan.com host is gone.
+const API = "https://api.etherscan.io/v2/api";
+const CHAIN_ID = 56;
 const TIMEOUT_MS = 8_000;
 
 export async function fetchBnbAddressHistory(address: string): Promise<BnbAddressTx[]> {
@@ -58,7 +68,7 @@ export async function fetchBnbAddressHistory(address: string): Promise<BnbAddres
 
 async function queryList(action: string, address: string, key: string): Promise<RawTx[]> {
   const url =
-    `${API}?module=account&action=${action}&address=${address}` +
+    `${API}?chainid=${CHAIN_ID}&module=account&action=${action}&address=${address}` +
     `&startblock=0&endblock=99999999&sort=desc&page=1&offset=25&apikey=${key}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);

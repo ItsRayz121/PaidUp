@@ -59,9 +59,11 @@ const tasks = [
 // to the Admin. Re-running the seed to apply network config must never reset a
 // link they pasted, a reward they retuned, or a task they switched off.
 const socialTasks = [
+  // Titles kept short and parallel ("<verb> RoziPay on <app>") so they sit on
+  // one line in the task list and wrap cleanly on the task's own page.
   { id: "social-whatsapp", icon: "whatsapp", title: "Follow RoziPay on WhatsApp", proof_label: "Your WhatsApp name", instructions: "Open our WhatsApp channel and press Follow. Then send us the name you follow with, so we can check it." },
-  { id: "social-telegram", icon: "telegram", title: "Join the RoziPay Telegram channel", proof_label: "Your Telegram @username", instructions: "Open our Telegram channel and press Join. Then send us your Telegram @username, so we can check it." },
-  { id: "social-twitter", icon: "twitter", title: "Follow RoziPay on X (Twitter)", proof_label: "Your X @username", instructions: "Open our X page and press Follow. Then send us your X @username, so we can check it." },
+  { id: "social-telegram", icon: "telegram", title: "Join RoziPay on Telegram", proof_label: "Your Telegram @username", instructions: "Open our Telegram channel and press Join. Then send us your Telegram @username, so we can check it." },
+  { id: "social-twitter", icon: "twitter", title: "Follow RoziPay on X", proof_label: "Your X @username", instructions: "Open our X page and press Follow. Then send us your X @username, so we can check it." },
 ];
 
 await initDb();

@@ -73,6 +73,9 @@ function TaskDetail({ task, fields, onSent }: {
   return (
     <>
       <Card className="p-4">
+        {/* The title takes the full width of the card — the reward sits on its
+            own line below, not squeezed into the right edge (which forced a
+            long title to break one word per line). */}
         <div className="flex items-start gap-3">
           {task.logoAssetId ? <img src={taskAssetUrl(task.logoAssetId)} alt=""
             className="h-12 w-12 shrink-0 rounded-xl border border-line object-cover" />
@@ -84,6 +87,8 @@ function TaskDetail({ task, fields, onSent }: {
               {category && <span className="rounded-full bg-brand-tint px-2 py-0.5 font-semibold text-brand">{category}</span>}
             </p>
           </div>
+        </div>
+        <div className="mt-3">
           <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
         </div>
 

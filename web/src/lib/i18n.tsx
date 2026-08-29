@@ -399,6 +399,12 @@ const copy: Record<string, string> = {
   "withdraw.youHave": "You have",
   "withdraw.aboutEquals": "Ready to take out",
   "withdraw.getPaidUsdt": "Get paid in USDT",
+  // "Take from" chips — shown only when more than one balance can be paid out.
+  "withdraw.payFrom": "Take from",
+  "withdraw.source.earnings": "Task earnings",
+  "withdraw.source.taskUsdt": "Task USDT",
+  "withdraw.source.deposit": "Money you added",
+  "withdraw.depositNote": "This is USDT you added yourself. We send it back to your wallet after a quick check.",
   // ---- Where the money goes (moved to /profile/settings, 2026-08-05) -------
   // This screen only ever SHOWS what's saved now; it never collects an
   // address itself. See the note above this block in the withdraw page.

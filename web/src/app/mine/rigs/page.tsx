@@ -110,10 +110,10 @@ export default function RigsPage() {
             const usdtAffordable = usdtPayable && usdtMicro >= (r.nextCostUsdtMicro ?? 0);
 
             return (
-              <Card key={r.id} className="p-4">
+              <Card key={r.id} className="p-3">
                 <Link href={`/mine/rigs/${r.id}`} className="flex items-center gap-3">
-                  <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
-                    <Icon size={24} />
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+                    <Icon size={22} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 font-bold text-brand-ink">
@@ -137,11 +137,16 @@ export default function RigsPage() {
                 </Link>
 
                 {maxed ? (
-                  <p className="mt-3 rounded-lg bg-success-tint px-3 py-2 text-center text-sm font-semibold text-success">
+                  <p className="mt-2.5 rounded-lg bg-success-tint px-3 py-1.5 text-center text-sm font-semibold text-success">
                     {t("rigs.maxed")}
                   </p>
                 ) : (
-                  <div className="mt-3 space-y-2">
+                  <div className="mt-2.5 space-y-1.5">
+                    {/* Speed change and per-day value on ONE line to keep the
+                        card short enough to show three at once (founder,
+                        2026-08-29). The payback-days estimate this used to
+                        carry lives on the machine's own page now; per-day
+                        value is absent under the pool model — see that page. */}
                     <p className="text-sm text-muted">
                       {t("rigs.next")}:{" "}
                       <strong className="num text-brand-ink">
@@ -156,36 +161,23 @@ export default function RigsPage() {
                           })}
                         </span>
                       )}
+                      {r.extraRoziPerDayMicro !== null && r.extraRoziPerDayMicro > 0 && (
+                        <span className="num ms-1.5 text-xs text-muted">
+                          · {t("rigs.extraPerDay", { n: formatRozi(r.extraRoziPerDayMicro) })}
+                        </span>
+                      )}
                     </p>
-
-                    {/* What this level is actually worth (founder, 2026-08-12) —
-                        only shown when the API sent a real number (pi model,
-                        see the route's own comment); silently absent under the
-                        pool model rather than showing a guess. */}
-                    {r.extraRoziPerDayMicro !== null && r.extraRoziPerDayMicro > 0 && (
-                      <p className="text-xs text-muted">
-                        {t("rigs.extraPerDay", { n: formatRozi(r.extraRoziPerDayMicro) })}
-                        {r.nextCostMicro !== null && (
-                          <> · {t("rigs.payback", {
-                            days: Math.max(1, Math.round(r.nextCostMicro / r.extraRoziPerDayMicro)).toLocaleString(),
-                          })}</>
-                        )}
-                      </p>
-                    )}
 
                     {/* USDT is the real way to buy a machine now (founder,
                         2026-08-29): when a rig has a USDT price and top-ups are
-                        on, the USDT button leads and the ROZI price sits below
-                        it as a "later" option. When there is no USDT price (the
-                        old default, and dev instances), ROZI stays primary. */}
+                        on, the USDT button leads and the ROZI price is the
+                        "later" option. When there is no USDT price (the old
+                        default, and dev instances), ROZI stays primary. */}
                     {usdtPayable && (
                       <div className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="num text-sm font-semibold text-accent-ink">
-                            {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
-                          </p>
-                          <p className="text-[11px] text-muted">{t("rigs.buyNow")}</p>
-                        </div>
+                        <p className="num min-w-0 flex-1 text-sm font-semibold text-accent-ink">
+                          {formatUsdtMicro(r.nextCostUsdtMicro ?? 0)}
+                        </p>
                         <Button
                           onClick={() => onUpgrade(r.id, "usdt")}
                           disabled={busy === r.id || !usdtAffordable}
@@ -199,14 +191,9 @@ export default function RigsPage() {
                     )}
 
                     <div className="flex items-center gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="num text-sm font-semibold text-brand">
-                          {formatRozi(r.nextCostMicro ?? 0)} ROZI
-                        </p>
-                        {usdtPayable && (
-                          <p className="text-[11px] text-muted">{t("rigs.roziFuture")}</p>
-                        )}
-                      </div>
+                      <p className="num min-w-0 flex-1 text-sm font-semibold text-brand">
+                        {formatRozi(r.nextCostMicro ?? 0)} ROZI
+                      </p>
                       <Button
                         onClick={() => onUpgrade(r.id, "rozi")}
                         disabled={busy === r.id || !affordable}

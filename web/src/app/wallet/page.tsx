@@ -53,10 +53,12 @@ export default function WalletPage() {
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
-  const points = bal.data?.points ?? 0;
-  const min = bal.data?.minWithdrawPoints ?? 1000;
-  const canWithdraw = points >= min;
   const usdtAvailableMicro = bal.data?.usdtAvailableMicro ?? 0;
+  // The withdraw screen now cashes out task earnings, task USDT AND deposit
+  // credit (founder, 2026-08-29), so the shortcut shows whenever there is
+  // anything actually ready to take out — not only when points cross the
+  // minimum.
+  const canWithdraw = usdtAvailableMicro > 0;
   const usdtLockedMicro = bal.data?.usdtLockedMicro ?? 0;
   const usdtTotalMicro = bal.data?.usdtTotalMicro ?? 0;
   // ⚠️ NO NUMBER ON THIS SCREEN MAY BE A FALLBACK ZERO. Every figure above is
