@@ -207,6 +207,60 @@ console.log("\n-- the 'under review' state is distinct from active/suspended --"
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- user list: server-side filters + sort (admin rebuild, Phase B) --");
+{
+  const admin = await mkStaff("list-admin", "admin");
+  const active1 = await mkUser("list-active-1");
+  const active2 = await mkUser("list-active-2");
+  const banned = await mkUser("list-banned");
+  await sql.run("UPDATE users SET status = 'suspended' WHERE id = ?", banned);
+  await sql.run("UPDATE users SET kyc_status = 'approved' WHERE id = ?", active1);
+
+  const suspOnly = await app.inject({ method: "GET", url: "/staff/users?status=suspended&limit=200", headers: authOf(admin) });
+  const suspIds = suspOnly.json().users.map((u: { id: string }) => u.id);
+  check("status=suspended returns only suspended", suspIds.includes(banned) && !suspIds.includes(active1), suspOnly.body);
+
+  const kycOnly = await app.inject({ method: "GET", url: "/staff/users?kyc=approved&limit=200", headers: authOf(admin) });
+  const kycIds = kycOnly.json().users.map((u: { id: string }) => u.id);
+  check("kyc=approved filters to approved users", kycIds.includes(active1) && !kycIds.includes(active2));
+
+  const asc = await app.inject({ method: "GET", url: "/staff/users?sort=created_at&dir=asc&limit=200", headers: authOf(admin) });
+  const times = asc.json().users.map((u: { created_at: string }) => u.created_at);
+  check("sort=created_at&dir=asc is actually ascending",
+    times.every((t: string, i: number) => i === 0 || times[i - 1] <= t), asc.body);
+
+  const total = suspOnly.json().total;
+  check("total matches the filter, not the whole table", total === suspIds.length);
+
+  const badSort = await app.inject({ method: "GET", url: "/staff/users?sort=email);DROP&dir=asc", headers: authOf(admin) });
+  check("an unknown sort key is ignored, not injected", badSort.statusCode === 200);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- user 360: the tabbed detail endpoint (admin rebuild, Phase B) --");
+{
+  const admin = await mkStaff("u360-admin", "admin");
+  const subject = await mkUser("u360-subject");
+  await sql.run(
+    `INSERT INTO ledger_entries (id, user_id, amount, direction, source_type, note, created_at) VALUES (?,?,?,?,?,?,?)`,
+    newId(), subject, 250, "credit", "task_completion", "test task", now(),
+  );
+
+  const r = await app.inject({ method: "GET", url: `/staff/users/${subject}`, headers: authOf(admin) });
+  check("detail endpoint 200s", r.statusCode === 200, r.body);
+  const b = r.json();
+  check("carries an activity timeline array", Array.isArray(b.activity));
+  check("the seeded ledger row shows in the activity timeline",
+    b.activity.some((a: { kind: string; detail: string }) => a.kind === "points" && a.detail.includes("250")));
+  check("carries roziLedger / usdtLedger / audit arrays",
+    Array.isArray(b.roziLedger) && Array.isArray(b.usdtLedger) && Array.isArray(b.audit));
+  check("carries a referral block", b.referral && typeof b.referral.joined2Count === "number");
+  check("still NO combined balance total (guardrail #7)",
+    b.user.balancePoints !== undefined && b.user.roziMicro !== undefined && b.user.usdtMicro !== undefined
+    && b.user.totalBalance === undefined && b.total === undefined);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- console-wide record search (admin rebuild, Phase A) --");
 {
   const admin = await mkStaff("search-admin", "admin");

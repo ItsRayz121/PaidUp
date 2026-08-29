@@ -6,10 +6,10 @@ import { useStaffSession, useApi } from "@/lib/hooks";
 import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
 import {
-  fetchStaffQueue, decideWithdrawal, fetchFraud, fetchStaffUser,
-  type StaffWithdrawal, type StaffUserDetail,
+  fetchStaffQueue, decideWithdrawal, fetchFraud,
+  type StaffWithdrawal,
 } from "@/lib/api";
-import { formatPoints, formatMoney, formatUsdtMicro, timeAgo } from "@/lib/format";
+import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import {
   KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton,
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
@@ -29,6 +29,7 @@ import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
 import { StaffSearch, SectionToc } from "@/components/staff-search";
 import { ToastProvider } from "@/components/staff/toast";
+import { UserLookupScreen } from "@/components/staff/UserDetail";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -266,7 +267,7 @@ export default function StaffPage() {
                   nobody else needs to see a stranger's national ID card. */}
               {may("kyc.view") && <Panel id="p-kyc" title="Verify IDs"><KycPanel /></Panel>}
               {/* Dispute lookup. */}
-              {may("users.view") && <Panel id="p-lookup" title="Look up a user"><UserLookup target={lookupTarget} /></Panel>}
+              {may("users.view") && <Panel id="p-lookup" title="Look up a user"><UserLookupScreen target={lookupTarget} onCleared={() => setLookupTarget(null)} /></Panel>}
               {may("fraud.view") && <Panel id="p-fraud" title="Fraud flags"><FraudPanel canResolve={may("fraud.resolve")} /></Panel>}
             </>
           )}
@@ -520,296 +521,6 @@ function Actions({ status, onAct }: { status: string; onAct: (a: "approve" | "re
   );
 }
 
-// ---- User detail (brief part 34) -------------------------------------------
-// The identity + money header. Everything a support agent needs before they say
-// anything to the user, above the fold, so nobody answers a dispute from the
-// one ledger that happened to be on screen.
-function Badge({ tone, children }: { tone: "ok" | "warn" | "bad" | "mute"; children: React.ReactNode }) {
-  const cls = {
-    ok: "bg-success-tint text-success",
-    warn: "bg-pending-tint text-pending",
-    bad: "bg-danger-tint text-danger",
-    mute: "bg-brand-tint/40 text-muted",
-  }[tone];
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{children}</span>;
-}
-
-function UserHeader({ d }: { d: StaffUserDetail }) {
-  const u = d.user;
-  const handle = u.username ? `@${String(u.username)}` : null;
-  return (
-    <div>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-semibold text-brand-ink">{String(u.email)}</span>
-        {handle && <span className="text-xs text-muted">{handle}</span>}
-        {u.display_name ? <span className="text-xs text-muted">· {String(u.display_name)}</span> : null}
-      </div>
-
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        <Badge tone={String(u.status) === "active" ? "ok" : "bad"}>{String(u.status)}</Badge>
-        {/* A hold stops AUTOMATIC payouts only — the account still mines and
-            earns. Saying "held" without that is how it gets mistaken for a
-            suspension. */}
-        {u.withdrawalHeld && <Badge tone="warn">payouts held</Badge>}
-        {/* A real, staff-SET triage label — see the Users panel's "Mark for
-            review" action. Distinct from the fraud-flag-count "suspect" badge,
-            which is not shown on this screen at all (fraudFlags are listed
-            below in full). */}
-        {u.underReview && <Badge tone="warn">under review</Badge>}
-        <Badge tone={String(u.kyc_status) === "approved" ? "ok" : "mute"}>id: {String(u.kyc_status ?? "none")}</Badge>
-        {u.telegram_id ? <Badge tone="mute">telegram</Badge> : null}
-        {u.country ? <Badge tone="mute">{String(u.country)}</Badge> : null}
-        <Badge tone="mute">code {String(u.referral_code ?? "—")}</Badge>
-        <Badge tone="mute">joined {timeAgo(String(u.created_at))}</Badge>
-      </div>
-
-      {u.withdrawalHeld && (
-        <p className="mt-2 rounded bg-pending-tint p-2 text-xs text-pending">
-          Automatic payouts are held: {String(u.withdrawal_hold_reason)}
-          {u.withdrawal_hold_until ? ` (until ${String(u.withdrawal_hold_until).slice(0, 10)})` : " (no end date)"}.
-          They can still mine and earn.
-        </p>
-      )}
-      {u.underReview && (
-        <p className="mt-2 rounded bg-pending-tint p-2 text-xs text-pending">
-          Marked for review: {String(u.under_review_reason)}
-          {u.under_review_by_email ? ` — by ${String(u.under_review_by_email)}` : ""}
-          {u.under_review_at ? ` (${timeAgo(String(u.under_review_at))})` : ""}. This is a triage
-          note only — it does not stop anything the account can do.
-        </p>
-      )}
-      {String(u.status) !== "active" && (
-        <p className="mt-2 rounded bg-danger-tint p-2 text-xs text-danger">
-          This account is {String(u.status)}. It cannot sign in.
-        </p>
-      )}
-
-      {/* ⚠️ THREE LEDGERS, THREE BOXES, NEVER A TOTAL. Points and USDT credit
-          have real rates; ROZI has none by design (guardrail #7). A combined
-          figure here would invent one, and it would be quoted to a user. */}
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <div className="rounded-lg border border-line p-2">
-          <p className="text-[10px] uppercase text-muted">Points</p>
-          <p className="num font-semibold text-brand-ink">{formatPoints(Number(u.balancePoints))}</p>
-          <p className="text-[10px] text-muted">withdrawable</p>
-        </div>
-        <div className="rounded-lg border border-line p-2">
-          <p className="text-[10px] uppercase text-muted">ROZI</p>
-          <p className="num font-semibold text-brand-ink">{(Number(u.roziMicro) / 1e6).toFixed(3)}</p>
-          <p className="text-[10px] text-muted">mined + received</p>
-        </div>
-        <div className="rounded-lg border border-line p-2">
-          <p className="text-[10px] uppercase text-muted">USDT credit</p>
-          <p className="num font-semibold text-brand-ink">{formatUsdtMicro(Number(u.usdtMicro))}</p>
-          <p className="text-[10px] text-muted">deposits, spend-only</p>
-        </div>
-      </div>
-
-      <p className="mt-2 text-xs text-muted">
-        Paid out: <span className="num font-semibold text-brand-ink">{formatPoints(d.paidSummary.totalPoints)}</span> pts
-        across {d.paidSummary.count} withdrawal{d.paidSummary.count === 1 ? "" : "s"}
-        {d.invitedBy && <> · invited by <span className="font-semibold text-brand-ink">{d.invitedBy.email}</span></>}
-        {/* ⚠️ inviteeCount, NOT invitees.length — the list is capped at 50 and
-            this number is what a referral-ring review acts on. */}
-        {d.inviteeCount > 0 && <> · invited <span className="font-semibold text-brand-ink">{d.inviteeCount}</span></>}
-      </p>
-    </div>
-  );
-}
-
-function UserLookup({ target }: { target: string | null }) {
-  const [id, setId] = useState("");
-  const [query, setQuery] = useState("");
-  const res = useApi(() => (query ? fetchStaffUser(query) : Promise.resolve(null)), [query]);
-
-  // When a "view ledger" link elsewhere sets a target, search for it. This is
-  // the "adjust state when a prop changes" case — the prop is the event.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (target) { setId(target); setQuery(target); }
-  }, [target]);
-
-  return (
-    <section className="mb-8">
-      <h2 className="mb-2 font-bold text-brand-ink">Look up a user (disputes)</h2>
-      <div className="flex gap-2">
-        <input value={id} onChange={(e) => setId(e.target.value)}
-          placeholder="user id" className="flex-1 rounded-md border border-line bg-card p-2 text-sm outline-none" />
-        <button onClick={() => setQuery(id)} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white">Search</button>
-      </div>
-
-      {query && res.loading && <p className="mt-2 text-sm text-muted">Loading…</p>}
-      {res.error && <p className="mt-2 text-sm text-danger">{res.error}</p>}
-      {res.data && (
-        <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm">
-          <UserHeader d={res.data} />
-
-          <p className="mt-3 mb-1 text-xs font-semibold uppercase text-muted">Points ledger</p>
-          <div className="mt-2 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-xs">
-              <thead className="text-left text-muted"><tr><th className="p-1.5">Amount</th><th className="p-1.5">Source</th><th className="p-1.5">Note</th><th className="p-1.5">When</th></tr></thead>
-              <tbody>
-                {(res.data.ledger as Record<string, unknown>[]).map((l, i) => (
-                  <tr key={i} className="border-t border-line">
-                    <td className="num p-1.5">{Number(l.amount) >= 0 ? "+" : ""}{String(l.amount)}</td>
-                    <td className="p-1.5">{String(l.source_type)}</td>
-                    <td className="p-1.5 text-muted">{String(l.note ?? "")}</td>
-                    <td className="p-1.5 text-muted">{timeAgo(String(l.created_at))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(res.data.fraudFlags as unknown[]).length > 0 && (
-            <p className="mt-2 rounded bg-danger-tint p-2 text-xs text-danger">
-              {(res.data.fraudFlags as unknown[]).length} fraud flag(s) on this user.
-            </p>
-          )}
-
-          {/* A SEPARATE money trail from the points ledger above — deposit
-              refunds ("Get your USDT back") and top-ups never touch
-              ledger_entries, so they were invisible here before this. */}
-          {(res.data.usdtRefunds as Record<string, unknown>[]).length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT refunds (their own deposit, sent back)</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[520px] text-xs">
-                  <thead className="text-left text-muted">
-                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Fee</th><th className="p-1.5">Chain / to</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
-                  </thead>
-                  <tbody>
-                    {(res.data.usdtRefunds as Record<string, unknown>[]).map((r, i) => (
-                      <tr key={i} className="border-t border-line">
-                        <td className="num p-1.5">{formatUsdtMicro(Number(r.amount))}</td>
-                        <td className="num p-1.5 text-muted">{Number(r.fee_micro) > 0 ? `− ${formatUsdtMicro(Number(r.fee_micro))}` : "—"}</td>
-                        <td className="max-w-[160px] truncate p-1.5 text-muted" title={String(r.address)}>{String(r.chain)} · {String(r.address)}</td>
-                        <td className="p-1.5">{String(r.status)}{r.reject_reason ? ` — ${String(r.reject_reason)}` : ""}</td>
-                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {(res.data.usdtTopups as Record<string, unknown>[]).length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT top-ups (deposit credit, buys machines only)</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[420px] text-xs">
-                  <thead className="text-left text-muted">
-                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Chain</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
-                  </thead>
-                  <tbody>
-                    {(res.data.usdtTopups as Record<string, unknown>[]).map((r, i) => (
-                      <tr key={i} className="border-t border-line">
-                        <td className="num p-1.5">{formatUsdtMicro(Number(r.amount))}</td>
-                        <td className="p-1.5 text-muted">{String(r.chain)}</td>
-                        <td className="p-1.5">{String(r.status)}{r.reject_reason ? ` — ${String(r.reject_reason)}` : ""}</td>
-                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Cash-out history. The points ledger above shows each withdrawal's
-              DEBIT, but not its chain, address, status or tx hash — which is
-              every question a "where is my money" ticket actually asks. */}
-          {res.data.withdrawals.length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">Withdrawals (task/referral cash-out)</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-xs">
-                  <thead className="text-left text-muted">
-                    <tr><th className="p-1.5">Amount</th><th className="p-1.5">Fee</th><th className="p-1.5">Chain / to</th><th className="p-1.5">Status</th><th className="p-1.5">When</th></tr>
-                  </thead>
-                  <tbody>
-                    {res.data.withdrawals.map((r, i) => (
-                      <tr key={i} className="border-t border-line">
-                        <td className="num p-1.5">{formatPoints(Number(r.amount))}</td>
-                        <td className="num p-1.5 text-muted">{Number(r.fee_points) > 0 ? `− ${formatPoints(Number(r.fee_points))}` : "—"}</td>
-                        <td className="max-w-[180px] truncate p-1.5 text-muted" title={String(r.address)}>
-                          {String(r.chain)} · {String(r.address)}{" "}
-                          {/* Snapshotted at request time. A signature proves the
-                              address belongs to the user; a typed one proves
-                              nothing, and a payout cannot be reversed. */}
-                          {r.address_verified ? "✓ signed" : "· typed in"}
-                        </td>
-                        <td className="p-1.5">{String(r.status)}{r.note ? ` — ${String(r.note)}` : ""}</td>
-                        <td className="p-1.5 text-muted">{timeAgo(String(r.created_at))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {res.data.invitees.length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">
-                Invited {res.data.inviteeCount} user(s)
-                {res.data.inviteeCount > res.data.invitees.length
-                  && ` — showing the newest ${res.data.invitees.length}`}
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {res.data.invitees.map((r, i) => (
-                  <span key={i} className="rounded bg-brand-tint/40 px-1.5 py-0.5 text-[10px] text-muted">
-                    {String(r.email)}{String(r.status) !== "active" ? ` (${String(r.status)})` : ""}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {res.data.tickets.length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">Support tickets</p>
-              <ul className="space-y-1">
-                {res.data.tickets.map((t, i) => (
-                  <li key={i} className="text-xs text-muted">
-                    <span className="text-brand-ink">{String(t.subject)}</span> · {String(t.status)} · {timeAgo(String(t.created_at))}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Devices + IPs this account has signed in from — the same table the
-              device-reuse / IP-reuse fraud rules read (guardrail #5). Useful for
-              "is this really them" and for a fraud review, and it lived nowhere
-              on this screen before. */}
-          {(res.data.devices ?? []).length > 0 && (
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase text-muted">Devices &amp; IP addresses</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[420px] text-xs">
-                  <thead className="text-left text-muted">
-                    <tr><th className="p-1.5">Device</th><th className="p-1.5">IP</th><th className="p-1.5">First seen</th><th className="p-1.5">Last seen</th></tr>
-                  </thead>
-                  <tbody>
-                    {(res.data.devices ?? []).map((d, i) => (
-                      <tr key={i} className="border-t border-line">
-                        <td className="num max-w-[140px] truncate p-1.5 text-muted" title={String(d.device_id)}>{String(d.device_id)}</td>
-                        <td className="num p-1.5">{String(d.ip ?? "—")}</td>
-                        <td className="p-1.5 text-muted">{timeAgo(String(d.first_seen))}</td>
-                        <td className="p-1.5 text-muted">{timeAgo(String(d.last_seen))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
 
 function FraudPanel({ canResolve }: { canResolve: boolean }) {
   const [auto, setAuto] = useState(true);

@@ -376,6 +376,49 @@ export async function staffRoutes(app: FastifyInstance) {
       id,
     );
 
+    // ---- Phase B additions: the tabbed User 360 -------------------------
+    // The full ROZI + USDT ledgers (points ledger is `ledger` above), an admin
+    // audit slice for THIS user, and a merged activity timeline. The timeline
+    // is the founder's "only if cheap" ask — built as a JS merge of a handful
+    // of small already-indexed queries, no new table and no write path
+    // (analytics.ts's rule).
+    const [roziLedger, usdtLedger, auditRows, tl] = await Promise.all([
+      sql.all("SELECT amount, direction, source_type, note, created_at FROM rozi_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 80", id),
+      sql.all("SELECT amount, direction, source_type, note, created_at FROM usdt_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 80", id),
+      sql.all<{ action: string; detail: string | null; previous_value: string | null; new_value: string | null; created_at: string; actor_email: string | null }>(
+        `SELECT a.action, a.detail, a.previous_value, a.new_value, a.created_at,
+                (SELECT email FROM users u WHERE u.id = a.actor_user_id) AS actor_email
+           FROM admin_audit_log a WHERE a.target_user_id = ? ORDER BY a.created_at DESC LIMIT 60`, id),
+      Promise.all([
+        sql.all<{ amount: number; source_type: string; note: string | null; created_at: string }>("SELECT amount, source_type, note, created_at FROM ledger_entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 40", id),
+        sql.all<{ amount: number; status: string; created_at: string }>("SELECT amount, status, created_at FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 20", id),
+        sql.all<{ amount: number; status: string; created_at: string }>("SELECT amount, status, created_at FROM usdt_topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 20", id),
+        sql.all<{ amount: number; status: string; created_at: string }>("SELECT amount, status, created_at FROM usdt_refund_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 20", id),
+        sql.all<{ amount: number; direction: string; source_type: string; created_at: string }>("SELECT amount, direction, source_type, created_at FROM rozi_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", id),
+        sql.all<{ status: string; network: string; created_at: string }>("SELECT status, network, created_at FROM task_completions WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", id),
+      ]),
+    ]);
+    const [lgP, lgW, lgTu, lgRr, lgRz, lgTc] = tl;
+    const activity = [
+      ...lgP.map((r) => ({ at: r.created_at, kind: "points", detail: `${r.amount >= 0 ? "+" : ""}${r.amount} pts · ${r.source_type}${r.note ? ` · ${r.note}` : ""}` })),
+      ...lgW.map((r) => ({ at: r.created_at, kind: "withdrawal", detail: `${r.status} · ${r.amount} pts` })),
+      ...lgTu.map((r) => ({ at: r.created_at, kind: "deposit", detail: `${r.status} · ${(r.amount / 1e6).toFixed(2)} USDT` })),
+      ...lgRr.map((r) => ({ at: r.created_at, kind: "refund", detail: `${r.status} · ${(r.amount / 1e6).toFixed(2)} USDT` })),
+      ...lgRz.map((r) => ({ at: r.created_at, kind: "rozi", detail: `${r.direction} ${(r.amount / 1e6).toFixed(3)} ROZI · ${r.source_type}` })),
+      ...lgTc.map((r) => ({ at: r.created_at, kind: "task", detail: `task ${r.status} · ${r.network}` })),
+      ...auditRows.map((r) => ({ at: r.created_at, kind: "admin", detail: `${r.action}${r.detail ? ` · ${r.detail}` : ""}${r.actor_email ? ` — by ${r.actor_email}` : ""}` })),
+    ].filter((x) => x.at).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 80);
+
+    // Referral picture: points this account has EARNED from referral bonuses
+    // (derived from the points ledger, not a counter), and the L2 count
+    // (friends of friends) that the earner's own /referrals/me also surfaces.
+    const refEarned = Number((await sql.get<{ n: string | number }>(
+      "SELECT COALESCE(SUM(amount), 0) AS n FROM ledger_entries WHERE user_id = ? AND source_type LIKE 'referral%'", id,
+    ))?.n ?? 0);
+    const joined2Count = Number((await sql.get<{ n: string | number }>(
+      `SELECT COUNT(*) AS n FROM users WHERE referred_by IN (SELECT id FROM users WHERE referred_by = ?)`, id,
+    ))?.n ?? 0);
+
     return {
       user: {
         ...user,
@@ -397,6 +440,8 @@ export async function staffRoutes(app: FastifyInstance) {
       inviteeCount,
       tickets,
       devices,
+      roziLedger, usdtLedger, audit: auditRows, activity,
+      referral: { earnedPoints: refEarned, joined2Count },
     };
   }));
 
@@ -1075,11 +1120,33 @@ export async function staffRoutes(app: FastifyInstance) {
   // let the panel show a short first page with a real "See more" rather than
   // a wall of rows — OFFSET is fine here (unlike the audit log) because this
   // list is read interactively, one page at a time, never scanned end to end.
+  // ⚠️ Now takes server-side SORT + FILTERS (admin rebuild, Phase B). The
+  // WHERE clause is assembled from a fixed set of conditions with bound
+  // params; `sort` / `dir` map through a whitelist to a column literal — never
+  // interpolated from the request. Same list is used for the row page and the
+  // COUNT, so `total` always matches the filter.
   app.get("/staff/users", staffGuard("users.list", async (_ctx, req) => {
-    const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
-    const query = req.query as { limit?: string; offset?: string };
+    const query = req.query as Record<string, string | undefined>;
+    const q = (query.q ?? "").trim().toLowerCase();
     const limit = Math.min(Number(query.limit ?? 10) || 10, 200);
     const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
+
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (q) { where.push("(LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)"); wp.push(`%${q}%`, q); }
+    if (query.status === "active" || query.status === "suspended") { where.push("u.status = ?"); wp.push(query.status); }
+    if (["none", "pending", "approved", "rejected"].includes(query.kyc ?? "")) { where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(query.kyc); }
+    if (query.country) { where.push("LOWER(u.country) = ?"); wp.push(query.country.toLowerCase()); }
+    if (query.flagged === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
+    if (query.held === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
+    if (query.review === "1") where.push("u.under_review_reason IS NOT NULL");
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const SORTS: Record<string, string> = {
+      created_at: "u.created_at", email: "u.email", status: "u.status", balance: "balance",
+    };
+    const sortCol = SORTS[query.sort ?? ""] ?? "u.created_at";
+    const dir = query.dir === "asc" ? "ASC" : "DESC";
 
     const [rows, totalRow] = await Promise.all([
       sql.all<{
@@ -1093,14 +1160,14 @@ export async function staffRoutes(app: FastifyInstance) {
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held,
                 (u.under_review_reason IS NOT NULL) AS "underReview"
          FROM users u
-         WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
-         ORDER BY u.created_at DESC
+         ${whereSql}
+         ORDER BY ${sortCol} ${dir}
          LIMIT ? OFFSET ?`,
-        now(), q, `%${q}%`, q, limit, offset,
+        now(), ...wp, limit, offset,
       ),
       sql.get<{ n: string | number }>(
-        `SELECT COUNT(*) AS n FROM users u WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)`,
-        q, `%${q}%`, q,
+        `SELECT COUNT(*) AS n FROM users u ${whereSql}`,
+        ...wp,
       ),
     ]);
     return { users: rows, total: Number(totalRow?.n ?? rows.length), offset, limit };

@@ -34,10 +34,15 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 // GET /staff/users grows the params; the columns are marked non-sortable
 // until then rather than faking a client-side sort of one page.
 export function UsersPanel() {
-  const q = useTableQuery("users", { pageSize: 25 });
+  const q = useTableQuery("users", { pageSize: 25, sort: "created_at", dir: "desc" });
   const users = useApi(
-    () => searchUsers(q.search, q.pageSize, q.offset),
-    [q.search, q.pageSize, q.offset],
+    () => searchUsers({
+      q: q.search, limit: q.pageSize, offset: q.offset,
+      sort: q.sort ?? undefined, dir: q.dir,
+      status: q.filters.status, kyc: q.filters.kyc, country: q.filters.country || undefined,
+      flagged: q.filters.flagged === "1", held: q.filters.held === "1", review: q.filters.review === "1",
+    }),
+    [q.search, q.pageSize, q.offset, q.sort, q.dir, JSON.stringify(q.filters)],
   );
   const toast = useToast();
   const { openUser } = useStaffNav();
@@ -68,7 +73,7 @@ export function UsersPanel() {
 
   const columns: Column<AdminUserRow>[] = [
     {
-      key: "email", header: "Email", csv: (u) => u.email,
+      key: "email", header: "Email", sortable: true, csv: (u) => u.email,
       render: (u) => (
         <div className="min-w-0">
           <span className="block truncate font-semibold text-brand-ink">{u.email}</span>
@@ -76,10 +81,10 @@ export function UsersPanel() {
         </div>
       ),
     },
-    { key: "balance", header: "Balance", align: "right", csv: (u) => u.balance, render: (u) => <Points value={u.balance} /> },
+    { key: "balance", header: "Balance", align: "right", sortable: true, csv: (u) => u.balance, render: (u) => <Points value={u.balance} /> },
     { key: "value", header: "Value", align: "right", csv: (u) => formatMoney(u.balance), render: (u) => <span className="text-muted">{formatMoney(u.balance)}</span> },
     {
-      key: "status", header: "Status", csv: (u) => u.status,
+      key: "status", header: "Status", sortable: true, csv: (u) => u.status,
       render: (u) => (
         <div className="flex flex-wrap items-center gap-1">
           <StatusBadge status={u.status === "active" ? "active" : "suspended"} />
@@ -89,7 +94,7 @@ export function UsersPanel() {
         </div>
       ),
     },
-    { key: "created_at", header: "Joined", csv: (u) => u.created_at, render: (u) => <TimeCell iso={u.created_at} /> },
+    { key: "created_at", header: "Joined", sortable: true, csv: (u) => u.created_at, render: (u) => <TimeCell iso={u.created_at} /> },
     {
       key: "actions", header: "", render: (u) => (
         <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -115,6 +120,19 @@ export function UsersPanel() {
         onRowClick={(u) => openUser(u.id)}
         searchPlaceholder="Search email or user id — blank shows the newest"
         emptyTitle="No users found"
+        filters={[
+          { key: "status", label: "Status", type: "select", options: [
+            { value: "active", label: "active" }, { value: "suspended", label: "suspended" },
+          ] },
+          { key: "kyc", label: "ID", type: "select", options: [
+            { value: "none", label: "none" }, { value: "pending", label: "pending" },
+            { value: "approved", label: "approved" }, { value: "rejected", label: "rejected" },
+          ] },
+          { key: "flagged", label: "Fraud flags", type: "select", options: [{ value: "1", label: "has open" }] },
+          { key: "held", label: "Payouts held", type: "select", options: [{ value: "1", label: "yes" }] },
+          { key: "review", label: "Under review", type: "select", options: [{ value: "1", label: "yes" }] },
+          { key: "country", label: "Country", type: "text", placeholder: "Country" },
+        ]}
         toolbarRight={
           <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">
             Export {q.search ? "matching" : "all"} (CSV)

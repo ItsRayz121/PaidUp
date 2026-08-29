@@ -2210,6 +2210,41 @@ These override convenience or speed at every step:
     `test:stage7` (78) all green.
   - **Next: Phase B** — the new Dashboard and the full tabbed User 360 page.
 
+- **ADMIN CONSOLE REBUILD — PHASE B (part 1): THE USER 360 PAGE + A REAL
+  USERS LIST (founder, 2026-08-29).** The Dashboard (part 2) is the next
+  commit.
+  - **`GET /staff/users` now takes server-side SORT + FILTERS.** `sort` /
+    `dir` map through a whitelist to a column literal (never interpolated);
+    `status` / `kyc` / `country` / `flagged` / `held` / `review` assemble a
+    bound-param WHERE used for BOTH the row page and the COUNT, so `total`
+    always matches the filter. `web/src/lib/api.ts` `searchUsers` takes an
+    options object now (old positional `(q, limit, offset)` still works). The
+    Users `DataTable` gets sortable headers + a filter bar.
+  - **`GET /staff/users/:id` grew four things** for the tabbed detail page,
+    every one DERIVED (analytics.ts's rule, no new table / write path):
+    `roziLedger`, `usdtLedger`, an `audit` slice (`admin_audit_log` where
+    `target_user_id` = this user, with the actor's email + before→after), and
+    a merged `activity` timeline — a JS merge of six small already-indexed
+    queries (points / withdrawals / deposits / refunds / ROZI / tasks) plus
+    the audit rows, sorted desc, capped 80. Plus a `referral` block
+    (`earnedPoints` from the points ledger, `joined2Count`).
+  - **`web/src/components/staff/UserDetail.tsx`** — the User 360 on
+    `DetailLayout`: tabs Overview · Activity · Balances · Money · Referrals ·
+    Tickets · Audit, and a Danger zone (suspend/restore · hold/lift payouts ·
+    mark/clear review · adjust points · adjust ROZI). ⚠️ **Still three
+    balance boxes, never a total** (guardrail #7) — there is a test asserting
+    the endpoint serves no `totalBalance`. `UserLookupScreen` (find-a-user
+    box + the detail) replaces the old ~290-line inline `UserLookup` /
+    `UserHeader` / `Badge` in `staff/page.tsx`, which were deleted.
+  - **Anonymise is NOT built** this pass — it needs careful multi-table data
+    handling and a dedicated decision; deferred (Phase F or a separate ask).
+    Every other Danger-zone action reuses an endpoint that already existed.
+  - Verified: web typecheck + eslint + build clean; api typecheck clean;
+    `test:usersadmin` now **50** (11 new — filter/sort incl. an
+    unknown-sort-key-is-ignored check, and the User 360 endpoint incl. the
+    no-total guardrail), `test:admin` (15), `test:stage4` (48),
+    `test:stage5` (55), `test:analytics` (40) all green.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

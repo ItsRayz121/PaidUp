@@ -492,9 +492,26 @@ export type StaffUserDetail = {
   // Devices/IPs this account has signed in from (user_devices) — the same
   // table the device-reuse / IP-reuse fraud rules read.
   devices: { device_id: string; ip: string | null; first_seen: string; last_seen: string }[];
+  // ---- admin rebuild, Phase B (the tabbed User 360) ----
+  roziLedger: Record<string, unknown>[];
+  usdtLedger: Record<string, unknown>[];
+  audit: { action: string; detail: string | null; previous_value: string | null; new_value: string | null; created_at: string; actor_email: string | null }[];
+  activity: { at: string; kind: string; detail: string }[];
+  referral: { earnedPoints: number; joined2Count: number };
 };
 export const fetchStaffUser = (id: string) =>
   apiFetch<StaffUserDetail>(`/staff/users/${id}`);
+// Danger-zone actions for the User 360 page.
+export const setWithdrawalHold = (id: string, reason: string | null, until?: string) =>
+  apiFetch<{ ok: true }>(`/staff/users/${id}/withdrawal-hold`, {
+    method: "POST", body: JSON.stringify({ reason, until }),
+  });
+// Whole ROZI (the endpoint is divisible-aware: 0.104 is valid). Positive
+// credits, negative debits.
+export const adjustUserRozi = (id: string, rozi: number, note: string) =>
+  apiFetch<{ ok: true }>(`/staff/mining/users/${id}/adjust`, {
+    method: "POST", body: JSON.stringify({ rozi, note }),
+  });
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
 
 // Console-wide record search (admin rebuild). Result types are filtered
@@ -519,9 +536,25 @@ export type AdminUserRow = {
   // See POST /staff/users/:id/review in api/src/routes/staff.ts.
   underReview: boolean;
 };
-export const searchUsers = (q = "", limit = 10, offset = 0) =>
-  apiFetch<{ users: AdminUserRow[]; total: number; offset: number; limit: number }>(
-    `/staff/users?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`);
+export type UserListParams = {
+  q?: string; limit?: number; offset?: number;
+  sort?: string; dir?: "asc" | "desc";
+  status?: string; kyc?: string; country?: string;
+  flagged?: boolean; held?: boolean; review?: boolean;
+};
+export const searchUsers = (p: UserListParams | string = "", limit = 10, offset = 0) => {
+  // Back-compat: older callers passed (q, limit, offset) positionally.
+  const o: UserListParams = typeof p === "string" ? { q: p, limit, offset } : p;
+  const qs = new URLSearchParams();
+  qs.set("q", o.q ?? "");
+  qs.set("limit", String(o.limit ?? 10));
+  qs.set("offset", String(o.offset ?? 0));
+  if (o.sort) { qs.set("sort", o.sort); qs.set("dir", o.dir ?? "desc"); }
+  for (const k of ["status", "kyc", "country"] as const) if (o[k]) qs.set(k, String(o[k]));
+  for (const k of ["flagged", "held", "review"] as const) if (o[k]) qs.set(k, "1");
+  return apiFetch<{ users: AdminUserRow[]; total: number; offset: number; limit: number }>(
+    `/staff/users?${qs.toString()}`);
+};
 export const setUserStatus = (id: string, status: "active" | "suspended", reason: string) =>
   apiFetch<{ ok: true; status: string }>(`/staff/users/${id}/status`, {
     method: "POST", body: JSON.stringify({ status, reason }),
