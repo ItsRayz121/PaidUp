@@ -497,6 +497,15 @@ export const fetchStaffUser = (id: string) =>
   apiFetch<StaffUserDetail>(`/staff/users/${id}`);
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
 
+// Console-wide record search (admin rebuild). Result types are filtered
+// server-side by the caller's permissions.
+export type StaffSearchHit = {
+  type: "user" | "withdrawal" | "refund" | "deposit" | "ticket" | "task" | "network";
+  id: string; label: string; sub: string; section: string;
+};
+export const staffRecordSearch = (q: string) =>
+  apiFetch<{ results: StaffSearchHit[] }>(`/staff/search?q=${encodeURIComponent(q)}`);
+
 // ---- Super-admin ----------------------------------------------------------
 export type AdminUserRow = {
   id: string; email: string; country: string; status: string; created_at: string; balance: number;

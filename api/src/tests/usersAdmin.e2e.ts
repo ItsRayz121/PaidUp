@@ -206,5 +206,47 @@ console.log("\n-- the 'under review' state is distinct from active/suspended --"
   check("a manager can mark for review (200)", managerOk.statusCode === 200, managerOk.body);
 }
 
+// ---------------------------------------------------------------------------
+console.log("\n-- console-wide record search (admin rebuild, Phase A) --");
+{
+  const admin = await mkStaff("search-admin", "admin");
+  const target = await mkUser("findme");
+  const targetRow = await sql.get<{ email: string; referral_code: string }>(
+    "SELECT email, referral_code FROM users WHERE id = ?", target);
+
+  const byEmail = await app.inject({
+    method: "GET", url: `/staff/search?q=${encodeURIComponent(targetRow!.email)}`, headers: authOf(admin),
+  });
+  check("search by email returns the user", byEmail.statusCode === 200
+    && byEmail.json().results.some((r: { type: string; id: string }) => r.type === "user" && r.id === target), byEmail.body);
+
+  const byId = await app.inject({
+    method: "GET", url: `/staff/search?q=${target}`, headers: authOf(admin),
+  });
+  check("search by full id returns the user", byId.json().results.some((r: { id: string }) => r.id === target));
+
+  const byCode = await app.inject({
+    method: "GET", url: `/staff/search?q=${encodeURIComponent(targetRow!.referral_code)}`, headers: authOf(admin),
+  });
+  check("search by invite code returns the user", byCode.json().results.some((r: { id: string }) => r.id === target));
+
+  const tooShort = await app.inject({ method: "GET", url: "/staff/search?q=a", headers: authOf(admin) });
+  check("a 1-char query returns nothing (no scan)", tooShort.statusCode === 200 && tooShort.json().results.length === 0);
+
+  // A support role holds users.view but NOT withdrawals.view — its search must
+  // never surface a withdrawal row.
+  const support = await mkStaff("search-support", "support");
+  const supportSearch = await app.inject({
+    method: "GET", url: `/staff/search?q=${encodeURIComponent(targetRow!.email)}`, headers: authOf(support),
+  });
+  check("support can search users", supportSearch.json().results.some((r: { type: string }) => r.type === "user"));
+  check("support search never returns a withdrawal type",
+    supportSearch.json().results.every((r: { type: string }) => r.type !== "withdrawal"));
+
+  const earner = await mkUser("not-staff");
+  const refused = await app.inject({ method: "GET", url: "/staff/search?q=findme", headers: authOf(earner) });
+  check("a non-staff caller is refused (403)", refused.statusCode === 403, String(refused.statusCode));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

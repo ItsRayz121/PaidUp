@@ -28,6 +28,7 @@ import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
 import { StaffSearch, SectionToc } from "@/components/staff-search";
+import { ToastProvider } from "@/components/staff/toast";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -168,6 +169,7 @@ export default function StaffPage() {
   );
 
   return (
+    <ToastProvider>
     <div className="mx-auto max-w-6xl px-4 py-5">
       <header className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur">
         {/* min-w-0 + break-all: a long staff email must wrap on a phone, not
@@ -188,7 +190,15 @@ export default function StaffPage() {
           once the role has at least one visible section. */}
       {visible.length > 0 && (
         <div className="mb-4">
-          <StaffSearch visibleSections={visible.map((s) => s.id)} has={may} onGo={goToDest} />
+          <StaffSearch
+            visibleSections={visible.map((s) => s.id)}
+            has={may}
+            onGo={goToDest}
+            onRecord={(hit) => {
+              if (hit.type === "user") openLedger(hit.id);
+              else goToDest(hit.section as SectionId);
+            }}
+          />
         </div>
       )}
 
@@ -318,6 +328,7 @@ export default function StaffPage() {
         </main>
       </div>
     </div>
+    </ToastProvider>
   );
 }
 

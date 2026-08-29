@@ -8,11 +8,15 @@ import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, bulkSetUserStatus, setUserReview, adjustUserPoints,
   fetchStaffMembers, setStaffRole,
-  fetchMoney, downloadExport, fetchStaffUser,
+  fetchMoney, downloadExport,
   type AdminUserRow, type StaffRole,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtAmount, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+import { useTableQuery } from "@/lib/staffTable";
+import { DataTable, type Column } from "@/components/staff/DataTable";
+import { StatusBadge, TimeCell, Points } from "@/components/staff/primitives";
+import { useToast } from "@/components/staff/toast";
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -24,315 +28,163 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-// ---- Users: search, suspend, adjust points -------------------------------
-// ⚠️ SHOWS 10 AT A TIME, "SEE MORE" GROWS THE PAGE (founder, 2026-08-27):
-// this used to hand back up to 200 rows on load. `limit` grows by 10 on each
-// click rather than a real offset-paged view, which keeps rows already on
-// screen in place (no "page 2 replaced page 1" disorientation) at the cost of
-// re-fetching the whole visible set each time — fine at this row count.
-// ---- Bulk selection + actions (founder, 2026-08-27) ------------------------
-// Suspend/export used to be one row at a time — fine for a dispute lookup, not
-// for a farm sweep of twenty accounts found by the same fraud rule. Selection
-// is scoped to whatever page is currently loaded (the same rows the "See
-// more" button grows), so a bulk action never reaches past what the staff
-// member can actually see and review before clicking it.
+// ---- Users list — on the shared DataTable (admin rebuild, Phase A) --------
+// Search / pagination / row count / CSV / bulk-suspend all come from the one
+// component now. Server-side sort and column filters land in Phase B when
+// GET /staff/users grows the params; the columns are marked non-sortable
+// until then rather than faking a client-side sort of one page.
 export function UsersPanel() {
-  const [q, setQ] = useState("");
-  const [query, setQuery] = useState("");
-  const [limit, setLimit] = useState(10);
-  const users = useApi(() => searchUsers(query, limit, 0), [query, limit]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
+  const q = useTableQuery("users", { pageSize: 25 });
+  const users = useApi(
+    () => searchUsers(q.search, q.pageSize, q.offset),
+    [q.search, q.pageSize, q.offset],
+  );
+  const toast = useToast();
+  const { openUser } = useStaffNav();
   const rows = users.data?.users ?? [];
 
-  function search(next: string) {
-    setQuery(next);
-    setLimit(10); // a new search starts from a short first page again
-    setSelected(new Set());
-  }
-
-  const allSelected = rows.length > 0 && rows.every((u) => selected.has(u.id));
-  function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(rows.map((u) => u.id)));
-  }
-  function toggleOne(id: string) {
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
   // N separate decisions, not one (see bulkSetUserStatus's comment in api.ts) —
-  // a partial failure (a row already in that state, the actor's own id caught
-  // in the selection) is reported, never silently swallowed into one ok/fail.
-  async function bulkChangeStatus(status: "active" | "suspended") {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+  // a partial failure (a row already in that state, the actor's own id in the
+  // selection) is reported, never swallowed into one ok/fail.
+  async function bulkStatus(ids: string[], status: "active" | "suspended") {
     const reason = window.prompt(
       status === "suspended"
         ? `Why are you suspending ${ids.length} account(s)? They are locked out immediately.`
         : `Why are you restoring ${ids.length} account(s)?`,
     );
     if (!reason?.trim()) return;
-    setBulkBusy(true);
     try {
       const r = await bulkSetUserStatus(ids, status, reason.trim());
-      const failedRows = r.results.filter((x) => !x.ok);
-      window.alert(
-        r.failed === 0
-          ? `${r.done} account(s) updated.`
-          : `${r.done} updated, ${r.failed} failed:\n\n${failedRows.map((x) => `${x.id}: ${x.error}`).join("\n")}`,
-      );
-      setSelected(new Set());
+      if (r.failed === 0) toast.ok(`${r.done} account(s) updated.`);
+      else toast.err(`${r.done} updated, ${r.failed} failed — ${r.results.filter((x) => !x.ok).map((x) => x.error).join("; ")}`);
       users.reload();
-    } catch (e) { window.alert((e as Error).message); }
-    finally { setBulkBusy(false); }
+    } catch (e) { toast.err((e as Error).message); }
   }
 
-  async function exportCsv() {
-    try { await downloadExport("users", query); }
-    catch (e) { window.alert((e as Error).message); }
+  async function exportAll() {
+    try { await downloadExport("users", q.search); toast.ok("Export started."); }
+    catch (e) { toast.err((e as Error).message); }
   }
+
+  const columns: Column<AdminUserRow>[] = [
+    {
+      key: "email", header: "Email", csv: (u) => u.email,
+      render: (u) => (
+        <div className="min-w-0">
+          <span className="block truncate font-semibold text-brand-ink">{u.email}</span>
+          <span className="block truncate text-xs text-muted">{u.id}</span>
+        </div>
+      ),
+    },
+    { key: "balance", header: "Balance", align: "right", csv: (u) => u.balance, render: (u) => <Points value={u.balance} /> },
+    { key: "value", header: "Value", align: "right", csv: (u) => formatMoney(u.balance), render: (u) => <span className="text-muted">{formatMoney(u.balance)}</span> },
+    {
+      key: "status", header: "Status", csv: (u) => u.status,
+      render: (u) => (
+        <div className="flex flex-wrap items-center gap-1">
+          <StatusBadge status={u.status === "active" ? "active" : "suspended"} />
+          {u.openFlags > 0 && <span className="rounded bg-pending-tint px-1.5 py-0.5 text-[11px] font-semibold text-pending">suspect ({u.openFlags})</span>}
+          {u.held && <span className="rounded bg-pending-tint px-1.5 py-0.5 text-[11px] font-semibold text-pending">payouts held</span>}
+          {u.underReview && <span className="rounded bg-brand-tint px-1.5 py-0.5 text-[11px] font-semibold text-brand">under review</span>}
+        </div>
+      ),
+    },
+    { key: "created_at", header: "Joined", csv: (u) => u.created_at, render: (u) => <TimeCell iso={u.created_at} /> },
+    {
+      key: "actions", header: "", render: (u) => (
+        <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => openUser(u.id)} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">Open</button>
+          <UserQuickActions u={u} reload={users.reload} />
+        </div>
+      ),
+    },
+  ];
 
   return (
     <section className="mb-8">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Users</h2>
-        <button onClick={exportCsv}
-          className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
-          Export {query ? "matching" : "all"} to CSV
-        </button>
-      </div>
-      <form onSubmit={(e) => { e.preventDefault(); search(q.trim()); }} className="mb-2 flex gap-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search email or user id — blank shows the newest"
-          className="flex-1 rounded-md border border-line bg-card p-2 text-sm outline-none"
-        />
-        <button className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white">Search</button>
-      </form>
-
-      {selected.size > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand-tint/40 p-2">
-          <span className="text-xs font-semibold text-brand-ink">{selected.size} selected</span>
-          <button disabled={bulkBusy} onClick={() => bulkChangeStatus("suspended")}
-            className="rounded-md bg-danger px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
-            Suspend selected
+      <h2 className="mb-2 font-bold text-brand-ink">Users</h2>
+      <DataTable<AdminUserRow>
+        q={q}
+        columns={columns}
+        rows={rows}
+        total={users.data?.total ?? 0}
+        loading={users.loading}
+        error={users.error}
+        onRetry={users.reload}
+        getRowId={(u) => u.id}
+        onRowClick={(u) => openUser(u.id)}
+        searchPlaceholder="Search email or user id — blank shows the newest"
+        emptyTitle="No users found"
+        toolbarRight={
+          <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">
+            Export {q.search ? "matching" : "all"} (CSV)
           </button>
-          <button disabled={bulkBusy} onClick={() => bulkChangeStatus("active")}
-            className="rounded-md bg-success px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
-            Restore selected
-          </button>
-          <button disabled={bulkBusy} onClick={() => setSelected(new Set())}
-            className="rounded-md bg-card px-2.5 py-1 text-xs font-semibold text-muted disabled:opacity-50">
-            Clear
-          </button>
-        </div>
-      )}
-
-      {users.loading ? <p className="text-sm text-muted">Loading…</p>
-        : users.error ? <p className="text-sm text-danger">{users.error}</p>
-        : rows.length === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No users found.</p>
-        ) : (
-          <>
-            <div className="overflow-x-auto rounded-lg border border-line">
-              <table className="w-full min-w-[800px] text-sm">
-                <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
-                  <tr>
-                    <th className="w-8 p-2.5"><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
-                    <th className="p-2.5">Email</th><th className="p-2.5">Balance</th>
-                    <th className="p-2.5">Value</th><th className="p-2.5">Status</th>
-                    <th className="p-2.5">Joined</th><th className="p-2.5">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((u) => (
-                    <UserRow key={u.id} u={u} onChanged={users.reload}
-                      selected={selected.has(u.id)} onToggleSelect={() => toggleOne(u.id)} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-2 text-xs text-muted">
-              Showing {rows.length} of {users.data!.total}
-              {rows.length < users.data!.total && (
-                <button onClick={() => setLimit((l) => l + 10)}
-                  className="ms-2 font-semibold text-brand hover:underline">See more</button>
-              )}
-            </p>
-          </>
-        )}
+        }
+        bulkActions={[
+          { label: "Suspend selected", tone: "danger", run: (ids) => bulkStatus(ids, "suspended") },
+          { label: "Restore selected", run: (ids) => bulkStatus(ids, "active") },
+        ]}
+      />
     </section>
   );
 }
 
-function UserRow(
-  { u, onChanged, selected, onToggleSelect }:
-  { u: AdminUserRow; onChanged: () => void; selected: boolean; onToggleSelect: () => void },
-) {
+// Per-row quick actions — adjust points, suspend/restore, mark for review.
+// The full set (with a proper typed confirmation) moves to the User detail
+// Danger zone in Phase B; kept here so nothing regresses in the meantime.
+function UserQuickActions({ u, reload }: { u: AdminUserRow; reload: () => void }) {
   const [busy, setBusy] = useState(false);
-  const { openUser } = useStaffNav();
+  const toast = useToast();
   const suspended = u.status !== "active";
 
-  async function toggleStatus() {
-    const next = suspended ? "active" : "suspended";
-    const reason = window.prompt(
-      next === "suspended"
-        ? "Why are you suspending this account? They are locked out immediately."
-        : "Why are you restoring this account?",
-    );
-    if (!reason?.trim()) return;
+  async function run(fn: () => Promise<unknown>, okMsg: string) {
     setBusy(true);
-    try { await setUserStatus(u.id, next, reason.trim()); onChanged(); }
-    catch (e) { window.alert((e as Error).message); }
+    try { await fn(); toast.ok(okMsg); reload(); }
+    catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
 
-  async function adjust() {
-    const raw = window.prompt(
-      "Adjust points. Positive adds, negative removes (e.g. 500 or -500).\n" +
-      "A credit is real money the user can withdraw. This is logged against you.",
-    );
+  function toggleStatus() {
+    const next = suspended ? "active" : "suspended";
+    const reason = window.prompt(next === "suspended"
+      ? "Why are you suspending this account? They are locked out immediately."
+      : "Why are you restoring this account?");
+    if (!reason?.trim()) return;
+    run(() => setUserStatus(u.id, next, reason.trim()), `Account ${next === "suspended" ? "suspended" : "restored"}.`);
+  }
+
+  function adjust() {
+    const raw = window.prompt("Adjust points. Positive adds, negative removes (e.g. 500 or -500).\nA credit is real money the user can withdraw. Logged against you.");
     if (raw === null) return;
     const points = Number(raw.trim());
-    if (!Number.isInteger(points) || points === 0) {
-      window.alert("Enter a whole number that is not zero.");
-      return;
-    }
+    if (!Number.isInteger(points) || points === 0) { toast.err("Enter a whole number that is not zero."); return; }
     const reason = window.prompt("Reason (the user sees this in their wallet):");
     if (!reason?.trim()) return;
-    setBusy(true);
-    try {
-      const r = await adjustUserPoints(u.id, points, reason.trim());
-      window.alert(`Done. Balance ${r.before} → ${r.after} points.`);
-      onChanged();
-    } catch (e) { window.alert((e as Error).message); }
-    finally { setBusy(false); }
+    run(async () => { const r = await adjustUserPoints(u.id, points, reason.trim()); toast.ok(`Balance ${r.before} → ${r.after} points.`); }, "");
   }
 
-  // "Flagged" / "payouts held" / "under review" don't carry their reason on
-  // this row — the list endpoint deliberately doesn't fetch per-row detail
-  // (that's an N+1 query for a list of 10-200). Clicking any of them jumps to
-  // the full user detail screen, which has the real text for all three.
-  async function showReason(kind: "flag" | "hold" | "review") {
-    setBusy(true);
-    try {
-      const d = await fetchStaffUser(u.id);
-      if (kind === "hold") {
-        window.alert(
-          d.user.withdrawal_hold_reason
-            ? `Payouts held: ${String(d.user.withdrawal_hold_reason)}`
-            : "No hold reason on file.",
-        );
-      } else if (kind === "review") {
-        window.alert(
-          d.user.under_review_reason
-            ? `Under review: ${String(d.user.under_review_reason)}`
-            : "No review reason on file.",
-        );
-      } else {
-        const open = d.fraudFlags.filter((f) => !f.resolution_note);
-        window.alert(
-          open.length
-            ? open.map((f) => `${String(f.flag_type)} (${String(f.severity)}): ${String(f.detail ?? "no detail")}`).join("\n\n")
-            : "No open flags.",
-        );
-      }
-    } catch (e) { window.alert((e as Error).message); }
-    finally { setBusy(false); openUser(u.id); }
-  }
-
-  // The "suspect (N)" badge above is a live COUNT of open fraud flags and
-  // clears itself the moment those flags resolve — it cannot say "we are
-  // looking into this" across a multi-day investigation. This is the real,
-  // staff-SET version of that: a person turns it on and off deliberately.
-  async function toggleReview() {
+  function toggleReview() {
     if (u.underReview) {
       if (!window.confirm("Clear the review mark on this account?")) return;
-      setBusy(true);
-      try { await setUserReview(u.id, null); onChanged(); }
-      catch (e) { window.alert((e as Error).message); }
-      finally { setBusy(false); }
+      run(() => setUserReview(u.id, null), "Review mark cleared.");
       return;
     }
     const reason = window.prompt("Why are you marking this account for review?");
     if (!reason?.trim()) return;
-    setBusy(true);
-    try { await setUserReview(u.id, reason.trim()); onChanged(); }
-    catch (e) { window.alert((e as Error).message); }
-    finally { setBusy(false); }
+    run(() => setUserReview(u.id, reason.trim()), "Marked for review.");
   }
 
   return (
-    <tr className={`border-t border-line ${suspended ? "bg-danger-tint/40" : ""}`}>
-      <td className="p-2.5"><input type="checkbox" checked={selected} onChange={onToggleSelect} /></td>
-      <td className="p-2.5">
-        <span className="font-semibold text-brand-ink">{u.email}</span>
-        <span className="block text-xs text-muted">{u.id}</span>
-      </td>
-      <td className="num p-2.5">{formatPoints(u.balance)}</td>
-      <td className="p-2.5 text-muted">{formatMoney(u.balance)}</td>
-      <td className="p-2.5">
-        <div className="flex flex-wrap items-center gap-1">
-          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-            suspended ? "bg-danger text-white" : "bg-success-tint text-success"
-          }`}>{suspended ? "banned" : "active"}</span>
-          {/* Open fraud flags on an otherwise active account — the "suspect"
-              state the founder asked for. Not a real status column: nothing
-              stops them earning, it's a signal, same as everywhere else fraud
-              flags appear in this panel (guardrail: flag-only, never a block
-              unless a real block is applied). */}
-          {u.openFlags > 0 && (
-            <button disabled={busy} onClick={() => showReason("flag")}
-              className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending hover:underline">
-              suspect ({u.openFlags})
-            </button>
-          )}
-          {u.held && (
-            <button disabled={busy} onClick={() => showReason("hold")}
-              className="rounded-full bg-pending-tint px-2 py-0.5 text-xs font-semibold text-pending hover:underline">
-              payouts held
-            </button>
-          )}
-          {/* The real, staff-SET triage mark — separate from "suspect (N)"
-              above, which is only a live count and forgets the moment flags
-              resolve. A different colour on purpose, so the two are never
-              mistaken for the same signal at a glance. */}
-          {u.underReview && (
-            <button disabled={busy} onClick={() => showReason("review")}
-              className="rounded-full bg-brand-tint px-2 py-0.5 text-xs font-semibold text-brand hover:underline">
-              under review
-            </button>
-          )}
-        </div>
-      </td>
-      <td className="p-2.5 text-muted">{timeAgo(u.created_at)}</td>
-      <td className="p-2.5">
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={() => openUser(u.id)}
-            className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
-            View
-          </button>
-          <button disabled={busy} onClick={adjust}
-            className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
-            Adjust
-          </button>
-          <button disabled={busy} onClick={toggleStatus}
-            className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50 ${
-              suspended ? "bg-success" : "bg-danger"
-            }`}>
-            {suspended ? "Restore" : "Suspend"}
-          </button>
-          <button disabled={busy} onClick={toggleReview}
-            className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand disabled:opacity-50">
-            {u.underReview ? "Clear review" : "Mark for review"}
-          </button>
-        </div>
-      </td>
-    </tr>
+    <>
+      <button disabled={busy} onClick={adjust} className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">Adjust</button>
+      <button disabled={busy} onClick={toggleStatus}
+        className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50 ${suspended ? "bg-success" : "bg-danger"}`}>
+        {suspended ? "Restore" : "Suspend"}
+      </button>
+      <button disabled={busy} onClick={toggleReview} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand disabled:opacity-50">
+        {u.underReview ? "Clear review" : "Review"}
+      </button>
+    </>
   );
 }
 

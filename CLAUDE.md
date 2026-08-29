@@ -2160,6 +2160,56 @@ These override convenience or speed at every step:
   - New `SearchIcon` in `components/icons.tsx`. Verified: web typecheck,
     eslint, production build all clean.
 
+- **ADMIN CONSOLE REBUILD — PHASE A: THE FOUNDATION (founder, 2026-08-29).**
+  The founder signed off a full staff-panel rebuild to a "professional" bar
+  (contract: the navigation tree + 6 phases, A→F). Decisions locked: no 2FA /
+  no impersonation, no dark mode (product is light-only), timezone = Pakistan
+  (UTC+5), no internal-notes feature, no editable push-copy screen, no
+  force-logout, activity timeline only if cheap (it is — a read-only union).
+  Phase A ships the shared primitives every later screen is built on; no
+  feature screens yet beyond migrating the Users list as the proof.
+  - **`web/src/components/staff/DataTable.tsx`** — the one list component.
+    Controlled (parent fetches rows from a `useTableQuery`, passes them back):
+    search box, filter bar, sortable headers, pagination + page-size, row
+    count, per-page CSV export, row-select + bulk-action bar, and the four
+    states (loading / empty / error / no-permission) built in. Every staff
+    list will use this.
+  - **`web/src/lib/staffTable.ts`** — `useTableQuery(storageKey, defaults)`:
+    page / pageSize / sort / dir / search / filters. Sort + pageSize + filters
+    persist per browser under the key; page number and search do not.
+  - **`web/src/components/staff/DetailLayout.tsx`** — the one record-page
+    shell: breadcrumb → header (title + copyable ids + badges + actions) →
+    tab strip → body → a visually-separated Danger zone that is always last.
+    Not wired to a screen yet — Phase B (User 360) is its first consumer.
+  - **`web/src/components/staff/primitives.tsx`** — one status-badge
+    vocabulary (`StatusBadge`), one time format (`TimeCell` — PKT, full UTC on
+    hover, "3h ago"), `Points` / `UsdtMicro`, `CopyId`, and the shared
+    empty/error/no-permission blocks.
+  - **`web/src/components/staff/toast.tsx`** — `ToastProvider` + `useToast()`,
+    mounted once in `staff/page.tsx`. Replaces scattered `window.alert` for
+    action *results* (input prompts stay `window.prompt` until Phase F).
+  - **Command palette now finds RECORDS, not just screens.** New
+    `GET /staff/search?q=` (`routes/staff.ts`, `requireStaff` + per-type
+    permission filter — a support role's search never returns a withdrawal
+    row) searches users (email · @handle · invite code · id), withdrawals /
+    refunds / deposits (id · tx · address), tickets (id · subject), tasks
+    (title), networks. `staff-search.tsx` merges these above the page
+    destinations; a user hit deep-links to the existing lookup, other types
+    jump to their section (real detail pages arrive in B–E).
+  - **Users list migrated to `DataTable`** as Phase A's visible output —
+    real offset pagination + page size, CSV of all matching rows (server
+    export) + the current page (client), bulk suspend/restore, per-row quick
+    actions. ⚠️ Columns are **not sortable yet** and there are no server-side
+    filters — `GET /staff/users` still only takes `q` / `limit` / `offset`;
+    Phase B grows that endpoint and turns both on rather than faking a
+    one-page client sort.
+  - Verified: web typecheck + eslint + production build clean; api typecheck
+    clean; `test:usersadmin` now 39 (7 new for `/staff/search` incl. the
+    permission-filter and non-staff-refused cases), `test:admin` (15),
+    `test:permissions` (16), `test:stage4` (48), `test:stage6` (70),
+    `test:stage7` (78) all green.
+  - **Next: Phase B** — the new Dashboard and the full tabbed User 360 page.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

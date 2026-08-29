@@ -5,7 +5,7 @@ import {
   postLedger, postEarnedUsdt, logAudit, getSetting, setSetting,
 } from "../db.ts";
 import { config } from "../config.ts";
-import { requirePermission, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
+import { requirePermission, requireStaff, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
 import { ROLES, ROLE_LABELS, ROLE_PERMISSIONS, isRole, permissionsOf } from "../permissions.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
@@ -952,6 +952,121 @@ export async function staffRoutes(app: FastifyInstance) {
   // SUPER-ADMIN capabilities. `admin` was always the top role, but it had no
   // tools: no way to find a user, credit one, suspend one, or appoint staff.
   // ==========================================================================
+
+  // ---- Console-wide record search (admin rebuild, Phase A) ---------------
+  // One box that finds a record by any handle a staff member has: an email, a
+  // @handle, an invite code, a full id, a tx hash, a ticket subject, a task
+  // title. Open to any staff role, but each RESULT TYPE is filtered by whether
+  // the caller can actually open it — searching never surfaces a record the
+  // role would be 403'd from. Deep-links are resolved on the client
+  // (web/src/components/staff-search.tsx).
+  app.get("/staff/search", async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { role } = await requireStaff(req);
+      const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
+      if (q.length < 2) return { results: [] as unknown[] };
+      const like = `%${q}%`;
+      const may = (p: Permission) => hasPermission(role, p);
+      const results: { type: string; id: string; label: string; sub: string; section: string }[] = [];
+
+      if (may("users.view") || may("users.list")) {
+        const rows = await sql.all<{ id: string; email: string; username: string | null; status: string; referral_code: string | null }>(
+          `SELECT id, email, username, status, referral_code FROM users
+           WHERE LOWER(email) LIKE ? OR LOWER(id) = ? OR LOWER(username) = ? OR LOWER(referral_code) = ?
+           ORDER BY created_at DESC LIMIT 6`,
+          like, q, q, q,
+        );
+        for (const r of rows) results.push({
+          type: "user", id: r.id, label: r.email,
+          sub: `${r.username ? "@" + r.username + " · " : ""}${r.status}${r.referral_code ? " · " + r.referral_code : ""}`,
+          section: "users",
+        });
+      }
+
+      if (may("withdrawals.view")) {
+        const rows = await sql.all<{ id: string; amount: number; status: string; payout_address: string; email: string }>(
+          `SELECT w.id, w.amount, w.status, w.payout_address, u.email
+           FROM withdrawal_requests w JOIN users u ON u.id = w.user_id
+           WHERE LOWER(w.id) LIKE ? OR LOWER(w.payout_address) = ? OR LOWER(u.email) LIKE ?
+           ORDER BY w.created_at DESC LIMIT 5`,
+          `${q}%`, q, like,
+        );
+        for (const r of rows) results.push({
+          type: "withdrawal", id: r.id, label: `Withdrawal ${r.amount} pts — ${r.email}`,
+          sub: `${r.status} · ${r.payout_address?.slice(0, 12) ?? ""}…`, section: "money",
+        });
+      }
+
+      if (may("refunds.view")) {
+        const rows = await sql.all<{ id: string; amount: number; status: string; email: string }>(
+          `SELECT r.id, r.amount, r.status, u.email
+           FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id
+           WHERE LOWER(r.id) LIKE ? OR LOWER(r.address) = ? OR LOWER(u.email) LIKE ?
+           ORDER BY r.created_at DESC LIMIT 5`,
+          `${q}%`, q, like,
+        );
+        for (const r of rows) results.push({
+          type: "refund", id: r.id, label: `Refund ${(r.amount / 1e6).toFixed(2)} USDT — ${r.email}`,
+          sub: r.status, section: "money",
+        });
+      }
+
+      if (may("deposits.view")) {
+        const rows = await sql.all<{ id: string; amount: number; status: string; tx_hash: string; email: string }>(
+          `SELECT t.id, t.amount, t.status, t.tx_hash, u.email
+           FROM usdt_topups t JOIN users u ON u.id = t.user_id
+           WHERE LOWER(t.id) LIKE ? OR LOWER(t.tx_hash) LIKE ? OR LOWER(u.email) LIKE ?
+           ORDER BY t.created_at DESC LIMIT 5`,
+          `${q}%`, like, like,
+        );
+        for (const r of rows) results.push({
+          type: "deposit", id: r.id, label: `Deposit ${(r.amount / 1e6).toFixed(2)} USDT — ${r.email}`,
+          sub: `${r.status} · ${r.tx_hash?.slice(0, 14) ?? ""}…`, section: "money",
+        });
+      }
+
+      if (may("support.view")) {
+        const rows = await sql.all<{ id: string; subject: string; status: string; email: string }>(
+          `SELECT s.id, s.subject, s.status, u.email
+           FROM support_tickets s JOIN users u ON u.id = s.user_id
+           WHERE LOWER(s.id) LIKE ? OR LOWER(s.subject) LIKE ? OR LOWER(u.email) LIKE ?
+           ORDER BY s.created_at DESC LIMIT 5`,
+          `${q}%`, like, like,
+        );
+        for (const r of rows) results.push({
+          type: "ticket", id: r.id, label: r.subject, sub: `${r.status} · ${r.email}`, section: "support",
+        });
+      }
+
+      if (may("tasks.view")) {
+        const rows = await sql.all<{ id: string; title: string; status: string }>(
+          `SELECT id, title, status FROM tasks
+           WHERE LOWER(id) LIKE ? OR LOWER(title) LIKE ?
+           ORDER BY created_at DESC LIMIT 5`,
+          `${q}%`, like,
+        );
+        for (const r of rows) results.push({
+          type: "task", id: r.id, label: r.title, sub: r.status ?? "", section: "tasks",
+        });
+      }
+
+      if (may("networks.manage")) {
+        const rows = await sql.all<{ id: string; name: string; status: string }>(
+          `SELECT id, name, status FROM networks
+           WHERE LOWER(id) LIKE ? OR LOWER(name) LIKE ? LIMIT 5`,
+          like, like,
+        );
+        for (const r of rows) results.push({
+          type: "network", id: r.id, label: r.name, sub: r.status, section: "tasks",
+        });
+      }
+
+      return { results };
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 500).send({ error: err.message ?? "Search failed" });
+    }
+  });
 
   // ---- Admin: find users --------------------------------------------------
   // Search by email or id. Balance is summed from the ledger, never stored.

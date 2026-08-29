@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { SectionId } from "@/lib/staffNav";
 import type { UiPermission } from "@/lib/permissions";
+import { staffRecordSearch, type StaffSearchHit } from "@/lib/api";
 import { SearchIcon } from "@/components/icons";
 
 export type SearchDest = {
@@ -114,16 +115,28 @@ function score(d: SearchDest, words: string[]): number {
   return s;
 }
 
+const TYPE_LABEL: Record<StaffSearchHit["type"], string> = {
+  user: "User", withdrawal: "Withdrawal", refund: "Refund", deposit: "Deposit",
+  ticket: "Ticket", task: "Task", network: "Network",
+};
+
+type Item =
+  | { kind: "record"; hit: StaffSearchHit }
+  | { kind: "dest"; dest: SearchDest };
+
 export function StaffSearch({
-  visibleSections, has, onGo,
+  visibleSections, has, onGo, onRecord,
 }: {
   visibleSections: SectionId[];
   has: (p: UiPermission) => boolean;
   onGo: (section: SectionId, anchor?: string) => void;
+  onRecord?: (hit: StaffSearchHit) => void;
 }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [records, setRecords] = useState<StaffSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -134,7 +147,7 @@ export function StaffSearch({
     );
   }, [visibleSections, has]);
 
-  const results = useMemo(() => {
+  const dests = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
     return pool
@@ -144,6 +157,27 @@ export function StaffSearch({
       .slice(0, 8)
       .map((x) => x.d);
   }, [q, pool]);
+
+  // Debounced record search against the API (permission-filtered server-side).
+  // All state changes happen inside the timeout, never synchronously in the
+  // effect body — the sub-2-char "clear" is one 250ms tick late, imperceptibly.
+  useEffect(() => {
+    const term = q.trim();
+    const id = setTimeout(() => {
+      if (term.length < 2) { setRecords([]); setSearching(false); return; }
+      setSearching(true);
+      staffRecordSearch(term)
+        .then((r) => setRecords(r.results))
+        .catch(() => setRecords([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const items: Item[] = useMemo(() => [
+    ...records.map((hit) => ({ kind: "record" as const, hit })),
+    ...dests.map((dest) => ({ kind: "dest" as const, dest })),
+  ], [records, dests]);
 
   // `/` or Ctrl/Cmd+K focuses the box from anywhere on the page.
   useEffect(() => {
@@ -168,22 +202,21 @@ export function StaffSearch({
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // Keep the highlighted row in range as the result list shrinks/grows.
-  const activeIdx = active < results.length ? active : 0;
+  const activeIdx = active < items.length ? active : 0;
 
-  function pick(d: SearchDest) {
-    onGo(d.section, d.anchor);
-    setQ("");
-    setOpen(false);
-    inputRef.current?.blur();
+  function reset() { setQ(""); setRecords([]); setOpen(false); inputRef.current?.blur(); }
+  function pick(it: Item) {
+    if (it.kind === "dest") onGo(it.dest.section, it.dest.anchor);
+    else onRecord?.(it.hit);
+    reset();
   }
 
   function onKeyDown(e: ReactKeyboardEvent) {
-    if (e.key === "Escape") { setQ(""); setOpen(false); inputRef.current?.blur(); return; }
-    if (results.length === 0) return;
-    if (e.key === "ArrowDown") { e.preventDefault(); setActive((activeIdx + 1) % results.length); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((activeIdx - 1 + results.length) % results.length); }
-    else if (e.key === "Enter") { e.preventDefault(); pick(results[activeIdx] ?? results[0]); }
+    if (e.key === "Escape") { reset(); return; }
+    if (items.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((activeIdx + 1) % items.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((activeIdx - 1 + items.length) % items.length); }
+    else if (e.key === "Enter") { e.preventDefault(); pick(items[activeIdx] ?? items[0]); }
   }
 
   return (
@@ -196,35 +229,58 @@ export function StaffSearch({
           onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(0); }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Search the panel — try “withdraw”, “kyc”, “flags”  ( / )"
+          placeholder="Search — a screen, or an email · @handle · id · tx · ticket  ( / )"
           autoCapitalize="none" autoCorrect="off" spellCheck={false}
           className="w-full bg-transparent text-sm text-brand-ink outline-none placeholder:text-muted"
         />
         {q && (
-          <button type="button" onClick={() => { setQ(""); inputRef.current?.focus(); }}
+          <button type="button" onClick={() => { setQ(""); setRecords([]); inputRef.current?.focus(); }}
             className="shrink-0 text-xs font-semibold text-muted hover:text-brand-ink">clear</button>
         )}
       </div>
 
       {open && q.trim() !== "" && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-line bg-card shadow-lg">
-          {results.length === 0 ? (
-            <p className="p-3 text-sm text-muted">Nothing matches “{q}”.</p>
-          ) : (
-            results.map((d, i) => (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-[70vh] overflow-y-auto rounded-lg border border-line bg-card shadow-lg">
+          {records.length > 0 && (
+            <p className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Records</p>
+          )}
+          {records.map((hit, i) => (
+            <button
+              key={`r:${hit.type}:${hit.id}`}
+              type="button"
+              onMouseEnter={() => setActive(i)}
+              onClick={() => pick({ kind: "record", hit })}
+              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${i === activeIdx ? "bg-brand-tint" : ""}`}
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-brand-ink">{hit.label}</span>
+                <span className="block truncate text-xs text-muted">{hit.sub}</span>
+              </span>
+              <span className="shrink-0 rounded bg-brand-tint/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-brand">{TYPE_LABEL[hit.type]}</span>
+            </button>
+          ))}
+
+          {dests.length > 0 && (
+            <p className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Go to</p>
+          )}
+          {dests.map((d, j) => {
+            const idx = records.length + j;
+            return (
               <button
-                key={`${d.section}:${d.anchor ?? ""}`}
+                key={`d:${d.section}:${d.anchor ?? ""}`}
                 type="button"
-                onMouseEnter={() => setActive(i)}
-                onClick={() => pick(d)}
-                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${
-                  i === activeIdx ? "bg-brand-tint" : ""
-                }`}
+                onMouseEnter={() => setActive(idx)}
+                onClick={() => pick({ kind: "dest", dest: d })}
+                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${idx === activeIdx ? "bg-brand-tint" : ""}`}
               >
                 <span className="font-semibold text-brand-ink">{d.label}</span>
                 {d.hint && <span className="shrink-0 text-xs text-muted">{d.hint}</span>}
               </button>
-            ))
+            );
+          })}
+
+          {items.length === 0 && (
+            <p className="p-3 text-sm text-muted">{searching ? "Searching…" : `Nothing matches “${q}”.`}</p>
           )}
         </div>
       )}
