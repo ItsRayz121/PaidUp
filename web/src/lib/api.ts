@@ -523,6 +523,21 @@ export type StaffSearchHit = {
 export const staffRecordSearch = (q: string) =>
   apiFetch<{ results: StaffSearchHit[] }>(`/staff/search?q=${encodeURIComponent(q)}`);
 
+// Dashboard landing: work-queue sizes + "money is stuck" signals + the last
+// few admin actions. All derived, no new counters.
+export type StaffDashboard = {
+  attention: {
+    withdrawalsPending: number; withdrawalsReady: number;
+    depositsPending: number; refundsPending: number;
+    bnbFailed: number; relayFailed: number;
+    fraudOpen: number; kycWaiting: number; ticketsOpen: number;
+    reconciliationShortfall: number;
+  };
+  reconciliation: { chain: string; delta: number; checkedAt: string }[];
+  recentActivity: { action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }[];
+};
+export const fetchStaffDashboard = () => apiFetch<StaffDashboard>("/staff/dashboard");
+
 // ---- Super-admin ----------------------------------------------------------
 export type AdminUserRow = {
   id: string; email: string; country: string; status: string; created_at: string; balance: number;

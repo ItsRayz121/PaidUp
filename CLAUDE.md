@@ -2245,6 +2245,29 @@ These override convenience or speed at every step:
     no-total guardrail), `test:admin` (15), `test:stage4` (48),
     `test:stage5` (55), `test:analytics` (40) all green.
 
+- **ADMIN CONSOLE REBUILD — PHASE B (part 2): THE DASHBOARD LANDING
+  (founder, 2026-08-29).** Phase B is now complete.
+  - **`GET /staff/dashboard`** (`analytics.view`) — one request the landing
+    page opens with: the size of every work queue (withdrawals new / ready,
+    deposits, refunds, BNB-failed, relay-failed, fraud open, KYC waiting,
+    tickets open), a per-chain reconciliation shortfall count (latest
+    `treasury_balance_snapshots` per chain, `delta < 0`), and the last 15
+    admin actions with actor + target email. All counts, all derived.
+  - **`web/src/components/staff/DashboardOverview.tsx`** — a "Needs
+    attention" tile grid (each tile is a button that jumps to its section;
+    all-zero collapses to one "every queue is clear" line), the
+    reconciliation-shortfall callout, and a recent-admin-activity table.
+    Renders ABOVE the existing `AnalyticsDashboard` charts + `KpiDashboard`
+    strip, both unchanged. Polls every 30s.
+  - ⚠️ **Still not looked at in a browser** — same standing caveat as the
+    Stage 3 dashboard. Numerically covered by tests; the visual layer wants
+    a logged-in admin session.
+  - Verified: web typecheck + eslint + build clean; api typecheck clean;
+    `test:analytics` now **45** (+5 for the dashboard endpoint incl. the
+    non-staff-403 case), `test:stage6` (70), `test:stage7` (78) re-run green.
+  - **Next: Phase C** — Money & payouts: all five queues on `DataTable` +
+    detail pages + reconciliation history.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

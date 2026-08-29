@@ -30,6 +30,7 @@ import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
 import { StaffSearch, SectionToc } from "@/components/staff-search";
 import { ToastProvider } from "@/components/staff/toast";
 import { UserLookupScreen } from "@/components/staff/UserDetail";
+import { DashboardOverview } from "@/components/staff/DashboardOverview";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -216,6 +217,7 @@ export default function StaffPage() {
           {section && <SectionToc section={section} has={may} onJump={(a) => goToDest(section, a)} />}
           {section === "dashboard" && may("analytics.view") && (
             <>
+              <Panel id="p-attention" title="Needs attention"><DashboardOverview /></Panel>
               <Panel title="Dashboard"><AnalyticsDashboard /></Panel>
               {/* The original at-a-glance strip, kept below the full report:
                   it reads from /staff/kpis, which several people already have

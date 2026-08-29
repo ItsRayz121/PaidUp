@@ -1652,6 +1652,57 @@ export async function staffRoutes(app: FastifyInstance) {
   }));
 
   // ---- Analytics (brief part 48) ------------------------------------------
+  // ---- Dashboard "needs attention" + activity feed (admin rebuild, Phase B) --
+  // One request the landing page opens with: the size of every work queue, the
+  // things that mean money is stuck or unreconciled, and the last few admin
+  // actions. All counts, all derived — no new table.
+  app.get("/staff/dashboard", staffGuard("analytics.view", async () => {
+    const one = async (text: string, ...params: unknown[]) =>
+      Number((await sql.get<{ v: number }>(text, ...params))?.v ?? 0);
+
+    const [
+      wPending, wReady, deposits, refunds, bnbStuck, relayStuck,
+      openFraud, kycWaiting, openTickets,
+    ] = await Promise.all([
+      one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status = 'pending'"),
+      one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status IN ('agent_approved','manager_approved')"),
+      one("SELECT COUNT(*)::int AS v FROM usdt_topups WHERE status = 'pending'"),
+      one("SELECT COUNT(*)::int AS v FROM usdt_refund_requests WHERE status = 'pending'"),
+      one("SELECT COUNT(*)::int AS v FROM bnb_withdrawal_requests WHERE status = 'failed'"),
+      one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed'"),
+      one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NULL"),
+      one("SELECT COUNT(*)::int AS v FROM users WHERE kyc_status = 'pending'"),
+      one("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status = 'open'"),
+    ]);
+
+    // Latest reconciliation snapshot per chain — a negative delta means the
+    // treasury holds LESS than the ledger says we owe (CUSTODY_SPEC.md § 3.5).
+    const recon = await sql.all<{ chain: string; delta: string | number; checked_at: string }>(
+      `SELECT DISTINCT ON (chain) chain, delta, checked_at
+         FROM treasury_balance_snapshots ORDER BY chain, checked_at DESC`,
+    );
+    const reconShortfall = recon.filter((r) => Number(r.delta) < 0);
+
+    const recentActivity = await sql.all<{ action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }>(
+      `SELECT a.action, a.detail, a.created_at,
+              (SELECT email FROM users u WHERE u.id = a.actor_user_id) AS actor_email,
+              (SELECT email FROM users u WHERE u.id = a.target_user_id) AS target_email
+         FROM admin_audit_log a ORDER BY a.created_at DESC LIMIT 15`,
+    );
+
+    return {
+      attention: {
+        withdrawalsPending: wPending, withdrawalsReady: wReady,
+        depositsPending: deposits, refundsPending: refunds,
+        bnbFailed: bnbStuck, relayFailed: relayStuck,
+        fraudOpen: openFraud, kycWaiting, ticketsOpen: openTickets,
+        reconciliationShortfall: reconShortfall.length,
+      },
+      reconciliation: recon.map((r) => ({ chain: r.chain, delta: Number(r.delta), checkedAt: r.checked_at })),
+      recentActivity,
+    };
+  }));
+
   // Everything here is derived from tables that already exist — see
   // analytics.ts. Separate from /staff/kpis, which stays as the small
   // at-a-glance strip; this is the full report the dashboard's charts read.

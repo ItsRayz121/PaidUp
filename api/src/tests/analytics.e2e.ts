@@ -214,6 +214,25 @@ console.log("\n-- the endpoint --");
   const r = await app.inject({ method: "GET", url: "/staff/analytics", headers: auth });
   check("admin can read it", r.statusCode === 200, String(r.statusCode));
 
+  // ---- Dashboard "needs attention" (admin rebuild, Phase B) ----
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, status, created_at)
+     VALUES (?,?,?,'bep20','pending',?)`, newId(), admin, 1500, now(),
+  );
+  const dash = await app.inject({ method: "GET", url: "/staff/dashboard", headers: auth });
+  check("dashboard endpoint 200s for an admin", dash.statusCode === 200, dash.body);
+  const dj = dash.json();
+  check("attention block has every queue key",
+    typeof dj.attention.withdrawalsPending === "number"
+    && typeof dj.attention.kycWaiting === "number"
+    && typeof dj.attention.reconciliationShortfall === "number");
+  check("the seeded pending withdrawal is counted", dj.attention.withdrawalsPending >= 1, JSON.stringify(dj.attention));
+  check("recentActivity is an array", Array.isArray(dj.recentActivity));
+  const dashDenied = await app.inject({
+    method: "GET", url: "/staff/dashboard", headers: { authorization: `Bearer ${jwt.sign({ sub: await mkUser("dash-earner") }, config.jwtSecret)}` },
+  });
+  check("a non-staff caller is refused the dashboard (403)", dashDenied.statusCode === 403, String(dashDenied.statusCode));
+
   const win = await app.inject({ method: "GET", url: "/staff/analytics?days=7", headers: auth });
   check("the window is passed through", win.json().series.length === 7);
 
