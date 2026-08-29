@@ -375,6 +375,50 @@ console.log("\n-- scanEvmChain: a provider's block-range limit is survived by sh
   logsProviderLimit = 1_000_000; // restore, so later suites/reruns in this process are unaffected
 }
 
+console.log("\n-- a deposit ALREADY credited via a manual usdt_topups claim: scanner must NOT double-pay --");
+
+{
+  // This is the exact shape of the 2026-08-12 production incident: a user
+  // pastes a tx hash into /mine/topup, staff confirm it (usdt_ledger gets a
+  // 'topup' credit keyed to the usdt_topups row), and later the deposit
+  // scanner walks the same block and sees the same transfer.
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 4000 + Math.floor(Math.random() * 1_000_000);
+  const dep = mkDeposit({ userId, address, blockNumber, blockHash: "0xd00d", amountMicro: 1_000_000n });
+  blockHashByNumber.set(blockNumber, "0xd00d");
+
+  // The manual claim, exactly as staffMining.ts's confirm handler writes it —
+  // note the tx hash is stored WITHOUT the "0x" prefix, which is what broke
+  // the naive cross-table comparison in production.
+  const topupId = newId();
+  await sql.run(
+    "INSERT INTO usdt_topups (id, user_id, chain, tx_hash, amount, status, reviewed_at, created_at) VALUES (?,?,?,?,?, 'confirmed', ?, ?)",
+    topupId, userId, "bep20", dep.txHash.replace(/^0x/, ""), 1_000_000, now(), now(),
+  );
+  const manualLedgerId = newId();
+  await sql.run(
+    "INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, source_ref_id, note, created_at) VALUES (?,?,?, 'credit', 'topup', ?, ?, ?)",
+    manualLedgerId, userId, 1_000_000, topupId, "Deposit (manual claim)", now(),
+  );
+
+  const before = await usdtBalanceMicroOf(userId);
+  const result = await recordObservedDeposit(dep, 15);
+
+  check("scanner reports 'already_credited', not a fresh credit", result.status === "already_credited", JSON.stringify(result));
+  check("the balance did NOT move — no second payment",
+    (await usdtBalanceMicroOf(userId)) === before, `${before} -> ${await usdtBalanceMicroOf(userId)}`);
+
+  const ledgerCount = await sql.all("SELECT id FROM usdt_ledger WHERE user_id = ? AND source_type = 'topup'", userId);
+  check("exactly ONE topup ledger row exists for this user (the manual one)", ledgerCount.length === 1, String(ledgerCount.length));
+
+  const row = await sql.get<{ status: string; credited_ledger_id: string | null }>(
+    "SELECT status, credited_ledger_id FROM chain_deposits WHERE id = ?", result.id,
+  );
+  check("the chain_deposits row is closed as 'credited', pointed at the MANUAL ledger entry",
+    row?.status === "credited" && row?.credited_ledger_id === manualLedgerId, JSON.stringify(row));
+}
+
 globalThis.fetch = realFetch;
 
 console.log(`\n${pass} passed, ${fail} failed`);

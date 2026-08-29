@@ -68,6 +68,38 @@ export async function recordObservedDeposit(
     return { status: "reorged_out", id };
   }
 
+  // CROSS-TABLE idempotency: has this exact deposit already been credited
+  // through the MANUAL top-up path (usdt_topups + a staff "confirm")? That
+  // table and this one have SEPARATE unique indexes and nothing checked
+  // across them — which is how the 2026-08-12 scanner backfill re-credited
+  // deposits users had already claimed by hand, doubling four balances (see
+  // CLAUDE.md). If a confirmed top-up exists for this (chain, tx), the money
+  // is already in the ledger: mark this row credited, point it at that same
+  // ledger entry, and pay nothing.
+  //
+  // tx_hash normalisation: usdt_topups rows may or may not carry the "0x"
+  // prefix (manual claims were stored without it); strip it on both sides.
+  const manual = await t.get<{ ledger_id: string }>(
+    `SELECT l.id AS ledger_id
+       FROM usdt_topups tu
+       JOIN usdt_ledger l
+         ON l.source_type = 'topup' AND l.source_ref_id = tu.id
+      WHERE tu.status = 'confirmed'
+        AND LOWER(tu.chain) = LOWER(?)
+        AND LOWER(REPLACE(tu.tx_hash, '0x', '')) = LOWER(REPLACE(?, '0x', ''))
+      LIMIT 1`,
+    observed.chain, observed.txHash,
+  );
+  if (manual) {
+    await t.run(
+      `UPDATE chain_deposits
+          SET status = 'credited', credited_ledger_id = ?, credited_at = ?
+        WHERE id = ? AND status <> 'credited'`,
+      manual.ledger_id, now(), id,
+    );
+    return { status: "already_credited", id };
+  }
+
   // The idempotency guard: this conditional UPDATE's rowCount is the ONLY
   // thing that decides whether we credit. A concurrent caller (a webhook
   // firing the same instant the poller processes this row, or the poller

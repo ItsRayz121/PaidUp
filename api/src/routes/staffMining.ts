@@ -481,12 +481,33 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       // Claim the row FIRST, and only if it is still pending. Two admins on the
       // queue at the same moment would otherwise both see 'pending', both post
       // credit, and pay one deposit twice.
-      const claimed = await t.get<{ user_id: string; tx_hash: string }>(
+      const claimed = await t.get<{ user_id: string; tx_hash: string; chain: string }>(
         `UPDATE usdt_topups SET status = 'confirmed', reviewed_by = ?, reviewed_at = ?
-         WHERE id = ? AND status = 'pending' RETURNING user_id, tx_hash`,
+         WHERE id = ? AND status = 'pending' RETURNING user_id, tx_hash, chain`,
         userId, now(), id,
       );
       if (!claimed) throw { statusCode: 409, message: "That top-up was already handled." };
+
+      // Has the deposit scanner ALREADY auto-credited this exact transaction?
+      // usdt_topups and chain_deposits have separate idempotency indexes;
+      // confirming here after the scanner has run would credit it twice (the
+      // 2026-08-12 double-credit, in reverse — see CLAUDE.md / credit.ts).
+      // Throw so the whole tx rolls back and the top-up stays pending for the
+      // reviewer to REJECT as a duplicate.
+      const already = await t.get<{ id: string }>(
+        `SELECT id FROM chain_deposits
+          WHERE status = 'credited'
+            AND LOWER(chain) = LOWER(?)
+            AND LOWER(REPLACE(tx_hash, '0x', '')) = LOWER(REPLACE(?, '0x', ''))
+          LIMIT 1`,
+        claimed.chain, claimed.tx_hash,
+      );
+      if (already) {
+        throw {
+          statusCode: 409,
+          message: "This deposit was already credited automatically by the deposit scanner. Reject this claim as a duplicate.",
+        };
+      }
 
       await postUsdt({
         userId: claimed.user_id, micro: usdtToMicro(b.amount), direction: "credit",
