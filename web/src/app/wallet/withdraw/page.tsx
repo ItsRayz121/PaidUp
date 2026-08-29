@@ -7,6 +7,7 @@ import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
+import { UsdtLogo } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fetchBalance, fetchPayoutAddresses, createWithdrawal, createEarnedUsdtWithdrawal, requestWithdrawalStepUp, ApiError } from "@/lib/api";
@@ -154,11 +155,18 @@ export default function WithdrawPage() {
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
+      {/* Same clean shape as the BNB withdraw screen (founder, 2026-08-29):
+          logo + title + the single payout chain as a subtitle, not a picker
+          card. The chain picker only comes back if CHAINS ever has >1 entry. */}
       <header className="flex items-center gap-2">
         <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
           <ArrowRightIcon size={22} className="rotate-180" />
         </Link>
-        <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
+        <UsdtLogo size={30} />
+        <div>
+          <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
+          {CHAINS.length === 1 && <p className="text-xs text-muted">{chainMeta.label} · {chainMeta.note}</p>}
+        </div>
       </header>
 
       {/* An unverified user gets a way FORWARD, not just a refusal. This is the
@@ -207,43 +215,31 @@ export default function WithdrawPage() {
         <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
       </Card>
 
+      {/* "Pay from" only appears when the user actually has task USDT to choose
+          between — otherwise there is nothing to pick and it is just noise. */}
       {earnedUsdtMicro > 0 && (
-        <div>
-          <p className="mb-2 px-1 font-semibold text-brand-ink">Pay from</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setSource("points")}
-              className={`rounded-xl border p-3 text-left ${source === "points" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
-              <span className="block font-semibold">Points balance</span>
-              <span className="text-xs text-muted">{formatMoney(balance)}</span>
-            </button>
-            <button type="button" onClick={() => setSource("earned_usdt")}
-              className={`rounded-xl border p-3 text-left ${source === "earned_usdt" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
-              <span className="block font-semibold">Task USDT</span>
-              <span className="text-xs text-muted">{formatUsdtMicro(earnedUsdtMicro)}</span>
-            </button>
-          </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setSource("points")}
+            className={`rounded-xl border p-3 text-left ${source === "points" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
+            <span className="block text-sm font-semibold">Points balance</span>
+            <span className="text-xs text-muted">{formatMoney(balance)}</span>
+          </button>
+          <button type="button" onClick={() => setSource("earned_usdt")}
+            className={`rounded-xl border p-3 text-left ${source === "earned_usdt" ? "border-brand bg-brand-tint" : "border-line bg-card"}`}>
+            <span className="block text-sm font-semibold">Task USDT</span>
+            <span className="text-xs text-muted">{formatUsdtMicro(earnedUsdtMicro)}</span>
+          </button>
         </div>
       )}
 
-      {/* Network picker — or, while we pay out on exactly one chain, a statement.
-          A row of radio buttons containing a single option is not a choice; it
-          reads as "there are others, find them", and every user who taps it
-          learns nothing. So one chain renders as a plain labelled fact, and the
-          picker comes back by itself the moment CHAINS has more than one entry
-          (see web/src/lib/chains.ts). */}
-      <div>
-        <p className="mb-2 px-1 font-semibold text-brand-ink">{t("withdraw.getPaidUsdt")}</p>
-        <div className="grid grid-cols-2 gap-2.5">
-          {CHAINS.length === 1 ? (
-            <div className="col-span-2 flex items-center justify-between rounded-xl border border-brand bg-brand-tint p-3">
-              <span>
-                <span className="block font-semibold text-brand-ink">{CHAINS[0].label}</span>
-                <span className="text-xs text-muted">{CHAINS[0].note}</span>
-              </span>
-              <CheckIcon size={18} className="shrink-0 text-brand" />
-            </div>
-          ) : (
-            CHAINS.map((c) => {
+      {/* The chain picker only renders when CHAINS has more than one entry — a
+          single-option radio group reads as "there are others, find them". The
+          one chain we pay out on is stated in the header subtitle instead. */}
+      {CHAINS.length > 1 && (
+        <div>
+          <p className="mb-2 px-1 font-semibold text-brand-ink">{t("withdraw.getPaidUsdt")}</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            {CHAINS.map((c) => {
               const active = c.id === chain;
               return (
                 <button key={c.id} onClick={() => selectChain(c.id)} aria-pressed={active}
@@ -255,10 +251,10 @@ export default function WithdrawPage() {
                   <span className="text-xs text-muted">{c.note}</span>
                 </button>
               );
-            })
-          )}
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ---- Where the money goes ----
           Connect (signed) is the default, same reasoning as ConnectWallet.tsx:
@@ -371,15 +367,11 @@ export default function WithdrawPage() {
         {!belowMin && !overBalance && !addressOk && (
           <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needWalletFirst")}</p>
         )}
-        {gasReady !== null && (
-          <div
-            className={`mt-2 rounded-lg border p-2.5 text-sm ${
-              gasReady ? "border-line bg-card text-muted" : "border-danger/30 bg-danger-tint text-danger"
-            }`}
-          >
-            <p className="font-semibold">
-              {gasReady ? t("refund.gasReady") : t("refund.gasNotReady")}
-            </p>
+        {/* Only shown when gas is actually missing — a reassuring "gas ready"
+            box on every visit is exactly the kind of clutter this pass removes. */}
+        {gasBlocked && (
+          <div className="mt-2 rounded-lg border border-danger/30 bg-danger-tint p-2.5 text-sm text-danger">
+            <p className="font-semibold">{t("refund.gasNotReady")}</p>
             <p className="num mt-1 text-xs opacity-80">
               {t("refund.gasBalance", { balance: formatBnbWei(bal.data?.personalGasWei ?? null) })}
             </p>
@@ -398,43 +390,48 @@ export default function WithdrawPage() {
   );
 }
 
+// Compact confirmation card — same shape as the BNB withdraw screen's `done`
+// state (founder, 2026-08-29), not a full-screen celebration.
 function SentConfirmation({ amount, chainLabel, address, status }: { amount: number; chainLabel: string; address: string; status: "paid" | "sending" | "pending" }) {
   const { t } = useI18n();
   const shortAddr = address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
   return (
-    <div className="flex min-h-[80dvh] flex-col items-center justify-center px-6 text-center">
-      <div className="animate-pop grid h-24 w-24 place-items-center rounded-full bg-success text-white"><CheckIcon size={52} /></div>
-      <h1 className="animate-rise mt-6 text-2xl font-bold text-brand-ink">
-        {status === "paid" ? "Your USDT was sent" : status === "sending" ? "Your USDT is being sent" : t("withdraw.gotRequest")}
-      </h1>
-      <p className="animate-rise mt-2 text-lg font-semibold text-brand-ink">
-        {t("withdraw.onTheWay", { points: formatMoney(amount) })}
-      </p>
-      <div className="animate-rise mt-6 w-full max-w-sm space-y-2.5 text-left">
-        <div className="rounded-xl bg-card border border-line p-3">
+    <div className="px-4 pt-5 pb-8 space-y-5">
+      <header className="flex items-center gap-2">
+        <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
+          <ArrowRightIcon size={22} className="rotate-180" />
+        </Link>
+        <UsdtLogo size={30} />
+        <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
+      </header>
+
+      <Card className="p-5 text-center">
+        <div className="animate-pop mx-auto grid h-16 w-16 place-items-center rounded-full bg-success text-white">
+          <CheckIcon size={34} />
+        </div>
+        <p className="mt-3 font-bold text-brand-ink">
+          {status === "paid" ? "Your USDT was sent" : status === "sending" ? "Your USDT is being sent" : t("withdraw.gotRequest")}
+        </p>
+        <p className="num mt-1 text-lg font-bold text-brand-ink">
+          {t("withdraw.onTheWay", { points: formatMoney(amount) })}
+        </p>
+        <div className="mt-4 rounded-xl border border-line bg-brand-tint/40 p-3 text-left">
           <p className="text-xs text-muted">{t("withdraw.network")}</p>
           <p className="font-semibold text-brand-ink">{chainLabel}</p>
           <p className="mt-2 text-xs text-muted">{t("withdraw.toWallet")}</p>
           <p className="num break-all text-sm text-brand-ink">{shortAddr}</p>
         </div>
-        <div className="flex items-center gap-3 rounded-xl bg-success-tint p-3 text-success">
-          <CheckIcon size={20} className="shrink-0" /><span className="text-sm font-medium">
-            {status === "paid" ? "Completed automatically" : status === "sending" ? "Automatic transfer started" : t("withdraw.requestReceived")}
-          </span>
-        </div>
         {status === "pending" && (
-          <div className="flex items-center gap-3 rounded-xl bg-pending-tint p-3 text-pending">
-            <ClockIcon size={20} className="shrink-0" /><span className="text-sm font-medium">{t("withdraw.slaNote")}</span>
-          </div>
+          <p className="mt-3 flex items-center justify-center gap-2 text-sm text-pending">
+            <ClockIcon size={16} className="shrink-0" /> {t("withdraw.slaNote")}
+          </p>
         )}
-        {/* The moment they most want to hear "your money is sent" — offer to
-            tell them. Renders nothing if push is off or unsupported. */}
-        <NotificationsCard compact />
-      </div>
-      <div className="mt-8 w-full max-w-sm space-y-2.5">
-        <Button href="/wallet" variant="primary">{t("withdraw.seeWallet")}</Button>
-        <Button href="/" variant="ghost">{t("withdraw.backHome")}</Button>
-      </div>
+        <div className="mt-4"><Button href="/wallet" variant="primary">{t("withdraw.seeWallet")}</Button></div>
+      </Card>
+
+      {/* The moment they most want to hear "your money is sent" — offer to tell
+          them. Renders nothing if push is off or unsupported. */}
+      <NotificationsCard compact />
     </div>
   );
 }
