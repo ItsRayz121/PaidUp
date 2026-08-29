@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
-import { WalletIcon, CheckIcon, ClockIcon, ShieldIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
+import { WalletIcon, CheckIcon, ClockIcon, InfoIcon, ArrowRightIcon } from "@/components/icons";
 import { UsdtLogo } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
@@ -168,8 +168,10 @@ export default function WithdrawPage() {
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
-      {/* Same clean shape as the BNB withdraw screen: logo + title + the single
-          payout chain as a subtitle. */}
+      {/* Absolutely the same shape as the BNB withdraw screen (founder,
+          2026-08-29): header, one balance card, then ONE card holding the
+          address, the amount and the button. The KYC / step-up / "take from"
+          / gas blocks only appear when they actually apply. */}
       <header className="flex items-center gap-2">
         <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
           <ArrowRightIcon size={22} className="rotate-180" />
@@ -210,14 +212,11 @@ export default function WithdrawPage() {
             {justResent ? t("withdraw.stepUp.resent") : t("withdraw.stepUp.resend")}
           </button>
         </Card>
-      ) : (
-        error && <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
-      )}
+      ) : null}
 
       <Card className="p-4">
         <p className="text-sm text-muted">{t("withdraw.youHave")}</p>
-        <p className="num text-2xl font-bold text-brand-ink">{formatUsdtMicro(usdtAvailableMicro)}</p>
-        <p className="text-sm text-muted">{t("withdraw.aboutEquals")}</p>
+        <p className="num mt-1 text-2xl font-bold text-brand-ink">{formatUsdtMicro(usdtAvailableMicro)}</p>
       </Card>
 
       {/* "Take from" only appears when more than one place has a balance. */}
@@ -246,56 +245,53 @@ export default function WithdrawPage() {
         </p>
       )}
 
-      {/* Where the money goes — a plain address box (founder, 2026-08-29:
-          "make it like the BNB screen"). One saved address can be tapped in. */}
-      <Card className="p-4">
-        <label htmlFor="withdraw-address" className="flex items-center gap-2 font-bold text-brand-ink">
-          <WalletIcon size={20} className="shrink-0 text-brand" />
-          {t("withdraw.bep20WalletAddress")}
-        </label>
-        {savedAddresses[chain] && savedAddresses[chain]!.toLowerCase() !== trimmed.toLowerCase() && (
-          <button
-            type="button"
-            onClick={() => setAddress(savedAddresses[chain]!)}
-            className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
-          >
-            <CheckIcon size={13} className="shrink-0" />
-            <span className="truncate">{t("withdraw.useSaved")} {shortAddress(savedAddresses[chain]!)}</span>
-          </button>
+      <Card className="p-4 space-y-4">
+        {!needsKyc && !needsStepUp && error && (
+          <p className="rounded-xl bg-danger-tint p-3 text-sm text-danger">{error}</p>
         )}
-        <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
-          autoCapitalize="none" autoCorrect="off" spellCheck={false}
-          placeholder={t("withdraw.addrPlaceholderEvm")}
-          className="num mt-3 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand" />
-        {trimmed && addressOk && (
-          <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-success">
-            <CheckIcon size={16} />
-            {savedAddresses[chain]?.toLowerCase() === trimmed.toLowerCase()
-              ? t("withdraw.savedAddressReady") : t("withdraw.newAddressReady")}
-          </p>
-        )}
-        {trimmed && !addressOk && (
-          <p className="mt-2 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
-        )}
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
-          <InfoIcon size={15} className="mt-0.5 shrink-0" /> {t("withdraw.addressAutoSave")}
-        </p>
-      </Card>
 
-      {/* Amount */}
-      <div>
-        <label htmlFor="amt" className="mb-2 block px-1 font-semibold text-brand-ink">{t("withdraw.howManyPoints")}</label>
-        <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
-          <WalletIcon size={20} className="text-brand" />
-          <input id="amt" type="number" inputMode="decimal" value={usdtInput}
-            min={minUsdt} max={availMicro / 1_000_000} step={0.5}
-            placeholder={String(minUsdt)}
-            onChange={(e) => setUsdtInput(e.target.value)}
-            className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
-          <span className="shrink-0 font-semibold text-muted">USDT</span>
+        <div>
+          <label htmlFor="withdraw-address" className="mb-1.5 flex items-center gap-2 text-sm font-semibold text-brand-ink">
+            <WalletIcon size={18} className="shrink-0 text-brand" />
+            {t("withdraw.bep20WalletAddress")}
+          </label>
+          <p className="mb-2 text-xs text-muted">{t("withdraw.addrHint")}</p>
+          <input id="withdraw-address" value={address} onChange={(e) => setAddress(e.target.value)}
+            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            placeholder={t("withdraw.addrPlaceholderEvm")}
+            className="num w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none focus:border-brand" />
+          {savedAddresses[chain] && savedAddresses[chain]!.toLowerCase() !== trimmed.toLowerCase() && (
+            <button
+              type="button"
+              onClick={() => setAddress(savedAddresses[chain]!)}
+              className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
+            >
+              <CheckIcon size={13} className="shrink-0" />
+              <span className="truncate">{t("withdraw.useSaved")} {shortAddress(savedAddresses[chain]!)}</span>
+            </button>
+          )}
+          {trimmed && !addressOk && (
+            <p className="mt-2 text-sm text-danger">{t("withdraw.addrInvalid", { label: chainMeta.label })}</p>
+          )}
         </div>
+
+        <div>
+          <label htmlFor="amt" className="mb-1.5 block text-sm font-semibold text-brand-ink">{t("withdraw.howManyPoints")}</label>
+          <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
+            <input id="amt" type="number" inputMode="decimal" value={usdtInput}
+              min={minUsdt} max={availMicro / 1_000_000} step={0.5}
+              placeholder={String(minUsdt)}
+              onChange={(e) => setUsdtInput(e.target.value)}
+              className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
+            <span className="shrink-0 font-semibold text-muted">USDT</span>
+          </div>
+          <p className="mt-1.5 text-xs text-muted">
+            {t("withdraw.lowestPayout", { points: isDeposit ? formatUsdtMicro(minMicro) : formatMoney(min) })}
+          </p>
+        </div>
+
         {isPoints && fee > 0 && !belowMin && (
-          <div className="mt-2 rounded-lg border border-line bg-card p-2.5 text-sm">
+          <div className="rounded-lg border border-line bg-card p-2.5 text-sm">
             <div className="flex justify-between text-muted">
               <span>{t("withdraw.feeLabel")}</span>
               <span className="num">− {formatMoney(fee)}</span>
@@ -306,38 +302,26 @@ export default function WithdrawPage() {
             </div>
           </div>
         )}
-        <p className="mt-1.5 px-1 text-sm font-semibold text-brand-ink">
-          {t("withdraw.weSendWorth", { points: isPoints ? formatMoney(net) : formatUsdtMicro(enteredMicro) })}
-        </p>
-        <p className="px-1 text-xs text-muted">
-          {t("withdraw.lowestPayout", { points: isDeposit ? formatUsdtMicro(minMicro) : formatMoney(min) })}
-        </p>
+
         {belowMin && (
-          <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">
+          <p className="rounded-lg bg-pending-tint p-2.5 text-sm text-pending">
             {t("withdraw.needAtLeast", { points: isDeposit ? formatUsdtMicro(minMicro) : formatMoney(min) })}
           </p>
         )}
-        {overBalance && <p className="mt-2 rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("withdraw.notEnough")}</p>}
-        {!belowMin && !overBalance && !addressOk && (
-          <p className="mt-2 rounded-lg bg-pending-tint p-2.5 text-sm text-pending">{t("withdraw.needWalletFirst")}</p>
-        )}
+        {overBalance && <p className="rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("withdraw.notEnough")}</p>}
         {gasBlocked && (
-          <div className="mt-2 rounded-lg border border-danger/30 bg-danger-tint p-2.5 text-sm text-danger">
+          <div className="rounded-lg border border-danger/30 bg-danger-tint p-2.5 text-sm text-danger">
             <p className="font-semibold">{t("refund.gasNotReady")}</p>
             <p className="num mt-1 text-xs opacity-80">
               {t("refund.gasBalance", { balance: formatBnbWei(bal.data?.personalGasWei ?? null) })}
             </p>
           </div>
         )}
-      </div>
 
-      <Button variant="accent" disabled={invalid || busy} onClick={submit}>
-        <WalletIcon size={20} />
-        {busy ? t("withdraw.sending") : needsStepUp ? t("withdraw.stepUp.confirm") : t("withdraw.askForUsdt")}
-      </Button>
-      <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
-        <ShieldIcon size={14} /> {t("withdraw.safetyNote")}
-      </p>
+        <Button variant="accent" disabled={invalid || busy} onClick={submit}>
+          {busy ? t("withdraw.sending") : needsStepUp ? t("withdraw.stepUp.confirm") : t("withdraw.askForUsdt")}
+        </Button>
+      </Card>
     </div>
   );
 }
@@ -358,10 +342,8 @@ function SentConfirmation({ amount, chainLabel, address, status }: { amount: num
       </header>
 
       <Card className="p-5 text-center">
-        <div className="animate-pop mx-auto grid h-16 w-16 place-items-center rounded-full bg-success text-white">
-          <CheckIcon size={34} />
-        </div>
-        <p className="mt-3 font-bold text-brand-ink">
+        <CheckIcon size={38} className="mx-auto text-success" />
+        <p className="mt-2 font-bold text-brand-ink">
           {status === "paid" ? "Your USDT was sent" : status === "sending" ? "Your USDT is being sent" : t("withdraw.gotRequest")}
         </p>
         <p className="num mt-1 text-lg font-bold text-brand-ink">

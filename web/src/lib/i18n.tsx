@@ -416,6 +416,7 @@ const copy: Record<string, string> = {
   "withdraw.yourWalletAddress": "Your USDT wallet address",
   "withdraw.addrPlaceholderEvm": "Paste address (0x…)",
   "withdraw.addrPlaceholderAptos": "0x… (Aptos)",
+  "withdraw.addrHint": "Paste your BNB Smart Chain (BEP20) wallet address.",
   "withdraw.addrInvalid": "That does not look like a {label} address.",
   "withdraw.sendRightNetwork":
     "Send to the right network ({label}). Money sent to the wrong network or a wrong address cannot come back.",
