@@ -5,6 +5,7 @@ import { Card, Button, SectionTitle, Tile } from "@/components/ui";
 import { TaskPreview } from "@/components/TaskFlow";
 import { HomeContent } from "@/components/HomeContent";
 import { AmbientBg } from "@/components/AmbientBg";
+import { WelcomeExperience } from "@/components/WelcomeExperience";
 import { Loading, ErrorState } from "@/components/state";
 import {
   ArrowRightIcon, GiftIcon, ShieldIcon, MineIcon, TasksIcon, WalletIcon,
@@ -72,6 +73,10 @@ export default function HomePage() {
     <div className="relative px-4 pt-5 pb-8 space-y-5">
       <AmbientBg />
 
+      {/* First signed-in visit only: a ~2.5s welcome shown over this page while
+          it loads underneath. Earner accounts only; gated per user (see the
+          component). The button works immediately. */}
+      {user && !user.role && <WelcomeExperience userId={user.id} />}
 
       {/* `break-all` used to sit on the name, which splits an ordinary word
           wherever the line happens to end — "Muhamm / ad". `break-words` only

@@ -1,0 +1,365 @@
+/* WelcomeExperience — the first-run welcome overlay.
+   Isolated styles: every class is prefixed `we-`. All movement is transform /
+   opacity (compositor-safe) apart from two slow, single-element box-shadow
+   pulses. The whole thing is frozen to its finished state under
+   prefers-reduced-motion (block at the very bottom, plus a JS-set `.we-reduced`
+   mirror for webviews that don't re-evaluate the media query live).
+
+   TIMING MAP (entrance runs once, ~2.9s total; then `.we-idle` is added and
+   only the calm looping bits stay):
+     0.00s  overlay fades in
+     0.04s  logo mark scales up
+     0.34s  path 1 draws  (each ~0.56s, staggered +0.14s)
+     0.80s  Tasks / Mining / Friends points pop in (staggered)
+     1.50s  one marigold ripple around the mark
+     1.90s  one light sweep across the button (ends ~2.80s)
+     2.90s  -> idle: spark travel, breathing logo glow, soft point glow,
+            one restrained button pulse every 5s. Paths are NEVER redrawn.
+            (ENTRANCE_MS in WelcomeExperience.tsx must match this handoff.) */
+
+.we-root {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  isolation: isolate;
+
+  --we-mint: #35e6d6;
+  --we-mint-soft: #7ef7ec;
+  --we-marigold: #f5b52e;
+  --we-ink: #f2fbf8;
+  --we-ink-soft: #bfe3df;
+
+  color: var(--we-ink);
+  font-family: var(--font-sans);
+  /* Deep black-teal, not flat black — a soft radial from a lit top edge down
+     to near-black. */
+  background:
+    radial-gradient(118% 84% at 50% 8%, #12454c 0%, #0b2b30 40%, #08191d 74%, #050f12 100%);
+  -webkit-font-smoothing: antialiased;
+
+  /* iOS / installed-PWA / Telegram Mini App safe areas. */
+  padding:
+    max(env(safe-area-inset-top), 20px)
+    max(env(safe-area-inset-right), 18px)
+    max(env(safe-area-inset-bottom), 20px)
+    max(env(safe-area-inset-left), 18px);
+
+  animation: we-root-in 240ms ease both;
+}
+@keyframes we-root-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* The mark's "portal" — a soft disc that expands to fill the screen on exit
+   while everything else fades, so the welcome dissolves into the home screen
+   underneath rather than being cut. */
+.we-portal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #23c9bd 0%, #0d5c63 42%, rgba(13, 92, 99, 0) 72%);
+  opacity: 0;
+  transform: scale(0);
+  pointer-events: none;
+}
+
+.we-stage {
+  position: relative;
+  z-index: 1;
+  margin: auto;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* ---------- constellation ---------- */
+.we-constellation {
+  position: relative;
+  width: min(76vw, 288px);
+  height: min(76vw, 288px);
+  margin-bottom: clamp(30px, 8vh, 58px);
+}
+.we-net {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.we-line-glow,
+.we-line-core {
+  fill: none;
+  stroke-linecap: round;
+}
+.we-line-glow { stroke: var(--we-mint); stroke-width: 2.6; opacity: 0.13; }
+.we-line-core {
+  stroke: var(--we-mint);
+  stroke-width: 0.9;
+  opacity: 0.92;
+  /* pathLength=1 on the path -> the dash spans the whole line; offset 1 hides
+     it, and `we-draw` walks the offset to 0 exactly once. `forwards` holds it
+     drawn; `.we-idle` below also nails it to 0 so it can never re-run. */
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: we-draw 560ms cubic-bezier(0.4, 0, 0.2, 1) var(--d, 0s) forwards;
+}
+@keyframes we-draw { to { stroke-dashoffset: 0 } }
+.we-idle .we-line-core { animation: none; stroke-dashoffset: 0; }
+
+/* travelling spark (SVG SMIL handles the motion; this is only the look) */
+.we-spark { opacity: 0; }
+.we-spark-halo { fill: var(--we-mint); opacity: 0.35; }
+.we-spark-core { fill: var(--we-mint-soft); }
+
+/* ---------- centre mark ---------- */
+.we-logo-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 92px;
+  height: 92px;
+  transform: translate(-50%, -50%);
+}
+.we-logo {
+  position: relative;
+  z-index: 2;
+  display: block;
+  animation: we-logo-in 520ms cubic-bezier(0.2, 0.7, 0.2, 1) 40ms both;
+}
+@keyframes we-logo-in {
+  from { opacity: 0; transform: scale(0.82) }
+  to   { opacity: 1; transform: scale(1) }
+}
+.we-logo-halo {
+  position: absolute;
+  inset: -36%;
+  z-index: 1;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(53, 230, 214, 0.45) 0%, rgba(53, 230, 214, 0) 70%);
+  opacity: 0.3;
+  pointer-events: none;
+}
+.we-ripple {
+  position: absolute;
+  inset: -6%;
+  z-index: 1;
+  border-radius: 9999px;
+  border: 2px solid var(--we-marigold);
+  opacity: 0;
+  pointer-events: none;
+  animation: we-ripple 820ms ease-out 1500ms both;
+}
+@keyframes we-ripple {
+  0%   { opacity: 0;   transform: scale(0.45) }
+  18%  { opacity: 0.7 }
+  100% { opacity: 0;   transform: scale(2.7) }
+}
+
+/* ---------- the three feature points ---------- */
+.we-node {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
+}
+/* Anchored to the same coordinates the SVG lines end at (viewBox 0 0 100 100). */
+.we-node-tasks   { left: 50%; top: 15%; }
+.we-node-mining  { left: 83%; top: 72%; }
+.we-node-friends { left: 17%; top: 72%; }
+.we-node-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 9999px;
+  background: rgba(9, 38, 42, 0.82);
+  border: 1px solid rgba(53, 230, 214, 0.4);
+  color: var(--we-mint-soft);
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.6);
+}
+.we-node-halo {
+  position: absolute;
+  inset: -8px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(53, 230, 214, 0.4), rgba(53, 230, 214, 0) 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+.we-node-label {
+  position: absolute;
+  left: 50%;
+  top: 32px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--we-ink-soft);
+}
+/* The top point's label sits ABOVE its dot — outward, like the bottom two — so
+   it can never crowd the centre mark on a 320px screen. It sits in the empty
+   dark canvas above the constellation, which has nothing to clip against. */
+.we-node-tasks .we-node-label {
+  top: auto;
+  bottom: 32px;
+}
+
+/* ---------- entrance: mark pieces + points (only before `.we-idle`) ---------- */
+.we-root:not(.we-idle):not(.we-exiting) .we-node {
+  animation: we-node-in 440ms cubic-bezier(0.2, 0.7, 0.2, 1) var(--nd, 0.8s) both;
+}
+@keyframes we-node-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.55) }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1) }
+}
+
+/* ---------- idle: the calm loop ---------- */
+.we-idle .we-logo-halo { animation: we-breathe 3600ms ease-in-out infinite; }
+@keyframes we-breathe {
+  0%, 100% { opacity: 0.22; transform: scale(1) }
+  50%      { opacity: 0.55; transform: scale(1.13) }
+}
+.we-idle .we-node-halo { animation: we-node-glow 6s ease-in-out infinite; }
+.we-idle .we-node-mining  .we-node-halo { animation-delay: 2s; }
+.we-idle .we-node-friends .we-node-halo { animation-delay: 4s; }
+@keyframes we-node-glow {
+  0%, 78%, 100% { opacity: 0;   transform: scale(0.7) }
+  88%           { opacity: 0.5; transform: scale(1.1) }
+}
+
+/* ---------- copy + call to action ---------- */
+.we-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+.we-headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 6.4vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--we-ink);
+}
+.we-sub {
+  margin: 12px 0 0;
+  max-width: 30ch;
+  font-size: clamp(0.9rem, 3.6vw, 1rem);
+  line-height: 1.5;
+  color: var(--we-ink-soft);
+}
+.we-cta {
+  position: relative;
+  overflow: hidden;
+  margin-top: clamp(22px, 5vh, 34px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0 40px;
+  border: 0;
+  border-radius: 9999px;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: #062a27;
+  background: linear-gradient(180deg, #2fe0d4 0%, #17c3bb 100%);
+  box-shadow: 0 10px 30px -12px rgba(23, 195, 187, 0.7);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.we-cta-label { position: relative; z-index: 1; }
+.we-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.55) 50%, transparent 60%);
+  transform: translateX(-150%);
+}
+.we-cta:focus-visible {
+  outline: 3px solid var(--we-mint-soft);
+  outline-offset: 3px;
+}
+.we-root:not(.we-idle):not(.we-exiting) .we-cta::after {
+  animation: we-sweep 900ms ease 1900ms both;
+}
+@keyframes we-sweep { to { transform: translateX(150%) } }
+.we-idle .we-cta { animation: we-cta-pulse 5s ease-in-out 800ms infinite; }
+@keyframes we-cta-pulse {
+  0%, 84%, 100% { transform: scale(1);     box-shadow: 0 10px 30px -12px rgba(23, 195, 187, 0.7) }
+  90%           { transform: scale(1.025); box-shadow: 0 14px 40px -10px rgba(23, 195, 187, 0.95) }
+}
+.we-tagline {
+  margin: 16px 0 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: #8fbdb8;
+}
+
+/* ---------- entrance: copy fades (only before `.we-idle`) ---------- */
+.we-root:not(.we-idle):not(.we-exiting) .we-headline { animation: we-fade-up 460ms ease 220ms both; }
+.we-root:not(.we-idle):not(.we-exiting) .we-sub      { animation: we-fade-up 460ms ease 360ms both; }
+.we-root:not(.we-idle):not(.we-exiting) .we-cta      { animation: we-fade-up 460ms ease 1700ms both; }
+.we-root:not(.we-idle):not(.we-exiting) .we-tagline  { animation: we-fade-up 460ms ease 1900ms both; }
+@keyframes we-fade-up {
+  from { opacity: 0; transform: translateY(10px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+
+/* ---------- exit (tap "Let's start") ---------- */
+.we-exiting .we-stage  { animation: we-stage-out 380ms ease forwards; }
+@keyframes we-stage-out { to { opacity: 0; transform: scale(1.04) } }
+.we-exiting .we-portal { animation: we-portal-out 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+@keyframes we-portal-out {
+  0%   { opacity: 0.85; transform: scale(0.2) }
+  100% { opacity: 0;    transform: scale(26) }
+}
+.we-exiting.we-root { animation: we-root-out 560ms ease 80ms forwards; }
+@keyframes we-root-out { to { opacity: 0 } }
+
+/* ---------- reduced motion: show the finished state, no motion at all ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .we-root,
+  .we-root *,
+  .we-root *::before,
+  .we-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .we-line-core { stroke-dashoffset: 0 !important; }
+  .we-ripple, .we-portal { opacity: 0 !important; }
+  .we-logo { opacity: 1 !important; transform: scale(1) !important; }
+  .we-node { opacity: 1 !important; transform: translate(-50%, -50%) !important; }
+  .we-headline, .we-sub, .we-cta, .we-tagline { opacity: 1 !important; transform: none !important; }
+}
+/* JS-detected mirror (same effect), for webviews that don't restyle on a live
+   OS setting change. */
+.we-reduced,
+.we-reduced *,
+.we-reduced *::before,
+.we-reduced *::after {
+  animation: none !important;
+  transition: none !important;
+}
+.we-reduced .we-line-core { stroke-dashoffset: 0 !important; }
+.we-reduced .we-ripple, .we-reduced .we-portal { opacity: 0 !important; }
+.we-reduced .we-logo { opacity: 1 !important; transform: scale(1) !important; }
+.we-reduced .we-node { opacity: 1 !important; transform: translate(-50%, -50%) !important; }
+.we-reduced .we-headline,
+.we-reduced .we-sub,
+.we-reduced .we-cta,
+.we-reduced .we-tagline { opacity: 1 !important; transform: none !important; }
