@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+import { useToast } from "@/components/staff/toast";
 
 // ---- Live refresh bar (founder, 2026-08-27) --------------------------------
 // The money/fraud queues were pull-on-load only — open the panel, see a
@@ -243,6 +244,7 @@ const TREASURY_CHAINS = [
 
 export function TreasuryPanel() {
   const s = useApi(fetchSettings, []);
+  const toast = useToast();
   const [draft, setDraft] = useState<Partial<Record<"bep20" | "base" | "aptos", string>>>({});
   const [busy, setBusy] = useState(false);
 
@@ -251,10 +253,11 @@ export function TreasuryPanel() {
     setBusy(true);
     try {
       await updateSettings({ treasury: { [chain]: address } });
+      toast.ok(`${chain.toUpperCase()} treasury address saved.`);
       s.reload();
       setDraft((d) => ({ ...d, [chain]: undefined }));
     } catch (e) {
-      window.alert((e as Error).message);
+      toast.err((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -312,6 +315,7 @@ export function TreasuryPanel() {
 // it covers on-chain gas / protects margin. Snapshotted onto each request.
 export function WithdrawalFeePanel() {
   const s = useApi(fetchSettings, []);
+  const toast = useToast();
   const [fee, setFee] = useState<number | null>(null);
   // Gas fee (founder, 2026-08-08): percent + a fixed floor, applied to BOTH
   // withdrawals (on top of the flat fee above) and deposit refunds
@@ -359,8 +363,9 @@ export function WithdrawalFeePanel() {
       s.reload();
       setFee(null); setGasPercent(null); setGasFixedUsdt(null);
       setAutoWithdrawUsdt(null); setAutoRefundUsdt(null);
+      toast.ok("Saved. Live immediately.");
     }
-    catch (e) { window.alert((e as Error).message); }
+    catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -476,6 +481,7 @@ export function NetworkPanel() {
 }
 
 function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void }) {
+  const toast = useToast();
   const [split, setSplit] = useState(net.commissionSplitPct);
   const [refPct, setRefPct] = useState(net.referralBonusPct);
   const [refPctL2, setRefPctL2] = useState(net.referralBonusPctL2);
@@ -489,7 +495,7 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
   async function patch(patchObj: Parameters<typeof updateNetwork>[1]) {
     setBusy(true);
     try { await updateNetwork(net.id, patchObj); onSaved(); }
-    catch (e) { window.alert((e as Error).message); }
+    catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -529,6 +535,7 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
 // bumping four rows and missing the fifth changes nothing users can see, and
 // nothing tells you that. Blank means "leave this one alone".
 function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
+  const toast = useToast();
   const [l1, setL1] = useState("");
   const [l2, setL2] = useState("");
   const [first, setFirst] = useState("");
@@ -549,12 +556,12 @@ function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
     setBusy(true);
     try {
       const res = await updateAllNetworkReferrals(patch);
-      window.alert(`Updated ${res.updated} networks.`);
+      toast.ok(`Updated ${res.updated} networks.`);
       setL1(""); setL2(""); setFirst("");
       onSaved();
     } catch (e) {
       // The API refuses L1+L2 above the margin — that message is the useful one.
-      window.alert((e as Error).message);
+      toast.err((e as Error).message);
     } finally { setBusy(false); }
   }
 
@@ -587,12 +594,13 @@ function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
 
 // ---- Fraud resolve action (used by the fraud panel) ----------------------
 export function ResolveFlagButton({ id, onResolved }: { id: string; onResolved: () => void }) {
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   async function resolve() {
     const note = window.prompt("How was this resolved? (optional)") ?? undefined;
     setBusy(true);
-    try { await resolveFraud(id, note); onResolved(); }
-    catch (e) { window.alert((e as Error).message); }
+    try { await resolveFraud(id, note); toast.ok("Flag resolved."); onResolved(); }
+    catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
   return (

@@ -15,6 +15,7 @@ import {
   type KycSubmission,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { useToast } from "@/components/staff/toast";
 
 // The image endpoint is authenticated, so it cannot be a plain <img src>. We fetch
 // it with the bearer token, turn it into an object URL, and revoke that URL as
@@ -34,6 +35,7 @@ async function loadImage(id: string, which: "selfie" | "front" | "back"): Promis
 }
 
 function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
+  const toast = useToast();
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,16 +69,17 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
     if (decision === "rejected") {
       const r = window.prompt("Why? The user will see this, so say what to fix (e.g. 'ID photo is blurry').");
       if (r === null) return;
-      if (!r.trim()) { window.alert("A reason is required."); return; }
+      if (!r.trim()) { toast.err("A reason is required."); return; }
       reason = r.trim();
     }
     setBusy(true);
     try {
       await decideKyc(sub.id, decision, reason);
+      toast.ok(decision === "approved" ? "ID approved." : "ID rejected.");
       close();
       onDone();
     } catch (e) {
-      window.alert((e as Error).message);
+      toast.err((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -175,6 +178,7 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
 // See kycFeatureEnabled() in api/src/kyc.ts.
 function KycSwitch() {
   const s = useApi(fetchSettings, []);
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const on = s.data?.kycEnabled !== false;
 
@@ -187,8 +191,8 @@ function KycSwitch() {
       "requiring an approved ID until you switch it back on.",
     )) return;
     setBusy(true);
-    try { await updateSettings({ kycEnabled: next }); s.reload(); }
-    catch (e) { window.alert((e as Error).message); }
+    try { await updateSettings({ kycEnabled: next }); toast.ok(`ID check turned ${next ? "on" : "off"}.`); s.reload(); }
+    catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
 

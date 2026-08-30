@@ -8,10 +8,13 @@ import { useApi } from "@/lib/hooks";
 import {
   fetchFlags, setFlag, fetchSettings, updateSettings, testStaffAlert, type FeatureFlag,
 } from "@/lib/api";
+import { StatusBadge } from "@/components/staff/primitives";
+import { useToast } from "@/components/staff/toast";
 
 // ---- Feature flags ---------------------------------------------------------
 export function FeatureFlagsPanel() {
   const flags = useApi(fetchFlags, []);
+  const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
 
   async function toggle(f: FeatureFlag) {
@@ -22,9 +25,10 @@ export function FeatureFlagsPanel() {
     setBusy(f.id);
     try {
       await setFlag(f.id, !f.enabled);
+      toast.ok(`"${f.label}" turned ${f.enabled ? "off" : "on"}.`);
       flags.reload();
     } catch (e) {
-      window.alert((e as Error).message);
+      toast.err((e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -46,12 +50,7 @@ export function FeatureFlagsPanel() {
                 className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-line bg-card p-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-brand-ink">
-                    {f.label}
-                    {!f.enabled && (
-                      <span className="ms-2 rounded-full bg-danger-tint px-2 py-0.5 text-[10px] font-semibold text-danger">
-                        OFF
-                      </span>
-                    )}
+                    {f.label} <StatusBadge status={f.enabled ? "on" : "off"} />
                   </p>
                   <p className="mt-0.5 text-xs text-muted">{f.effect}</p>
                   {/* The honest note. A BNB deposit is somebody sending to an
@@ -124,6 +123,7 @@ export function StaffAlertsPanel() {
 // ---- Global settings -------------------------------------------------------
 export function GlobalSettingsPanel() {
   const settings = useApi(fetchSettings, []);
+  const toast = useToast();
   const [form, setForm] = useState({
     appName: "", supportEmail: "", supportTelegram: "",
     minWithdrawPoints: 0, maintenanceMessage: "",
@@ -153,7 +153,7 @@ export function GlobalSettingsPanel() {
       setSaved(true);
       settings.reload();
     } catch (e) {
-      window.alert((e as Error).message);
+      toast.err((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -169,7 +169,7 @@ export function GlobalSettingsPanel() {
     try {
       await updateSettings({ maintenanceMode: on });
       settings.reload();
-    } catch (e) { window.alert((e as Error).message); }
+    } catch (e) { toast.err((e as Error).message); }
   }
 
   if (settings.loading) return <p className="mb-8 text-sm text-muted">Loading settings…</p>;

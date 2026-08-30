@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { fetchAudit, fetchAuditActions, type AuditEntry } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
+import { TimeCell } from "@/components/staff/primitives";
 
 // Actions worth showing in red. Money and access — the two things you would
 // want to notice while scrolling. Everything else is routine queue work.
@@ -110,7 +110,7 @@ export function AuditPanel() {
               <tbody>
                 {rows.map((e) => (
                   <tr key={e.id} className="border-t border-line align-top">
-                    <td className="whitespace-nowrap p-2.5 text-muted" title={e.at}>{timeAgo(e.at)}</td>
+                    <td className="whitespace-nowrap p-2.5"><TimeCell iso={e.at} /></td>
                     <td className="p-2.5">
                       <div className="break-all text-brand-ink">{e.actorEmail}</div>
                       <div className="text-xs text-muted">
