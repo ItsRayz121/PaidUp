@@ -923,7 +923,25 @@ export const TASK_CATEGORY_CHOICES = [
 export const TASK_ICON_CHOICES = [
   "", "whatsapp", "telegram", "twitter", "youtube", "facebook", "instagram", "star",
 ] as const;
-export const fetchCustomTasks = () => apiFetch<{ tasks: CustomTask[] }>("/staff/tasks");
+// Shared list params for the Phase D task/proof queues — same idiom as the
+// Phase C money queues' MoneyListParams.
+export type TaskListParams = {
+  q?: string; status?: string;
+  sort?: string; dir?: "asc" | "desc";
+  limit?: number; offset?: number;
+};
+function taskQs(p: TaskListParams): string {
+  const qs = new URLSearchParams();
+  if (p.q) qs.set("q", p.q);
+  if (p.status) qs.set("status", p.status);
+  if (p.sort) { qs.set("sort", p.sort); qs.set("dir", p.dir ?? "desc"); }
+  qs.set("limit", String(p.limit ?? 25));
+  qs.set("offset", String(p.offset ?? 0));
+  return qs.toString();
+}
+export const fetchCustomTasks = (p: TaskListParams = {}) =>
+  apiFetch<{ tasks: CustomTask[]; total: number; offset: number; limit: number }>(
+    `/staff/tasks?${taskQs(p)}`);
 export const createCustomTask = (input: CustomTaskInput) =>
   apiFetch<{ ok: boolean; id?: string }>("/staff/tasks", { method: "POST", body: JSON.stringify(input) });
 export const updateCustomTask = (id: string, patch: Partial<CustomTaskInput>) =>
@@ -969,6 +987,8 @@ export type TaskProof = {
   user_email: string; user_handle: string | null; user_country: string | null;
   user_joined: string | null; reviewer_email: string | null;
   task_title: string; task_points: number; task_usdt_micro: number;
+  /** Mined-ROZI reward for a ROZI task (0/absent for points/USDT tasks). */
+  task_rozi_micro?: number;
   task_logo_asset_id: string | null; proof_label: string | null; category: string | null;
   /** Empty for tasks with no configured fields — those fall back to proof_text,
    *  which every row still carries. */
@@ -983,11 +1003,24 @@ export type ProofQueue = {
   counts: { pending: number; approved: number; rejected: number };
   tasks: { id: string; title: string; pending: number }[];
   proofs: TaskProof[];
+  /** For THIS filter (status + task + search) — drives the pager. */
+  total: number; offset: number; limit: number;
 };
-export const fetchTaskProofs = (status = "pending", taskId = "", q = "") =>
-  apiFetch<ProofQueue>(
-    `/staff/task-proofs?status=${encodeURIComponent(status)}`
-    + `&taskId=${encodeURIComponent(taskId)}&q=${encodeURIComponent(q)}`);
+export type ProofListParams = {
+  status?: string; taskId?: string; q?: string;
+  dir?: "asc" | "desc"; limit?: number; offset?: number;
+};
+export const fetchTaskProofs = (p: ProofListParams | string = "pending", taskId = "", q = "") => {
+  const o: ProofListParams = typeof p === "string" ? { status: p, taskId, q } : p;
+  const qs = new URLSearchParams();
+  qs.set("status", o.status ?? "pending");
+  if (o.taskId) qs.set("taskId", o.taskId);
+  if (o.q) qs.set("q", o.q);
+  if (o.dir) qs.set("dir", o.dir);
+  qs.set("limit", String(o.limit ?? 25));
+  qs.set("offset", String(o.offset ?? 0));
+  return apiFetch<ProofQueue>(`/staff/task-proofs?${qs.toString()}`);
+};
 export const decideTaskProof = (id: string, action: "approve" | "reject", note?: string) =>
   apiFetch<{ ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number; status?: string }>(
     `/staff/task-proofs/${id}/decision`, { method: "POST", body: JSON.stringify({ action, note }) });

@@ -12,19 +12,19 @@
 //   postback — a partner's server calls our signed postback (URL + secret shown
 //              on the card). Same contract as a real ad network.
 import { useState } from "react";
-import { useApi } from "@/lib/hooks";
 import {
-  fetchCustomTasks, createCustomTask, updateCustomTask, fetchTaskPostback,
-  fetchTaskFields, saveTaskFields, uploadTaskLogo, updateTaskLifecycle, taskAssetUrl,
+  fetchTaskPostback,
+  fetchTaskFields, saveTaskFields, uploadTaskLogo, taskAssetUrl,
   TASK_ICON_CHOICES, TASK_CATEGORY_CHOICES, TASK_CATEGORY_LABELS,
   type CustomTask, type CustomTaskInput, type StaffTaskFieldInput, type TaskFieldKind,
+  type TaskProof,
 } from "@/lib/api";
 import { formatPoints, formatUsdtMicro, timeAgo } from "@/lib/format";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
 
-const empty: CustomTaskInput = {
+export const EMPTY_TASK: CustomTaskInput = {
   title: "", rewardType: "rozi", rewardRoziMicro: 50_000_000, rewardUsdtMicro: 0, verifyMode: "proof",
   instructions: "", proofLabel: "", proofHeading: "Submit your proof", proofHelp: "", proofRequired: true,
   actionUrl: "", buttonLabel: "Open task", icon: "", logoAssetId: null,
@@ -41,7 +41,7 @@ const empty: CustomTaskInput = {
   targetMinAccountDays: null, targetMaxAccountDays: null, targetMinCompleted: null,
 };
 
-function toLocalInput(value?: string | null): string {
+export function toLocalInput(value?: string | null): string {
   if (!value) return "";
   const d = new Date(value);
   if (!Number.isFinite(d.getTime())) return "";
@@ -49,110 +49,44 @@ function toLocalInput(value?: string | null): string {
   return local.toISOString().slice(0, 16);
 }
 
-const fromLocalInput = (value: string): string | null => value ? new Date(value).toISOString() : null;
+export const fromLocalInput = (value: string): string | null => value ? new Date(value).toISOString() : null;
 
-export function TasksPanel() {
-  const tasks = useApi(fetchCustomTasks, []);
-  const [form, setForm] = useState<CustomTaskInput | null>(null);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  async function save() {
-    if (!form) return;
-    if (form.title.trim().length < 3) { setMsg("Title is too short."); return; }
-    try {
-      if (editId) await updateCustomTask(editId, form);
-      else await createCustomTask(form);
-      setForm(null); setEditId(null); setMsg(null);
-      tasks.reload();
-    } catch (e) { setMsg((e as Error).message); }
-  }
-
-  function startEdit(t: CustomTask) {
-    setEditId(t.id);
-    setForm({
-      // Legacy custom rows migrate to reward_type 'rozi'; anything still
-      // reading 'points'/'both' with only points is shown as ROZI.
-      title: t.title,
-      rewardType: (t.reward_type === "usdt" ? "usdt" : t.reward_type === "both" ? "both" : "rozi"),
-      rewardRoziMicro: Number(t.reward_rozi_micro ?? 0),
-      rewardUsdtMicro: Number(t.reward_usdt_micro), verifyMode: t.verify_mode,
-      instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
-      proofHeading: t.proof_heading ?? "Submit your proof", proofHelp: t.proof_help ?? "",
-      proofRequired: t.proof_required !== 0,
-      actionUrl: t.action_url ?? "", buttonLabel: t.button_label ?? "Open task",
-      icon: t.icon ?? "", logoAssetId: t.logo_asset_id,
-      minutes: t.minutes, country: t.country, startsAt: t.starts_at, endsAt: t.ends_at,
-      featured: t.featured !== 0, priority: t.priority,
-      // ⚠️ AN EXHAUSTED CAMPAIGN EDITS AS 'active'. `status` on the input is the
-      // two states an Admin owns, and sending 'exhausted' back would be the
-      // panel asserting a budget verdict it does not compute. Saving a raised
-      // budget reopens it server-side; saving without one exhausts it again on
-      // the next completion, which is correct either way.
-      status: t.status === "exhausted" ? "active" : t.status as CustomTaskInput["status"],
-      budgetConversions: t.budget_conversions,
-      budgetPoints: t.budget_points,
-      budgetUsdtMicro: t.budget_usdt_micro,
-      revenuePerConversionMicro: t.revenue_per_conversion_micro,
-      category: t.category ?? "",
-      countries: t.countries.length > 0 ? t.countries : ["ALL"],
-      targetMinAccountDays: t.target_min_account_days,
-      targetMaxAccountDays: t.target_max_account_days,
-      targetMinCompleted: t.target_min_completed,
-    });
-  }
-
-  async function lifecycle(t: CustomTask, action: "pause" | "resume" | "end") {
-    try {
-      await updateTaskLifecycle(t.id, action);
-      tasks.reload();
-    } catch (e) { setMsg((e as Error).message); }
-  }
-
-  return (
-    <section className="mb-8">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="font-bold text-brand-ink">Our own tasks</h2>
-        {!form && (
-          <button onClick={() => { setEditId(null); setForm({ ...empty }); }}
-            className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">
-            + New task
-          </button>
-        )}
-      </div>
-      <p className="mb-2 text-xs text-muted">
-        Tasks you write yourself — no ad network behind them. Points come off your margin.
-        A task never pays itself: a proof task is credited when you approve the proof; a
-        postback task is credited when a partner&rsquo;s server calls the signed URL.
-      </p>
-
-      {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-danger">{msg}</p>}
-
-      {form && (
-        <TaskForm
-          value={form} editing={!!editId}
-          onChange={setForm}
-          onCancel={() => { setForm(null); setEditId(null); setMsg(null); }}
-          onSave={save}
-        />
-      )}
-
-      {tasks.loading ? <p className="text-sm text-muted">Loading…</p>
-        : (tasks.data?.tasks.length ?? 0) === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No custom tasks yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {tasks.data!.tasks.map((t) => (
-              <TaskCard key={t.id} t={t} onEdit={() => startEdit(t)}
-                onLifecycle={(action) => lifecycle(t, action)} />
-            ))}
-          </div>
-        )}
-    </section>
-  );
+// Map a stored CustomTask row onto the editable CustomTaskInput the form takes.
+// Split out of the old inline TasksPanel so the Phase D detail view can reuse it.
+export function taskToInput(t: CustomTask): CustomTaskInput {
+  return {
+    // Legacy custom rows migrate to reward_type 'rozi'; anything still
+    // reading 'points'/'both' with only points is shown as ROZI.
+    title: t.title,
+    rewardType: (t.reward_type === "usdt" ? "usdt" : t.reward_type === "both" ? "both" : "rozi"),
+    rewardRoziMicro: Number(t.reward_rozi_micro ?? 0),
+    rewardUsdtMicro: Number(t.reward_usdt_micro), verifyMode: t.verify_mode,
+    instructions: t.instructions ?? "", proofLabel: t.proof_label ?? "",
+    proofHeading: t.proof_heading ?? "Submit your proof", proofHelp: t.proof_help ?? "",
+    proofRequired: t.proof_required !== 0,
+    actionUrl: t.action_url ?? "", buttonLabel: t.button_label ?? "Open task",
+    icon: t.icon ?? "", logoAssetId: t.logo_asset_id,
+    minutes: t.minutes, country: t.country, startsAt: t.starts_at, endsAt: t.ends_at,
+    featured: t.featured !== 0, priority: t.priority,
+    // ⚠️ AN EXHAUSTED CAMPAIGN EDITS AS 'active'. `status` on the input is the
+    // two states an Admin owns, and sending 'exhausted' back would be the
+    // panel asserting a budget verdict it does not compute. Saving a raised
+    // budget reopens it server-side; saving without one exhausts it again on
+    // the next completion, which is correct either way.
+    status: t.status === "exhausted" ? "active" : t.status as CustomTaskInput["status"],
+    budgetConversions: t.budget_conversions,
+    budgetPoints: t.budget_points,
+    budgetUsdtMicro: t.budget_usdt_micro,
+    revenuePerConversionMicro: t.revenue_per_conversion_micro,
+    category: t.category ?? "",
+    countries: t.countries.length > 0 ? t.countries : ["ALL"],
+    targetMinAccountDays: t.target_min_account_days,
+    targetMaxAccountDays: t.target_max_account_days,
+    targetMinCompleted: t.target_min_completed,
+  };
 }
 
-function TaskForm({ value, editing, onChange, onCancel, onSave }: {
+export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
   value: CustomTaskInput; editing: boolean;
   onChange: (v: CustomTaskInput) => void; onCancel: () => void; onSave: () => void;
 }) {
@@ -414,7 +348,7 @@ function TaskForm({ value, editing, onChange, onCancel, onSave }: {
 // Brief part 15: what this campaign earned against what it paid, and part 16:
 // how much of its budget is gone. Every figure comes from the API already
 // computed (api/src/taskBudget.ts) — this component formats, it never derives.
-function CampaignBudget({ t }: { t: CustomTask }) {
+export function CampaignBudget({ t }: { t: CustomTask }) {
   const capped = t.budget_conversions !== null || t.budget_points !== null || t.budget_usdt_micro !== null;
   const hasRevenue = t.revenue_per_conversion_micro > 0;
   if (!capped && !hasRevenue && t.spentConversions === 0) return null;
@@ -490,7 +424,7 @@ function CampaignBudget({ t }: { t: CustomTask }) {
   );
 }
 
-function TaskCard({ t, onEdit, onLifecycle }: {
+export function TaskCard({ t, onEdit, onLifecycle }: {
   t: CustomTask; onEdit: () => void;
   onLifecycle: (action: "pause" | "resume" | "end") => void;
 }) {
@@ -624,7 +558,7 @@ function TaskCard({ t, onEdit, onLifecycle }: {
 // inside the edit form. A campaign that shows to nobody looks exactly like a
 // campaign nobody has done yet, and the only way to tell them apart used to be
 // opening Edit — which puts the card into a state you then have to cancel out of.
-function TargetingSummary({ t }: { t: CustomTask }) {
+export function TargetingSummary({ t }: { t: CustomTask }) {
   const rules: string[] = [];
   const countries = t.countries.length > 0 ? t.countries : ["ALL"];
   if (!countries.some((c) => c.toLowerCase() === "all")) rules.push(countries.join(", "));
@@ -653,7 +587,7 @@ const KIND_LABELS: Record<TaskFieldKind, string> = {
   username: "Username", crypto_address: "Crypto wallet address",
 };
 
-function FieldEditor({ task }: { task: CustomTask }) {
+export function FieldEditor({ task }: { task: CustomTask }) {
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<StaffTaskFieldInput[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -804,7 +738,7 @@ function FieldEditor({ task }: { task: CustomTask }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+export function Field({ label, value }: { label: string; value: string }) {
   return (
     <p className="flex items-center gap-2">
       <span className="w-20 shrink-0 uppercase text-muted">{label}</span>
@@ -813,6 +747,52 @@ function Field({ label, value }: { label: string; value: string }) {
         {value}
       </button>
     </p>
+  );
+}
+
+// The evidence a user submitted. Structured answers when the task asks
+// questions; the original single box when it does not — every row still carries
+// proof_text, so this never renders empty. (Moved here from the retired
+// proof-queue.tsx so the Phase D review detail can reuse it.)
+export function ProofBody({ proof }: { proof: TaskProof }) {
+  if (proof.answers.length === 0) {
+    return (
+      <p className="mt-2 whitespace-pre-line rounded-md bg-brand-tint/40 p-2 text-sm text-brand-ink">
+        {proof.proof_label && (
+          <span className="block text-[11px] font-semibold uppercase text-muted">{proof.proof_label}</span>
+        )}
+        {proof.proof_text}
+      </p>
+    );
+  }
+  return (
+    <dl className="mt-2 space-y-1.5 rounded-md bg-brand-tint/40 p-2">
+      {proof.answers.map((a, i) => (
+        <div key={`${a.fieldId}-${i}`}>
+          <dt className="text-[11px] font-semibold uppercase text-muted">{a.label}</dt>
+          <dd className="text-sm text-brand-ink">
+            {a.kind === "url" ? (
+              // ⚠️ USER-SUPPLIED. The scheme was forced to http(s) server-side
+              // (api/src/taskFields.ts), so this href cannot be javascript: —
+              // but the whole URL is shown, not a friendly word, because a staff
+              // session is the one worth stealing and a reviewer should read
+              // where a link goes before clicking it.
+              <a href={a.value} target="_blank" rel="noreferrer noopener"
+                className="break-all font-mono text-xs text-brand underline">{a.value}</a>
+            ) : a.kind === "crypto_address" ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase text-muted">{a.validation ?? "wallet"}</span>
+                <code className="break-all text-xs">{a.value}</code>
+                <button onClick={() => navigator.clipboard?.writeText(a.value)}
+                  className="rounded bg-card px-2 py-1 text-[10px] font-semibold text-brand">Copy</button>
+              </span>
+            ) : (
+              <span className="whitespace-pre-line break-words">{a.value}</span>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

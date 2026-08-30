@@ -19,8 +19,7 @@ import {
 } from "@/components/staff/MoneyQueues";
 import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
-import { TasksPanel } from "@/components/tasks-admin";
-import { ProofQueue } from "@/components/proof-queue";
+import { TasksAdminPanel, ProofReviewPanel } from "@/components/staff/TasksAdmin";
 import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/components/settings-admin";
@@ -289,9 +288,9 @@ export default function StaffPage() {
           {section === "tasks" && (
             <>
               {/* Our own custom tasks. */}
-              {may("tasks.view") && <Panel id="p-tasks" title="Our own tasks"><TasksPanel /></Panel>}
+              {may("tasks.view") && <Panel id="p-tasks" title="Our own tasks"><TasksAdminPanel /></Panel>}
               {/* Task proof review. */}
-              {may("tasks.review") && <Panel id="p-proofs" title="Task proofs"><ProofQueue /></Panel>}
+              {may("tasks.review") && <Panel id="p-proofs" title="Task proofs"><ProofReviewPanel /></Panel>}
               {/* Ad-network config. */}
               {may("networks.manage") && <Panel id="p-networks" title="Ad networks"><NetworkPanel /></Panel>}
             </>

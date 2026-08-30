@@ -260,9 +260,36 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 
   // ---- List every custom task (admin) -------------------------------------
-  app.get("/staff/tasks", staffGuard("tasks.view", async () => {
-    const tasks = await sql.all<Record<string, unknown>>(
-      `SELECT t.id, t.title, t.points, t.reward_type, t.reward_usdt_micro, t.reward_rozi_micro, t.type,
+  // ⚠️ SERVER-SIDE SEARCH / SORT / PAGINATION (admin rebuild, Phase D). Same
+  // idiom as GET /staff/withdrawals and GET /staff/users: `sort`/`dir` map
+  // through a fixed whitelist to a column literal (never interpolated), and one
+  // WHERE clause drives the row page and the COUNT so `total` always matches the
+  // filter. `campaignMoney()` stays a single all-campaigns pass — it returns a
+  // Map keyed by task id, so a page row just looks itself up. Every existing
+  // field on each row is unchanged; `total`/`offset`/`limit` are additive.
+  app.get("/staff/tasks", staffGuard("tasks.view", async (_ctx, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const search = (query.q ?? "").trim().toLowerCase();
+    const statusF = (query.status ?? "").trim();
+    const limit = Math.min(Number(query.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
+
+    const where: string[] = ["t.source = 'custom'"];
+    const wp: unknown[] = [];
+    if (search) { where.push("LOWER(t.title) LIKE ?"); wp.push(`%${search}%`); }
+    if (statusF) { where.push("t.status = ?"); wp.push(statusF); }
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+
+    const SORTS: Record<string, string> = {
+      created_at: "t.created_at", title: "LOWER(t.title)", status: "t.status",
+      priority: "t.priority",
+    };
+    const sortCol = SORTS[query.sort ?? ""] ?? "t.created_at";
+    const dir = query.dir === "asc" ? "ASC" : "DESC";
+
+    const [tasks, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT t.id, t.title, t.points, t.reward_type, t.reward_usdt_micro, t.reward_rozi_micro, t.type,
               t.verify_mode, t.instructions, t.proof_label, t.proof_heading, t.proof_help,
               t.proof_required, t.action_url, t.icon, t.minutes, t.country, t.status, t.created_at,
               t.button_label, t.logo_asset_id, t.starts_at, t.ends_at, t.featured, t.priority,
@@ -274,14 +301,20 @@ export async function staffTaskRoutes(app: FastifyInstance) {
               (t.postback_secret IS NOT NULL) AS has_secret,
               (SELECT COUNT(*) FROM task_completions c WHERE c.task_id = t.id AND c.status = 'credited') AS credited_count,
               (SELECT COUNT(*) FROM task_proofs p WHERE p.task_id = t.id AND p.status = 'pending') AS pending_proofs
-       FROM tasks t WHERE t.source = 'custom' ORDER BY t.created_at DESC`,
-    );
+       FROM tasks t ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...wp, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(`SELECT COUNT(*) AS n FROM tasks t ${whereSql}`, ...wp),
+    ]);
 
     // Part 15 — what each campaign earned against what it paid. DERIVED from the
     // completions and the ledger (taskBudget.ts), never a stored counter, so it
     // cannot drift away from the rows it is summarising.
     const money = await campaignMoney(config.pointsPerUsdt);
     return {
+      total: Number(totalRow?.n ?? tasks.length),
+      offset,
+      limit,
       tasks: tasks.map((t) => {
         const m = money.get(t.id as string);
         const cap = t.budget_conversions as number | null;
@@ -613,10 +646,16 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // other task's, reviewing a single campaign meant reading past everything
   // else.
   app.get("/staff/task-proofs", staffGuard("tasks.review", async (_ctx, req) => {
-    const q = req.query as { status?: string; taskId?: string; q?: string };
+    const q = req.query as { status?: string; taskId?: string; q?: string; sort?: string; dir?: string; limit?: string; offset?: string };
     const status = z.enum(["pending", "approved", "rejected"]).catch("pending").parse(q.status);
     const taskId = (q.taskId ?? "").trim();
     const search = (q.q ?? "").trim().toLowerCase();
+    // Pagination (admin rebuild, Phase D). The queue used to hand back up to 200
+    // rows in one screen; `offset` + `total` let the shared <DataTable> page it.
+    const limit = Math.min(Number(q.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+    // Oldest-waiting-first is the review default; a whitelisted toggle only.
+    const dir = q.dir === "desc" ? "DESC" : "ASC";
 
     const where: string[] = ["p.status = ?"];
     const args: unknown[] = [status];
@@ -645,7 +684,12 @@ export async function staffTaskRoutes(app: FastifyInstance) {
        JOIN tasks t ON t.id = p.task_id
        LEFT JOIN users r ON r.id = p.reviewed_by
        WHERE ${where.join(" AND ")}
-       ORDER BY p.created_at ASC LIMIT 200`,
+       ORDER BY p.created_at ${dir} LIMIT ? OFFSET ?`,
+      ...args, limit, offset,
+    );
+    // Row count for THIS filter (status + task + search) — drives the pager.
+    const totalRow = await sql.get<{ n: string | number }>(
+      `SELECT COUNT(*) AS n FROM task_proofs p JOIN users u ON u.id = p.user_id WHERE ${where.join(" AND ")}`,
       ...args,
     );
 
@@ -688,6 +732,9 @@ export async function staffTaskRoutes(app: FastifyInstance) {
 
     return {
       counts,
+      total: Number(totalRow?.n ?? proofs.length),
+      offset,
+      limit,
       tasks: tasks.map((t) => ({ id: t.id, title: t.title, pending: Number(t.n) })),
       proofs: proofs.map((p) => ({
         ...p,

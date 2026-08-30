@@ -42,7 +42,8 @@
     "test:stage7": "tsx src/tests/stage7.e2e.ts",
     "test:taskmarketplace": "tsx src/tests/taskMarketplace.e2e.ts",
     "test:usersadmin": "tsx src/tests/usersAdmin.e2e.ts",
-    "test:moneyadmin": "tsx src/tests/moneyAdmin.e2e.ts"
+    "test:moneyadmin": "tsx src/tests/moneyAdmin.e2e.ts",
+    "test:tasksadmin": "tsx src/tests/tasksAdmin.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
