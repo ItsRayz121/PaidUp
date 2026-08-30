@@ -930,8 +930,19 @@ export async function staffRoutes(app: FastifyInstance) {
   // the ticket a user is on the phone about meant paging; and no owner, so two
   // agents answered the same person twice.
   app.get("/staff/tickets", staffGuard("support.view", async (_ctx, req) => {
-    const q = req.query as { status?: string; q?: string; mine?: string };
+    const q = req.query as { status?: string; q?: string; mine?: string; sort?: string; dir?: string; limit?: string; offset?: string };
     const status = q.status ?? "open";
+    // Pagination (admin rebuild, Phase E). Same idiom as GET /staff/users: the
+    // `where` clause drives the row page AND the count so `total` matches the
+    // filter; `counts` stays over ALL tickets regardless. `sort` maps through a
+    // whitelist to a column literal, never interpolated.
+    const limit = Math.min(Number(q.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+    const SORTS: Record<string, string> = {
+      updated_at: "ti.updated_at", created_at: "ti.created_at", status: "ti.status",
+    };
+    const sortCol = SORTS[q.sort ?? ""] ?? "ti.updated_at";
+    const dir = q.dir === "desc" ? "DESC" : "ASC";
 
     const where: string[] = [];
     const params: unknown[] = [];
@@ -949,17 +960,24 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     if (q.mine) { where.push("ti.assigned_to = ?"); params.push(q.mine); }
 
-    const rows = await sql.all<Record<string, unknown>>(
-      `SELECT ti.*, u.email AS user_email, a.email AS assignee_email,
-         (SELECT COUNT(*)::int FROM ticket_messages m
-           WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count
-       FROM support_tickets ti
-       JOIN users u ON u.id = ti.user_id
-       LEFT JOIN users a ON a.id = ti.assigned_to
-       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-       ORDER BY ti.updated_at ASC LIMIT 200`,
-      ...params,
-    );
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const [rows, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `SELECT ti.*, u.email AS user_email, a.email AS assignee_email,
+           (SELECT COUNT(*)::int FROM ticket_messages m
+             WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count
+         FROM support_tickets ti
+         JOIN users u ON u.id = ti.user_id
+         LEFT JOIN users a ON a.id = ti.assigned_to
+         ${whereSql}
+         ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+        ...params, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `SELECT COUNT(*) AS n FROM support_tickets ti JOIN users u ON u.id = ti.user_id ${whereSql}`,
+        ...params,
+      ),
+    ]);
 
     // Counts per status, always over ALL tickets — never over the current
     // filter, or the tabs would each report the number of tickets matching
@@ -970,6 +988,9 @@ export async function staffRoutes(app: FastifyInstance) {
 
     return {
       counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
+      total: Number(totalRow?.n ?? rows.length),
+      offset,
+      limit,
       tickets: rows.map((t) => ({
         id: t.id, userId: t.user_id, userEmail: t.user_email, subject: t.subject,
         status: t.status, messageCount: t.message_count,

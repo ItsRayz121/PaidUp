@@ -131,9 +131,83 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   },
 ];
 
-export function MiningPanel() {
-  const settings = useApi(fetchMiningSettings, []);
+// ---- The Mining section, split into tabs (admin rebuild, Phase E) ----------
+//
+// This used to be ONE component that mounted six sub-panels at once, firing
+// ~7 API calls the instant the Mining section opened — the exact thing the
+// SECTIONS comment in staff/page.tsx says `mining.view` is kept off a section
+// gate to avoid. Each tab now mounts on its own, so opening the section costs
+// one request (the overview), not seven.
+//
+// ⚠️ THE SUB-PANELS ARE UNCHANGED. Every settings write, conversion window,
+// store decision, rig toggle and booster edit calls the same endpoint it always
+// did — this is a mount-splitting change, not a rewrite of any economy path.
+const MINING_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "settings", label: "Economy settings" },
+  { id: "conversion", label: "Conversion" },
+  { id: "store", label: "Store" },
+  { id: "rigs", label: "Rigs" },
+  { id: "boosters", label: "Boosters" },
+] as const;
+type MiningTab = (typeof MINING_TABS)[number]["id"];
+
+export function MiningAdminSection() {
+  const [tab, setTab] = useState<MiningTab>("overview");
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1 overflow-x-auto border-b border-line pb-px">
+        {MINING_TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`whitespace-nowrap rounded-t-md px-3 py-2 text-sm font-semibold ${
+              tab === t.id ? "border-x border-t border-line bg-card text-brand-ink" : "text-muted hover:text-brand-ink"
+            }`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "overview" && <MiningOverviewPanel />}
+      {tab === "settings" && <EconomySettingsPanel />}
+      {tab === "conversion" && <ConversionPanel />}
+      {tab === "store" && <StorePanel />}
+      {tab === "rigs" && <RigPanel />}
+      {tab === "boosters" && <BoosterPanel />}
+    </div>
+  );
+}
+
+// The live economy numbers + the "Settle now" action + top miners.
+export function MiningOverviewPanel() {
   const stats = useApi(fetchMiningStats, []);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function onSettle() {
+    if (!window.confirm("Settle all closed, unsettled epochs now? This mints ROZI. It is idempotent, so a double-click is safe.")) return;
+    try {
+      await settleMining();
+      stats.reload();
+      setMsg("Settlement run.");
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+
+  if (stats.loading) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (stats.error) return <p className="p-4 text-sm text-danger">{stats.error}</p>;
+  return (
+    <div className="space-y-6">
+      {msg && <p className="rounded-md border border-line bg-card p-2 text-xs text-brand-ink">{msg}</p>}
+      {stats.data && <StatsHeader s={stats.data} onSettle={onSettle} />}
+      {stats.data && <TopMinersTable rows={stats.data.topMiners} />}
+    </div>
+  );
+}
+
+// The tunable-number wall, grouped as the spec reads. Every write is
+// audit-logged server-side. String settings pass through as typed; numbers are
+// coerced by the CURRENT value's type, never a hand-kept key list.
+export function EconomySettingsPanel() {
+  const settings = useApi(fetchMiningSettings, []);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -147,16 +221,11 @@ export function MiningPanel() {
     try {
       const patch: Record<string, number | string> = {};
       for (const [k, v] of Object.entries(draft)) {
-        // String settings pass through as typed. Deciding by the CURRENT value's
-        // type (not a hand-kept key list) is what keeps this from mangling the
-        // next string setting someone adds — the old `k === "adProvider"` check
-        // was quietly turning an edited emissionModel or piHalvingUsers into NaN.
         patch[k] = typeof cur[k] === "number" ? Number(v) : v;
       }
       await updateMiningSettings(patch);
       setDraft({});
       settings.reload();
-      stats.reload();
       setMsg("Saved. Live immediately — no redeploy.");
     } catch (e) {
       setMsg((e as Error).message);
@@ -165,90 +234,56 @@ export function MiningPanel() {
     }
   }
 
-  async function onSettle() {
-    if (!window.confirm("Settle all closed, unsettled epochs now? This mints ROZI. It is idempotent, so a double-click is safe.")) return;
-    try {
-      await settleMining();
-      stats.reload();
-      setMsg("Settlement run.");
-    } catch (e) {
-      setMsg((e as Error).message);
-    }
-  }
-
   return (
-    <div className="space-y-6">
-      {stats.data && <StatsHeader s={stats.data} onSettle={onSettle} />}
-
-      {stats.data && <TopMinersTable rows={stats.data.topMiners} />}
-
-      <ConversionPanel />
-
-      <StorePanel />
-
-      <RigPanel />
-
-      <BoosterPanel />
-
-      {/* ⚠️ TopupPanel / RefundPanel USED TO RENDER HERE AND MUST NOT COME BACK.
-          They are USDT deposits and deposit refunds — money in and money out —
-          and their permissions say so (`deposits.*`, `refunds.*`, grouped under
-          "Money in" in permissions.ts). This section is gated on
-          `mining.manage`/`machines.manage`, which the Finance role does not
-          hold, so sitting here made the deposit-confirm and refund-payout
-          queues unreachable by the exact role that owns them. They live under
-          Money & payouts now. See staff/page.tsx. */}
-
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="font-bold text-brand-ink">Economy settings</h3>
-          {dirty && (
-            <button
-              onClick={save}
-              disabled={saving}
-              className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-            >
-              {saving ? "Saving…" : `Save ${Object.keys(draft).length} change(s)`}
-            </button>
-          )}
-        </div>
-
-        {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-brand-ink">{msg}</p>}
-
-        {settings.loading ? (
-          <p className="p-4 text-sm text-muted">Loading…</p>
-        ) : settings.error ? (
-          <p className="p-4 text-sm text-danger">{settings.error}</p>
-        ) : (
-          <div className="space-y-4">
-            {GROUPS.map((g) => (
-              <div key={g.title} className="rounded-lg border border-line bg-card p-3">
-                <h4 className="text-sm font-bold text-brand-ink">{g.title}</h4>
-                {g.note && <p className="mt-1 text-xs text-muted">{g.note}</p>}
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {g.keys.map(([key, label]) => (
-                    <label key={key} className="flex items-center justify-between gap-3 text-xs">
-                      <span className="min-w-0 flex-1 text-muted">{label}</span>
-                      <input
-                        value={draft[key] ?? String(cur[key] ?? "")}
-                        onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                        className={`w-32 shrink-0 rounded-md border px-2 py-1 text-right font-mono ${
-                          draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line"
-                        }`}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="font-bold text-brand-ink">Economy settings</h3>
+        {dirty && (
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? "Saving…" : `Save ${Object.keys(draft).length} change(s)`}
+          </button>
         )}
       </div>
+
+      {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-brand-ink">{msg}</p>}
+
+      {settings.loading ? (
+        <p className="p-4 text-sm text-muted">Loading…</p>
+      ) : settings.error ? (
+        <p className="p-4 text-sm text-danger">{settings.error}</p>
+      ) : (
+        <div className="space-y-4">
+          {GROUPS.map((g) => (
+            <div key={g.title} className="rounded-lg border border-line bg-card p-3">
+              <h4 className="text-sm font-bold text-brand-ink">{g.title}</h4>
+              {g.note && <p className="mt-1 text-xs text-muted">{g.note}</p>}
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {g.keys.map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="min-w-0 flex-1 text-muted">{label}</span>
+                    <input
+                      value={draft[key] ?? String(cur[key] ?? "")}
+                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                      className={`w-32 shrink-0 rounded-md border px-2 py-1 text-right font-mono ${
+                        draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line"
+                      }`}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) {
+export function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) {
   const pctEmitted = (s.supply.emitted / s.supply.cap) * 100;
   const isPi = s.emissionModel === "pi";
 
@@ -380,7 +415,7 @@ function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => void }) 
 // Top 10 by lifetime mined ROZI (never transfers-in, never current balance —
 // see the query's own comment in staffMining.ts). Rows jump to the same user
 // detail screen every other clickable row in this panel jumps to.
-function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
+export function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
   const { openUser } = useStaffNav();
   return (
     <div className="rounded-lg border border-line bg-card p-3">
@@ -418,7 +453,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-function ConversionPanel() {
+export function ConversionPanel() {
   const conv = useApi(fetchConversion, []);
   const [pot, setPot] = useState("");
   const [hours, setHours] = useState("168");
@@ -563,7 +598,7 @@ function ConversionPanel() {
 // A redemption is a human job like a withdrawal: the ROZI was taken when the
 // user asked, so the only outcomes are "done" or "give it back". Reject refunds
 // the exact amount snapshotted on the row and returns the item to stock.
-function StorePanel() {
+export function StorePanel() {
   const items = useApi(fetchStoreAdmin, []);
   const [queueFilter, setQueueFilter] = useState<string>("pending");
   const queue = useApi(() => fetchRedemptions(queueFilter), [queueFilter]);
@@ -726,7 +761,7 @@ function StorePanel() {
   );
 }
 
-function RigPanel() {
+export function RigPanel() {
   const rigs = useApi(fetchAdminRigs, []);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -844,7 +879,7 @@ function RigPanel() {
 //
 // Ships DISABLED by default, deliberately — a booster with a price nobody chose
 // is a price we did not mean to publish.
-function BoosterPanel() {
+export function BoosterPanel() {
   const boosters = useApi(fetchAdminBoosters, []);
   const [msg, setMsg] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);

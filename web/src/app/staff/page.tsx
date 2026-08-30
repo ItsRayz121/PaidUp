@@ -8,11 +8,12 @@ import { LogoutButton } from "@/components/state";
 import { fetchFraud } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import {
-  KpiDashboard, TicketQueue, NetworkPanel, ResolveFlagButton,
+  KpiDashboard, NetworkPanel, ResolveFlagButton,
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
+import { SupportQueuePanel } from "@/components/staff/SupportQueue";
 import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
-import { MiningPanel } from "@/components/mining-admin";
+import { MiningAdminSection } from "@/components/mining-admin";
 import {
   WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
   RelayJobsPanel, ReconciliationPanel,
@@ -62,11 +63,11 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "deposits.view", "refunds.view", "treasury.view", "money.view", "settings.manage"] },
   { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
   { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
-  // ⚠️ `mining.view` is deliberately NOT here. MiningPanel is one large screen
-  // that fires the whole mining admin surface — settings, rigs, conversion — on
-  // mount, and every one of those needs `mining.manage`. Listing the read
-  // permission would show the section to a manager and then fill it with 403s.
-  // The read-only mining numbers belong on the Dashboard, which is where
+  // ⚠️ `mining.view` is deliberately NOT here. The Mining section's tabs
+  // (MiningAdminSection, Phase E) each need `mining.manage` / `machines.manage`
+  // — even though a tab now mounts on its own, listing the read permission would
+  // still show the section to a manager and then fill every tab with 403s. The
+  // read-only mining numbers belong on the Dashboard, which is where
   // `mining.view` is actually spent (GET /staff/mining/stats).
   { id: "mining", label: "Mining (ROZI)", needs: ["mining.manage", "machines.manage"] },
   // Referral rates and the leaderboard sit together because they are one job:
@@ -297,10 +298,10 @@ export default function StaffPage() {
           )}
 
           {section === "mining" && (
-            <Panel title="Mining (ROZI)">
+            <Panel id="p-mining" title="Mining (ROZI)">
               <section className="mb-8">
                 <h2 className="mb-2 font-bold text-brand-ink">Mining (ROZI)</h2>
-                <MiningPanel />
+                <MiningAdminSection />
               </section>
             </Panel>
           )}
@@ -320,7 +321,7 @@ export default function StaffPage() {
           )}
 
           {section === "support" && may("support.view") && (
-            <Panel title="Support tickets"><TicketQueue /></Panel>
+            <Panel id="p-support" title="Support tickets"><SupportQueuePanel /></Panel>
           )}
 
           {section === "audit" && may("audit.view") && (

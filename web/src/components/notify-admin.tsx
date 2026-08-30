@@ -15,7 +15,7 @@ import {
   fetchContentAdmin, createContentBlock, updateContentBlock, deleteContentBlock,
   type ContentBlock,
 } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
+import { StatusBadge, TimeCell } from "@/components/staff/primitives";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -159,7 +159,7 @@ export function BroadcastPanel() {
               <div key={h.id} className="rounded-lg border border-line p-2 text-xs">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="font-semibold text-brand-ink">{h.title}</span>
-                  <span className="shrink-0 text-muted">{timeAgo(h.at)}</span>
+                  <span className="shrink-0"><TimeCell iso={h.at} /></span>
                 </div>
                 <p className="text-muted">{h.body}</p>
                 <p className="mt-1 text-muted">
@@ -351,10 +351,7 @@ export function ContentPanel() {
               <div key={b.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-line p-2">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-brand-ink">
-                    {b.title}
-                    <span className={`ms-1.5 rounded px-1 text-[10px] font-semibold uppercase ${
-                      b.status === "live" ? "bg-success-tint text-success" : "bg-brand-tint text-muted"
-                    }`}>{b.status}</span>
+                    {b.title} <StatusBadge status={b.status} />
                   </p>
                   <p className="text-xs text-muted">{b.body}</p>
                   <p className="mt-0.5 text-[11px] text-muted">

@@ -4,9 +4,9 @@
 // (agent+), and ad-network config (admin). Density over friendliness — this is
 // an internal tool, so jargon is allowed here (DESIGN_BRIEF), unlike the earner app.
 import { useEffect, useState } from "react";
-import { useApi, useStaffSession } from "@/lib/hooks";
+import { useApi } from "@/lib/hooks";
 import {
-  fetchKpis, fetchStaffTickets, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
+  fetchKpis, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, resolveFraud, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
@@ -117,105 +117,14 @@ function Tile(
   return onClick ? <button onClick={onClick} className={cls}>{inner}</button> : <div className={cls}>{inner}</div>;
 }
 
-// ---- Support-ticket queue (agent+, brief part 40) -------------------------
+// ---- Support-ticket thread (agent+, brief part 40) -----------------------
 //
-// The queue serves counts per status over ALL tickets, so an empty list can be
-// told apart from the filter being on the wrong tab — which is the moment
-// people decide the panel is broken. "All" is a real tab for the same reason: a
-// ticket closed by mistake is invisible under every single-status view.
-const TICKET_STATUSES = ["open", "answered", "closed", "all"];
+// The queue that lists tickets moved onto the shared <DataTable> in Phase E
+// (components/staff/SupportQueue.tsx); this thread — the "who is this / read the
+// history / reply" panel — is unchanged and reused there inside a <DetailLayout>.
+export const TICKET_STATUSES = ["open", "answered", "closed", "all"];
 
-export function TicketQueue() {
-  const [status, setStatus] = useState("open");
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [mineOnly, setMineOnly] = useState(false);
-  const me = useStaffSession().user;
-  const queue = useApi(
-    () => fetchStaffTickets(status, query, mineOnly ? (me?.id ?? "") : ""),
-    [status, query, mineOnly, me?.id],
-  );
-  const [openId, setOpenId] = useState<string | null>(null);
-  const counts = queue.data?.counts ?? {};
-
-  return (
-    <section className="mb-8">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Support tickets</h2>
-        <div className="flex flex-wrap gap-1">
-          {TICKET_STATUSES.map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
-              {s}
-              {/* The count is over every ticket, never the current filter — a
-                  per-filter count would always equal the list length and say
-                  nothing. */}
-              {s !== "all" && counts[s] !== undefined && (
-                <span className="ms-1 opacity-70">{counts[s]}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <input value={search} onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") setQuery(search.trim()); }}
-          placeholder="Search subject or email…"
-          className="min-w-0 flex-1 rounded-md border border-line bg-card px-2 py-1.5 text-sm outline-none" />
-        <button onClick={() => setQuery(search.trim())}
-          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">Search</button>
-        {query && (
-          <button onClick={() => { setSearch(""); setQuery(""); }}
-            className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand">Clear</button>
-        )}
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
-          Mine only
-        </label>
-      </div>
-
-      {queue.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
-        : queue.error ? <p className="p-4 text-sm text-danger">{queue.error}</p>
-        : (queue.data?.tickets.length ?? 0) === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">
-            No {status === "all" ? "" : status} tickets{query ? ` matching “${query}”` : ""}.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {queue.data!.tickets.map((t: StaffTicket) => (
-              <div key={t.id} className="rounded-lg border border-line bg-card">
-                <button onClick={() => setOpenId(openId === t.id ? null : t.id)}
-                  className="flex w-full items-center justify-between gap-3 p-3 text-left">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-brand-ink">
-                      {t.subject}
-                      {status === "all" && (
-                        <span className="ms-1.5 rounded bg-brand-tint px-1 text-[10px] uppercase text-brand">{t.status}</span>
-                      )}
-                    </p>
-                    <p className="text-xs text-muted">
-                      {t.userEmail} · {t.messageCount} message(s) · {timeAgo(t.updatedAt)}
-                      {/* Who has picked it up. Without this, two agents answer
-                          the same person twice — and the second one contradicts
-                          the first. */}
-                      {t.assigneeEmail
-                        ? <> · <span className="font-semibold text-brand">{t.assigneeEmail}</span></>
-                        : <> · <span className="text-pending">unassigned</span></>}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-xs font-semibold uppercase text-brand">{openId === t.id ? "Close" : "Open"}</span>
-                </button>
-                {openId === t.id && <TicketThread t={t} onChange={queue.reload} />}
-              </div>
-            ))}
-          </div>
-        )}
-    </section>
-  );
-}
-
-function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
+export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
   const id = t.id;
   const thread = useApi(() => fetchStaffTicket(id), [id]);
   const [reply, setReply] = useState("");

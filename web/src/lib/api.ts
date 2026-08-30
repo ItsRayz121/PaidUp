@@ -764,11 +764,26 @@ export type StaffTicket = {
   // Who has picked this up. Null = still in the pool.
   assignedTo: string | null; assigneeEmail: string | null;
 };
-export const fetchStaffTickets = (status = "open", q = "", mine = "") =>
-  apiFetch<{ counts: Record<string, number>; tickets: StaffTicket[] }>(
-    `/staff/tickets?status=${encodeURIComponent(status)}` +
-    (q ? `&q=${encodeURIComponent(q)}` : "") +
-    (mine ? `&mine=${encodeURIComponent(mine)}` : ""));
+export type TicketListParams = {
+  status?: string; q?: string; mine?: string;
+  sort?: string; dir?: "asc" | "desc"; limit?: number; offset?: number;
+};
+export const fetchStaffTickets = (
+  p: TicketListParams | string = "open", q = "", mine = "",
+) => {
+  const o: TicketListParams = typeof p === "string" ? { status: p, q, mine } : p;
+  const qs = new URLSearchParams();
+  qs.set("status", o.status ?? "open");
+  if (o.q) qs.set("q", o.q);
+  if (o.mine) qs.set("mine", o.mine);
+  if (o.sort) { qs.set("sort", o.sort); qs.set("dir", o.dir ?? "asc"); }
+  qs.set("limit", String(o.limit ?? 25));
+  qs.set("offset", String(o.offset ?? 0));
+  return apiFetch<{
+    counts: Record<string, number>; tickets: StaffTicket[];
+    total: number; offset: number; limit: number;
+  }>(`/staff/tickets?${qs.toString()}`);
+};
 // Staff see the whole thread INCLUDING internal notes — hiding them from the
 // people who wrote them would defeat the point. Hence a separate, wider type
 // from the earner-facing `TicketMessage` above.
