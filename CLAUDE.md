@@ -2428,28 +2428,20 @@ These override convenience or speed at every step:
     NOT re-themed screen-by-screen — they already pick up the vault tokens
     via `.app-frame`, which is the whole point of that mechanism.
 
-- **THE ORNATE HOURGLASS BECOMES A FLAT FUNNEL (founder, 2026-08-30).** Same
-  redesign review as the entry above; the founder chose the minimal geometric
-  funnel from the mockup over the wood/metal/glass hourglass. **This is its
-  own commit, sitting on top of the theme commit, specifically so `git revert`
-  of just this commit — or the GitHub "Revert" button on it — brings the
-  hourglass back in one step without disturbing the dark-default or the
-  dial.** The funnel and hourglass touch different line ranges in
-  `mine/page.tsx` / `globals.css`, so that revert is conflict-free.
-  - **`components/HourglassClaim.tsx` DELETED; `components/RoziFunnel.tsx`
-    replaces it.** A flat "vault" shape — an outline mouth + a catch triangle
-    that fills from the base — drawn entirely with `--color-brand` /
-    `--color-accent`, so it needs NO per-theme override (the old hourglass had
-    a `[data-theme="vault"] .hg-wrap svg` rim hack; gone). No imperative DOM
-    building. Three modes, same three call sites in `app/mine/page.tsx`:
-    `<RoziFunnel pour onSettled={…} />` (session just started, one-shot 0→1
-    fill), `<RoziFunnel fill={sessionProgress} />` (running — catch tracks
-    ELAPSED SESSION TIME), `<RoziFunnel fill={1} ready />` (claim card — full,
-    marigold, glowing). ⚠️ **Still purely decorative — `fill` is never wired
-    to `claimableMicro`**, exactly the rule `HourglassClaim.tsx`'s header
-    carried and `RoziFunnel.tsx`'s header repeats. All `.hg-*` CSS removed.
-  - Verified with the theme commit in place: web `tsc --noEmit` clean,
-    `eslint` 0 errors, `next build` clean (36 routes). Not browser-reviewed.
+- **THE FLAT FUNNEL IS REVERTED — THE HOURGLASS IS BACK (founder, 2026-08-30).**
+  `git revert` of `ec3feae` ("Replace the ornate hourglass with a flat
+  RoziFunnel"). The founder wanted the hourglass with coins dropping from the
+  upper bulb through the neck into the lower bulb as the session runs, i.e. the
+  `progress` mode of `HourglassClaim.tsx`. `components/RoziFunnel.tsx` is
+  deleted again; `components/HourglassClaim.tsx` is restored, along with the
+  `.hg-*` CSS in `globals.css` (including the `[data-theme="vault"] .hg-wrap
+  svg` rim override) and the three `/mine` call sites. The Deep-Vault-default
+  theme commit (`11b0e7c`) and the `/mine` dial-as-hero change are untouched —
+  only the glass swap is undone. The two commits that landed after `ec3feae`
+  (staff dashboard, welcome animation) touch different files and were not
+  affected; only this CLAUDE.md entry needed a manual merge.
+  - Verified: web `tsc --noEmit` clean, `eslint` 0 errors, `next build` clean.
+    Not browser-reviewed.
 
 - **THE DASHBOARD SHOWS PROGRESS, NOT JUST A RED COUNT — AND FRAUD FLAGS /
   TREASURY SHORTFALL / FAILED RELAY JOBS GET REAL FIXES (founder, 2026-08-30).**

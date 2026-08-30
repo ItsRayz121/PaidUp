@@ -151,12 +151,13 @@ body {
   }
 }
 
-/* Claim card (founder, 2026-08-12; visual now components/RoziFunnel.tsx):
-   mined ROZI is settled but sits unclaimed until the user taps Claim.
-   claim-burst is one-shot, added on tap and removed once it finishes — a
-   small ring at the CENTER of the claim visual, not sized to fill it (the
-   old inset:0 circle assumed a square icon and would draw an oval on the
-   tall funnel instead of a burst). */
+/* Claim card (founder, 2026-08-12, visual redone 2026-08-13 — see
+   components/HourglassClaim.tsx): mined ROZI is settled but sits unclaimed
+   until the user taps Claim. claim-burst is one-shot, added on tap and
+   removed once it finishes — a small ring at the CENTER of the claim visual,
+   not sized to fill it (the claim visual is now the tall, rectangular
+   hourglass below; the old inset:0 circle assumed a square icon and would
+   draw an oval here instead of a burst). */
 @keyframes claim-burst {
   0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
   40% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
@@ -178,82 +179,71 @@ body {
   .claim-burst { animation: none; opacity: 0; }
 }
 
-/* The ROZI funnel — components/RoziFunnel.tsx. A flat geometric "vault"
-   (mouth outline + a catch triangle that fills from the base) drawn entirely
-   with brand tokens, so it needs no per-theme override. Replaced the ornate
-   wood/metal/glass hourglass (founder, 2026-08-30). Purely decorative — the
-   fill fraction reflects elapsed SESSION time, never the ROZI amount.
+/* The hourglass claim visual itself — components/HourglassClaim.tsx builds
+   the wood/metal/glass/coins in plain SVG (no CSS needed for those), so
+   what's left here is the coin face gradients, the "ready" glow once the
+   pour finishes, and a gem-sparkle twinkle carried over from the old
+   gem-glint moment this replaced. */
+.hg-wrap { width: 108px; height: 166px; transition: filter 300ms; }
+.hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
 
-   The fill: `.rf-fill` is a rect covering the catch's exact vertical span
-   (SVG y 78..146, height 68), clipped to the catch triangle by a <clipPath>.
-   A top inset() of (1 - --fill) of its own height makes the fill rise from
-   the base; the transition is what animates a session-progress tick or the
-   one-shot pour. */
-.rozi-funnel {
-  position: relative;
-  width: 108px;
-  height: 150px;
-  margin-inline: auto;
-  transition: filter 400ms ease;
-}
-.rozi-funnel svg { display: block; width: 100%; height: 100%; overflow: visible; }
-
-.rf-mouth,
-.rf-catch-line {
-  fill: none;
-  stroke: var(--color-brand);
-  stroke-width: 3;
-  stroke-linejoin: round;
-}
-.rf-mouth { opacity: 0.5; }
-.rf-catch-line { opacity: 0.3; }
-.rf-neck { stroke: var(--color-brand); stroke-width: 3; stroke-linecap: round; opacity: 0.4; }
-
-.rf-fill {
-  fill: var(--color-brand);
-  clip-path: inset(calc((1 - var(--fill, 1)) * 100%) 0 0 0);
-  transition: clip-path 900ms cubic-bezier(0.2, 0.7, 0.2, 1), fill 400ms ease;
-}
-
-/* "Ready" — the claim state: full, marigold, glowing, with a few sparkles. */
-.rozi-funnel.is-ready { filter: drop-shadow(0 0 18px rgba(242, 164, 23, 0.55)); }
-.rozi-funnel.is-ready .rf-fill { fill: var(--color-accent); }
-.rozi-funnel.is-ready .rf-mouth,
-.rozi-funnel.is-ready .rf-catch-line,
-.rozi-funnel.is-ready .rf-neck { stroke: var(--color-accent); opacity: 0.55; }
-
-/* A marigold mote sliding through the neck while ROZI is still collecting. */
-.rf-mote { fill: var(--color-accent); opacity: 0; transform-box: view-box; }
-.rozi-funnel:not(.is-ready) .rf-mote { animation: rf-drip 1.9s ease-in infinite; }
-@keyframes rf-drip {
-  0% { transform: translateY(0); opacity: 0; }
-  25% { opacity: 0.95; }
-  70% { transform: translateY(72px); opacity: 0.85; }
-  100% { transform: translateY(80px); opacity: 0; }
-}
-
-.rf-spark {
+/* "Working" state (founder, 2026-08-29): coins sit settled in the bottom bulb
+   while a mining session runs. A gentle breathing glow + a spark trickling
+   down through the neck says "running" without draining the glass. */
+.hg-wrap.hg-working { animation: hg-working-glow 3.2s ease-in-out infinite; }
+.hg-wrap.hg-working::after {
+  content: "";
   position: absolute;
-  width: 9px;
-  height: 9px;
+  left: 50%;
+  top: 42%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  pointer-events: none;
+  animation: hg-working-trickle 1.5s ease-in infinite;
+}
+@keyframes hg-working-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(242, 164, 23, 0.35)); }
+  50% { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.7)); }
+}
+@keyframes hg-working-trickle {
+  0% { transform: translateY(0) scale(0.8); opacity: 0; }
+  30% { opacity: 0.9; }
+  100% { transform: translateY(18px) scale(0.5); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-wrap.hg-working { animation: none; filter: drop-shadow(0 0 10px rgba(242, 164, 23, 0.5)); }
+  .hg-wrap.hg-working::after { animation: none; opacity: 0; }
+}
+.hg-coin-ring { fill: url(#hgCoinGrad); stroke: #a86400; stroke-width: 0.6; }
+.hg-coin-face { fill: url(#hgCoinFaceGrad); }
+.hg-splash { opacity: 0; }
+.hg-splash.play { animation: hg-splash 550ms ease-out; }
+@keyframes hg-splash {
+  0% { opacity: 0.9; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+.hg-sparkle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
   opacity: 0;
   pointer-events: none;
   background: var(--color-accent);
-  clip-path: polygon(50% 0%, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0% 50%, 38% 38%);
+  clip-path: polygon(50% 0%, 63% 38%, 100% 50%, 63% 62%, 50% 100%, 37% 62%, 0% 50%, 37% 38%);
 }
-.rozi-funnel.is-ready .rf-spark { animation: rf-twinkle 1.7s ease-in-out infinite; }
-.rf-spark.s1 { top: 30%; left: 2%; animation-delay: 0s; }
-.rf-spark.s2 { top: 15%; right: 4%; animation-delay: 0.5s; }
-.rf-spark.s3 { top: 54%; right: 10%; animation-delay: 1s; }
-@keyframes rf-twinkle {
+.hg-wrap.ready .hg-sparkle { animation: hg-twinkle 1.6s ease-in-out infinite; }
+.hg-sparkle.s1 { top: 40%; left: -6%; animation-delay: 0s; }
+.hg-sparkle.s2 { top: 24%; right: -8%; animation-delay: 0.4s; }
+.hg-sparkle.s3 { top: 58%; right: -2%; animation-delay: 0.8s; }
+@keyframes hg-twinkle {
   0%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
   50% { opacity: 1; transform: scale(1) rotate(90deg); }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .rf-fill { transition: none; }
-  .rozi-funnel .rf-mote { animation: none; opacity: 0; }
-  .rozi-funnel.is-ready .rf-spark { animation: none; opacity: 0; }
+  .hg-wrap.ready .hg-sparkle { animation: none; opacity: 0; }
 }
 
 /* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13;
@@ -461,9 +451,15 @@ body {
   background-color: #07161a;
 }
 
-/* The ROZI funnel (components/RoziFunnel.tsx) needs no vault override — it is
-   drawn entirely with --color-brand / --color-accent, which this skin already
-   remaps to their luminous dark-ground values. */
+/* The claim / session hourglass (components/HourglassClaim.tsx) is a drawn
+   object with fixed wood + metal + glass colours. The dark metal caps and
+   the dark glass outline lose definition on the dark card — a thin light
+   rim on the whole illustration brings every edge back without touching the
+   SVG internals. The wrapper's own marigold "ready" glow is on `.hg-wrap`,
+   not the inner <svg>, so the two do not collide. */
+:root[data-theme="vault"] .app-frame .hg-wrap svg {
+  filter: drop-shadow(0 0 0.7px rgba(255, 255, 255, 0.6));
+}
 
 /* ============================================================
    Balance hero sheen — a slow light sweep across the big number
