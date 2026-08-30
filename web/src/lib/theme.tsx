@@ -1,17 +1,19 @@
 "use client";
 
-// The look of the earner app — a per-device, opt-in choice between two design
+// The look of the earner app — a per-device choice between two design
 // directions the founder asked to see built:
 //
-//   "light"  — Charged Light. The app that shipped: a light shell with the
-//              deep-teal hero and mining panels. The DEFAULT.
 //   "vault"  — Deep Vault. A full dark skin ("the Wallet look"): near-black
-//              teal ground, glowing balance, live mining reactor.
+//              teal ground, glowing balance, live mining reactor. THE DEFAULT
+//              (founder, 2026-08-30, after reviewing the redesign mockup).
+//   "light"  — Charged Light. The original light shell with the deep-teal hero
+//              and mining panels. Now the OPT-OUT — a user picks it in
+//              /profile/settings and we store that choice.
 //
-// ⚠️ This reopens the documented "app is light-only" call. It is opt-in, stored
-// only on the device (localStorage), reversible, and changes NOTHING about the
-// ledgers, the copy, or any guardrail — only the colour tokens (see the
-// [data-theme="vault"] block in globals.css).
+// ⚠️ Making vault the default reopens the documented "app is light-only" call
+// (DESIGN_BRIEF / CLAUDE.md). It changes NOTHING about the ledgers, the copy,
+// or any guardrail — only the colour tokens (see the [data-theme="vault"]
+// block in globals.css) — and light is one tap away in settings.
 //
 // HOW THE NO-FLASH BIT WORKS: a tiny blocking script in layout.tsx reads the
 // same localStorage key and sets data-theme on <html> BEFORE first paint, so a
@@ -26,18 +28,19 @@ import {
 export type Theme = "light" | "vault";
 
 const STORAGE_KEY = "rozipay-theme";
-const THEMES: Theme[] = ["light", "vault"];
 
 // Shared with the blocking script in layout.tsx — keep the key in sync.
 export const THEME_STORAGE_KEY = STORAGE_KEY;
 
+// Vault is the default: anything other than a stored, explicit "light" resolves
+// to "vault". Matches the blocking script in layout.tsx.
 function readStored(): Theme {
-  if (typeof window === "undefined") return "light";
+  if (typeof window === "undefined") return "vault";
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
-    return THEMES.includes(v as Theme) ? (v as Theme) : "light";
+    return v === "light" ? "light" : "vault";
   } catch {
-    return "light";
+    return "vault";
   }
 }
 
@@ -52,10 +55,11 @@ type Ctx = { theme: Theme; setTheme: (t: Theme) => void };
 const ThemeContext = createContext<Ctx>({ theme: "light", setTheme: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Server render + first client render must match the prerendered HTML, so the
-  // initial value is always "light". The effect below reconciles with what the
-  // blocking script already put on <html>; because that script ran first, there
-  // is no visible change, only the React state catching up.
+  // Server render + first client render must match the prerendered HTML (which
+  // carries no data-theme — the blocking script in layout.tsx sets it), so the
+  // initial value is always "light". The effect below reconciles to the real
+  // choice (now "vault" unless the user stored "light"); the blocking script
+  // already painted the right skin, so this is only React state catching up.
   const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {

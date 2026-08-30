@@ -18,6 +18,7 @@ export function MiningReactor({ active, size = 84 }: { active: boolean; size?: n
       <span className="r-ring" />
       <span className="r-ring" />
       <span className="r-ring" />
+      <span className="r-arc" />
       <span className="r-spin" />
       <span className="r-core" />
     </div>

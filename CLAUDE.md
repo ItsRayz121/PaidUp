@@ -2395,6 +2395,39 @@ These override convenience or speed at every step:
   - Verified: api typecheck clean, `test:mining` 42/42, `test:mining:e2e`
     63/63 (incl. "10 task boosts are capped at 8").
 
+- **DEEP VAULT IS NOW THE DEFAULT LOOK, AND `/mine`'s DIAL IS THE HERO
+  (founder, 2026-08-30).** The founder reviewed the "RoziPay Screen Redesign"
+  artifact (the dark "Deep Vault" mockup) and asked to make that skin the
+  default. Shipped as its own commit, separate from the hourglass→funnel swap
+  below, so the glass change can be reverted on its own. Verified: web `tsc
+  --noEmit` clean, `eslint` 0 errors (7 pre-existing `<img>` warnings, none in
+  touched files), `next build` clean (36 routes). ⚠️ Not yet reviewed in a
+  real browser — same standing caveat as every visual change since the Stage 3
+  dashboard.
+  - ⚠️ **THIS REOPENS THE DOCUMENTED "APP IS LIGHT-ONLY" CALL, ON PURPOSE.**
+    `lib/theme.tsx` `readStored()` + the `layout.tsx` blocking script now
+    resolve anything other than an explicit stored `"light"` to `"vault"`.
+    Light is the OPT-OUT — one tap in `/profile/settings` (the picker now
+    lists Dark first and calls it "The normal look"). `viewport.themeColor`
+    → `#0b1517`. **Nothing about the ledgers, copy, or any guardrail changes
+    with the skin** — it is only the `--color-*` tokens in the
+    `[data-theme="vault"]` block. A user who opts to light keeps the dark
+    address-bar tint (one static value, accepted).
+  - **`/mine`'s dial rebuilt as the screen's hero.** The `MiningReactor` went
+    from an 84px chip inside a tint box to a 168px core sitting on the card,
+    with "MINING SPEED" (uppercase, tracked) + the speed number under it —
+    matching the mockup. New `.r-arc` span on the reactor: a short STATIC
+    marigold arc on the rim (a gauge flourish from the mockup — static so it
+    can never read as "progress toward" anything). The balance, the
+    "what you'll get" estimate line and its hedge, the start/running controls
+    are all unchanged.
+  - **Untouched, deliberately**: the `mine.notcash` disclosure banner
+    (guardrail — ROZI still says plainly it cannot be cashed out), all mine
+    copy, the boosts/tiles/breakdown/activity sections below the dial
+    ("rest is good" — founder), and every other screen. Home / Wallet were
+    NOT re-themed screen-by-screen — they already pick up the vault tokens
+    via `.app-frame`, which is the whole point of that mechanism.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

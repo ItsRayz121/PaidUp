@@ -52,7 +52,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#0d5c63",
+  // The vault (dark) skin is the default now, so the browser/PWA chrome tint
+  // matches its near-black teal ground. A user who opts back to the light skin
+  // keeps this address-bar colour — an acceptable trade for one static value.
+  themeColor: "#0b1517",
   // Standalone mode has no browser bar, so the phone's own gesture area can sit
   // on top of our UI. This makes env(safe-area-inset-*) report real values so
   // the bottom nav and install sheet can pad around it.
@@ -67,14 +70,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             on many Pakistani networks, and a blocked beforeInteractive script
             stalls the page for everyone. lib/telegram.ts reads the Mini App's
             initData straight from the URL fragment instead. */}
-        {/* Applies the saved look ("vault" = the dark skin) BEFORE first paint,
-            so a user who chose it never sees a flash of the light theme. Kept
-            in sync afterwards by lib/theme.tsx; the key must match
+        {/* Applies the look BEFORE first paint so there is no theme flash.
+            "vault" (the dark skin) is the DEFAULT (founder, 2026-08-30): the
+            attribute is set unless the user has explicitly stored "light".
+            Kept in sync afterwards by lib/theme.tsx; the key must match
             THEME_STORAGE_KEY there. */}
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{if(localStorage.getItem('rozipay-theme')==='vault')document.documentElement.dataset.theme='vault'}catch(e){}",
+              "try{if(localStorage.getItem('rozipay-theme')!=='light')document.documentElement.dataset.theme='vault'}catch(e){}",
           }}
         />
         <Shell>{children}</Shell>

@@ -289,8 +289,11 @@ export default function MinePage() {
         </span>
       </p>
 
-      {/* ---- The dial ---- */}
-      <Card className="p-5 text-center">
+      {/* ---- The dial ---- The mining core is the hero of this screen now
+          (founder, 2026-08-30, matching the redesign mockup): one card, the
+          balance on top, a large live reactor in the middle, the speed and
+          "what you'll get" figures under it — no inner tint box. */}
+      <Card className="overflow-hidden p-5 text-center">
         <p className="text-sm font-semibold text-muted">{t("mine.balance")}</p>
         <p className="num mt-1 text-4xl font-extrabold text-brand-ink">
           {formatRozi(s.roziMicro)} <span className="text-2xl text-brand">ROZI</span>
@@ -306,34 +309,34 @@ export default function MinePage() {
           </p>
         )}
 
-        <div className="mt-4 rounded-xl bg-brand-tint/60 p-4">
-          {/* The live core — spins while a session runs, sits still and dim
-              when idle. Decorative and state-reflecting only (same rule as the
-              mining-chamber rings); the numbers below are the exact figures. */}
-          <MiningReactor active={s.session.active} size={84} />
-          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted">
-            {t("mine.hashrate")}
-          </p>
-          <p className="num text-3xl font-extrabold text-brand">
-            {s.hashrate.toLocaleString()}
-          </p>
-          {/* Two genuinely different numbers, and the copy must not blur them.
-              Pool model: a live estimate that MOVES as other people mine — say so,
-              rather than letting users discover it and think we cheated them.
-              Pi model: what they have actually earned. Nobody else can move it, so
-              the "~" and the hedge both come off. */}
-          <p className="mt-1 text-sm text-muted">
-            {s.estimateIsLive ? t("mine.today") : t("mine.earned")}:{" "}
-            <strong className="num text-brand-ink">
-              {s.estimateIsLive ? "~" : ""}{formatRozi(s.estimatedRoziMicro)} ROZI
-            </strong>
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            {s.estimateIsLive ? t("mine.estimate.note") : t("mine.earned.note")}
-          </p>
+        {/* The live core — spins while a session runs, sits still and dim when
+            idle. Decorative and state-reflecting only (same rule as the
+            mining-chamber rings); the numbers below are the exact figures. */}
+        <div className="mt-5">
+          <MiningReactor active={s.session.active} size={168} />
         </div>
+        <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
+          {t("mine.hashrate")}
+        </p>
+        <p className="num text-4xl font-extrabold text-brand">
+          {s.hashrate.toLocaleString()}
+        </p>
+        {/* Two genuinely different numbers, and the copy must not blur them.
+            Pool model: a live estimate that MOVES as other people mine — say so,
+            rather than letting users discover it and think we cheated them.
+            Pi model: what they have actually earned. Nobody else can move it, so
+            the "~" and the hedge both come off. */}
+        <p className="mt-1 text-sm text-muted">
+          {s.estimateIsLive ? t("mine.today") : t("mine.earned")}:{" "}
+          <strong className="num text-brand-ink">
+            {s.estimateIsLive ? "~" : ""}{formatRozi(s.estimatedRoziMicro)} ROZI
+          </strong>
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          {s.estimateIsLive ? t("mine.estimate.note") : t("mine.earned.note")}
+        </p>
 
-        <div className="mt-4">
+        <div className="mt-5">
           {startPour ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
               {/* Same hourglass the claim card uses (components/HourglassClaim.tsx)

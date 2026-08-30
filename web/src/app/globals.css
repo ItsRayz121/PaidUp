@@ -528,20 +528,35 @@ body {
   opacity: 0.9;
   will-change: transform;
 }
+/* A short static marigold arc on the outer rim — the gauge-like flourish from
+   the redesign mockup (founder, 2026-08-30). Static on purpose: it never moves
+   and never fills, so it cannot read as "progress toward" anything. Dimmed
+   with the rest of the reactor when idle. */
+.reactor .r-arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: conic-gradient(from 208deg, var(--color-accent) 0deg 66deg, transparent 67deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  opacity: 0.9;
+}
 .reactor .r-core {
   width: 46%;
   aspect-ratio: 1;
   border-radius: 9999px;
   background: radial-gradient(circle at 38% 34%, #7ff4ec, var(--color-brand) 46%, #0d5c63);
-  box-shadow: 0 0 18px rgba(22, 189, 182, 0.55);
+  box-shadow: 0 0 28px rgba(22, 189, 182, 0.5);
   animation: reactor-breathe 2.8s ease-in-out infinite;
 }
 .reactor.is-idle .r-spin,
+.reactor.is-idle .r-arc,
 .reactor.is-idle .r-ring { animation-play-state: paused; opacity: 0.2; }
+.reactor.is-idle .r-arc { filter: saturate(0.6); }
 .reactor.is-idle .r-core {
   animation: none;
   filter: saturate(0.6);
-  box-shadow: 0 0 10px rgba(22, 189, 182, 0.25);
+  box-shadow: 0 0 12px rgba(22, 189, 182, 0.25);
 }
 @media (prefers-reduced-motion: reduce) {
   .reactor .r-ring, .reactor .r-spin, .reactor .r-core { animation: none; }

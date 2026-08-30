@@ -2,8 +2,8 @@
 
 // The look picker on /profile/settings. Two options, matching the two design
 // directions the founder asked to see built:
-//   • Charged Light — the app as shipped (default)
-//   • Deep Vault    — the dark "Wallet look"
+//   • Deep Vault    — the dark "Wallet look" — THE DEFAULT (founder, 2026-08-30)
+//   • Charged Light  — the original light shell, now the opt-out
 //
 // Purely a colour choice, stored on the device (see lib/theme.tsx). No balance,
 // copy, or guardrail changes with it. Reduced-motion and screen readers are
@@ -16,17 +16,17 @@ type Opt = { id: Theme; titleKey: string; descKey: string; swatch: string[] };
 
 const OPTIONS: Opt[] = [
   {
-    id: "light",
-    titleKey: "settings.theme.light",
-    descKey: "settings.theme.light.desc",
-    // page ground, card, hero teal, marigold
-    swatch: ["#eef5f5", "#ffffff", "#0d5c63", "#f2a417"],
-  },
-  {
     id: "vault",
     titleKey: "settings.theme.vault",
     descKey: "settings.theme.vault.desc",
+    // page ground, card, hero teal, marigold
     swatch: ["#0b1517", "#0e2429", "#16bdb6", "#f5a623"],
+  },
+  {
+    id: "light",
+    titleKey: "settings.theme.light",
+    descKey: "settings.theme.light.desc",
+    swatch: ["#eef5f5", "#ffffff", "#0d5c63", "#f2a417"],
   },
 ];
 
