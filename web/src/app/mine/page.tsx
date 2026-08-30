@@ -8,7 +8,7 @@ import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
-import { HourglassClaim } from "@/components/HourglassClaim";
+import { RoziFunnel } from "@/components/RoziFunnel";
 import { MiningReactor } from "@/components/MiningReactor";
 import { AmbientBg } from "@/components/AmbientBg";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
@@ -95,10 +95,9 @@ export default function MinePage() {
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
   // How far through the current mining session we are, 0..1 — feeds the
-  // hourglass so its coins start in the TOP bulb and drop one by one as the
-  // session elapses (founder, 2026-08-30), instead of sitting settled at the
-  // bottom the whole time. Purely decorative: it tracks ELAPSED TIME, never the
-  // real ROZI amount (see HourglassClaim.tsx's header). `countdown` above
+  // RoziFunnel so its catch fills as the session elapses, instead of sitting
+  // full the whole time. Purely decorative: it tracks ELAPSED TIME, never the
+  // real ROZI amount (see RoziFunnel.tsx's header). `countdown` above
   // re-renders this component every second, so Date.now() here stays fresh.
   const sessionMs = (s?.session.sessionHours ?? 8) * 3600_000;
   const sessionStartMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - sessionMs : 0;
@@ -339,28 +338,25 @@ export default function MinePage() {
         <div className="mt-5">
           {startPour ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
-              {/* Same hourglass the claim card uses (components/HourglassClaim.tsx)
-                  — coins dropping from the upper glass to the lower one — played
-                  once right after a session starts, not just on claim. Priority
-                  over the running-session view below: mining.reload() flips
-                  s.session.active to true while this is still playing, and this
-                  branch must win that race so the pour is not skipped. */}
-              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
-                <HourglassClaim onSettled={onStartPourSettled} />
+              {/* Same funnel the claim card uses (components/RoziFunnel.tsx) —
+                  filling from empty to full — played once right after a session
+                  starts, not just on claim. Priority over the running-session
+                  view below: mining.reload() flips s.session.active to true
+                  while this is still playing, and this branch must win that
+                  race so the pour is not skipped. */}
+              <div className="relative mx-auto" style={{ width: 120, height: 150 }}>
+                <RoziFunnel pour onSettled={onStartPourSettled} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.started.pour")}</p>
             </div>
           ) : s.session.active ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
-              {/* The session hourglass (founder, 2026-08-30): coins start in the
-                  TOP bulb and drop one by one, newest through the neck, as the
-                  session elapses — `progress` is the fraction of the session
-                  done. Reverses the 2026-08-29 "settled at the bottom the whole
-                  time" look, which read as an already-finished glass. Purely
-                  decorative — it tracks elapsed time, never the real ROZI
-                  amount; the countdown below is the exact figure. */}
-              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
-                <HourglassClaim progress={sessionProgress} />
+              {/* The session funnel (founder, 2026-08-30): the catch fills as
+                  the session elapses — `fill` is the fraction of the session
+                  done. Purely decorative — it tracks elapsed time, never the
+                  real ROZI amount; the countdown below is the exact figure. */}
+              <div className="relative mx-auto" style={{ width: 120, height: 150 }}>
+                <RoziFunnel fill={sessionProgress} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
@@ -399,13 +395,12 @@ export default function MinePage() {
           settlement or a tap. */}
       {s.claimableMicro > 0 && (
         <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
-          <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+          <div className="relative mx-auto" style={{ width: 120, height: 150 }}>
             {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
-            {/* Wood/metal/glass hourglass, filled with real RoziPay-mark
-                coins — see components/HourglassClaim.tsx. Pours once on
-                mount (this card only ever mounts when claimableMicro is
-                already > 0), then settles into a static glow. */}
-            <HourglassClaim />
+            {/* The full, glowing marigold funnel — see components/RoziFunnel.tsx.
+                This card only ever mounts when claimableMicro is already > 0,
+                so the funnel shows its settled "ready" state. */}
+            <RoziFunnel fill={1} ready />
           </div>
           <p className="mt-3 text-sm font-semibold text-accent-ink">{t("mine.claim.title")}</p>
           <p className="num mt-1 text-3xl font-extrabold text-brand-ink">
