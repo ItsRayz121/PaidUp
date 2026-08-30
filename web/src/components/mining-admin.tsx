@@ -63,14 +63,16 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   },
   {
     title: "Boosts",
-    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get three formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost), the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost), and the BANNER zone id (an In-Page Push zone — small dismissible bar shown on the mining screen only; passive impressions, no boost). Each empty value disables its own part.",
+    note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. THE AD BOOST IS FLAT, not a percentage (founder, 2026-08-30): each watched ad adds \"Ad boost (flat speed)\" to the miner's speed AFTER all multipliers, so one ad is +1 and four ads is +4 no matter how big the miner is. \"Ad boost (%)\" is kept as a separate knob but ships at 0 — set it above 0 only if you want a percentage ad boost back on top of the flat one. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get three formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost), the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost), and the BANNER zone id (an In-Page Push zone — small dismissible bar shown on the mining screen only; passive impressions, no boost). Each empty value disables its own part.",
     keys: [
       ["taskBoostPct", "Task boost (%)"],
       ["taskBoostHours", "Task boost lasts (hours)"],
       ["taskBoostMaxStack", "Max task boosts stacked"],
-      ["adBoostPct", "Ad boost (%)"],
+      ["adBoostFlat", "Ad boost (flat speed added per ad)"],
+      ["adBoostPct", "Ad boost (%) — extra, ships at 0"],
       ["adBoostHours", "Ad boost lasts (hours)"],
       ["adBoostMaxStack", "Max ad boosts stacked"],
+      ["adMinWatchSeconds", "Min seconds watching before the boost counts"],
       ["adWatchDailyCap", "Ads per user per day"],
       ["adsEnabled", "Ads on (1) / off (0)"],
       ["adProvider", "Ad provider (monetag / adsterra)"],

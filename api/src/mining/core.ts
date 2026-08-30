@@ -141,21 +141,33 @@ export const MINING_DEFAULTS = {
 
   // -- Ad boost (§ 8.1). The reward for watching an ad is a BOOST, never
   //    currency — which is why a faked ad view cannot mint anything.
-  adBoostPct: 100,
+  //
+  //    FLAT, NOT A MULTIPLIER (founder decision, 2026-08-30). It used to be
+  //    +100% per ad, so an 18-speed miner jumped to 36 on one ad and kept
+  //    doubling — ROZI came too easily. Now each active ad boost adds a FLAT
+  //    `adBoostFlat` to the hashrate AFTER every multiplier, so one ad is
+  //    exactly +1 speed and four ads is +4, whatever the miner's other
+  //    multipliers are. `adBoostPct` is kept as a separate, still-tunable knob
+  //    (an Admin who wants a percentage ad boost can set it back above 0), but
+  //    the shipped default is 0 so the flat amount is the whole reward.
+  adBoostPct: 0,
+  adBoostFlat: 1,
   adBoostHours: 4,
   adWatchDailyCap: 10,
 
-  // Capped in activeBoostPcts() the SAME way taskBoostMaxStack caps task boosts
-  // (2026-08-12): count active "ad" rows, drop any past the cap, newest first.
-  // Without this, adWatchDailyCap was the only brake — and it throttles daily ad
-  // REVENUE, not concurrent hashrate. A user who watches all 10 ads in one burst
-  // has them nearly all active at once (each lasts adBoostHours independently),
-  // which is +1000% (11x) stacked on top of streak and task boosts — an order of
-  // magnitude past the "~3x for an engaged miner" figure the rest of the economy
-  // is tuned around. Capped at grant time it would throw away boosts a user
-  // genuinely earned; capping the READ, like task boosts, means the 4th+ watch
-  // simply queues and kicks in as an earlier one expires, so nothing is wasted.
-  adBoostMaxStack: 3,
+  // Minimum seconds between issuing an ad nonce and redeeming it — the only
+  // real check we have that an ad was actually watched (Monetag has no S2S
+  // postback; see the honesty note in routes/mining.ts). Admin-tunable so it
+  // can be raised without a redeploy; the floor an honest watcher must clear.
+  adMinWatchSeconds: 15,
+
+  // Capped on READ the SAME way taskBoostMaxStack caps task boosts (2026-08-12):
+  // count active "ad" rows, drop any past the cap, newest first. It is what
+  // makes "four ads => +4 and no more" true — the 5th active ad boost simply
+  // does not count until an earlier one expires, so nothing a user earned is
+  // thrown away, it just queues. Set to 4 (founder, 2026-08-30) to match the
+  // "watch four ads, mine four faster" framing.
+  adBoostMaxStack: 4,
   adsEnabled: 0,            // off until the founder has a Monetag/Adsterra account
   adProvider: "",           // ads stay off until this is set too, even if the flag is 1
 
@@ -445,7 +457,10 @@ export type HashrateInputs = {
   streakDays: number;
   streakStepPct: number;   // +5% per day
   streakCapDays: number;   // ...up to 20 days => 2.0x
-  boostPcts: number[];     // active boosts: task (+50), ad (+100), points (+100)
+  boostPcts: number[];     // active PERCENTAGE boosts: task (+50), points (+100)
+  // Flat hashrate added AFTER every multiplier — the ad boost (founder,
+  // 2026-08-30: each watched ad is +1 speed, not +100%). Omitted => 0.
+  flatBonus?: number;
   referralHashrate: number; // raw hashrate inherited from L1/L2 invitees
   referralCapPct: number;  // referral component <= this % of own pre-referral
   maxHashrate: number;
@@ -456,12 +471,17 @@ export function computeHashrate(i: HashrateInputs): number {
 
   const streak = 1 + (i.streakStepPct / 100) * Math.min(i.streakDays, i.streakCapDays);
 
-  // Boosts are additive with each other, then multiplicative against the flat
-  // base. Two +50% task boosts and a +100% ad boost => x3.0, not x4.5. Additive
-  // stacking is the difference between a lively economy and a runaway one.
+  // Percentage boosts are additive with each other, then multiplicative against
+  // the flat base. Two +50% task boosts => x2.0, not x2.25. Additive stacking is
+  // the difference between a lively economy and a runaway one.
   const boost = 1 + i.boostPcts.reduce((a, b) => a + b, 0) / 100;
 
-  const own = flat * streak * boost;
+  // The ad boost lands here, AFTER the multipliers — a flat +N on the final
+  // number, so one ad is exactly +1 speed no matter how big the miner already
+  // is (founder, 2026-08-30). It still feeds the referral ceiling below (it is
+  // part of "own"), which is correct: a parasite that only watches ads is still
+  // capped at doubling itself.
+  const own = flat * streak * boost + (i.flatBonus ?? 0);
 
   // A referral parasite — an account with no rigs, no streak, no tasks, living
   // entirely off a downline — is capped at doubling itself. You cannot farm your

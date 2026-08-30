@@ -261,6 +261,11 @@ const copy: Record<string, string> = {
   "wallet.history.seeAll": "See all {count}",
   "wallet.history.more": "See more",
   "wallet.history.less": "Show less",
+  // Shown under the time on a row that is still pending / on its way, and under
+  // the Status line in the detail sheet — a small reassurance that "Processing"
+  // is normal and not stuck. Deliberately a wide range: most land in a few
+  // minutes, but staff-queued ones can take longer.
+  "wallet.tx.eta": "Usually arrives in 5–30 minutes",
   // ---- What each kind of ROZI transaction is called ------------------------
   // ⚠️ ONE PLAIN SENTENCE PER SOURCE TYPE, and the list must cover every value
   // in the rozi_ledger CHECK constraint (api/src/db.ts). A type with no entry
@@ -767,11 +772,13 @@ const copy: Record<string, string> = {
   "mine.boost.task.title": "Do a task, mine faster",
   "mine.boost.task.body": "Any task → +{pct}% speed for {hours}h.",
   "mine.boost.ad.title": "Watch an ad",
-  // The "{n} left today" count is folded in here now — it was its own line.
-  "mine.boost.ad.body": "+{pct}% speed for {hours}h · {n} left today",
+  // Founder, 2026-08-30: each ad adds a FLAT amount of mining speed, not a
+  // percentage — {flat} comes from the API (s.ads.boostFlat), never hardcoded.
+  // The "{n} left today" count is folded in here — it was its own line.
+  "mine.boost.ad.body": "+{flat} speed for {hours}h · {n} left today",
   "mine.boost.ad.left": "{n} left today",
   "mine.boost.ad.cta": "Watch",
-  "mine.ad.done": "Done. You now mine {pct}% faster for {hours} hours.",
+  "mine.ad.done": "Done. Your mining speed is up by {flat} for {hours} hours.",
   // The ad opens in a new tab; the user comes back and taps Claim.
   "mine.ad.open": "The ad opened in a new tab. Watch it, then come back here.",
   "mine.ad.claimWait": "Claim in {s}s",

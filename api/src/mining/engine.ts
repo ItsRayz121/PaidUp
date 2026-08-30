@@ -79,6 +79,24 @@ function boostStackCaps(s: MiningSettings): Record<string, number> {
   return { task: s.taskBoostMaxStack, ad: s.adBoostMaxStack };
 }
 
+// Split a set of already-stack-capped boost rows into the two things
+// computeHashrate() wants: the PERCENTAGE multipliers (task, points), and the
+// FLAT hashrate the ad boosts add (founder, 2026-08-30 — each active ad row is
+// worth `adBoostFlat`, not its stored multiplier_pct). Ad rows are counted, not
+// summed by pct: the row's pct is 0 in the shipped config and the reward is the
+// flat amount per capped row.
+function splitBoosts(
+  cappedRows: { kind: string; multiplier_pct: number }[], s: MiningSettings,
+): { pcts: number[]; flatBonus: number } {
+  const pcts: number[] = [];
+  let adCount = 0;
+  for (const r of cappedRows) {
+    if (r.kind === "ad") adCount++;
+    else pcts.push(r.multiplier_pct);
+  }
+  return { pcts, flatBonus: adCount * s.adBoostFlat };
+}
+
 // Shared by the single-user and batch hashrate paths so the cap rule is written
 // once. `rows` must already be newest-first; `groupKey` scopes the per-kind count
 // (a per-user id for the batch path, a constant for a single user).
@@ -100,12 +118,14 @@ function applyStackCaps<T extends { kind: string; multiplier_pct: number }>(
   return out;
 }
 
-async function activeBoostPcts(userId: string, s: MiningSettings): Promise<number[]> {
+async function activeBoosts(
+  userId: string, s: MiningSettings,
+): Promise<{ pcts: number[]; flatBonus: number }> {
   const rows = await sql.all<{ kind: string; multiplier_pct: number }>(
     "SELECT kind, multiplier_pct FROM user_boosts WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
     userId, now(),
   );
-  return applyStackCaps(rows, boostStackCaps(s), () => "").map((r) => r.multiplier_pct);
+  return splitBoosts(applyStackCaps(rows, boostStackCaps(s), () => ""), s);
 }
 
 // A user's OWN hashrate — everything except the referral component — computed for
@@ -155,24 +175,27 @@ async function ownHashrateBatch(
     rigPowerBy.set(r.user_id, (rigPowerBy.get(r.user_id) ?? 0) + power);
   }
 
-  // Same per-kind stack cap as activeBoostPcts(), scoped per user here.
-  const boostsBy = new Map<string, number[]>();
+  // Same per-kind stack cap as activeBoosts(), scoped per user here, then split
+  // into percentage boosts + the flat ad bonus (see splitBoosts()).
+  const cappedBy = new Map<string, { kind: string; multiplier_pct: number }[]>();
   for (const b of applyStackCaps(boostRows, boostStackCaps(s), (r) => r.user_id)) {
-    const list = boostsBy.get(b.user_id) ?? [];
-    list.push(b.multiplier_pct);
-    boostsBy.set(b.user_id, list);
+    const list = cappedBy.get(b.user_id) ?? [];
+    list.push({ kind: b.kind, multiplier_pct: b.multiplier_pct });
+    cappedBy.set(b.user_id, list);
   }
 
   const streakBy = new Map(streakRows.map((r) => [r.user_id, r.current_days]));
 
   for (const id of userIds) {
+    const { pcts, flatBonus } = splitBoosts(cappedBy.get(id) ?? [], s);
     out.set(id, computeHashrate({
       base: s.baseHashrate,
       rigPower: rigPowerBy.get(id) ?? 0,
       streakDays: streakBy.get(id) ?? 0,
       streakStepPct: s.streakStepPct,
       streakCapDays: s.streakCapDays,
-      boostPcts: boostsBy.get(id) ?? [],
+      boostPcts: pcts,
+      flatBonus,
       referralHashrate: 0, // the recursion break — see ownHashrate() above
       referralCapPct: s.referralCapPct,
       maxHashrate: s.maxHashrate,
@@ -229,7 +252,7 @@ export async function hashrateOf(
   const cfg = s ?? (await loadMiningSettings());
   const [rigs, boosts, streak, referral] = await Promise.all([
     rigPowerOf(userId),
-    activeBoostPcts(userId, cfg),
+    activeBoosts(userId, cfg),
     sql.get<{ current_days: number }>(
       "SELECT current_days FROM mining_streaks WHERE user_id = ?", userId),
     referralHashrateOf(userId, cfg),
@@ -241,7 +264,8 @@ export async function hashrateOf(
     streakDays,
     streakStepPct: cfg.streakStepPct,
     streakCapDays: cfg.streakCapDays,
-    boostPcts: boosts,
+    boostPcts: boosts.pcts,
+    flatBonus: boosts.flatBonus,
     referralHashrate: referral,
     referralCapPct: cfg.referralCapPct,
     maxHashrate: cfg.maxHashrate,
@@ -254,7 +278,10 @@ export async function hashrateOf(
       streakDays,
       streakMultiplierPct: Math.round(
         (1 + (cfg.streakStepPct / 100) * Math.min(streakDays, cfg.streakCapDays)) * 100),
-      boostPct: boosts.reduce((a, b) => a + b, 0),
+      boostPct: boosts.pcts.reduce((a, b) => a + b, 0),
+      // The flat ad bonus (founder, 2026-08-30) — shown as "+N" on the /mine
+      // breakdown, separate from the "+X%" percentage boosts above.
+      adFlatBonus: boosts.flatBonus,
       referral,
     },
   };

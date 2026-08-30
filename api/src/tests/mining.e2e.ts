@@ -185,14 +185,20 @@ const after = await hashrateOf(miner);
 check("buying a rig burns ROZI", (await roziOf(miner)) === 10_000 - cost, `bal=${await roziOf(miner)}`);
 check("buying a rig raises hashrate", after.hashrate > before.hashrate, `${before.hashrate} -> ${after.hashrate}`);
 
-console.log("\n-- boosts stack additively and expire --");
+console.log("\n-- boosts: task % stacks, the ad boost is a flat add, both expire --");
 
+const cfg = await loadMiningSettings();
 const boosted = await mkUser("boosted");
 const h0 = (await hashrateOf(boosted)).hashrate;
-await grantBoost(boosted, "task", 50, 48);
-await grantBoost(boosted, "ad", 100, 4);
+await grantBoost(boosted, "task", cfg.taskBoostPct, 48);
+const hTask = (await hashrateOf(boosted)).hashrate;
+check(`a +${cfg.taskBoostPct}% task boost gives x1.5`, hTask === Math.floor(h0 * 1.5), `${h0} -> ${hTask}`);
+// Founder, 2026-08-30: an ad is a FLAT +adBoostFlat, applied after the
+// multipliers — not a percentage. Its stored multiplier_pct is ignored.
+await grantBoost(boosted, "ad", cfg.adBoostPct, 4);
 const h1 = (await hashrateOf(boosted)).hashrate;
-check("two boosts (+50%, +100%) give x2.5, not x3", h1 === Math.floor(h0 * 2.5), `${h0} -> ${h1}`);
+check(`an ad boost adds a flat +${cfg.adBoostFlat} on top of the multipliers`,
+  h1 === hTask + cfg.adBoostFlat, `${hTask} -> ${h1}`);
 
 // An expired boost must stop counting.
 await sql.run(
@@ -205,28 +211,28 @@ console.log("\n-- task boost cap: a survey farm cannot stack boosts forever --")
 
 const stacker = await mkUser("stacker");
 const base = (await hashrateOf(stacker)).hashrate;
-for (let i = 0; i < 10; i++) await grantBoost(stacker, "task", 50, 48);
+for (let i = 0; i < 10; i++) await grantBoost(stacker, "task", cfg.taskBoostPct, 48);
 const stacked = (await hashrateOf(stacker)).hashrate;
-const cfg = await loadMiningSettings();
 const expected = Math.floor(base * (1 + (cfg.taskBoostMaxStack * cfg.taskBoostPct) / 100));
 check(`10 task boosts are capped at ${cfg.taskBoostMaxStack}`, stacked === expected, `got ${stacked}, expected ${expected}`);
 
-console.log("\n-- ad boost cap: an ad-watching burst cannot stack boosts forever --");
+console.log("\n-- ad boost cap: an ad-watching burst cannot stack flat adds forever --");
 
 const adStacker = await mkUser("adStacker");
 const adBase = (await hashrateOf(adStacker)).hashrate;
-for (let i = 0; i < 10; i++) await grantBoost(adStacker, "ad", 100, 4);
+for (let i = 0; i < 10; i++) await grantBoost(adStacker, "ad", cfg.adBoostPct, 4);
 const adStacked = (await hashrateOf(adStacker)).hashrate;
-const adExpected = Math.floor(adBase * (1 + (cfg.adBoostMaxStack * cfg.adBoostPct) / 100));
-check(`10 ad boosts are capped at ${cfg.adBoostMaxStack}`, adStacked === adExpected, `got ${adStacked}, expected ${adExpected}`);
+const adExpected = adBase + cfg.adBoostMaxStack * cfg.adBoostFlat;
+check(`10 ad boosts are capped at ${cfg.adBoostMaxStack} (flat +${cfg.adBoostMaxStack * cfg.adBoostFlat})`,
+  adStacked === adExpected, `got ${adStacked}, expected ${adExpected}`);
 
-// Task and ad stacks are counted independently — a maxed-out ad burst must not
-// crowd out an active task boost, and vice versa.
-await grantBoost(adStacker, "task", 50, 48);
+// The task % and the flat ad add are counted independently — a maxed-out ad
+// burst must not crowd out an active task boost, and vice versa.
+await grantBoost(adStacker, "task", cfg.taskBoostPct, 48);
 const adPlusTask = (await hashrateOf(adStacker)).hashrate;
-const adPlusTaskExpected = Math.floor(
-  adBase * (1 + (cfg.adBoostMaxStack * cfg.adBoostPct + cfg.taskBoostPct) / 100));
-check("ad cap and task boost stack independently", adPlusTask === adPlusTaskExpected,
+const adPlusTaskExpected =
+  Math.floor(adBase * (1 + cfg.taskBoostPct / 100)) + cfg.adBoostMaxStack * cfg.adBoostFlat;
+check("ad flat add and task boost stack independently", adPlusTask === adPlusTaskExpected,
   `got ${adPlusTask}, expected ${adPlusTaskExpected}`);
 
 console.log("\n-- AD NONCE: a single ad view cannot be redeemed twice --");

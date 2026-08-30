@@ -114,6 +114,10 @@ const defOf = (r: RigRow) => ({
 // State lives in ad_impressions, never in process memory: the API runs more than
 // one instance on Railway, so an in-memory nonce set would reject a valid
 // completion that happened to land on a different instance.
+//
+// The minimum watch time is `adMinWatchSeconds` (mining/core.ts), Admin-tunable
+// at runtime — 15s by default. This constant is only the fallback for the flag
+// message when a settings read is not in hand.
 const MIN_WATCH_SECONDS = 15;
 
 // Ads need BOTH the flag and a configured provider. Without the provider check, an
@@ -142,8 +146,12 @@ const adsLive = (s: { adsEnabled: number; adProvider: string }) =>
 async function redeemAdNonce(
   userId: string,
   nonce: string,
-  s: { adsEnabled: number; adProvider: string; adBoostPct: number; adBoostHours: number; adWatchDailyCap: number },
+  s: {
+    adsEnabled: number; adProvider: string; adBoostPct: number; adBoostHours: number;
+    adWatchDailyCap: number; adMinWatchSeconds: number;
+  },
 ): Promise<{ watchedSeconds: number }> {
+  const minWatch = s.adMinWatchSeconds > 0 ? s.adMinWatchSeconds : MIN_WATCH_SECONDS;
   await accrue(userId); // pay out the pre-boost seconds at the pre-boost rate
 
   const result = await sql.tx(async (t) => {
@@ -162,7 +170,7 @@ async function redeemAdNonce(
     }
 
     const watchedSeconds = (Date.now() - Date.parse(row.issued_at)) / 1000;
-    if (watchedSeconds < MIN_WATCH_SECONDS) {
+    if (watchedSeconds < minWatch) {
       await t.run(
         "UPDATE ad_impressions SET status = 'rejected' WHERE id = ? AND status = 'issued'", row.id);
       throw { statusCode: 400, message: "Watch the whole ad to get your boost." };
@@ -197,9 +205,9 @@ async function redeemAdNonce(
 
   // Machine-regular completions (always redeemed at exactly the dwell minimum) are
   // the bot signature here. Flag, never block.
-  if (result.watchedSeconds < MIN_WATCH_SECONDS + 0.5) {
+  if (result.watchedSeconds < minWatch + 0.5) {
     await flagOnce("mining_bot_pattern", `ad:${userId}`, userId, "medium",
-      `Ad completions land at exactly the ${MIN_WATCH_SECONDS}s dwell minimum.`);
+      `Ad completions land at exactly the ${minWatch}s dwell minimum.`);
   }
   return result;
 }
@@ -273,7 +281,12 @@ export async function miningRoutes(app: FastifyInstance) {
         watchedToday: Number(adsToday?.n ?? 0),
         dailyCap: s.adWatchDailyCap,
         boostPct: s.adBoostPct,
+        // The flat speed each watched ad adds (founder, 2026-08-30). The shipped
+        // config makes this the whole reward and boostPct 0; the /mine copy
+        // reads this number, never an invented one.
+        boostFlat: s.adBoostFlat,
         boostHours: s.adBoostHours,
+        minWatchSeconds: s.adMinWatchSeconds,
         // Show an ad before mining starts. The client honours this; the server
         // never refuses to start a session for want of one (see adGateOnStart).
         gateOnStart: Boolean(s.adGateOnStart) && adsLive(s),
@@ -344,13 +357,13 @@ export async function miningRoutes(app: FastifyInstance) {
     // Redeem BEFORE starting, so the boost is live for the whole session rather
     // than being applied a second later to a session already accruing at the
     // un-boosted rate.
-    let boost: { pct: number; hours: number } | null = null;
+    let boost: { pct: number; flat: number; hours: number } | null = null;
     if (body.adNonce) {
       const s = await loadMiningSettings();
       if (adsLive(s)) {
         try {
           await redeemAdNonce(userId, body.adNonce, s);
-          boost = { pct: s.adBoostPct, hours: s.adBoostHours };
+          boost = { pct: s.adBoostPct, flat: s.adBoostFlat, hours: s.adBoostHours };
         } catch {
           // A bad, stale or already-spent nonce must NOT stop the user mining.
           // They lose the boost, not the session.
@@ -1032,7 +1045,7 @@ export async function miningRoutes(app: FastifyInstance) {
        VALUES (?,?,?,?,?,'issued',?)`,
       newId(), userId, deviceOf(req) || null, nonce, s.adProvider || "none", now(),
     );
-    return { nonce, minSeconds: MIN_WATCH_SECONDS };
+    return { nonce, minSeconds: s.adMinWatchSeconds > 0 ? s.adMinWatchSeconds : MIN_WATCH_SECONDS };
   }));
 
   // Redeem an ad watched OUTSIDE the start-mining flow (the standalone "watch an
@@ -1045,7 +1058,7 @@ export async function miningRoutes(app: FastifyInstance) {
     if (!adsLive(s)) throw { statusCode: 400, message: "Ads are not available right now." };
 
     await redeemAdNonce(userId, body.nonce, s);
-    return { ok: true, boostPct: s.adBoostPct, hours: s.adBoostHours };
+    return { ok: true, boostPct: s.adBoostPct, boostFlat: s.adBoostFlat, hours: s.adBoostHours };
   }));
 
   // ---- ROZI transfers (wallet to wallet) -----------------------------------

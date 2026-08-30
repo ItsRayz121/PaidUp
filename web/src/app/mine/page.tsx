@@ -93,6 +93,17 @@ export default function MinePage() {
   // eslint-disable-next-line react-hooks/purity
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
+  // How far through the current mining session we are, 0..1 — feeds the
+  // hourglass so its coins start in the TOP bulb and drop one by one as the
+  // session elapses (founder, 2026-08-30), instead of sitting settled at the
+  // bottom the whole time. Purely decorative: it tracks ELAPSED TIME, never the
+  // real ROZI amount (see HourglassClaim.tsx's header). `countdown` above
+  // re-renders this component every second, so Date.now() here stays fresh.
+  const sessionMs = (s?.session.sessionHours ?? 8) * 3600_000;
+  const sessionStartMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - sessionMs : 0;
+  // eslint-disable-next-line react-hooks/purity
+  const sessionProgress = sessionStartMs ? Math.min(1, Math.max(0, (Date.now() - sessionStartMs) / sessionMs)) : 0;
+
   // Start mining. An ad fires first when the gate is on: the rewarded video
   // inside Telegram, the direct link on the website — the same formats the
   // boost button uses, because relying on the vignette alone meant this tap
@@ -115,7 +126,7 @@ export default function MinePage() {
       if (res.boost) {
         setNotice(
           t("mine.ad.done")
-            .replace("{pct}", String(res.boost.pct))
+            .replace("{flat}", String(res.boost.flat))
             .replace("{hours}", String(res.boost.hours)),
         );
       }
@@ -216,7 +227,7 @@ export default function MinePage() {
     setNotice(null);
     try {
       const res = await completeAd(adClaim.nonce);
-      setNotice(t("mine.ad.done").replace("{pct}", String(res.boostPct)).replace("{hours}", String(res.hours)));
+      setNotice(t("mine.ad.done").replace("{flat}", String(res.boostFlat)).replace("{hours}", String(res.hours)));
       mining.reload();
     } catch (e) {
       setNotice((e as Error).message);
@@ -333,14 +344,15 @@ export default function MinePage() {
             </div>
           ) : s.session.active ? (
             <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
-              {/* The session hourglass (founder, 2026-08-29): coins sit SETTLED
-                  in the bottom bulb for the whole session, with a breathing
-                  glow and a spark trickling through the neck. It used to drain
-                  one coin an hour from the top bulb, which read as a broken,
-                  half-empty glass. Purely decorative — "the machine is
-                  running"; the countdown below is what says how far in. */}
+              {/* The session hourglass (founder, 2026-08-30): coins start in the
+                  TOP bulb and drop one by one, newest through the neck, as the
+                  session elapses — `progress` is the fraction of the session
+                  done. Reverses the 2026-08-29 "settled at the bottom the whole
+                  time" look, which read as an already-finished glass. Purely
+                  decorative — it tracks elapsed time, never the real ROZI
+                  amount; the countdown below is the exact figure. */}
               <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
-                <HourglassClaim working />
+                <HourglassClaim progress={sessionProgress} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
@@ -440,7 +452,7 @@ export default function MinePage() {
                 <p className="text-[15px] font-bold text-brand-ink">{t("mine.boost.ad.title")}</p>
                 <p className="text-xs text-muted">
                   {t("mine.boost.ad.body", {
-                    pct: String(s.ads.boostPct),
+                    flat: String(s.ads.boostFlat),
                     hours: String(s.ads.boostHours),
                     n: String(adsLeft),
                   })}
@@ -539,7 +551,12 @@ export default function MinePage() {
           />
           <Row
             label={t("mine.breakdown.boosts")}
-            value={s.breakdown.boostPct > 0 ? `+${s.breakdown.boostPct}%` : "—"}
+            value={
+              [
+                s.breakdown.boostPct > 0 ? `+${s.breakdown.boostPct}%` : null,
+                s.breakdown.adFlatBonus > 0 ? `+${s.breakdown.adFlatBonus}` : null,
+              ].filter(Boolean).join(" · ") || "—"
+            }
           />
           <Row
             label={t("mine.breakdown.referral")}

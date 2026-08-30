@@ -59,6 +59,10 @@ export function TxDetailSheet({ row, onClose }: { row: Row; onClose: () => void 
           )}
         </div>
 
+        {(row.status === "pending" || row.status === "sending") && (
+          <p className="text-xs text-muted">{t("wallet.tx.eta")}</p>
+        )}
+
         {explorerUrl && (
           <a href={explorerUrl} target="_blank" rel="noreferrer"
             className="block rounded-xl border border-line p-3 text-center text-sm font-semibold text-brand active:bg-brand-tint/40">

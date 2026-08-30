@@ -176,9 +176,26 @@ test("hashrate: boosts stack additively, not multiplicatively", () => {
     base: 10, rigPower: 90, streakDays: 0, streakStepPct: 5, streakCapDays: 20,
     referralHashrate: 0, referralCapPct: 100, maxHashrate: 100_000,
   };
-  // flat 100. Two +50% task boosts and one +100% ad boost => x3.0, not x4.5.
+  // flat 100. Two +50% task boosts + one +100% points boost => x3.0, not x4.5.
   assert.equal(computeHashrate({ ...base, boostPcts: [] }), 100);
   assert.equal(computeHashrate({ ...base, boostPcts: [50, 50, 100] }), 300);
+});
+
+test("hashrate: the ad boost is a FLAT add applied AFTER the multipliers", () => {
+  // Founder, 2026-08-30: each watched ad is +1 speed, not +100%. So flatBonus
+  // lands on the final number, unaffected by streak or percentage boosts.
+  const base = {
+    base: 10, rigPower: 90, streakDays: 0, streakStepPct: 5, streakCapDays: 20,
+    boostPcts: [], referralHashrate: 0, referralCapPct: 100, maxHashrate: 100_000,
+  };
+  assert.equal(computeHashrate({ ...base, flatBonus: 0 }), 100);
+  assert.equal(computeHashrate({ ...base, flatBonus: 4 }), 104);
+  // 4 flat is exactly 4, whatever the multipliers: x2 streak + x2 pct = x4 on
+  // 100 => 400, then + 4 flat => 404 (not 100*4 + 4*4).
+  assert.equal(
+    computeHashrate({ ...base, streakDays: 20, boostPcts: [100], flatBonus: 4 }),
+    404,
+  );
 });
 
 test("hashrate: streak maxes out at 2x and stops there", () => {

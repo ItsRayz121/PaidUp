@@ -2314,6 +2314,56 @@ These override convenience or speed at every step:
     a logged-in admin session.
   - **Next: Phase D** — Tasks & offers.
 
+- **A PHONE-REVIEW PASS: A "MONEY ON ITS WAY" LINE, THE HOURGLASS FILLS
+  TOP→BOTTOM AGAIN, AND THE AD BOOST STOPS DOUBLING YOUR SPEED (founder,
+  2026-08-30).** Four asks off screenshots. Verified: `npm run test:mining`
+  (42, +1), `npm run test:mining:e2e` (63, +1), `test:referrals` (26),
+  `test:conversion` (25), `test:store` (29) all green; api + web typecheck,
+  eslint (0 errors), web production build (36 routes) all clean.
+  - **Pending wallet rows now say they are normal.** `HistoryList` +
+    `TxDetailSheet` show a small muted line — "Usually arrives in 5–30
+    minutes" (`wallet.tx.eta`) — under the time on any `pending`/`sending`
+    row. No layout change, no bigger card. Deposits and withdrawals settle
+    in a few minutes now; the founder's ask was purely the reassurance copy
+    so a "Processing" row for 20 minutes does not read as stuck.
+  - ⚠️ **THE `/mine` SESSION HOURGLASS REVERSES THE 2026-08-29 "settled at
+    the bottom" LOOK.** It now uses `HourglassClaim`'s `progress` mode
+    (which already existed, built 2026-08-28): coins start in the TOP bulb
+    and drop one by one, newest through the neck, as the 8h session
+    elapses. `sessionProgress` = elapsed / session length, recomputed each
+    second off the existing `useCountdown` re-render. Still **purely
+    decorative** — it tracks elapsed TIME, never the real ROZI amount (the
+    countdown text is the exact figure), and `HOURGLASS_COIN_COUNT` stays a
+    fixed 14: the founder asked for "36 coins for a 36 speed", but 36 real
+    coins overflow the glass and a 0.004 claim would round to zero visible
+    coins — the same reason `HourglassClaim.tsx`'s header already gives for
+    not wiring the count to a number. `working` mode is left in the
+    component, now unused by any caller.
+  - **The ad-watch dwell is now Admin-tunable.** New `adMinWatchSeconds`
+    (default 15, `/staff → Mining`), used by `redeemAdNonce`,
+    `/mining/ad/issue` and the bot-pattern flag. The 15s server dwell was
+    **already enforced** — Monetag has no S2S postback, so this is the only
+    real "was it watched" check and always was (the honesty note in
+    `routes/mining.ts` is unchanged) — this just lets the floor be raised
+    without a redeploy.
+  - ⚠️ **THE AD BOOST IS A FLAT +1 SPEED PER AD NOW, NOT +100%.** It used
+    to double the miner's hashrate per ad (18 → 36 → 72…); ROZI came too
+    easily. `adBoostPct` 100 → **0**, new `adBoostFlat` = **1** added to the
+    hashrate AFTER every multiplier (`computeHashrate`'s new optional
+    `flatBonus`), `adBoostMaxStack` 3 → **4** so "watch four ads, mine four
+    faster" is the whole ceiling. `adBoostPct` survives as a separate,
+    still-tunable knob (set it > 0 for a percentage ad boost on top) but
+    ships at 0. `splitBoosts()` in `mining/engine.ts` routes `kind='ad'`
+    rows to the flat amount and ignores their stored `multiplier_pct`;
+    task/points boosts are unchanged percentages. The `/mine` breakdown row
+    shows `+50% · +4`; the ad card + `mine.ad.done` copy read `{flat}` from
+    the API, never an invented number.
+  - **Task boost (+50%/48h) left alone** — the founder was not specific and
+    it is "the most important number in the file" (it makes big miners do
+    surveys); tunable in `/staff` if it should come down. **Referral mining
+    hashrate untouched** — the founder started to raise it, then said "okay,
+    I got it" and moved on.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

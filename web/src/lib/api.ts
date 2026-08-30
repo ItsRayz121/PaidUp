@@ -1160,7 +1160,11 @@ export type MiningState = {
   hashrate: number;
   breakdown: {
     base: number; rigs: number; streakDays: number;
-    streakMultiplierPct: number; boostPct: number; referral: number;
+    streakMultiplierPct: number; boostPct: number;
+    // Flat speed added by watched ads (founder, 2026-08-30) — shown as "+N",
+    // separate from the "+X%" percentage boosts.
+    adFlatBonus: number;
+    referral: number;
   };
   sharesToday: number;
   estimatedRoziMicro: number;
@@ -1170,6 +1174,11 @@ export type MiningState = {
   ads: {
     enabled: boolean; watchedToday: number; dailyCap: number;
     boostPct: number; boostHours: number;
+    // Each watched ad adds this FLAT amount to mining speed (founder,
+    // 2026-08-30). The shipped config makes this the whole reward (boostPct 0).
+    boostFlat: number;
+    // Minimum seconds on the ad before the boost counts (Admin-tunable).
+    minWatchSeconds: number;
     // Show an ad around the start-mining tap. Soft: the server still starts
     // the session if no ad was shown.
     gateOnStart: boolean;
@@ -1227,7 +1236,7 @@ export const sendRozi = (to: string, amount: number) =>
 // Monetag had nothing to show — routine here at night — we start mining anyway.
 // An ad network outage must never stop someone mining or break their streak.
 export const startMining = (adNonce?: string) =>
-  apiFetch<{ ok: true; expiresAt: string; boost: { pct: number; hours: number } | null }>(
+  apiFetch<{ ok: true; expiresAt: string; boost: { pct: number; flat: number; hours: number } | null }>(
     "/mining/start", { method: "POST", body: JSON.stringify({ adNonce }) });
 
 // Collect settled-but-unclaimed ROZI into the real spendable balance. See the
@@ -1341,7 +1350,7 @@ export const fetchRoziHistory = () => apiFetch<{ entries: RoziEntry[] }>("/minin
 export const issueAd = () =>
   apiFetch<{ nonce: string; minSeconds: number }>("/mining/ad/issue", { method: "POST" });
 export const completeAd = (nonce: string) =>
-  apiFetch<{ ok: true; boostPct: number; hours: number }>(
+  apiFetch<{ ok: true; boostPct: number; boostFlat: number; hours: number }>(
     "/mining/ad/complete", { method: "POST", body: JSON.stringify({ nonce }) });
 
 // ---- Verify your ID (KYC) ---------------------------------------------------
