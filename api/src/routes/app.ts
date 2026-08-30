@@ -14,6 +14,7 @@ import { loadLeaderboard, maskName } from "../leaderboard.ts";
 import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
 import { campaignState, unavailableMessage } from "../taskLifecycle.ts";
+import { recordDevice } from "../fraud.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -451,7 +452,8 @@ export async function appRoutes(app: FastifyInstance) {
   // the first time an Admin edits a row. Everything the invite screens print
   // comes from here.
   app.get("/referrals/me", guard(async (userId) => {
-    const user = (await sql.get<UserRow>("SELECT referral_code FROM users WHERE id = ?", userId))!;
+    const user = (await sql.get<{ referral_code: string; referred_by: string | null }>(
+      "SELECT referral_code, referred_by FROM users WHERE id = ?", userId))!;
     // ::int — Postgres returns COUNT()/SUM() of integers as bigint, i.e. a string.
     const joined = await sql.get<{ n: number }>(
       "SELECT COUNT(*)::int AS n FROM referrals WHERE referrer_user_id = ?", userId,
@@ -487,6 +489,14 @@ export async function appRoutes(app: FastifyInstance) {
 
     return {
       code: user.referral_code,
+      // Whether the "add a friend's code" box is offered on the invite screen —
+      // only for a user nobody has invited yet. Checks BOTH the column and the
+      // edge table: signup writes both, but either one present means a bind
+      // would be refused, so the box must not be shown. Once set, a referrer is
+      // permanent (see POST /referrals/bind).
+      canBind: !user.referred_by && !(await sql.get(
+        "SELECT 1 FROM referrals WHERE referred_user_id = ?", userId,
+      )),
       joined: joined?.n ?? 0,
       joined2: joined2?.n ?? 0,
       earnedPoints: earned?.s ?? 0,
@@ -501,6 +511,88 @@ export async function appRoutes(app: FastifyInstance) {
         miningL2Pct: m.referralL2Pct,
       },
     };
+  }));
+
+  // Bind a friend's referral code AFTER signup.
+  //
+  // For a user nobody invited (no `referred_by`). From here on the inviter earns
+  // their configured share of this user's task points — out of margin, never out
+  // of this user's balance (credit.ts). It is NOT retroactive: tasks already
+  // credited stay as they were, and the first-task bonus only fires on a future
+  // credited task (see credit.ts).
+  //
+  // Binding is one-time and permanent: `referred_by` is never cleared, exactly
+  // as if the code had been used on the signup link.
+  app.post("/referrals/bind", guard(async (userId, req) => {
+    if (!(await flagEnabled("referrals"))) {
+      throw { statusCode: 403, message: "Invites are turned off right now." };
+    }
+    const parsed = z.object({ code: z.string().trim().min(1).max(64) })
+      .safeParse((req.body ?? {}) as unknown);
+    if (!parsed.success) throw { statusCode: 400, message: "Enter a referral code." };
+    const code = parsed.data.code.toUpperCase();
+
+    const me = await sql.get<{ referred_by: string | null; referral_code: string }>(
+      "SELECT referred_by, referral_code FROM users WHERE id = ?", userId,
+    );
+    if (!me) throw { statusCode: 404, message: "Account not found." };
+    const alreadyEdge = await sql.get("SELECT 1 FROM referrals WHERE referred_user_id = ?", userId);
+    if (me.referred_by || alreadyEdge) {
+      throw { statusCode: 409, message: "You have already added a referral code." };
+    }
+    if (code === me.referral_code.toUpperCase()) {
+      throw { statusCode: 400, message: "That is your own code." };
+    }
+
+    // Look up by referral_code ONLY — never by username/handle. A handle can be
+    // the lowercase twin of someone else's published invite code (see
+    // routes/profile.ts), and "send ROZI to" already had to be hardened against
+    // exactly that. Binding a referrer must not inherit the ambiguity.
+    const inviter = await sql.get<{ id: string }>(
+      "SELECT id FROM users WHERE referral_code = ?", code,
+    );
+    if (!inviter) throw { statusCode: 404, message: "That code does not match anyone." };
+    if (inviter.id === userId) throw { statusCode: 400, message: "That is your own code." };
+
+    // Cycle guard: the inviter must not already sit below you in the invite tree,
+    // or you would each be earning a share of the other's tasks forever. Walk up
+    // from the inviter following `referred_by`; if it reaches you, refuse.
+    let cursor: string | null = inviter.id;
+    for (let hops = 0; cursor && hops < 64; hops++) {
+      const up: { referred_by: string | null } | undefined = await sql.get(
+        "SELECT referred_by FROM users WHERE id = ?", cursor,
+      );
+      if (!up) break;
+      if (up.referred_by === userId) {
+        throw { statusCode: 409, message: "That person was invited by you." };
+      }
+      cursor = up.referred_by;
+    }
+
+    // users.referred_by and the referrals edge are written together, exactly as
+    // signup does it. referred_user_id is UNIQUE, so a race to bind twice fails
+    // the second INSERT and rolls back the whole transaction — the caught error
+    // is that race, not a bug.
+    try {
+      await sql.tx(async (t) => {
+        await t.run("UPDATE users SET referred_by = ? WHERE id = ?", inviter.id, userId);
+        await t.run(
+          "INSERT INTO referrals (id, referrer_user_id, referred_user_id, created_at, bonus_paid) VALUES (?,?,?,?,0)",
+          newId(), inviter.id, userId, now(),
+        );
+      });
+    } catch {
+      throw { statusCode: 409, message: "You have already added a referral code." };
+    }
+
+    // Re-run device/IP detection now that this user has a referrer — a
+    // late-bound self-referral must still raise a referral_ring flag
+    // (fraud.ts § 3), the same as one bound on the signup link.
+    const rawDev = req.headers["x-device-id"];
+    const deviceId = Array.isArray(rawDev) ? rawDev[0] : rawDev;
+    await recordDevice(userId, deviceId ? String(deviceId).slice(0, 100) : undefined, req.ip);
+
+    return { ok: true as const };
   }));
 
   // ---- CPX Research survey wall -------------------------------------------

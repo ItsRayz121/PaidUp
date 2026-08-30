@@ -361,6 +361,15 @@ const copy: Record<string, string> = {
   // No {link} here — Telegram's share screen attaches the link on its own.
   "refer.telegramShareText":
     "I earn real money on RoziPay, and I mine free ROZI every day. Join with my code {code} and we both get paid.",
+  // "Add a friend's code" — shown only to users nobody invited yet. Once added,
+  // it cannot be changed, so the copy says so before they tap.
+  "refer.bind.title": "Were you invited by a friend?",
+  "refer.bind.body": "Add their code so they get their share when you earn. It costs you nothing.",
+  "refer.bind.placeholder": "Friend's code",
+  "refer.bind.cta": "Add code",
+  "refer.bind.saving": "Adding…",
+  "refer.bind.done": "Code added. Your friend now earns a share when you do.",
+  "refer.bind.note": "You can only add a code once.",
   // inbox — messages from us to the user (brief part 39).
   //
   // ⚠️ THE COPY HERE CANNOT PROMISE ANYTHING, because it wraps text a staff

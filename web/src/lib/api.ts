@@ -349,6 +349,7 @@ export const submitTaskProof = (
 // screen that prints a stale 15% is an invite screen that lies.
 export type Referrals = {
   code: string;
+  canBind: boolean; // true if nobody invited this user yet — show the "add a code" box
   joined: number;   // friends you invited
   joined2: number;  // friends THEY invited
   earnedPoints: number;
@@ -361,6 +362,9 @@ export type Referrals = {
   };
 };
 export const fetchReferrals = () => apiFetch<Referrals>("/referrals/me");
+// Bind a friend's code after signup — only works while Referrals.canBind is true.
+export const bindReferral = (code: string) =>
+  apiFetch<{ ok: true }>("/referrals/bind", { method: "POST", body: JSON.stringify({ code }) });
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
 export const createWithdrawal = (amountPoints: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {

@@ -7,7 +7,7 @@ import { Loading, ErrorState } from "@/components/state";
 import { CopyIcon, ShareIcon, CheckIcon, GiftIcon, StarIcon, MineIcon, TelegramIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchReferrals, fetchTelegramConfig } from "@/lib/api";
+import { fetchReferrals, fetchTelegramConfig, bindReferral } from "@/lib/api";
 import { formatPointsAsRozi } from "@/lib/format";
 
 export default function ReferPage() {
@@ -16,6 +16,10 @@ export default function ReferPage() {
   const ref = useApi(fetchReferrals, []);
   const tg = useApi(fetchTelegramConfig, []);
   const [copied, setCopied] = useState<"web" | "tg" | null>(null);
+  const [bindCode, setBindCode] = useState("");
+  const [binding, setBinding] = useState(false);
+  const [bindErr, setBindErr] = useState<string | null>(null);
+  const [bound, setBound] = useState(false);
 
   if (!ready || ref.loading) return <div className="p-4 pt-6"><Loading /></div>;
   if (ref.error) return <div className="p-4 pt-6"><ErrorState message={ref.error} onRetry={ref.reload} /></div>;
@@ -39,6 +43,19 @@ export default function ReferPage() {
   async function share() {
     if (navigator.share) { try { await navigator.share({ title: "Join RoziPay", text: message, url: link }); } catch {} }
     else { copy("web", link); }
+  }
+  async function bind() {
+    setBinding(true);
+    setBindErr(null);
+    try {
+      await bindReferral(bindCode.trim());
+      setBound(true);
+      ref.reload();
+    } catch (e) {
+      setBindErr((e as Error).message);
+    } finally {
+      setBinding(false);
+    }
   }
   function shareTelegram() {
     // t.me/share opens Telegram's own "send to a chat" picker with the invite.
@@ -113,6 +130,47 @@ export default function ReferPage() {
         </Card>
       )}
 
+      {/* "Add a friend's code" — only for a user nobody invited yet. Sits in the
+          invite area on purpose: it is the other half of the same relationship,
+          and a user who was invited by WhatsApp screenshot never got to enter a
+          code at signup. One-time and permanent, so the copy says so. */}
+      {ref.data?.canBind && (
+        <Card className="p-4">
+          {bound ? (
+            <p className="flex items-center gap-2 text-sm font-semibold text-success">
+              <CheckIcon size={18} /> {t("refer.bind.done")}
+            </p>
+          ) : (
+            <>
+              <p className="font-semibold text-brand-ink">{t("refer.bind.title")}</p>
+              <p className="mt-0.5 text-sm text-muted">{t("refer.bind.body")}</p>
+              <div className="mt-3 flex gap-2.5">
+                <input
+                  value={bindCode}
+                  onChange={(e) => setBindCode(e.target.value)}
+                  placeholder={t("refer.bind.placeholder")}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="num min-w-0 flex-1 rounded-xl border border-line bg-card p-3 uppercase text-brand-ink outline-none focus:border-brand"
+                />
+                <Button
+                  variant="primary"
+                  size="md"
+                  full={false}
+                  onClick={bind}
+                  disabled={binding || bindCode.trim() === ""}
+                >
+                  {binding ? t("refer.bind.saving") : t("refer.bind.cta")}
+                </Button>
+              </div>
+              {bindErr && <p className="mt-2 text-sm text-danger">{bindErr}</p>}
+              <p className="mt-2 text-xs text-muted">{t("refer.bind.note")}</p>
+            </>
+          )}
+        </Card>
+      )}
+
       {/* Three stats, not two. "Their friends" is shown even at zero, because a
           number nobody knows exists is a reward nobody chases — the second level
           has been paying since launch with no counter anywhere. */}
@@ -122,11 +180,14 @@ export default function ReferPage() {
         <Stat label={t("refer.pointsEarned")} value={formatPointsAsRozi(ref.data?.earnedPoints ?? 0)} accent />
       </div>
 
+      {/* Leaderboard sits ABOVE the reward breakdown (founder, 2026-08-30):
+          social proof — "people are really earning here" — lands better before
+          the fine print of how the split works than after it. */}
+      <Button href="/leaderboard" variant="ghost">🏆 {t("leaderboard.seeLeaderboard")}</Button>
+
       {/* The full offer: both levels, the first-task bonus and the mining speed,
           in one place. No CTA — the share buttons are already above it. */}
       {rewards && <InviteRewards rewards={rewards} />}
-
-      <Button href="/leaderboard" variant="ghost">🏆 {t("leaderboard.seeLeaderboard")}</Button>
 
       <section>
         <h2 className="mb-2 px-1 text-base font-bold text-brand-ink">{t("refer.howItWorks")}</h2>

@@ -47,6 +47,16 @@ const me = async (userId: string) => {
   });
   return { status: res.statusCode, body: res.json() };
 };
+const bind = async (userId: string, code: string) => {
+  const res = await app.inject({
+    method: "POST", url: "/referrals/bind",
+    headers: { authorization: `Bearer ${jwt.sign({ sub: userId }, config.jwtSecret)}` },
+    payload: { code },
+  });
+  return { status: res.statusCode, body: res.json() };
+};
+const codeOf = async (userId: string) =>
+  (await sql.get<{ c: string }>("SELECT referral_code AS c FROM users WHERE id = ?", userId))!.c;
 
 // PGlite persists between runs, so the network rows this test writes are torn
 // down at the end — otherwise the SECOND run reads the first run's leftovers.
@@ -129,6 +139,54 @@ await postLedger({
 r = await me(alice);
 check("earnedPoints sums the referral_bonus ledger rows", r.body.earnedPoints === 250,
   `got ${r.body.earnedPoints}`);
+
+console.log("\n-- binding a friend's code after signup --");
+
+// canBind reflects "nobody invited me yet".
+r = await me(alice);
+check("canBind is true for a user with no referrer", r.body.canBind === true);
+r = await me(bob);
+check("canBind is false once someone invited you", r.body.canBind === false);
+
+const frank = await mkUser("frank");
+const aliceCode = await codeOf(alice);
+
+// Self-bind is refused, by code and by id-behind-the-code.
+let b = await bind(frank, await codeOf(frank));
+check("cannot bind your own code", b.status === 400, `status=${b.status}`);
+
+b = await bind(frank, "NOSUCHCODE99");
+check("unknown code is 404", b.status === 404, `status=${b.status}`);
+
+b = await bind(frank, aliceCode.toLowerCase());
+check("binding a real code succeeds (case-insensitive)", b.status === 200 && b.body.ok === true,
+  `status=${b.status} body=${JSON.stringify(b.body)}`);
+
+const frankRow = await sql.get<{ referred_by: string | null }>(
+  "SELECT referred_by FROM users WHERE id = ?", frank);
+check("users.referred_by is set to the inviter", frankRow?.referred_by === alice);
+const edge = await sql.get<{ n: number }>(
+  "SELECT COUNT(*)::int AS n FROM referrals WHERE referrer_user_id = ? AND referred_user_id = ?",
+  alice, frank);
+check("a referrals edge row was written", edge?.n === 1);
+
+r = await me(frank);
+check("canBind flips to false after binding", r.body.canBind === false);
+r = await me(alice);
+check("the inviter's friend count goes up", r.body.joined === 3, `got ${r.body.joined}`);
+
+b = await bind(frank, await codeOf(dave));
+check("cannot bind a second time", b.status === 409, `status=${b.status}`);
+
+b = await bind(bob, await codeOf(dave));
+check("a user who was already referred cannot bind", b.status === 409, `status=${b.status}`);
+
+// Cycle: bob sits below alice, so alice binding bob's code would make them each
+// earn off the other.
+const grace = await mkUser("grace");
+await bind(grace, aliceCode);            // grace -> alice
+b = await bind(alice, await codeOf(grace));
+check("a descendant's code is refused (cycle guard)", b.status === 409, `status=${b.status}`);
 
 await cleanupNets();
 console.log(`\n${pass} passed, ${fail} failed`);
