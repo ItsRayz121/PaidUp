@@ -231,8 +231,9 @@ least one session.
 
 ### 4.4 Task multiplier — the link to real revenue
 A **credited** task/survey completion (CPX or any network, via the existing
-verified postback path) grants **+50% hashrate for 48 hours**, stacking up to
-`task_boost_max_stack` (default 3) → up to **2.5×**.
+verified postback path) grants **+25% hashrate for 48 hours** (founder,
+2026-08-30 — halved from +50%), stacking up to `task_boost_max_stack`
+(default 8, raised from 3 the same day) → up to **3.0×**.
 
 This is the most important line in the spec. It means the highest-hashrate miners
 are the people doing the surveys that actually pay us. Mining does not cannibalise
