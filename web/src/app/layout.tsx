@@ -67,6 +67,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             on many Pakistani networks, and a blocked beforeInteractive script
             stalls the page for everyone. lib/telegram.ts reads the Mini App's
             initData straight from the URL fragment instead. */}
+        {/* Applies the saved look ("vault" = the dark skin) BEFORE first paint,
+            so a user who chose it never sees a flash of the light theme. Kept
+            in sync afterwards by lib/theme.tsx; the key must match
+            THEME_STORAGE_KEY there. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{if(localStorage.getItem('rozipay-theme')==='vault')document.documentElement.dataset.theme='vault'}catch(e){}",
+          }}
+        />
         <Shell>{children}</Shell>
       </body>
     </html>

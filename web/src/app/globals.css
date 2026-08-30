@@ -367,3 +367,160 @@ body {
   .ambient-bg .ab-blob { animation: none; }
   .ambient-bg .ab-motes i { animation: none; opacity: 0.16; }
 }
+
+/* ============================================================
+   THEME: Deep Vault  (design direction A — "the Wallet look")
+   ============================================================
+   A user-switchable dark skin for the EARNER app, off by default.
+   Set from /profile/settings; persisted in localStorage and applied
+   as data-theme="vault" on <html> by a blocking script in layout.tsx
+   (so there is no flash of the light theme on load).
+
+   ⚠️ This reopens the "app is light-only" founder call (DESIGN_BRIEF /
+   CLAUDE.md). It is opt-in, per-device, and reversible — the light skin
+   is still the default and nothing about the two ledgers, the copy, or
+   any guardrail changes with the colours.
+
+   HOW IT WORKS: Tailwind v4 emits every `--color-*` from `@theme` as a
+   CSS variable that the utilities read via var(). Redefining those
+   variables on `.app-frame` re-skins every `bg-card` / `text-ink` /
+   `border-line` inside the earner shell at once — with NO per-screen
+   edits. The staff panel is NOT wrapped in `.app-frame`, so it is
+   untouched and stays light (it writes its colours inline anyway). */
+:root[data-theme="vault"] .app-frame {
+  --color-brand: #16bdb6;        /* bright teal — luminous on a dark ground */
+  --color-brand-ink: #f2fbf8;    /* near-white — headings, big numbers */
+  --color-brand-tint: #103439;   /* dark teal panel — chips, tiles, pills */
+
+  --color-accent: #f5a623;       /* marigold, unchanged — the one reward colour */
+  --color-accent-ink: #f6d59a;   /* light marigold — text on the dark accent tint */
+  --color-accent-tint: #241d0b;
+
+  --color-success: #3ad29a;
+  --color-success-tint: #0d2b22;
+  --color-pending: #e0a94a;
+  --color-pending-tint: #2a2412;
+  --color-danger: #f0857a;
+  --color-danger-tint: #2e1512;
+
+  --color-ink: #e6f1ef;
+  --color-muted: #8aa6a4;         /* AA on the dark card */
+  --color-line: #1e3a3f;
+  --color-bg: #07161a;
+  --color-card: #0e2429;
+
+  color-scheme: dark;
+  background:
+    radial-gradient(1100px 620px at 12% -8%, rgba(22, 189, 182, 0.14), transparent 60%),
+    radial-gradient(900px 520px at 100% 4%, rgba(245, 166, 35, 0.08), transparent 55%),
+    #0b1517;
+}
+:root[data-theme="vault"] body {
+  background: #0b1517;
+}
+
+/* Solid brand / accent / status surfaces carry DARK text in this skin —
+   white on bright teal, marigold or bright green fails contrast (the mockup
+   uses near-black ink on all of them). `[class*="text-white"]` also catches
+   text-white/70 etc. without CSS-escaping the slash. Scoped tight so the
+   light skin is untouched; the TINT surfaces (bg-*-tint) are unaffected and
+   keep their light-ink tokens. */
+:root[data-theme="vault"] .app-frame .bg-brand,
+:root[data-theme="vault"] .app-frame .bg-brand [class*="text-white"],
+:root[data-theme="vault"] .app-frame .bg-accent,
+:root[data-theme="vault"] .app-frame .bg-accent [class*="text-brand-ink"],
+:root[data-theme="vault"] .app-frame .bg-success,
+:root[data-theme="vault"] .app-frame .bg-success [class*="text-white"],
+:root[data-theme="vault"] .app-frame .bg-danger,
+:root[data-theme="vault"] .app-frame .bg-danger [class*="text-white"] {
+  color: #06231f;
+}
+
+/* The faint circuit texture in AmbientBg is drawn with a dark stroke —
+   invisible on a dark ground. Swap it for a light one. */
+:root[data-theme="vault"] .app-frame .ambient-bg .ab-grid {
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46' viewBox='0 0 46 46'%3E%3Cg fill='none' stroke='%23bfeeea' stroke-width='1'%3E%3Cpath d='M0 23h13m7 0h6m7 0h13M23 0v13m0 7v6m0 7v13'/%3E%3Ccircle cx='23' cy='23' r='3'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ============================================================
+   Balance hero sheen — a slow light sweep across the big number
+   on Home. Pure CSS, purely decorative: it never touches the
+   number itself, so it cannot imply the balance is moving. Works
+   in both skins. Frozen for reduced-motion.
+   ============================================================ */
+@keyframes hero-sheen {
+  0%, 70% { transform: translateX(-130%); }
+  86%, 100% { transform: translateX(130%); }
+}
+.hero-balance { position: relative; overflow: hidden; }
+.hero-balance::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.42) 50%, transparent 62%);
+  transform: translateX(-130%);
+  animation: hero-sheen 5.4s ease-in-out 1.2s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-balance::after { animation: none; opacity: 0; }
+}
+
+/* ============================================================
+   Mining reactor — the live "core" on /mine's speed panel
+   (design direction A). Rotating ring + breathing core + pulse
+   rings while a session runs; paused and desaturated when idle.
+   Reflects session state that is ALREADY true (same rule as the
+   .mining-chamber rings) — it never stands in for the ROZI
+   figure, which the copy states exactly. See components/MiningReactor.tsx.
+   ============================================================ */
+@keyframes reactor-spin { to { transform: rotate(360deg); } }
+@keyframes reactor-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(22, 189, 182, 0.5); }
+  50% { transform: scale(1.06); box-shadow: 0 0 24px rgba(22, 189, 182, 0.8); }
+}
+@keyframes reactor-ring {
+  0% { transform: scale(0.7); opacity: 0.5; }
+  100% { transform: scale(1.85); opacity: 0; }
+}
+.reactor { position: relative; display: grid; place-items: center; }
+.reactor .r-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid var(--color-brand);
+  opacity: 0;
+  animation: reactor-ring 2.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+.reactor .r-ring:nth-child(2) { animation-delay: 0.9s; }
+.reactor .r-ring:nth-child(3) { animation-delay: 1.8s; }
+.reactor .r-spin {
+  position: absolute;
+  inset: 6px;
+  border-radius: 9999px;
+  background: conic-gradient(from 0deg, transparent, #48e6db, transparent 55%, var(--color-accent), transparent);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  animation: reactor-spin 3.6s linear infinite;
+  opacity: 0.9;
+}
+.reactor .r-core {
+  width: 46%;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 38% 34%, #7ff4ec, var(--color-brand) 46%, #0d5c63);
+  animation: reactor-breathe 2.8s ease-in-out infinite;
+}
+.reactor.is-idle .r-spin,
+.reactor.is-idle .r-ring { animation-play-state: paused; opacity: 0.2; }
+.reactor.is-idle .r-core {
+  animation: none;
+  filter: saturate(0.6);
+  box-shadow: 0 0 10px rgba(22, 189, 182, 0.25);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reactor .r-ring, .reactor .r-spin, .reactor .r-core { animation: none; }
+  .reactor .r-spin { opacity: 0.5; }
+  .reactor .r-ring { opacity: 0.14; }
+}

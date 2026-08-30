@@ -9,6 +9,7 @@ import {
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
 import { HourglassClaim } from "@/components/HourglassClaim";
+import { MiningReactor } from "@/components/MiningReactor";
 import { AmbientBg } from "@/components/AmbientBg";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
@@ -306,7 +307,11 @@ export default function MinePage() {
         )}
 
         <div className="mt-4 rounded-xl bg-brand-tint/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          {/* The live core — spins while a session runs, sits still and dim
+              when idle. Decorative and state-reflecting only (same rule as the
+              mining-chamber rings); the numbers below are the exact figures. */}
+          <MiningReactor active={s.session.active} size={84} />
+          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted">
             {t("mine.hashrate")}
           </p>
           <p className="num text-3xl font-extrabold text-brand">

@@ -18,6 +18,7 @@ import { Loading, ErrorState } from "@/components/state";
 import { ArrowRightIcon, ProfileIcon, LockIcon, CheckIcon } from "@/components/icons";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ConnectEmailCard } from "@/components/ConnectEmailCard";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -314,6 +315,17 @@ export default function ProfileSettingsPage() {
             <ArrowRightIcon size={20} className="shrink-0 text-brand" />
           </Card>
         </Link>
+      </div>
+
+      {/* ---- Look ----
+          Two design directions the founder asked to see built: the light app
+          as shipped, and a dark "Wallet look". A per-device colour choice,
+          applied the instant it is tapped (no Save) — see components/ThemeToggle
+          and lib/theme.tsx. */}
+      <div>
+        <SectionTitle>{t("settings.theme")}</SectionTitle>
+        <ThemeToggle />
+        <p className="mt-1.5 px-1 text-xs text-muted">{t("settings.theme.hint")}</p>
       </div>
 
       {saved && (

@@ -118,7 +118,10 @@ export default function HomePage() {
                 mid-balance, which makes the app's single most important number
                 look broken. clamp() keeps the full 48px on a normal phone and
                 shrinks it only where it would not fit. */}
-            <p className="num mt-1 text-[clamp(2.25rem,11vw,3rem)] font-extrabold leading-tight">
+            {/* hero-balance adds a slow light sweep across the number (CSS
+                only, globals.css). It never touches the value, so it cannot
+                imply the balance is moving; reduced-motion freezes it. */}
+            <p className="hero-balance num mt-1 text-[clamp(2.25rem,11vw,3rem)] font-extrabold leading-tight">
               {formatRozi(totalRoziMicro(minedMicro, points), HERO_DECIMALS)}{" "}
               <span className="text-2xl font-bold text-white/70">ROZI</span>
             </p>

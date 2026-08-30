@@ -6,6 +6,7 @@ import { TopBar } from "./TopBar";
 import { InstallPrompt } from "./InstallPrompt";
 import { TelegramBoot } from "./TelegramBoot";
 import { I18nProvider } from "@/lib/i18n";
+import { ThemeProvider } from "@/lib/theme";
 import { useInsideTelegram } from "@/lib/telegram";
 
 // Earner app = phone-framed (max 480) with bottom tabs.
@@ -32,15 +33,20 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return <div className="min-h-[100dvh] bg-bg">{children}</div>;
   }
 
+  // ThemeProvider only wraps the earner shell — the "vault" dark skin is scoped
+  // to `.app-frame` in globals.css, and the staff branch above is deliberately
+  // outside it.
   return (
-    <I18nProvider>
-      <div className="app-frame flex flex-col">
-        <TelegramBoot />
-        {chrome && <TopBar />}
-        <main className="flex-1">{children}</main>
-        {canPromptInstall && <InstallPrompt />}
-        {!isAuth && <BottomNav />}
-      </div>
-    </I18nProvider>
+    <ThemeProvider>
+      <I18nProvider>
+        <div className="app-frame flex flex-col">
+          <TelegramBoot />
+          {chrome && <TopBar />}
+          <main className="flex-1">{children}</main>
+          {canPromptInstall && <InstallPrompt />}
+          {!isAuth && <BottomNav />}
+        </div>
+      </I18nProvider>
+    </ThemeProvider>
   );
 }

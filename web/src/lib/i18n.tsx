@@ -115,6 +115,14 @@ const copy: Record<string, string> = {
   "settings.forgotPassword": "Forgot your password?",
   "settings.forgotPasswordHint": "Get a code by email to set a new one.",
   "settings.notifications": "Notifications",
+  // The look picker — two colour styles, applied straight away, saved on this
+  // phone only.
+  "settings.theme": "App look",
+  "settings.theme.hint": "This changes the colours on your phone only. It does not change your balance or anything else.",
+  "settings.theme.light": "Bright",
+  "settings.theme.light.desc": "Light background. The normal look.",
+  "settings.theme.vault": "Dark",
+  "settings.theme.vault.desc": "Dark background with a glowing balance. Easier on the eyes at night.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.nothing": "Nothing to save yet.",
