@@ -105,6 +105,41 @@ export function CopyId({ value, label }: { value: string; label?: string }) {
   );
 }
 
+// ---- address / hash (list view) -----------------------------------
+// Middle-truncated + click-to-copy. A list cell must NEVER render a full
+// 42/66-char address or tx hash with `break-all` — squeezed into a narrow
+// column it wraps one character per line and the row becomes a wall (caught on
+// the failed-relay queue, 2026-08-30). The full value stays one tap away in the
+// row's detail view, and on hover via the title.
+export function Addr({ value, lead = 8, tail = 6 }: { value?: string | null; lead?: number; tail?: number }) {
+  const [done, setDone] = useState(false);
+  if (!value) return <span className="text-muted">—</span>;
+  const short = value.length > lead + tail + 1 ? `${value.slice(0, lead)}…${value.slice(-tail)}` : value;
+  return (
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try { await navigator.clipboard?.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* no clipboard */ }
+      }}
+      title={value}
+      className="num inline-flex items-center gap-1 whitespace-nowrap rounded bg-brand-tint/40 px-1.5 py-0.5 text-xs text-brand hover:bg-brand-tint"
+    >
+      <span>{short}</span>
+      <span className="text-[10px] text-muted">{done ? "✓" : "copy"}</span>
+    </button>
+  );
+}
+
+// ---- long error text (list view) --------------------------------
+// A relay / payout error can be a whole paragraph. Show two lines with an
+// ellipsis and the full text on hover; the row's detail view carries it in
+// full.
+export function ErrText({ value }: { value?: string | null }) {
+  if (!value) return <span className="text-muted">—</span>;
+  return <div title={value} className="line-clamp-2 max-w-[20rem] text-xs text-danger">{value}</div>;
+}
+
 // ---- shared list states --------------------------------------------
 export function NoPermission({ what = "this" }: { what?: string }) {
   return (

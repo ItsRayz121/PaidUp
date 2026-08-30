@@ -16,7 +16,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId } from "./primitives";
+import { StatusBadge, TimeCell, CopyId, Addr, ErrText } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
@@ -246,7 +246,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       key: "address", header: "Send to", csv: (r) => r.address ?? "",
       render: (r) => r.address ? (
         <div>
-          <span className="num break-all text-xs text-brand">{r.address}</span>
+          <Addr value={r.address} />
           <div className={`mt-0.5 text-xs font-semibold ${r.addressVerified ? "text-success" : "text-pending"}`}>
             {r.addressVerified ? "✓ signed by the user's wallet" : "not checked — typed in"}
           </div>
@@ -384,7 +384,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
     },
     { key: "amount", header: "Claimed", align: "right", sortable: true, csv: (r) => r.amount, render: (r) => <span className="num">{r.amount} USDT</span> },
     { key: "chain", header: "Chain", csv: (r) => r.chain, render: (r) => <span className="uppercase">{r.chain}</span> },
-    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <span className="num break-all text-xs">{r.tx_hash}</span> },
+    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <Addr value={r.tx_hash} /> },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.created_at, render: (r) => <TimeCell iso={r.created_at} /> },
     { key: "actions", header: "", render: actionsFor },
@@ -515,7 +515,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
       key: "address", header: "Send to", csv: (r) => r.address,
       render: (r) => (
         <div>
-          <span className="num break-all text-xs">{r.address}</span>
+          <Addr value={r.address} />
           <div className={`mt-0.5 text-xs font-semibold ${r.addressVerified ? "text-success" : "text-pending"}`}>
             {r.addressVerified ? "signed by the user's wallet" : "not checked — typed in"}
           </div>
@@ -603,10 +603,10 @@ export function BnbWithdrawalsPanel() {
       ),
     },
     { key: "amount", header: "Amount", align: "right", csv: (r) => r.amountWei, render: (r) => <span className="num">{formatBnbWei(r.amountWei)} BNB</span> },
-    { key: "address", header: "To", csv: (r) => r.address, render: (r) => <span className="num break-all text-xs">{r.address}</span> },
+    { key: "address", header: "To", csv: (r) => r.address, render: (r) => <Addr value={r.address} /> },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "attempts", header: "Tries", align: "right", csv: (r) => r.attempts, render: (r) => <span className="num">{r.attempts}</span> },
-    { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <span className="text-xs text-danger">{r.lastError ?? "—"}</span> },
+    { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <ErrText value={r.lastError} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.at, render: (r) => <TimeCell iso={r.at} /> },
   ];
 
@@ -689,10 +689,10 @@ export function RelayJobsPanel() {
       ),
     },
     { key: "amount", header: "Amount", align: "right", csv: (r) => r.amountMicro, render: (r) => <span className="num">{formatUsdtMicro(r.amountMicro)}</span> },
-    { key: "to", header: "To", csv: (r) => r.toAddress, render: (r) => <span className="num break-all text-xs">{r.toAddress}</span> },
+    { key: "to", header: "To", csv: (r) => r.toAddress, render: (r) => <Addr value={r.toAddress} /> },
     { key: "status", header: "Phase", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "attempts", header: "Tries", align: "right", csv: (r) => r.attempts, render: (r) => <span className="num">{r.attempts}</span> },
-    { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <span className="text-xs text-danger">{r.lastError ?? "—"}</span> },
+    { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <ErrText value={r.lastError} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.at, render: (r) => <TimeCell iso={r.at} /> },
   ];
 
@@ -757,11 +757,19 @@ export function RelayJobsPanel() {
 // ======================================================================
 // 6. Reconciliation history
 // ======================================================================
+const RECON_PREVIEW = 6;
+
 export function ReconciliationPanel() {
   const [auto, setAuto] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const data = useApi(() => fetchReconciliation("bep20", 60), [], true, auto ? QUEUE_POLL_MS : undefined);
   const snaps = data.data?.snapshots ?? [];
   const shortfalls = snaps.filter((s) => s.delta < 0).length;
+  // Show the newest handful and hide the rest behind "See more" — the check
+  // runs hourly, so 60 rows is a full-height wall nobody reads past row 6. The
+  // shortfall summary below still counts the whole window.
+  const shown = showAll ? snaps : snaps.slice(0, RECON_PREVIEW);
+  const hiddenCount = snaps.length - shown.length;
 
   return (
     <section className="mb-8">
@@ -798,7 +806,7 @@ export function ReconciliationPanel() {
                 </tr>
               </thead>
               <tbody>
-                {snaps.map((s, i) => (
+                {shown.map((s, i) => (
                   <tr key={i} className="border-t border-line">
                     <td className="p-2.5"><TimeCell iso={s.checked_at} /></td>
                     <td className="num p-2.5 text-right">{s.onchainBalance} USDT</td>
@@ -811,6 +819,12 @@ export function ReconciliationPanel() {
               </tbody>
             </table>
           </div>
+          {(hiddenCount > 0 || showAll) && (
+            <button onClick={() => setShowAll(!showAll)}
+              className="mt-2 text-xs font-semibold text-brand hover:underline">
+              {showAll ? "Show less" : `See more (${hiddenCount})`}
+            </button>
+          )}
         </>
       )}
     </section>
