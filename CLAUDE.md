@@ -2369,6 +2369,32 @@ These override convenience or speed at every step:
     hashrate untouched** — the founder started to raise it, then said "okay,
     I got it" and moved on.
 
+- **TASK BOOST HALVED, AND ITS STACK CEILING RAISED (founder, 2026-08-30,
+  follow-up to the phone-review pass above).** Two `mining/core.ts` default
+  changes plus one config bump, all Admin-tunable in `/staff → Mining`:
+  - **`taskBoostPct` 50 → 25.** One credited task is now +25% mining speed for
+    48h, not +50%. The founder's framing: "cut it by fifty percent" — ROZI was
+    coming too easily even after the ad-boost fix above. Stacking is still
+    additive-then-multiplicative, so a user at speed 17 who does one task mines
+    at 21 (×1.25) rather than 25 (×1.5).
+  - **`taskBoostMaxStack` 3 → 8.** The founder wanted "+25% for EVERY task,
+    even if more tasks are present" — so more tasks keep adding boost past
+    where the old +150% ceiling sat. ⚠️ **A hard cap still exists on purpose**
+    — it is the one anti-farm guardrail on task boosts (the
+    `a survey farm cannot stack boosts forever` e2e test) — it is just higher:
+    8 tasks ⇒ +200%, nothing beyond. The founder was offered "no cap at all"
+    and chose the raised-but-finite ceiling.
+  - **`adMinWatchSeconds` 15 → 20.** Raised alongside, since that dwell timer
+    is the ONLY "was the ad watched" check (Monetag has no S2S postback) — a
+    few more seconds is the only real friction on parking the tab open to farm
+    the flat ad boost. Tunable toward 30 in `/staff` if it is still farmed
+    once live.
+  - The `/mine` task-boost line reads `{pct}` from the API, so it now shows
+    "+25%" with no copy edit. One e2e assertion that hardcoded "×1.5" was
+    changed to derive the multiplier from `cfg.taskBoostPct`.
+  - Verified: api typecheck clean, `test:mining` 42/42, `test:mining:e2e`
+    63/63 (incl. "10 task boosts are capped at 8").
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

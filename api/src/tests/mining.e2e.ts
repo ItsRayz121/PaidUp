@@ -192,7 +192,8 @@ const boosted = await mkUser("boosted");
 const h0 = (await hashrateOf(boosted)).hashrate;
 await grantBoost(boosted, "task", cfg.taskBoostPct, 48);
 const hTask = (await hashrateOf(boosted)).hashrate;
-check(`a +${cfg.taskBoostPct}% task boost gives x1.5`, hTask === Math.floor(h0 * 1.5), `${h0} -> ${hTask}`);
+check(`a +${cfg.taskBoostPct}% task boost scales hashrate by that %`,
+  hTask === Math.floor(h0 * (1 + cfg.taskBoostPct / 100)), `${h0} -> ${hTask}`);
 // Founder, 2026-08-30: an ad is a FLAT +adBoostFlat, applied after the
 // multipliers — not a percentage. Its stored multiplier_pct is ignored.
 await grantBoost(boosted, "ad", cfg.adBoostPct, 4);

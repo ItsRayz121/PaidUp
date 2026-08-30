@@ -135,9 +135,21 @@ export const MINING_DEFAULTS = {
 
   // -- Task boost (§ 4.4). The most important number in the file: it is what
   //    makes the biggest miners also the people doing the surveys that pay us.
-  taskBoostPct: 50,
+  //
+  //    HALVED 50 -> 25 (founder, 2026-08-30). One task is now +25% speed for
+  //    48h. Still a real pull toward doing the surveys that pay us, without
+  //    ROZI coming too fast. All three knobs are Admin-tunable in
+  //    /staff -> Mining, no redeploy.
+  //
+  //    STACK CAP RAISED 3 -> 8 (founder, 2026-08-30, same pass): the founder
+  //    wanted "+25% for EVERY task, even if more tasks are present", so more
+  //    tasks keep adding boost well past where the old +150% ceiling sat.
+  //    A hard cap still exists on purpose — it is the one anti-farm guardrail
+  //    on task boosts (see the "a survey farm cannot stack boosts forever"
+  //    e2e test) — it is just higher: 8 tasks => +200%, and nothing beyond.
+  taskBoostPct: 25,
   taskBoostHours: 48,
-  taskBoostMaxStack: 3,
+  taskBoostMaxStack: 8,
 
   // -- Ad boost (§ 8.1). The reward for watching an ad is a BOOST, never
   //    currency — which is why a faked ad view cannot mint anything.
@@ -159,7 +171,14 @@ export const MINING_DEFAULTS = {
   // real check we have that an ad was actually watched (Monetag has no S2S
   // postback; see the honesty note in routes/mining.ts). Admin-tunable so it
   // can be raised without a redeploy; the floor an honest watcher must clear.
-  adMinWatchSeconds: 15,
+  //
+  // 20s (founder, 2026-08-30). Raised from 15 the same day the ad boost went
+  // flat: since this timer is the ONLY "was it watched" check, a few more
+  // seconds is the only real friction on parking the RoziPay tab open for the
+  // dwell and collecting the boost. Raise toward 30 in /staff → Mining if the
+  // boost is still being farmed once live; the cost is annoying honest
+  // watchers slightly.
+  adMinWatchSeconds: 20,
 
   // Capped on READ the SAME way taskBoostMaxStack caps task boosts (2026-08-12):
   // count active "ad" rows, drop any past the cap, newest first. It is what
