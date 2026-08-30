@@ -443,6 +443,24 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46' viewBox='0 0 46 46'%3E%3Cg fill='none' stroke='%23bfeeea' stroke-width='1'%3E%3Cpath d='M0 23h13m7 0h6m7 0h13M23 0v13m0 7v6m0 7v13'/%3E%3Ccircle cx='23' cy='23' r='3'/%3E%3C/g%3E%3C/svg%3E");
 }
 
+/* `--color-brand-ink` is near-white in this skin (it is heading text), but
+   TaskFlow's "Task started" overlay uses `bg-brand-ink` as a full-screen
+   SURFACE with white text on it — which would be white-on-white. Give that
+   one surface a real dark ground. */
+:root[data-theme="vault"] .app-frame .bg-brand-ink {
+  background-color: #07161a;
+}
+
+/* The claim / session hourglass (components/HourglassClaim.tsx) is a drawn
+   object with fixed wood + metal + glass colours. The dark metal caps and
+   the dark glass outline lose definition on the dark card — a thin light
+   rim on the whole illustration brings every edge back without touching the
+   SVG internals. The wrapper's own marigold "ready" glow is on `.hg-wrap`,
+   not the inner <svg>, so the two do not collide. */
+:root[data-theme="vault"] .app-frame .hg-wrap svg {
+  filter: drop-shadow(0 0 0.7px rgba(255, 255, 255, 0.6));
+}
+
 /* ============================================================
    Balance hero sheen — a slow light sweep across the big number
    on Home. Pure CSS, purely decorative: it never touches the
@@ -475,10 +493,14 @@ body {
    .mining-chamber rings) — it never stands in for the ROZI
    figure, which the copy states exactly. See components/MiningReactor.tsx.
    ============================================================ */
+/* Every animated property here is transform or opacity — they run on the
+   compositor, so the reactor stays smooth on a cheap phone. No box-shadow or
+   filter is animated (those repaint every frame); the core's glow is a
+   single static box-shadow. */
 @keyframes reactor-spin { to { transform: rotate(360deg); } }
 @keyframes reactor-breathe {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(22, 189, 182, 0.5); }
-  50% { transform: scale(1.06); box-shadow: 0 0 24px rgba(22, 189, 182, 0.8); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 @keyframes reactor-ring {
   0% { transform: scale(0.7); opacity: 0.5; }
@@ -504,12 +526,14 @@ body {
   mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
   animation: reactor-spin 3.6s linear infinite;
   opacity: 0.9;
+  will-change: transform;
 }
 .reactor .r-core {
   width: 46%;
   aspect-ratio: 1;
   border-radius: 9999px;
   background: radial-gradient(circle at 38% 34%, #7ff4ec, var(--color-brand) 46%, #0d5c63);
+  box-shadow: 0 0 18px rgba(22, 189, 182, 0.55);
   animation: reactor-breathe 2.8s ease-in-out infinite;
 }
 .reactor.is-idle .r-spin,
