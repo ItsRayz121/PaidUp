@@ -59,7 +59,8 @@ export function TxDetailSheet({ row, onClose }: { row: Row; onClose: () => void 
           )}
         </div>
 
-        {(row.status === "pending" || row.status === "sending") && (
+        {(row.status === "pending" || row.status === "sending") &&
+          (row.token === "USDT" || row.token === "BNB") && (
           <p className="text-xs text-muted">{t("wallet.tx.eta")}</p>
         )}
 

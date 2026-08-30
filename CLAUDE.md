@@ -2326,6 +2326,9 @@ These override convenience or speed at every step:
     row. No layout change, no bigger card. Deposits and withdrawals settle
     in a few minutes now; the founder's ask was purely the reassurance copy
     so a "Processing" row for 20 minutes does not read as stuck.
+    ⚠️ **Scoped to USDT/BNB rows only** (cross-check pass): the wait it
+    describes is blockchain settlement, not a staff review queue, so it must
+    not appear on a task-points row that is ever `pending`.
   - ⚠️ **THE `/mine` SESSION HOURGLASS REVERSES THE 2026-08-29 "settled at
     the bottom" LOOK.** It now uses `HourglassClaim`'s `progress` mode
     (which already existed, built 2026-08-28): coins start in the TOP bulb
@@ -2353,8 +2356,10 @@ These override convenience or speed at every step:
     `flatBonus`), `adBoostMaxStack` 3 → **4** so "watch four ads, mine four
     faster" is the whole ceiling. `adBoostPct` survives as a separate,
     still-tunable knob (set it > 0 for a percentage ad boost on top) but
-    ships at 0. `splitBoosts()` in `mining/engine.ts` routes `kind='ad'`
-    rows to the flat amount and ignores their stored `multiplier_pct`;
+    ships at 0. `splitBoosts()` in `mining/engine.ts` adds `adBoostFlat` per
+    capped `kind='ad'` row AND still passes through that row's stored
+    `multiplier_pct` when it is non-zero (cross-check pass — the first cut
+    dropped it, which would have made the "still-tunable" claim a lie);
     task/points boosts are unchanged percentages. The `/mine` breakdown row
     shows `+50% · +4`; the ad card + `mine.ad.done` copy read `{flat}` from
     the API, never an invented number.

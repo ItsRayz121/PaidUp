@@ -23,8 +23,11 @@ export function HistoryList({ rows, onOpen }: { rows: Row[]; onOpen: (row: Row) 
                   <p className="font-semibold text-brand-ink leading-snug">{e.label}</p>
                   <p className="text-xs text-muted">{timeAgo(e.at)}</p>
                   {/* Money still on its way — a quiet "this is normal" line so a
-                      "Processing" row for 20 minutes does not read as stuck. */}
-                  {(e.status === "pending" || e.status === "sending") && (
+                      "Processing" row for 20 minutes does not read as stuck.
+                      USDT/BNB only: the wait it describes is blockchain
+                      settlement, not a staff review queue. */}
+                  {(e.status === "pending" || e.status === "sending") &&
+                    (e.token === "USDT" || e.token === "BNB") && (
                     <p className="text-xs text-muted">{t("wallet.tx.eta")}</p>
                   )}
                 </div>

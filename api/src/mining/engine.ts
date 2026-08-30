@@ -80,11 +80,15 @@ function boostStackCaps(s: MiningSettings): Record<string, number> {
 }
 
 // Split a set of already-stack-capped boost rows into the two things
-// computeHashrate() wants: the PERCENTAGE multipliers (task, points), and the
-// FLAT hashrate the ad boosts add (founder, 2026-08-30 — each active ad row is
-// worth `adBoostFlat`, not its stored multiplier_pct). Ad rows are counted, not
-// summed by pct: the row's pct is 0 in the shipped config and the reward is the
-// flat amount per capped row.
+// computeHashrate() wants: the PERCENTAGE multipliers, and the FLAT hashrate the
+// ad boosts add (founder, 2026-08-30 — each active ad row is worth
+// `adBoostFlat`, applied after the multipliers).
+//
+// An ad row contributes the flat amount FROM SETTINGS (so retuning adBoostFlat
+// affects boosts already running, like the stack cap does), plus its own stored
+// multiplier_pct if that is non-zero — which is 0 in the shipped config, so ads
+// are flat-only by default, but an Admin who sets adBoostPct > 0 gets a genuine
+// percentage on top rather than a knob that silently does nothing.
 function splitBoosts(
   cappedRows: { kind: string; multiplier_pct: number }[], s: MiningSettings,
 ): { pcts: number[]; flatBonus: number } {
@@ -92,7 +96,7 @@ function splitBoosts(
   let adCount = 0;
   for (const r of cappedRows) {
     if (r.kind === "ad") adCount++;
-    else pcts.push(r.multiplier_pct);
+    if (r.multiplier_pct > 0) pcts.push(r.multiplier_pct);
   }
   return { pcts, flatBonus: adCount * s.adBoostFlat };
 }
