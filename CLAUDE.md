@@ -2451,6 +2451,61 @@ These override convenience or speed at every step:
   - Verified with the theme commit in place: web `tsc --noEmit` clean,
     `eslint` 0 errors, `next build` clean (36 routes). Not browser-reviewed.
 
+- **THE DASHBOARD SHOWS PROGRESS, NOT JUST A RED COUNT — AND FRAUD FLAGS /
+  TREASURY SHORTFALL / FAILED RELAY JOBS GET REAL FIXES (founder, 2026-08-30).**
+  The founder's three complaints from the live `/staff#dashboard`: resolved
+  fraud flags still showed as open, "treasury shortfall (bep20: −2.00)" was
+  unexplained and unfixable from the panel, and a "payout relay job failed"
+  tile with no way to clear it. Root cause of the recurring flag: the hourly
+  `deposits/reconcile.ts` re-creates a `reconciliation_mismatch` fraud flag
+  every hour the shortfall exists, and `flagOnce` only dedupes among
+  *unresolved* rows — so resolving it guarantees a fresh one next tick. Fix the
+  shortfall and the flag stops. Verified: `npm run test:moneyadmin` now **48**
+  (+17 — the handled endpoints + the USDT-adjust reconciliation path incl.
+  cap/zero/permission/goes-negative cases), `test:analytics` **46** (+1, the
+  `{ open, cleared }` signal shape), `test:stage4` (48), `test:usersadmin`
+  (50), `test:admin` (15), `test:permissions` (16), `test:stage6` (70),
+  `test:stage7` (78), `test:usdt` (85), `test:wallet` (52), `test:deposits`
+  (37) all green; api + web typecheck, eslint, web production build (36 routes)
+  clean.
+  - **`GET /staff/dashboard` — the four signals you can work to zero carry
+    `{ open, cleared }`, not a bare count.** `fraudOpen`, `relayFailed`,
+    `bnbFailed`, `reconciliationShortfall` each report how many are still open
+    and how many were cleared in the last 7 days. `DashboardOverview.tsx` shows
+    the tile **red only while `open > 0`**, **green ("✓ all N cleared") once
+    `open === 0 && cleared > 0`**, plain otherwise, with a
+    "N total · N cleared · N open" sub-line — the founder's own "5 frauds, 3
+    checked, 2 left" framing. The other six tiles are self-clearing queues and
+    stay simple counts. Every tile now deep-links to its actual panel
+    (`goToSection` gained an optional anchor → routed through the existing
+    `goToDest` scroll), so "click Open fraud flags" lands **on** the fraud
+    panel, not just the section.
+  - ⚠️ **`resolved_at` added to `fraud_flags`** (backfilled from `created_at`
+    for already-resolved rows), stamped by `POST /staff/fraud/:id/resolve`.
+    `handled_at`/`handled_by`/`handled_note` added to `payout_relay_jobs` and
+    `bnb_withdrawal_requests`.
+  - **`POST /staff/relay-jobs/:id/handled` + `POST /staff/bnb-withdrawals/:id/handled`**
+    (`withdrawals.decide`) — a staff acknowledgement, **not a retry and not a
+    money move**. A failed relay job is terminal: a refund that gave up before
+    value moved was already auto-credited back by the tick; a withdrawal whose
+    prefund leg confirmed is settled on-chain. This just records "a human
+    checked which case it was" and takes the row out of the red count. Only a
+    `failed` row, once each. Surfaced as a "Mark as handled" button in the
+    Money → Payout relay jobs / BNB withdrawals detail Danger zone; the row
+    stays listed, now green with the note.
+  - **`POST /staff/users/:id/usdt-adjust`** (`users.adjust`, admin-tier) —
+    posts a `usdt_ledger` `admin_adjustment` (append-only, advisory-locked,
+    audit-logged `usdt_adjusted`, capped $200/call, `chain` defaults `bep20`).
+    ⚠️ **UNLIKE the points adjust, a debit MAY take the balance negative — on
+    purpose**: the recorded balance was wrong and the true entitlement is
+    lower. This is the fix for the −2.00 shortfall (the 2026-08-12
+    double-credit residue): post a −2.00 debit to the affected test user and
+    the hourly check stops flagging, which stops the recurring fraud flag. New
+    "Adjust USDT" button in the User 360 Danger zone next to Adjust points /
+    Adjust ROZI. ⚠️ **There is still no *automatic* reconciliation correction**
+    — a human identifies the user (join `usdt_topups`↔`chain_deposits` on
+    `tx_hash`) and posts the adjustment.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

@@ -212,7 +212,7 @@ export default function StaffPage() {
         <nav className="sticky top-20 hidden w-44 shrink-0 space-y-1 md:block">{nav}</nav>
 
         <main className="min-w-0 flex-1">
-        <StaffNavContext.Provider value={{ goToSection: go, openUser: openLedger }}>
+        <StaffNavContext.Provider value={{ goToSection: goToDest, openUser: openLedger }}>
           {/* Map of what's in the current section — jumps to each panel. */}
           {section && <SectionToc section={section} has={may} onJump={(a) => goToDest(section, a)} />}
           {section === "dashboard" && may("analytics.view") && (
@@ -258,10 +258,10 @@ export default function StaffPage() {
                   native send / relay job is terminal and needs a human on the
                   chain, not a retry button. */}
               {may("withdrawals.view") && (
-                <Panel id="p-bnb-withdrawals" title="BNB withdrawals"><BnbWithdrawalsPanel /></Panel>
+                <Panel id="p-bnb-withdrawals" title="BNB withdrawals"><BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /></Panel>
               )}
               {may("withdrawals.view") && (
-                <Panel id="p-relay-jobs" title="Payout relay jobs"><RelayJobsPanel /></Panel>
+                <Panel id="p-relay-jobs" title="Payout relay jobs"><RelayJobsPanel canHandle={may("withdrawals.decide")} /></Panel>
               )}
               {/* The treasury (hot) wallet: where payouts are sent from. */}
               {may("treasury.view") && <Panel id="p-treasury" title="Treasury wallet"><TreasuryPanel /></Panel>}

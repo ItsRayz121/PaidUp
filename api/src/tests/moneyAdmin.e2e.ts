@@ -211,6 +211,94 @@ console.log("\n-- payout relay jobs: new read-only queue --");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- mark a failed relay job / BNB withdrawal handled --");
+{
+  const u = await mkUser("handle-user");
+  const jobId = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address, amount_micro, needs_prefund, status, last_error, created_at)
+     VALUES (?, 'refund', ?, 'bep20', ?, ?, 9, ?, 1000000, 0, 'failed', 'gave up', ?)`,
+    jobId, newId(), u, `0xfromh${TAG}`, `0xtoh${TAG}`, tick(),
+  );
+  const okJob = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address, amount_micro, needs_prefund, status, created_at)
+     VALUES (?, 'refund', ?, 'bep20', ?, ?, 10, ?, 1000000, 0, 'forward_confirmed', ?)`,
+    okJob, newId(), u, `0xfromh2${TAG}`, `0xtoh2${TAG}`, tick(),
+  );
+
+  const noPerm = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/handled`, headers: authOf(u), payload: {} });
+  check("an earner cannot mark a job handled (403)", noPerm.statusCode === 403, String(noPerm.statusCode));
+
+  const notFound = await app.inject({ method: "POST", url: `/staff/relay-jobs/${newId()}/handled`, headers: authOf(admin), payload: {} });
+  check("unknown job id => 404", notFound.statusCode === 404, String(notFound.statusCode));
+
+  const notFailed = await app.inject({ method: "POST", url: `/staff/relay-jobs/${okJob}/handled`, headers: authOf(admin), payload: {} });
+  check("a non-failed job cannot be marked handled (400)", notFailed.statusCode === 400, String(notFailed.statusCode));
+
+  const done = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/handled`, headers: authOf(agent), payload: { note: "checked chain — money returned" } });
+  check("agent (holds withdrawals.decide) can mark handled", done.statusCode === 200, done.body);
+
+  const again = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/handled`, headers: authOf(admin), payload: {} });
+  check("marking handled twice => 400", again.statusCode === 400, String(again.statusCode));
+
+  const row = await sql.get<{ handled_at: string | null; handled_note: string | null }>(
+    "SELECT handled_at, handled_note FROM payout_relay_jobs WHERE id = ?", jobId);
+  check("handled_at + note persisted", !!row?.handled_at && row?.handled_note === "checked chain — money returned", JSON.stringify(row));
+
+  const listed = await app.inject({ method: "GET", url: "/staff/relay-jobs", headers: authOf(admin) });
+  const handledRow = (listed.json() as { rows: { id: string; handledAt: string | null }[] }).rows.find((r) => r.id === jobId);
+  check("the failed row still lists, now carrying handledAt", !!handledRow?.handledAt, JSON.stringify(handledRow));
+
+  // BNB side: same shape, own table.
+  const bnbId = newId();
+  await sql.run(
+    `INSERT INTO bnb_withdrawal_requests (id, user_id, chain, address, amount_wei, status, last_error, created_at)
+     VALUES (?,?,?,?,?,'failed','no gas',?)`,
+    bnbId, u, "bep20", `0xbnbh${TAG}`, "1000000000000000", tick(),
+  );
+  const bnbDone = await app.inject({ method: "POST", url: `/staff/bnb-withdrawals/${bnbId}/handled`, headers: authOf(admin), payload: {} });
+  check("a failed BNB withdrawal can be marked handled", bnbDone.statusCode === 200, bnbDone.body);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- admin USDT adjustment (reconciliation fix) --");
+{
+  const u = await mkUser("usdt-adj");
+  await sql.run(
+    `INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, chain, created_at)
+     VALUES (?,?,?, 'credit', 'topup', 'bep20', ?)`,
+    newId(), u, 2_000_000, tick(),
+  );
+
+  const earner = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(u), payload: { usdt: -1, reason: "nope" } });
+  check("an earner cannot adjust USDT (403)", earner.statusCode === 403, String(earner.statusCode));
+
+  const agentTry = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(agent), payload: { usdt: -1, reason: "nope" } });
+  check("an agent (no users.adjust) cannot adjust USDT (403)", agentTry.statusCode === 403, String(agentTry.statusCode));
+
+  const zero = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(admin), payload: { usdt: 0, reason: "zero" } });
+  check("zero amount => 400", zero.statusCode === 400, String(zero.statusCode));
+
+  const tooBig = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(admin), payload: { usdt: 9999, reason: "too big" } });
+  check("over the per-call cap => 400", tooBig.statusCode === 400, String(tooBig.statusCode));
+
+  const fix = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(admin), payload: { usdt: -2, reason: "reconcile 2026-08-12 double-credit residue" } });
+  check("admin can post a correcting -2 USDT debit", fix.statusCode === 200, fix.body);
+  const fj = fix.json() as { beforeMicro: number; afterMicro: number };
+  check("before was +2,000,000 micro, after is 0", fj.beforeMicro === 2_000_000 && fj.afterMicro === 0, JSON.stringify(fj));
+
+  const sum = await sql.get<{ bal: string | number }>("SELECT COALESCE(SUM(amount),0) AS bal FROM usdt_ledger WHERE user_id = ?", u);
+  check("usdt_ledger now sums to 0 for this user", Number(sum?.bal ?? -1) === 0, JSON.stringify(sum));
+
+  const goNeg = await app.inject({ method: "POST", url: `/staff/users/${u}/usdt-adjust`, headers: authOf(admin), payload: { usdt: -1, reason: "books were still wrong" } });
+  check("a debit MAY take the balance negative (200, not blocked)", goNeg.statusCode === 200, goNeg.body);
+  check("resulting balance is -1,000,000 micro", (goNeg.json() as { afterMicro: number }).afterMicro === -1_000_000, goNeg.body);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- reconciliation history --");
 {
   await sql.run(

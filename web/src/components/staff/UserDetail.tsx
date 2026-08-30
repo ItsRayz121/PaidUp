@@ -10,7 +10,7 @@ import { StatusBadge, TimeCell, Points, UsdtMicro } from "./primitives";
 import { useToast } from "./toast";
 import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
-  adjustUserPoints, adjustUserRozi, type StaffUserDetail,
+  adjustUserPoints, adjustUserRozi, adjustUserUsdt, type StaffUserDetail,
 } from "@/lib/api";
 import { formatMoney, formatPoints } from "@/lib/format";
 
@@ -103,6 +103,22 @@ export function UserDetail({ d, onReload, onBack }: {
     const reason = window.prompt("Reason (the user sees this in their wallet):");
     if (!reason?.trim()) return;
     act(async () => { const r = await adjustUserPoints(u.id, points, reason.trim()); toast.ok(`Points ${r.before} → ${r.after}.`); }, "");
+  }
+  function doAdjustUsdt() {
+    const raw = window.prompt(
+      "Adjust USDT deposit-credit balance (dollars, decimals allowed). Positive adds, negative removes.\n" +
+      "Use this to fix a treasury shortfall: a debit here brings the books back to what the chain holds.\n" +
+      "A debit MAY take the balance negative — that is expected when the recorded balance was wrong.",
+    );
+    if (raw === null) return;
+    const usdt = Number(raw.trim());
+    if (!Number.isFinite(usdt) || usdt === 0) { toast.err("Enter a non-zero number."); return; }
+    const reason = window.prompt("Reason (min 3 characters — lands in the audit log):");
+    if (!reason || reason.trim().length < 3) return;
+    act(async () => {
+      const r = await adjustUserUsdt(u.id, usdt, reason.trim());
+      toast.ok(`USDT ${(r.beforeMicro / 1e6).toFixed(6)} → ${(r.afterMicro / 1e6).toFixed(6)}.`);
+    }, "");
   }
   function doAdjustRozi() {
     const raw = window.prompt("Adjust ROZI (whole ROZI, decimals allowed). Positive adds, negative removes.");
@@ -370,6 +386,10 @@ export function UserDetail({ d, onReload, onBack }: {
           <button disabled={busy} onClick={doAdjustRozi}
             className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50">
             Adjust ROZI
+          </button>
+          <button disabled={busy} onClick={doAdjustUsdt}
+            className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50">
+            Adjust USDT
           </button>
         </div>
       }

@@ -23,7 +23,7 @@ import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
   fetchStaffQueue, decideWithdrawal, fetchAdminTopups, confirmTopup, rejectTopup,
   fetchAdminRefunds, payRefund, rejectRefund, fetchStaffBnbWithdrawals, fetchRelayJobs,
-  fetchReconciliation,
+  fetchReconciliation, markRelayJobHandled, markBnbWithdrawalHandled,
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
@@ -139,6 +139,47 @@ function RelaySummary({ r }: { r: NonNullable<StaffWithdrawal["relay"]> }) {
         F("Forward tx", r.forwardTxHash ? <CopyId value={r.forwardTxHash} /> : "—"),
         F("Last error", <span className="text-danger">{r.lastError ?? "—"}</span>),
       ]} />
+    </div>
+  );
+}
+
+// Danger-zone block for a FAILED relay job / BNB withdrawal. Both are terminal
+// and neither can be retried from here — a failed relay refund was already
+// auto-credited back by the background tick, a failed BNB send never touched an
+// internal balance. "Mark as handled" is a staff acknowledgement only: it
+// signs nothing, moves no money, and just takes the row out of the dashboard's
+// red "needs attention" count once a human has checked the chain.
+function HandledZone({ handledAt, handledNote, canMark, onMark }: {
+  handledAt: string | null; handledNote: string | null;
+  canMark: boolean; onMark: (note: string | undefined) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (handledAt) {
+    return (
+      <div className="rounded-lg border border-success/40 bg-success-tint/30 p-3 text-xs text-success">
+        ✓ Marked handled <TimeCell iso={handledAt} />{handledNote ? ` — ${handledNote}` : ""}
+      </div>
+    );
+  }
+  if (!canMark) return null;
+  return (
+    <div className="rounded-lg border border-line bg-card p-3">
+      <p className="mb-2 text-xs text-muted">
+        Nothing here signs or moves money. Check the chain and the user&rsquo;s balance, then mark
+        this handled so it stops showing on the dashboard as needing attention.
+      </p>
+      <button
+        disabled={busy}
+        onClick={async () => {
+          const raw = window.prompt("Short note on how this was resolved (optional):");
+          const note = raw && raw.trim() ? raw.trim() : undefined;
+          setBusy(true);
+          try { await onMark(note); } finally { setBusy(false); }
+        }}
+        className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50"
+      >
+        Mark as handled
+      </button>
     </div>
   );
 }
@@ -577,9 +618,10 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
 // ======================================================================
 const BNB_TABS = ["failed", "pending", "sending", "paid"];
 
-export function BnbWithdrawalsPanel() {
+export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:bnb", PAGE);
   const c = useQueueControls(q, "failed");
+  const toast = useToast();
   const [open, setOpen] = useState<StaffBnbWithdrawalRow | null>(null);
 
   const data = useApi(
@@ -631,11 +673,22 @@ export function BnbWithdrawalsPanel() {
         ]}
         extra={
           <p className="rounded-lg border border-line bg-card p-3 text-xs text-muted">
-            Read-only. A failed native BNB send is terminal — it needs a human to check the chain, not a
-            retry (the balance is a live on-chain read, so a resend could double-spend). Nothing was
+            No retry button. A failed native BNB send is terminal — it needs a human to check the chain,
+            not a resend (the balance is a live on-chain read, so a resend could double-spend). Nothing was
             debited from an internal balance, so a failed job needs no compensating credit.
           </p>
         }
+        danger={open.status === "failed" && (open.handledAt || canHandle) ? (
+          <HandledZone
+            handledAt={open.handledAt} handledNote={open.handledNote} canMark={canHandle}
+            onMark={async (note) => {
+              await markBnbWithdrawalHandled(open.id, note);
+              toast.ok("Marked handled.");
+              setOpen(null);
+              data.reload();
+            }}
+          />
+        ) : undefined}
       />
     );
   }
@@ -662,9 +715,10 @@ export function BnbWithdrawalsPanel() {
 // ======================================================================
 const RELAY_TABS = ["failed", "active", "pending", "gas_sent", "prefund_sent", "forward_sent", "forward_confirmed"];
 
-export function RelayJobsPanel() {
+export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:relay", PAGE);
   const c = useQueueControls(q, "failed");
+  const toast = useToast();
   const [open, setOpen] = useState<RelayJobRow | null>(null);
 
   const data = useApi(
@@ -722,12 +776,23 @@ export function RelayJobsPanel() {
         ]}
         extra={
           <p className="rounded-lg border border-line bg-card p-3 text-xs text-muted">
-            Read-only. A failed relay job is terminal — the compensating action (return the held money,
-            re-check the chain) is decided per case. For a refund job that gave up before any value moved,
-            the background tick auto-credits the balance back; a withdrawal whose prefund leg already
-            confirmed is left for a human to reconcile against the chain.
+            No retry button — a failed relay job is terminal. For a refund job that gave up before any
+            value moved, the background tick has already auto-credited the balance back; a withdrawal
+            whose prefund leg already confirmed is left for a human to reconcile against the chain. Once
+            you have checked which case this is, mark it handled below.
           </p>
         }
+        danger={open.status === "failed" && (open.handledAt || canHandle) ? (
+          <HandledZone
+            handledAt={open.handledAt} handledNote={open.handledNote} canMark={canHandle}
+            onMark={async (note) => {
+              await markRelayJobHandled(open.id, note);
+              toast.ok("Marked handled.");
+              setOpen(null);
+              data.reload();
+            }}
+          />
+        ) : undefined}
       />
     );
   }

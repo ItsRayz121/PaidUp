@@ -1490,6 +1490,27 @@ const MIGRATIONS = `
   ALTER TABLE withdrawal_requests DROP CONSTRAINT IF EXISTS withdrawal_requests_source_kind_check;
   ALTER TABLE withdrawal_requests ADD CONSTRAINT withdrawal_requests_source_kind_check
     CHECK (source_kind IN ('points','earned_usdt'));
+
+  -- ---- DASHBOARD "NEEDS ATTENTION": CLEARED vs OPEN (founder, 2026-08-30) ---
+  -- A resolved fraud flag / a handled failed payout job should stop reading as
+  -- a red "open" item and instead show as "cleared" -- the dashboard tile then
+  -- says "5 total, 3 cleared, 2 open" instead of a single red count that only
+  -- ever climbs. resolved_at on fraud_flags is what dates a clear; the handled_
+  -- columns on the two terminal failed-money tables are a staff acknowledgement
+  -- ("I checked the chain, the money was returned, nothing more to do") -- they
+  -- never retry or move money, only take the row out of the red count.
+  ALTER TABLE fraud_flags ADD COLUMN IF NOT EXISTS resolved_at TEXT;
+  ALTER TABLE payout_relay_jobs ADD COLUMN IF NOT EXISTS handled_at TEXT;
+  ALTER TABLE payout_relay_jobs ADD COLUMN IF NOT EXISTS handled_by TEXT;
+  ALTER TABLE payout_relay_jobs ADD COLUMN IF NOT EXISTS handled_note TEXT;
+  ALTER TABLE bnb_withdrawal_requests ADD COLUMN IF NOT EXISTS handled_at TEXT;
+  ALTER TABLE bnb_withdrawal_requests ADD COLUMN IF NOT EXISTS handled_by TEXT;
+  ALTER TABLE bnb_withdrawal_requests ADD COLUMN IF NOT EXISTS handled_note TEXT;
+  -- Backfill: a flag resolved before this column existed gets its created_at as
+  -- a best-effort resolved_at, so it isn't counted as "cleared just now"
+  -- forever. Only touches already-resolved rows.
+  UPDATE fraud_flags SET resolved_at = created_at
+   WHERE resolved_by IS NOT NULL AND resolved_at IS NULL;
 `;
 
 // ---------------------------------------------------------------------------

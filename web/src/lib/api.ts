@@ -503,6 +503,7 @@ export type StaffBnbWithdrawalRow = {
   chain: string; address: string; amountWei: string;
   status: string; txHash: string | null; attempts: number;
   lastError: string | null; at: string; completedAt: string | null;
+  handledAt: string | null; handledBy: string | null; handledNote: string | null;
 };
 export const fetchStaffBnbWithdrawals = (p: MoneyListParams = {}) =>
   apiFetch<{ rows: StaffBnbWithdrawalRow[]; total: number; offset: number; limit: number }>(
@@ -517,10 +518,23 @@ export type RelayJobRow = {
   status: string; gasTxHash: string | null; prefundTxHash: string | null;
   forwardTxHash: string | null; attempts: number; lastError: string | null;
   at: string; completedAt: string | null;
+  handledAt: string | null; handledBy: string | null; handledNote: string | null;
 };
 export const fetchRelayJobs = (p: MoneyListParams = {}) =>
   apiFetch<{ rows: RelayJobRow[]; total: number; offset: number; limit: number }>(
     `/staff/relay-jobs?${moneyQs({ status: "failed", ...p })}`);
+
+// Acknowledge a FAILED relay job / BNB withdrawal — a staff "I checked this,
+// nothing more to do" that takes the row out of the dashboard's red count.
+// Never retries or moves money.
+export const markRelayJobHandled = (id: string, note?: string) =>
+  apiFetch<{ ok: true }>(`/staff/relay-jobs/${id}/handled`, {
+    method: "POST", body: JSON.stringify({ note }),
+  });
+export const markBnbWithdrawalHandled = (id: string, note?: string) =>
+  apiFetch<{ ok: true }>(`/staff/bnb-withdrawals/${id}/handled`, {
+    method: "POST", body: JSON.stringify({ note }),
+  });
 
 // Reconciliation history: treasury + unswept on-chain balance vs the ledger,
 // one row per scheduled check. A negative delta is a shortfall.
@@ -583,6 +597,13 @@ export const adjustUserRozi = (id: string, rozi: number, note: string) =>
   apiFetch<{ ok: true }>(`/staff/mining/users/${id}/adjust`, {
     method: "POST", body: JSON.stringify({ rozi, note }),
   });
+// Corrects a user's USDT deposit-credit balance (usdt_ledger). Built for
+// reconciliation — a debit here MAY take the balance negative, on purpose:
+// the recorded balance was wrong. `usdt` is signed dollars; positive credits.
+export const adjustUserUsdt = (id: string, usdt: number, reason: string) =>
+  apiFetch<{ ok: true; beforeMicro: number; afterMicro: number }>(`/staff/users/${id}/usdt-adjust`, {
+    method: "POST", body: JSON.stringify({ usdt, reason }),
+  });
 export const fetchFraud = () => apiFetch<{ flags: Record<string, unknown>[] }>("/staff/fraud");
 
 // Console-wide record search (admin rebuild). Result types are filtered
@@ -596,13 +617,17 @@ export const staffRecordSearch = (q: string) =>
 
 // Dashboard landing: work-queue sizes + "money is stuck" signals + the last
 // few admin actions. All derived, no new counters.
+// A signal that can be worked down to zero: how many are still open, and how
+// many were cleared in the last few days. The tile shows red only while
+// `open > 0`, and "all clear" once everything is handled.
+export type AttentionSignal = { open: number; cleared: number };
 export type StaffDashboard = {
   attention: {
     withdrawalsPending: number; withdrawalsReady: number;
     depositsPending: number; refundsPending: number;
-    bnbFailed: number; relayFailed: number;
-    fraudOpen: number; kycWaiting: number; ticketsOpen: number;
-    reconciliationShortfall: number;
+    bnbFailed: AttentionSignal; relayFailed: AttentionSignal;
+    fraudOpen: AttentionSignal; reconciliationShortfall: AttentionSignal;
+    kycWaiting: number; ticketsOpen: number;
   };
   reconciliation: { chain: string; delta: number; checkedAt: string }[];
   recentActivity: { action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }[];

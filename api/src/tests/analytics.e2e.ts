@@ -224,8 +224,13 @@ console.log("\n-- the endpoint --");
   const dj = dash.json();
   check("attention block has every queue key",
     typeof dj.attention.withdrawalsPending === "number"
-    && typeof dj.attention.kycWaiting === "number"
-    && typeof dj.attention.reconciliationShortfall === "number");
+    && typeof dj.attention.kycWaiting === "number");
+  // The signals you can work down to zero carry { open, cleared } so the tile
+  // can show progress and turn green (founder, 2026-08-30).
+  check("fraud/relay/bnb/recon are { open, cleared } signals",
+    ["fraudOpen", "relayFailed", "bnbFailed", "reconciliationShortfall"].every((k) =>
+      typeof dj.attention[k]?.open === "number" && typeof dj.attention[k]?.cleared === "number"),
+    JSON.stringify(dj.attention));
   check("the seeded pending withdrawal is counted", dj.attention.withdrawalsPending >= 1, JSON.stringify(dj.attention));
   check("recentActivity is an array", Array.isArray(dj.recentActivity));
   const dashDenied = await app.inject({

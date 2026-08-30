@@ -13,8 +13,13 @@ export type SectionId =
   | "support" | "audit" | "settings" | "team";
 
 export type StaffNav = {
-  /** Switch to a section (e.g. from a stat tile to the queue it counts). */
-  goToSection: (id: SectionId) => void;
+  /**
+   * Switch to a section (e.g. from a stat tile to the queue it counts).
+   * Pass a panel id (e.g. "p-fraud") to also scroll that panel into view once
+   * the section has mounted — a tile that lands you on a long section without
+   * scrolling reads as "it did nothing".
+   */
+  goToSection: (id: SectionId, anchor?: string) => void;
   /** Jump to Users & IDs with a specific user pre-loaded in the lookup box. */
   openUser: (userId: string) => void;
 };

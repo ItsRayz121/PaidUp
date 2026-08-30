@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
-  postLedger, postEarnedUsdt, logAudit, getSetting, setSetting,
+  postLedger, postEarnedUsdt, postUsdt, logAudit, getSetting, setSetting,
 } from "../db.ts";
 import { config } from "../config.ts";
 import { requirePermission, requireStaff, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
@@ -372,8 +372,33 @@ export async function staffRoutes(app: FastifyInstance) {
         chain: r.chain, address: r.address, amountWei: String(r.amount_wei),
         status: r.status, txHash: r.tx_hash ?? null, attempts: Number(r.attempts ?? 0),
         lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
+        handledAt: r.handled_at ?? null, handledBy: r.handled_by ?? null, handledNote: r.handled_note ?? null,
       })),
     };
+  }));
+
+  // Mark a FAILED BNB withdrawal as handled — a staff acknowledgement, not a
+  // money move. A failed native send is terminal (db.ts): the money was never
+  // taken from an internal balance, so there is nothing to return; this just
+  // records that a human checked it and takes the row out of the dashboard's
+  // red "needs attention" count.
+  app.post("/staff/bnb-withdrawals/:id/handled", staffGuard("withdrawals.decide", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const note = z.object({ note: z.string().trim().max(500).optional() }).safeParse(req.body).data?.note ?? null;
+    const row = await sql.get<{ status: string; handled_at: string | null }>(
+      "SELECT status, handled_at FROM bnb_withdrawal_requests WHERE id = ?", id);
+    if (!row) return reply.code(404).send({ error: "Request not found." });
+    if (row.status !== "failed") return reply.code(400).send({ error: "Only a failed request can be marked handled." });
+    if (row.handled_at) return reply.code(400).send({ error: "Already marked handled." });
+    await sql.run(
+      "UPDATE bnb_withdrawal_requests SET handled_at = ?, handled_by = ?, handled_note = ? WHERE id = ?",
+      now(), userId, note, id,
+    );
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "bnb_withdrawal_handled",
+      detail: `request ${id}${note ? ` — ${note}` : ""}`, actorIp: req.ip,
+    });
+    return { ok: true };
   }));
 
   // ---- Payout relay job queue (admin rebuild, Phase C) ------------------
@@ -430,8 +455,35 @@ export async function staffRoutes(app: FastifyInstance) {
         status: r.status, gasTxHash: r.gas_tx_hash ?? null, prefundTxHash: r.prefund_tx_hash ?? null,
         forwardTxHash: r.forward_tx_hash ?? null, attempts: Number(r.attempts ?? 0),
         lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
+        handledAt: r.handled_at ?? null, handledBy: r.handled_by ?? null, handledNote: r.handled_note ?? null,
       })),
     };
+  }));
+
+  // Mark a FAILED relay job as handled — a staff acknowledgement, not a retry
+  // and not a money move. A failed job is terminal (db.ts): a refund that gave
+  // up before any value moved has already been auto-credited back by the
+  // background tick, and a withdrawal whose prefund leg confirmed is settled on
+  // the chain. This records that a human checked which case it was and takes
+  // the row out of the dashboard's red "needs attention" count. It never signs
+  // or broadcasts anything.
+  app.post("/staff/relay-jobs/:id/handled", staffGuard("withdrawals.decide", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const note = z.object({ note: z.string().trim().max(500).optional() }).safeParse(req.body).data?.note ?? null;
+    const row = await sql.get<{ status: string; handled_at: string | null }>(
+      "SELECT status, handled_at FROM payout_relay_jobs WHERE id = ?", id);
+    if (!row) return reply.code(404).send({ error: "Relay job not found." });
+    if (row.status !== "failed") return reply.code(400).send({ error: "Only a failed job can be marked handled." });
+    if (row.handled_at) return reply.code(400).send({ error: "Already marked handled." });
+    await sql.run(
+      "UPDATE payout_relay_jobs SET handled_at = ?, handled_by = ?, handled_note = ? WHERE id = ?",
+      now(), userId, note, id,
+    );
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "relay_job_handled",
+      detail: `job ${id}${note ? ` — ${note}` : ""}`, actorIp: req.ip,
+    });
+    return { ok: true };
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.
@@ -613,8 +665,8 @@ export async function staffRoutes(app: FastifyInstance) {
     const note = (req.body as { note?: string })?.note;
     const id = (req.params as { id: string }).id;
     const res = await sql.run(
-      "UPDATE fraud_flags SET resolved_by = ?, resolution_note = ? WHERE id = ? AND resolved_by IS NULL",
-      userId, note ?? null, id,
+      "UPDATE fraud_flags SET resolved_by = ?, resolution_note = ?, resolved_at = ? WHERE id = ? AND resolved_by IS NULL",
+      userId, note ?? null, now(), id,
     );
     if (!res.rowCount) return reply.code(404).send({ error: "Flag not found or already resolved." });
     return { ok: true };
@@ -1560,6 +1612,70 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true, ...result };
   }));
 
+  // ---- Admin: adjust a user's USDT deposit-credit balance by hand ---------
+  // Built for reconciliation. When usdt_ledger holds a credit no real on-chain
+  // USDT ever backed (the 2026-08-12 double-credit residue), the hourly
+  // treasury check (deposits/reconcile.ts) flags a shortfall EVERY hour and
+  // never stops — and every hour it re-creates the fraud flag you just
+  // resolved. A correcting debit here brings the books back to what the chain
+  // actually holds, which is what makes both stop.
+  //
+  // Same guardrails as the points adjust: admin only, mandatory reason,
+  // capped, append-only (postUsdt — guardrail #2), advisory lock, audit-logged.
+  // UNLIKE the points adjust, a debit MAY take the balance negative — that is
+  // the point: the recorded balance was wrong and the true entitlement is
+  // lower. The resulting balance is returned so the caller sees it.
+  const usdtAdjustSchema = z.object({
+    usdt: z.number().refine((n) => n !== 0, "Enter a non-zero amount."),
+    chain: z.string().trim().min(1).max(20).optional(),
+    reason: z.string().trim().min(3, "Say why.").max(500),
+  });
+  const MAX_USDT_ADJUST_MICRO = 200_000_000; // $200 per single call
+  app.post("/staff/users/:id/usdt-adjust", staffGuard("users.adjust", async ({ userId: actorId, role }, req, reply) => {
+    const parsed = usdtAdjustSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Enter an amount and a reason." });
+    }
+    const { usdt, reason } = parsed.data;
+    const chain = parsed.data.chain ?? "bep20";
+    const targetId = (req.params as { id: string }).id;
+    const micro = Math.round(usdt * 1_000_000);
+    if (micro === 0) return reply.code(400).send({ error: "That rounds to zero USDT." });
+    if (Math.abs(micro) > MAX_USDT_ADJUST_MICRO) {
+      return reply.code(400).send({ error: `One adjustment cannot be more than $${MAX_USDT_ADJUST_MICRO / 1e6}.` });
+    }
+
+    const target = await sql.get<{ id: string }>("SELECT id FROM users WHERE id = ?", targetId);
+    if (!target) return reply.code(404).send({ error: "User not found." });
+
+    const result = await sql.tx(async (t) => {
+      // Lock the row so a concurrent rig purchase / refund can't race this.
+      await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", targetId);
+      const beforeRow = await t.get<{ bal: string | number }>(
+        "SELECT COALESCE(SUM(amount), 0) AS bal FROM usdt_ledger WHERE user_id = ?", targetId,
+      );
+      const beforeMicro = Number(beforeRow?.bal ?? 0);
+      const entryId = await postUsdt({
+        userId: targetId,
+        micro: Math.abs(micro),
+        direction: micro > 0 ? "credit" : "debit",
+        sourceType: "admin_adjustment",
+        note: reason,
+        chain,
+      }, t);
+      await logAudit({
+        actorUserId: actorId, actorRole: role, action: "usdt_adjusted",
+        targetUserId: targetId,
+        detail: `${micro > 0 ? "+" : ""}${(micro / 1e6).toFixed(6)} USDT (${chain}) — ${reason}`,
+        previousValue: (beforeMicro / 1e6).toFixed(6),
+        newValue: ((beforeMicro + micro) / 1e6).toFixed(6),
+        actorIp: req.ip,
+      }, t);
+      return { entryId, beforeMicro, afterMicro: beforeMicro + micro };
+    });
+    return { ok: true, ...result };
+  }));
+
   // ---- Admin: appoint / remove staff --------------------------------------
   app.get("/staff/staff", staffGuard("staff.manage", async () => {
     const rows = await sql.all<{ user_id: string; email: string; role: Role; created_at: string }>(
@@ -1834,17 +1950,26 @@ export async function staffRoutes(app: FastifyInstance) {
     const one = async (text: string, ...params: unknown[]) =>
       Number((await sql.get<{ v: number }>(text, ...params))?.v ?? 0);
 
+    // "Cleared" counts look back over this window so a tile can read
+    // "5 total · 3 cleared · 2 open" and go green once everything is handled,
+    // instead of a red number that only ever climbs (founder, 2026-08-30).
+    const clearWindow = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
     const [
-      wPending, wReady, deposits, refunds, bnbStuck, relayStuck,
-      openFraud, kycWaiting, openTickets,
+      wPending, wReady, deposits, refunds,
+      bnbOpen, bnbCleared, relayOpen, relayCleared,
+      fraudOpen, fraudCleared, kycWaiting, openTickets,
     ] = await Promise.all([
       one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status = 'pending'"),
       one("SELECT COUNT(*)::int AS v FROM withdrawal_requests WHERE status IN ('agent_approved','manager_approved')"),
       one("SELECT COUNT(*)::int AS v FROM usdt_topups WHERE status = 'pending'"),
       one("SELECT COUNT(*)::int AS v FROM usdt_refund_requests WHERE status = 'pending'"),
-      one("SELECT COUNT(*)::int AS v FROM bnb_withdrawal_requests WHERE status = 'failed'"),
-      one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed'"),
+      one("SELECT COUNT(*)::int AS v FROM bnb_withdrawal_requests WHERE status = 'failed' AND handled_at IS NULL"),
+      one("SELECT COUNT(*)::int AS v FROM bnb_withdrawal_requests WHERE status = 'failed' AND handled_at IS NOT NULL AND handled_at > ?", clearWindow),
+      one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed' AND handled_at IS NULL"),
+      one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed' AND handled_at IS NOT NULL AND handled_at > ?", clearWindow),
       one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NULL"),
+      one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NOT NULL AND resolved_at IS NOT NULL AND resolved_at > ?", clearWindow),
       one("SELECT COUNT(*)::int AS v FROM users WHERE kyc_status = 'pending'"),
       one("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status = 'open'"),
     ]);
@@ -1856,6 +1981,13 @@ export async function staffRoutes(app: FastifyInstance) {
          FROM treasury_balance_snapshots ORDER BY chain, checked_at DESC`,
     );
     const reconShortfall = recon.filter((r) => Number(r.delta) < 0);
+    // A chain that showed a shortfall in the window but whose latest check is
+    // back in the black counts as "cleared" — the books were corrected.
+    const reconEverNegInWindow = await one(
+      "SELECT COUNT(DISTINCT chain)::int AS v FROM treasury_balance_snapshots WHERE delta < 0 AND checked_at > ?",
+      clearWindow,
+    );
+    const reconCleared = Math.max(0, reconEverNegInWindow - reconShortfall.length);
 
     const recentActivity = await sql.all<{ action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }>(
       `SELECT a.action, a.detail, a.created_at,
@@ -1868,9 +2000,13 @@ export async function staffRoutes(app: FastifyInstance) {
       attention: {
         withdrawalsPending: wPending, withdrawalsReady: wReady,
         depositsPending: deposits, refundsPending: refunds,
-        bnbFailed: bnbStuck, relayFailed: relayStuck,
-        fraudOpen: openFraud, kycWaiting, ticketsOpen: openTickets,
-        reconciliationShortfall: reconShortfall.length,
+        // These four carry an open + recently-cleared count so the tile can go
+        // green once everything is handled, instead of only ever showing red.
+        bnbFailed: { open: bnbOpen, cleared: bnbCleared },
+        relayFailed: { open: relayOpen, cleared: relayCleared },
+        fraudOpen: { open: fraudOpen, cleared: fraudCleared },
+        reconciliationShortfall: { open: reconShortfall.length, cleared: reconCleared },
+        kycWaiting, ticketsOpen: openTickets,
       },
       reconciliation: recon.map((r) => ({ chain: r.chain, delta: Number(r.delta), checkedAt: r.checked_at })),
       recentActivity,
