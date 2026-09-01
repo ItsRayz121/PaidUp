@@ -504,6 +504,9 @@ export type StaffBnbWithdrawalRow = {
   status: string; txHash: string | null; attempts: number;
   lastError: string | null; at: string; completedAt: string | null;
   handledAt: string | null; handledBy: string | null; handledNote: string | null;
+  // A failed native send has no internal debit to return, so credit-back is
+  // never offered; retry is possible while nothing was broadcast.
+  owedBack: boolean; retryable: boolean;
 };
 export const fetchStaffBnbWithdrawals = (p: MoneyListParams = {}) =>
   apiFetch<{ rows: StaffBnbWithdrawalRow[]; total: number; offset: number; limit: number }>(
@@ -519,6 +522,9 @@ export type RelayJobRow = {
   forwardTxHash: string | null; attempts: number; lastError: string | null;
   at: string; completedAt: string | null;
   handledAt: string | null; handledBy: string | null; handledNote: string | null;
+  // Status of the underlying withdrawal/refund request; whether the money is
+  // still owed and safe to return; whether the job can be re-queued.
+  reqStatus: string | null; owedBack: boolean; retryable: boolean;
 };
 export const fetchRelayJobs = (p: MoneyListParams = {}) =>
   apiFetch<{ rows: RelayJobRow[]; total: number; offset: number; limit: number }>(
@@ -526,7 +532,8 @@ export const fetchRelayJobs = (p: MoneyListParams = {}) =>
 
 // Acknowledge a FAILED relay job / BNB withdrawal — a staff "I checked this,
 // nothing more to do" that takes the row out of the dashboard's red count.
-// Never retries or moves money.
+// Never retries or moves money. (Superseded by *resolve* below, kept for any
+// old caller.)
 export const markRelayJobHandled = (id: string, note?: string) =>
   apiFetch<{ ok: true }>(`/staff/relay-jobs/${id}/handled`, {
     method: "POST", body: JSON.stringify({ note }),
@@ -534,6 +541,25 @@ export const markRelayJobHandled = (id: string, note?: string) =>
 export const markBnbWithdrawalHandled = (id: string, note?: string) =>
   apiFetch<{ ok: true }>(`/staff/bnb-withdrawals/${id}/handled`, {
     method: "POST", body: JSON.stringify({ note }),
+  });
+
+// Resolve a FAILED relay job / BNB withdrawal from the queue (founder,
+// 2026-09-01). `acknowledge` = mark handled; `credit_back` = reject the request
+// and return the money (relay only, when still owed + safe); `retry` = re-queue
+// the on-chain send (only when nothing has moved yet). The note is required.
+export type RelayResolveAction = "acknowledge" | "credit_back" | "retry";
+export const resolveRelayJob = (id: string, action: RelayResolveAction, note: string) =>
+  apiFetch<{ ok: true; status: string; handledAt: string | null }>(`/staff/relay-jobs/${id}/resolve`, {
+    method: "POST", body: JSON.stringify({ action, note }),
+  });
+export const resolveBnbWithdrawal = (id: string, action: "acknowledge" | "retry", note: string) =>
+  apiFetch<{ ok: true; status: string; handledAt: string | null }>(`/staff/bnb-withdrawals/${id}/resolve`, {
+    method: "POST", body: JSON.stringify({ action, note }),
+  });
+// Run the treasury reconciliation check now instead of waiting the hour.
+export const recheckReconciliation = (chain = "bep20") =>
+  apiFetch<{ ok: true; chain: string; snapshot: ReconSnapshot | null }>(`/staff/mining/reconciliation/recheck`, {
+    method: "POST", body: JSON.stringify({ chain }),
   });
 
 // Reconciliation history: treasury + unswept on-chain balance vs the ledger,
@@ -544,6 +570,38 @@ export type ReconSnapshot = {
 export const fetchReconciliation = (chain = "bep20", limit = 50) =>
   apiFetch<{ chain: string; snapshots: ReconSnapshot[] }>(
     `/staff/mining/reconciliation?chain=${encodeURIComponent(chain)}&limit=${limit}`);
+
+// Money & payouts overview (founder, 2026-09-01): what the platform holds right
+// now + inflow/outflow across six time windows + the latest 5 of each stream.
+// All figures derived server-side; USDT is micro (1e6) end to end.
+export type MoneyFlow = {
+  depositsInMicro: number; withdrawalsOutMicro: number; refundsOutMicro: number;
+  outMicro: number; bnbOutWei: string; netMicro: number;
+};
+type LatestMoneyRow = { id: string; email: string; status: string; at: string };
+export type MoneyOverview = {
+  heldNow: {
+    treasuryMicro: Record<string, number>; treasuryTotalMicro: number;
+    outstandingPoints: number; pointsLiabilityMicro: number;
+    usdtDepositLiabilityMicro: number; checkedAt: string | null;
+  };
+  windows: string[];
+  flows: Record<string, MoneyFlow>;
+  latest: {
+    withdrawals: (LatestMoneyRow & { points: number; usdtMicro: number })[];
+    deposits: (LatestMoneyRow & { usdtMicro: number })[];
+    refunds: (LatestMoneyRow & { usdtMicro: number })[];
+    bnb: (LatestMoneyRow & { wei: string })[];
+    relayFailed: (LatestMoneyRow & { usdtMicro: number })[];
+  };
+  owed: {
+    outstandingPoints: number; outstandingMicro: number;
+    paidPoints: number; paidMicro: number;
+    pendingPoints: number; pendingMicro: number;
+    feePoints: number;
+  };
+};
+export const fetchMoneyOverview = () => apiFetch<MoneyOverview>("/staff/money/overview");
 export const decideWithdrawal = (id: string, action: "approve" | "reject" | "pay", note?: string, txHash?: string) =>
   apiFetch<{ ok: true; status: string; txHash?: string; usdt?: string }>(`/staff/withdrawals/${id}/decision`, {
     method: "POST", body: JSON.stringify({ action, note, txHash }),
@@ -630,7 +688,6 @@ export type StaffDashboard = {
     kycWaiting: number; ticketsOpen: number;
   };
   reconciliation: { chain: string; delta: number; checkedAt: string }[];
-  recentActivity: { action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }[];
 };
 export const fetchStaffDashboard = () => apiFetch<StaffDashboard>("/staff/dashboard");
 
@@ -727,22 +784,9 @@ export const fetchAudit = (q: {
 export const fetchAuditActions = () =>
   apiFetch<{ actions: { action: string; count: number }[] }>("/staff/audit/actions");
 
-export type MoneyView = {
-  points: {
-    credited: number; debited: number; adjustments: number;
-    outstanding: number; paidPoints: number; pendingPoints: number; feePoints: number;
-  };
-  // Decimal STRINGS, not numbers: the server floors to USDT's 6-dp smallest unit
-  // (payout.ts `pointsToUsdt`) so a payout can never over-pay from rounding.
-  // Parse before doing arithmetic or formatting — a string has no .toFixed.
-  usdt: { outstanding: string; paid: string; pending: string };
-  recentAudit: Record<string, unknown>[];
-  // How many audit rows exist in total — lets the widget offer "See more"
-  // (which jumps to the full, paginated Audit section) only when there
-  // really is more than the short list shown here.
-  auditTotal: number;
-};
-export const fetchMoney = (limit = 10) => apiFetch<MoneyView>(`/staff/money?limit=${limit}`);
+// `/staff/money` + its MoneyView/fetchMoney client were retired 2026-09-01 —
+// the numbers moved into MoneyOverview (fetchMoneyOverview, above). The
+// endpoint itself is left in place for any external/bookmarked use.
 
 // CSV export can't be a plain <a href>: the API authenticates with a Bearer
 // header, which a browser navigation won't send. Fetch it as a blob instead.

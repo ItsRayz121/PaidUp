@@ -64,8 +64,13 @@ export async function staffRoutes(app: FastifyInstance) {
     const limit = Math.min(Number(query.limit ?? 25) || 25, 200);
     const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
 
-    const where: string[] = ["w.status = ?"];
-    const wp: unknown[] = [status];
+    // status=all drops the filter (founder, 2026-09-01: an "All" tab on every
+    // money queue). pendingTotal below is only computed for OWED_STATUSES, so
+    // "all" gets a null total — a "to send" figure over a mixed set is a wrong
+    // instruction to whoever funds the wallet.
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (status !== "all") { where.push("w.status = ?"); wp.push(status); }
     if (q) {
       where.push("(LOWER(u.email) LIKE ? OR LOWER(w.id) = ? OR LOWER(w.user_id) = ? OR LOWER(w.payout_address) LIKE ? OR LOWER(w.tx_hash) LIKE ?)");
       wp.push(`%${q}%`, q, q, `%${q}%`, `%${q}%`);
@@ -76,7 +81,7 @@ export async function staffRoutes(app: FastifyInstance) {
       where.push("w.amount <= ?");
       wp.push(config.agentApprovalMaxPoints);
     }
-    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const SORTS: Record<string, string> = {
       created_at: "w.created_at", amount: "w.amount", status: "w.status",
@@ -373,6 +378,11 @@ export async function staffRoutes(app: FastifyInstance) {
         status: r.status, txHash: r.tx_hash ?? null, attempts: Number(r.attempts ?? 0),
         lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
         handledAt: r.handled_at ?? null, handledBy: r.handled_by ?? null, handledNote: r.handled_note ?? null,
+        // A native BNB send never debits an internal balance, so there is
+        // nothing to credit back. It can be re-queued while nothing has been
+        // broadcast (tx_hash still null).
+        owedBack: false,
+        retryable: r.status === "failed" && !r.tx_hash,
       })),
     };
   }));
@@ -399,6 +409,62 @@ export async function staffRoutes(app: FastifyInstance) {
       detail: `request ${id}${note ? ` — ${note}` : ""}`, actorIp: req.ip,
     });
     return { ok: true };
+  }));
+
+  // Resolve a FAILED BNB withdrawal from the queue (founder, 2026-09-01).
+  // Only two actions — there is no internal debit to credit back:
+  //   • acknowledge — a human checked the chain, take it off the red count.
+  //   • retry       — re-queue (status→pending, attempts→0) so the background
+  //                   tick re-attempts the native send. Only while nothing has
+  //                   been broadcast (tx_hash null), and only if the user has
+  //                   no other BNB request in flight (the partial unique index).
+  const bnbResolveSchema = z.object({
+    action: z.enum(["acknowledge", "retry"]),
+    note: z.string().trim().min(1, "Say what you did.").max(500),
+  });
+  app.post("/staff/bnb-withdrawals/:id/resolve", staffGuard("withdrawals.decide", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const parsed = bnbResolveSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Pick an action and add a note." });
+    const { action, note } = parsed.data;
+
+    const row = await sql.get<{ status: string; handled_at: string | null; tx_hash: string | null; user_id: string }>(
+      "SELECT status, handled_at, tx_hash, user_id FROM bnb_withdrawal_requests WHERE id = ?", id);
+    if (!row) return reply.code(404).send({ error: "Request not found." });
+    if (row.status !== "failed") return reply.code(400).send({ error: "Only a failed request can be resolved here." });
+
+    if (action === "acknowledge") {
+      if (row.handled_at) return reply.code(400).send({ error: "Already marked handled." });
+      await sql.run(
+        "UPDATE bnb_withdrawal_requests SET handled_at = ?, handled_by = ?, handled_note = ? WHERE id = ?",
+        now(), userId, note, id,
+      );
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "bnb_withdrawal_handled",
+        detail: `request ${id} — ${note}`, actorIp: req.ip,
+      });
+      return { ok: true, status: "failed", handledAt: now() };
+    }
+
+    // action === "retry"
+    if (row.tx_hash) return reply.code(409).send({ error: "A transaction was already broadcast for this — check the chain, then Acknowledge." });
+    const other = await sql.get<{ id: string }>(
+      "SELECT id FROM bnb_withdrawal_requests WHERE user_id = ? AND status IN ('pending','sending') AND id <> ?",
+      row.user_id, id,
+    );
+    if (other) return reply.code(409).send({ error: "This user already has another BNB withdrawal in flight — resolve that first." });
+    await sql.run(
+      `UPDATE bnb_withdrawal_requests
+         SET status = 'pending', attempts = 0, last_error = NULL,
+             handled_at = NULL, handled_by = NULL, handled_note = NULL
+       WHERE id = ? AND status = 'failed'`,
+      id,
+    );
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "bnb_withdrawal_retry",
+      detail: `request ${id} re-queued — ${note}`, actorIp: req.ip,
+    });
+    return { ok: true, status: "pending", handledAt: null };
   }));
 
   // ---- Payout relay job queue (admin rebuild, Phase C) ------------------
@@ -436,8 +502,12 @@ export async function staffRoutes(app: FastifyInstance) {
 
     const [rows, totalRow] = await Promise.all([
       sql.all<Record<string, unknown>>(
-        `SELECT j.*, u.email AS user_email FROM payout_relay_jobs j
+        `SELECT j.*, u.email AS user_email,
+                COALESCE(wr.status, rr.status) AS req_status
+         FROM payout_relay_jobs j
          JOIN users u ON u.id = j.user_id
+         LEFT JOIN withdrawal_requests wr ON j.purpose = 'withdrawal' AND wr.id = j.request_id
+         LEFT JOIN usdt_refund_requests rr ON j.purpose = 'refund' AND rr.id = j.request_id
          ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
         ...wp, limit, offset,
       ),
@@ -447,16 +517,30 @@ export async function staffRoutes(app: FastifyInstance) {
     ]);
     return {
       total: Number(totalRow?.n ?? rows.length), offset, limit,
-      rows: rows.map((r) => ({
-        id: r.id, purpose: r.purpose, requestId: r.request_id,
-        userId: r.user_id, userEmail: r.user_email,
-        chain: r.chain, fromAddress: r.from_address, toAddress: r.to_address,
-        amountMicro: Number(r.amount_micro), needsPrefund: Boolean(r.needs_prefund),
-        status: r.status, gasTxHash: r.gas_tx_hash ?? null, prefundTxHash: r.prefund_tx_hash ?? null,
-        forwardTxHash: r.forward_tx_hash ?? null, attempts: Number(r.attempts ?? 0),
-        lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
-        handledAt: r.handled_at ?? null, handledBy: r.handled_by ?? null, handledNote: r.handled_note ?? null,
-      })),
+      rows: rows.map((r) => {
+        // The money is still owed only while the underlying request sits at
+        // 'sending' — failJob's SAFE path already flips it to 'rejected' and
+        // credits back. "Safe" here mirrors payoutRelay.ts failJob: for a
+        // withdrawal, nothing has left treasury while prefund_tx_hash is null;
+        // for a refund, while forward_tx_hash is null.
+        const reqStatus = (r.req_status as string | null) ?? null;
+        const safe = r.purpose === "withdrawal" ? !r.prefund_tx_hash : !r.forward_tx_hash;
+        const owedBack = r.status === "failed" && reqStatus === "sending" && Boolean(safe);
+        return {
+          id: r.id, purpose: r.purpose, requestId: r.request_id,
+          userId: r.user_id, userEmail: r.user_email,
+          chain: r.chain, fromAddress: r.from_address, toAddress: r.to_address,
+          amountMicro: Number(r.amount_micro), needsPrefund: Boolean(r.needs_prefund),
+          status: r.status, gasTxHash: r.gas_tx_hash ?? null, prefundTxHash: r.prefund_tx_hash ?? null,
+          forwardTxHash: r.forward_tx_hash ?? null, attempts: Number(r.attempts ?? 0),
+          lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
+          handledAt: r.handled_at ?? null, handledBy: r.handled_by ?? null, handledNote: r.handled_note ?? null,
+          reqStatus,
+          // Both actions are offered under exactly the same condition: a failed
+          // job whose money is still owed and safe to touch.
+          owedBack, retryable: owedBack,
+        };
+      }),
     };
   }));
 
@@ -484,6 +568,120 @@ export async function staffRoutes(app: FastifyInstance) {
       detail: `job ${id}${note ? ` — ${note}` : ""}`, actorIp: req.ip,
     });
     return { ok: true };
+  }));
+
+  // Resolve a FAILED relay job from the queue (founder, 2026-09-01: "if
+  // something is flagged, there must be a button that actually clears it").
+  // Three actions, each a real outcome — not a second "mark handled":
+  //   • acknowledge  — same as /handled: a human checked it, take it off the
+  //                     dashboard's red count. No money moves.
+  //   • credit_back  — the money is still owed (request at 'sending') and safe
+  //                     to return: reject the request and post the compensating
+  //                     credit, exactly as payoutRelay.ts failJob would have on
+  //                     its SAFE path. Advisory-locked on the user (guardrail #8).
+  //   • retry        — re-queue the job (status→pending, attempts→0) so the
+  //                     background tick picks it up again. Only when nothing has
+  //                     left treasury yet.
+  const relayResolveSchema = z.object({
+    action: z.enum(["acknowledge", "credit_back", "retry"]),
+    note: z.string().trim().min(1, "Say what you did.").max(500),
+  });
+  app.post("/staff/relay-jobs/:id/resolve", staffGuard("withdrawals.decide", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const parsed = relayResolveSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Pick an action and add a note." });
+    const { action, note } = parsed.data;
+
+    const job = await sql.get<{
+      id: string; purpose: "withdrawal" | "refund"; request_id: string; user_id: string;
+      amount_micro: string | number; status: string; handled_at: string | null;
+      prefund_tx_hash: string | null; forward_tx_hash: string | null;
+    }>("SELECT * FROM payout_relay_jobs WHERE id = ?", id);
+    if (!job) return reply.code(404).send({ error: "Relay job not found." });
+    if (job.status !== "failed") return reply.code(400).send({ error: "Only a failed job can be resolved here." });
+
+    const safe = job.purpose === "withdrawal" ? !job.prefund_tx_hash : !job.forward_tx_hash;
+
+    if (action === "acknowledge") {
+      if (job.handled_at) return reply.code(400).send({ error: "Already marked handled." });
+      await sql.run(
+        "UPDATE payout_relay_jobs SET handled_at = ?, handled_by = ?, handled_note = ? WHERE id = ?",
+        now(), userId, note, id,
+      );
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "relay_job_handled",
+        detail: `job ${id} — ${note}`, actorIp: req.ip,
+      });
+      return { ok: true, status: "failed", handledAt: now() };
+    }
+
+    if (action === "retry") {
+      if (!safe) return reply.code(409).send({ error: "This job has already moved value on-chain — check the chain, then use Acknowledge." });
+      // The underlying request must still be waiting to be sent.
+      const req0 = job.purpose === "withdrawal"
+        ? await sql.get<{ status: string }>("SELECT status FROM withdrawal_requests WHERE id = ?", job.request_id)
+        : await sql.get<{ status: string }>("SELECT status FROM usdt_refund_requests WHERE id = ?", job.request_id);
+      if (req0?.status !== "sending") {
+        return reply.code(409).send({ error: `The ${job.purpose} is '${req0?.status ?? "gone"}', not 'sending' — nothing to retry.` });
+      }
+      await sql.run(
+        `UPDATE payout_relay_jobs
+           SET status = 'pending', attempts = 0, last_error = NULL,
+               handled_at = NULL, handled_by = NULL, handled_note = NULL
+         WHERE id = ? AND status = 'failed'`,
+        id,
+      );
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "relay_job_retry",
+        detail: `job ${id} (${job.purpose} ${job.request_id}) re-queued — ${note}`, actorIp: req.ip,
+      });
+      return { ok: true, status: "pending", handledAt: null };
+    }
+
+    // action === "credit_back"
+    if (!safe) return reply.code(409).send({ error: "This job has already moved value on-chain — crediting back would double-pay. Check the chain, then Acknowledge." });
+    const outcome = await sql.tx(async (t) => {
+      await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", job.user_id);
+      if (job.purpose === "withdrawal") {
+        const w = await t.get<{ user_id: string; amount: number }>(
+          `UPDATE withdrawal_requests SET status = 'rejected', review_note = ?, reviewed_by = 'system:manual', reviewed_at = ?
+           WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+          `Relay job failed — resolved by staff: ${note}`, now(), job.request_id,
+        );
+        if (!w) return { changed: false as const };
+        await postLedger({
+          userId: w.user_id, points: w.amount, direction: "credit",
+          sourceType: "admin_adjustment", sourceRefId: job.request_id,
+          note: "Withdrawal could not be sent — points returned",
+        }, t);
+      } else {
+        const r = await t.get<{ user_id: string; amount: string | number }>(
+          `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = 'system:manual', reviewed_at = ?
+           WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+          `Relay job failed — resolved by staff: ${note}`, now(), job.request_id,
+        );
+        if (!r) return { changed: false as const };
+        await postUsdt({
+          userId: r.user_id, micro: Number(r.amount), direction: "credit",
+          sourceType: "refund", sourceRefId: job.request_id,
+          note: "Refund could not be sent — money returned to your balance",
+        }, t);
+      }
+      await t.run(
+        "UPDATE payout_relay_jobs SET handled_at = ?, handled_by = ?, handled_note = ? WHERE id = ?",
+        now(), userId, `credited back: ${note}`, id,
+      );
+      await logAudit({
+        actorUserId: userId, actorRole: role, action: "relay_job_credit_back",
+        targetUserId: job.user_id,
+        detail: `job ${id} (${job.purpose} ${job.request_id}) — ${note}`, actorIp: req.ip,
+      }, t);
+      return { changed: true as const };
+    });
+    if (!outcome.changed) {
+      return reply.code(409).send({ error: "The request is no longer at 'sending' — it was already resolved. Use Acknowledge." });
+    }
+    return { ok: true, status: "failed", handledAt: now() };
   }));
 
   // One-screen dispute view: user's balance, ledger, and fraud flags.
@@ -1763,6 +1961,114 @@ export async function staffRoutes(app: FastifyInstance) {
     return { ok: true, role: next };
   }));
 
+  // ---- Money & payouts: the overview screen ------------------------------
+  // Founder, 2026-09-01: "make it comprehensive — how much the platform holds
+  // right now, and how much flows in vs out over 1h / 24h / 7d / 30d / 1y / all
+  // time". Every figure is derived from a ledger or a request table, so it
+  // cannot drift. USDT is carried in micro (1e6) end to end; points are
+  // converted at config.pointsPerUsdt only where a USDT figure is asked for.
+  app.get("/staff/money/overview", staffGuard("withdrawals.view", async () => {
+    const scalarM = async (text: string, ...p: unknown[]) =>
+      Number((await sql.get<{ v: string | number }>(text, ...p))?.v ?? 0);
+    const toMicro = (points: number) => Math.round((points / config.pointsPerUsdt) * 1_000_000);
+
+    // ---- what the platform holds right now ----
+    // Latest reconciliation snapshot per chain carries the on-chain balance
+    // (treasury hot wallet + known-unswept deposit addresses).
+    const snaps = await sql.all<{ chain: string; onchain_balance: string | number; checked_at: string }>(
+      `SELECT DISTINCT ON (chain) chain, onchain_balance, checked_at
+         FROM treasury_balance_snapshots ORDER BY chain, checked_at DESC`,
+    );
+    const treasuryMicro: Record<string, number> = {};
+    let treasuryTotalMicro = 0;
+    for (const s of snaps) {
+      treasuryMicro[s.chain] = Number(s.onchain_balance);
+      treasuryTotalMicro += Number(s.onchain_balance);
+    }
+    const [pointsCredited, pointsDebited, usdtDepositLiabilityMicro,
+           paidPoints, pendingPoints, feePoints] = await Promise.all([
+      scalarM("SELECT COALESCE(SUM(amount),0) AS v FROM ledger_entries WHERE amount > 0"),
+      scalarM("SELECT COALESCE(SUM(-amount),0) AS v FROM ledger_entries WHERE amount < 0"),
+      scalarM("SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger"),
+      scalarM("SELECT COALESCE(SUM(amount),0) AS v FROM withdrawal_requests WHERE status = 'paid'"),
+      scalarM("SELECT COALESCE(SUM(amount),0) AS v FROM withdrawal_requests WHERE status IN ('pending','agent_approved','manager_approved','sending')"),
+      scalarM("SELECT COALESCE(SUM(COALESCE(fee_points,0)),0) AS v FROM withdrawal_requests WHERE status = 'paid'"),
+    ]);
+    const outstandingPoints = pointsCredited - pointsDebited;
+
+    // ---- inflow / outflow per time window ----
+    const WINDOWS: { key: string; since: string | null }[] = [
+      { key: "h1", since: new Date(Date.now() - 3_600_000).toISOString() },
+      { key: "h24", since: new Date(Date.now() - 24 * 3_600_000).toISOString() },
+      { key: "d7", since: new Date(Date.now() - 7 * 86_400_000).toISOString() },
+      { key: "d30", since: new Date(Date.now() - 30 * 86_400_000).toISOString() },
+      { key: "d365", since: new Date(Date.now() - 365 * 86_400_000).toISOString() },
+      { key: "all", since: null },
+    ];
+    async function flowFor(since: string | null) {
+      const g = (col: string) => (since ? ` AND ${col} >= ?` : "");
+      const a = since ? [since] : [];
+      const [depIn, wdOutPts, rfOutMicro, bnbOutWei] = await Promise.all([
+        // Money IN: confirmed USDT deposit credits.
+        scalarM(`SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger WHERE direction='credit' AND source_type='topup'${g("created_at")}`, ...a),
+        // Money OUT: what was actually SENT — net of the withdrawal fee, keyed
+        // on paid_at (when it left), converted to USDT.
+        scalarM(`SELECT COALESCE(SUM(amount - COALESCE(fee_points,0)),0) AS v FROM withdrawal_requests WHERE status='paid'${g("paid_at")}`, ...a),
+        // Money OUT: deposit refunds, net of the gas fee, keyed on reviewed_at.
+        scalarM(`SELECT COALESCE(SUM(amount - COALESCE(fee_micro,0)),0) AS v FROM usdt_refund_requests WHERE status='paid'${g("reviewed_at")}`, ...a),
+        // BNB gas sent out (wei, decimal string).
+        scalarM(`SELECT COALESCE(SUM(CAST(amount_wei AS NUMERIC)),0)::text AS v FROM bnb_withdrawal_requests WHERE status='paid'${g("completed_at")}`, ...a),
+      ]);
+      const withdrawalsOutMicro = toMicro(wdOutPts);
+      const outMicro = withdrawalsOutMicro + rfOutMicro;
+      return {
+        depositsInMicro: depIn,
+        withdrawalsOutMicro,
+        refundsOutMicro: rfOutMicro,
+        outMicro,
+        bnbOutWei: String(bnbOutWei),
+        netMicro: depIn - outMicro,
+      };
+    }
+    const flowsArr = await Promise.all(WINDOWS.map((w) => flowFor(w.since)));
+    const flows: Record<string, Awaited<ReturnType<typeof flowFor>>> = {};
+    WINDOWS.forEach((w, i) => { flows[w.key] = flowsArr[i]; });
+
+    // ---- latest 5 of each stream (a glance; each links to the full queue) ----
+    const rows = <T>(t: string, ...p: unknown[]) => sql.all<T>(t, ...p);
+    const [lw, ld, lr, lb, lj] = await Promise.all([
+      rows<Record<string, unknown>>(`SELECT w.id, u.email, w.amount, w.status, w.created_at AS at FROM withdrawal_requests w JOIN users u ON u.id = w.user_id ORDER BY w.created_at DESC LIMIT 5`),
+      rows<Record<string, unknown>>(`SELECT t.id, u.email, t.amount, t.status, t.created_at AS at FROM usdt_topups t JOIN users u ON u.id = t.user_id ORDER BY t.created_at DESC LIMIT 5`),
+      rows<Record<string, unknown>>(`SELECT r.id, u.email, r.amount, r.status, r.created_at AS at FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id ORDER BY r.created_at DESC LIMIT 5`),
+      rows<Record<string, unknown>>(`SELECT b.id, u.email, b.amount_wei, b.status, b.created_at AS at FROM bnb_withdrawal_requests b JOIN users u ON u.id = b.user_id ORDER BY b.created_at DESC LIMIT 5`),
+      rows<Record<string, unknown>>(`SELECT j.id, u.email, j.amount_micro, j.status, j.created_at AS at FROM payout_relay_jobs j JOIN users u ON u.id = j.user_id WHERE j.status = 'failed' ORDER BY j.created_at DESC LIMIT 5`),
+    ]);
+
+    return {
+      heldNow: {
+        treasuryMicro, treasuryTotalMicro,
+        outstandingPoints, pointsLiabilityMicro: toMicro(outstandingPoints),
+        usdtDepositLiabilityMicro,
+        checkedAt: snaps[0]?.checked_at ?? null,
+      },
+      windows: WINDOWS.map((w) => w.key),
+      flows,
+      latest: {
+        withdrawals: lw.map((r) => ({ id: r.id, email: r.email, points: Number(r.amount), usdtMicro: toMicro(Number(r.amount)), status: r.status, at: r.at })),
+        deposits: ld.map((r) => ({ id: r.id, email: r.email, usdtMicro: Number(r.amount), status: r.status, at: r.at })),
+        refunds: lr.map((r) => ({ id: r.id, email: r.email, usdtMicro: Number(r.amount), status: r.status, at: r.at })),
+        bnb: lb.map((r) => ({ id: r.id, email: r.email, wei: String(r.amount_wei), status: r.status, at: r.at })),
+        relayFailed: lj.map((r) => ({ id: r.id, email: r.email, usdtMicro: Number(r.amount_micro), status: r.status, at: r.at })),
+      },
+      owed: {
+        outstandingPoints, outstandingMicro: toMicro(outstandingPoints),
+        paidPoints, paidMicro: toMicro(paidPoints),
+        pendingPoints, pendingMicro: toMicro(pendingPoints),
+        feePoints,
+      },
+    };
+  }));
+
   // ---- Admin: the money view ----------------------------------------------
   // Every figure is derived from the ledger, so it cannot drift from reality.
   // `outstanding` is the liability that matters: points users hold that they can
@@ -1989,13 +2295,10 @@ export async function staffRoutes(app: FastifyInstance) {
     );
     const reconCleared = Math.max(0, reconEverNegInWindow - reconShortfall.length);
 
-    const recentActivity = await sql.all<{ action: string; detail: string | null; created_at: string; actor_email: string | null; target_email: string | null }>(
-      `SELECT a.action, a.detail, a.created_at,
-              (SELECT email FROM users u WHERE u.id = a.actor_user_id) AS actor_email,
-              (SELECT email FROM users u WHERE u.id = a.target_user_id) AS target_email
-         FROM admin_audit_log a ORDER BY a.created_at DESC LIMIT 15`,
-    );
-
+    // "recentActivity" was removed from this response 2026-09-01 (founder): it
+    // duplicated the Audit log, which is its own section and the one place the
+    // full record belongs. The dashboard is "what needs doing", not "what just
+    // happened".
     return {
       attention: {
         withdrawalsPending: wPending, withdrawalsReady: wReady,
@@ -2009,7 +2312,6 @@ export async function staffRoutes(app: FastifyInstance) {
         kycWaiting, ticketsOpen: openTickets,
       },
       reconciliation: recon.map((r) => ({ chain: r.chain, delta: Number(r.delta), checkedAt: r.checked_at })),
-      recentActivity,
     };
   }));
 

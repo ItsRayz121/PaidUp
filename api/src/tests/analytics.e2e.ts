@@ -232,7 +232,9 @@ console.log("\n-- the endpoint --");
       typeof dj.attention[k]?.open === "number" && typeof dj.attention[k]?.cleared === "number"),
     JSON.stringify(dj.attention));
   check("the seeded pending withdrawal is counted", dj.attention.withdrawalsPending >= 1, JSON.stringify(dj.attention));
-  check("recentActivity is an array", Array.isArray(dj.recentActivity));
+  // recentActivity was removed from this response 2026-09-01 (founder) — it
+  // duplicated the Audit log.
+  check("recentActivity is gone (moved to the Audit log)", dj.recentActivity === undefined, JSON.stringify(Object.keys(dj)));
   const dashDenied = await app.inject({
     method: "GET", url: "/staff/dashboard", headers: { authorization: `Bearer ${jwt.sign({ sub: await mkUser("dash-earner") }, config.jwtSecret)}` },
   });

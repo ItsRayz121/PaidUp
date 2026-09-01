@@ -23,13 +23,28 @@ import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
   fetchStaffQueue, decideWithdrawal, fetchAdminTopups, confirmTopup, rejectTopup,
   fetchAdminRefunds, payRefund, rejectRefund, fetchStaffBnbWithdrawals, fetchRelayJobs,
-  fetchReconciliation, markRelayJobHandled, markBnbWithdrawalHandled,
+  fetchReconciliation, resolveRelayJob, resolveBnbWithdrawal, recheckReconciliation,
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtMicro, formatBnbWei } from "@/lib/format";
 
 // ---- shared bits --------------------------------------------------------
+
+// Each money queue gets its own colour so the screens stop looking identical
+// (founder, 2026-09-01: "give separate colour to each box … right now they are
+// totally similar with just headings"). One hue per stream, drawn as a thick
+// left border on the panel + a dot by the title. Tokens only — both themes
+// define brand / success / accent / pending / danger.
+type Accent = "brand" | "success" | "accent" | "pending" | "danger" | "neutral";
+const ACCENT_BAR: Record<Accent, string> = {
+  brand: "border-l-brand", success: "border-l-success", accent: "border-l-accent",
+  pending: "border-l-pending", danger: "border-l-danger", neutral: "border-l-line",
+};
+const ACCENT_DOT: Record<Accent, string> = {
+  brand: "bg-brand", success: "bg-success", accent: "bg-accent",
+  pending: "bg-pending", danger: "bg-danger", neutral: "bg-muted",
+};
 
 // A status tab strip. Kept separate from the DataTable filter bar on purpose:
 // a money queue is read one status at a time (the old panels were tabbed), and
@@ -53,20 +68,28 @@ function StatusTabs({ options, value, onChange }: {
 }
 
 // The toolbar row every money queue shares: status tabs on the left, the live
-// refresh bar on the right.
-function QueueHeader({ title, tabs, status, setStatus, refresh }: {
+// refresh bar on the right. `accent` draws a coloured dot by the title so each
+// queue is recognisable at a glance.
+function QueueHeader({ title, tabs, status, setStatus, refresh, accent = "neutral" }: {
   title: string; tabs: string[]; status: string; setStatus: (s: string) => void;
   refresh: { updatedAt: number | null; loading: boolean; reload: () => void; auto: boolean; setAuto: (v: boolean) => void };
+  accent?: Accent;
 }) {
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-      <h2 className="font-bold text-brand-ink">{title}</h2>
+      <h2 className="flex items-center gap-2 font-bold text-brand-ink">
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT[accent]}`} aria-hidden />
+        {title}
+      </h2>
       <StatusTabs options={tabs} value={status} onChange={setStatus} />
       <RefreshBar updatedAt={refresh.updatedAt} loading={refresh.loading} onRefresh={refresh.reload}
         auto={refresh.auto} setAuto={refresh.setAuto} />
     </div>
   );
 }
+
+// The root <section> className for a money queue — the accent's left border.
+const shellCls = (accent: Accent) => `mb-8 border-l-4 pl-4 ${ACCENT_BAR[accent]}`;
 
 // Small hook: status tab + auto-refresh toggle, wired to a useTableQuery so
 // switching tabs resets to page 1.
@@ -143,43 +166,93 @@ function RelaySummary({ r }: { r: NonNullable<StaffWithdrawal["relay"]> }) {
   );
 }
 
-// Danger-zone block for a FAILED relay job / BNB withdrawal. Both are terminal
-// and neither can be retried from here — a failed relay refund was already
-// auto-credited back by the background tick, a failed BNB send never touched an
-// internal balance. "Mark as handled" is a staff acknowledgement only: it
-// signs nothing, moves no money, and just takes the row out of the dashboard's
-// red "needs attention" count once a human has checked the chain.
-function HandledZone({ handledAt, handledNote, canMark, onMark }: {
-  handledAt: string | null; handledNote: string | null;
-  canMark: boolean; onMark: (note: string | undefined) => Promise<void>;
+// Resolve a FAILED relay job / BNB withdrawal (founder, 2026-09-01: "there must
+// be a button that actually clears it"). Three real outcomes:
+//   • Acknowledge     — a human checked the chain; nothing moves. Always shown.
+//   • Credit money back — the money is still owed and safe to return (relay
+//                         only, `owedBack`). Rejects the request + returns the
+//                         balance in one step, server-side.
+//   • Retry now        — re-queue the on-chain send (`retryable`), behind a
+//                        confirm — only when nothing has left treasury yet.
+// Rendered as a popover on the list row AND (expanded) in the detail danger
+// zone, so it is never "buried".
+type ResolveRow = {
+  id: string; status: string; handledAt: string | null; handledNote: string | null;
+  owedBack: boolean; retryable: boolean;
+};
+function ResolveControls({ kind, row, canDo, compact, onDone }: {
+  kind: "relay" | "bnb"; row: ResolveRow; canDo: boolean; compact?: boolean; onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  if (handledAt) {
+  const toast = useToast();
+
+  if (row.handledAt) {
     return (
-      <div className="rounded-lg border border-success/40 bg-success-tint/30 p-3 text-xs text-success">
-        ✓ Marked handled <TimeCell iso={handledAt} />{handledNote ? ` — ${handledNote}` : ""}
-      </div>
+      <span className="text-xs text-success">
+        ✓ resolved{compact ? "" : <> <TimeCell iso={row.handledAt} /></>}{row.handledNote ? ` — ${row.handledNote}` : ""}
+      </span>
     );
   }
-  if (!canMark) return null;
+  if (row.status !== "failed" || !canDo) return <span className="text-xs text-muted">—</span>;
+
+  async function run(action: "acknowledge" | "credit_back" | "retry") {
+    if (action === "retry" && !window.confirm(
+      "Re-queue this on-chain send? Do this ONLY if you have checked the chain and nothing was actually sent — a resend that lands twice is a double payment.",
+    )) return;
+    const note = window.prompt(
+      action === "acknowledge" ? "What did you check? (required — goes in the audit log)"
+      : action === "credit_back" ? "Why is the money going back? (required)"
+      : "Why is it safe to retry? (required)",
+    );
+    if (!note || !note.trim()) return;
+    setBusy(true);
+    try {
+      if (kind === "relay") await resolveRelayJob(row.id, action, note.trim());
+      else await resolveBnbWithdrawal(row.id, action === "credit_back" ? "acknowledge" : action, note.trim());
+      toast.ok(action === "retry" ? "Re-queued." : action === "credit_back" ? "Money returned." : "Marked handled.");
+      onDone();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  // Compact = pills in the list cell; full = stacked buttons in the detail
+  // danger zone. Both offer the same set, gated the same way.
+  const btn = compact
+    ? "rounded-md px-2 py-1 text-xs font-semibold"
+    : "block w-full rounded px-2 py-1.5 text-left text-xs font-semibold";
+  const acts = (
+    <>
+      <button disabled={busy} onClick={() => run("acknowledge")}
+        className={`${btn} bg-brand-tint text-brand hover:brightness-95`}>
+        {compact ? "Acknowledge" : "Acknowledge (no money moves)"}
+      </button>
+      {kind === "relay" && row.owedBack && (
+        <button disabled={busy} onClick={() => run("credit_back")}
+          className={`${btn} bg-success text-white hover:brightness-95`}>
+          {compact ? "Credit back" : "Credit the money back"}
+        </button>
+      )}
+      {row.retryable && (
+        <button disabled={busy} onClick={() => run("retry")}
+          className={`${btn} bg-danger text-white hover:brightness-95`}>
+          Retry now
+        </button>
+      )}
+    </>
+  );
+
+  if (compact) {
+    return <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>{acts}</div>;
+  }
+
   return (
     <div className="rounded-lg border border-line bg-card p-3">
       <p className="mb-2 text-xs text-muted">
-        Nothing here signs or moves money. Check the chain and the user&rsquo;s balance, then mark
-        this handled so it stops showing on the dashboard as needing attention.
+        Check the chain and the user&rsquo;s balance first. Then pick one — every option is written to
+        the audit log.
+        {row.owedBack && " The money for this one is still owed and safe to return."}
       </p>
-      <button
-        disabled={busy}
-        onClick={async () => {
-          const raw = window.prompt("Short note on how this was resolved (optional):");
-          const note = raw && raw.trim() ? raw.trim() : undefined;
-          setBusy(true);
-          try { await onMark(note); } finally { setBusy(false); }
-        }}
-        className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50"
-      >
-        Mark as handled
-      </button>
+      <div className="space-y-1">{acts}</div>
     </div>
   );
 }
@@ -189,7 +262,7 @@ const PAGE = { pageSize: 25, sort: "created_at", dir: "desc" as const };
 // ======================================================================
 // 1. Withdrawals
 // ======================================================================
-const WITHDRAWAL_TABS = ["pending", "agent_approved", "manager_approved", "sending", "paid", "rejected"];
+const WITHDRAWAL_TABS = ["all", "pending", "agent_approved", "manager_approved", "sending", "paid", "rejected"];
 
 export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) {
   const q = useTableQuery("money:withdrawals", PAGE);
@@ -324,8 +397,8 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
   }
 
   return (
-    <section className="mb-8">
-      <QueueHeader title="Withdrawals" tabs={WITHDRAWAL_TABS} status={c.status} setStatus={c.setStatus}
+    <section className={shellCls("brand")}>
+      <QueueHeader title="Withdrawals" accent="brand" tabs={WITHDRAWAL_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
 
       {pendingTotal && pendingTotal.count > 0 && (
@@ -363,7 +436,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
 // ======================================================================
 // 2. USDT deposits (top-ups)
 // ======================================================================
-const TOPUP_TABS = ["pending", "confirmed", "rejected"];
+const TOPUP_TABS = ["all", "pending", "confirmed", "rejected"];
 
 export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:deposits", PAGE);
@@ -453,8 +526,8 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
   }
 
   return (
-    <section className="mb-8">
-      <QueueHeader title="USDT deposits" tabs={TOPUP_TABS} status={c.status} setStatus={c.setStatus}
+    <section className={shellCls("success")}>
+      <QueueHeader title="USDT deposits" accent="success" tabs={TOPUP_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       {treasuryAddress ? (
         <p className="mb-2 text-xs text-muted">
@@ -484,7 +557,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
 // ======================================================================
 // 3. USDT refunds
 // ======================================================================
-const REFUND_TABS = ["pending", "sending", "paid", "rejected"];
+const REFUND_TABS = ["all", "pending", "sending", "paid", "rejected"];
 
 export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:refunds", PAGE);
@@ -593,8 +666,8 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
   }
 
   return (
-    <section className="mb-8">
-      <QueueHeader title="USDT refunds" tabs={REFUND_TABS} status={c.status} setStatus={c.setStatus}
+    <section className={shellCls("accent")}>
+      <QueueHeader title="USDT refunds" accent="accent" tabs={REFUND_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <p className="mb-2 text-xs text-muted">
         A user asking for the deposit they have not spent — their own money coming back, not their task
@@ -616,12 +689,11 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
 // ======================================================================
 // 4. BNB withdrawals (read-only)
 // ======================================================================
-const BNB_TABS = ["failed", "pending", "sending", "paid"];
+const BNB_TABS = ["all", "failed", "pending", "sending", "paid"];
 
 export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:bnb", PAGE);
   const c = useQueueControls(q, "failed");
-  const toast = useToast();
   const [open, setOpen] = useState<StaffBnbWithdrawalRow | null>(null);
 
   const data = useApi(
@@ -650,6 +722,10 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
     { key: "attempts", header: "Tries", align: "right", csv: (r) => r.attempts, render: (r) => <span className="num">{r.attempts}</span> },
     { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <ErrText value={r.lastError} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.at, render: (r) => <TimeCell iso={r.at} /> },
+    {
+      key: "actions", header: "",
+      render: (r) => <ResolveControls kind="bnb" row={r} canDo={canHandle} compact onDone={() => data.reload()} />,
+    },
   ];
 
   if (open) {
@@ -673,29 +749,21 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
         ]}
         extra={
           <p className="rounded-lg border border-line bg-card p-3 text-xs text-muted">
-            No retry button. A failed native BNB send is terminal — it needs a human to check the chain,
-            not a resend (the balance is a live on-chain read, so a resend could double-spend). Nothing was
-            debited from an internal balance, so a failed job needs no compensating credit.
+            A failed native BNB send never debited an internal balance, so there is nothing to credit
+            back. It can be re-queued only while nothing was broadcast (no tx hash) — otherwise check
+            the chain and Acknowledge.
           </p>
         }
-        danger={open.status === "failed" && (open.handledAt || canHandle) ? (
-          <HandledZone
-            handledAt={open.handledAt} handledNote={open.handledNote} canMark={canHandle}
-            onMark={async (note) => {
-              await markBnbWithdrawalHandled(open.id, note);
-              toast.ok("Marked handled.");
-              setOpen(null);
-              data.reload();
-            }}
-          />
+        danger={open.status === "failed" ? (
+          <ResolveControls kind="bnb" row={open} canDo={canHandle} onDone={() => { setOpen(null); data.reload(); }} />
         ) : undefined}
       />
     );
   }
 
   return (
-    <section className="mb-8">
-      <QueueHeader title="BNB withdrawals" tabs={BNB_TABS} status={c.status} setStatus={c.setStatus}
+    <section className={shellCls("pending")}>
+      <QueueHeader title="BNB withdrawals" accent="pending" tabs={BNB_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <DataTable<StaffBnbWithdrawalRow>
         q={q} columns={columns} rows={rows}
@@ -713,12 +781,11 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
 // ======================================================================
 // 5. Payout relay jobs (read-only)
 // ======================================================================
-const RELAY_TABS = ["failed", "active", "pending", "gas_sent", "prefund_sent", "forward_sent", "forward_confirmed"];
+const RELAY_TABS = ["all", "failed", "active", "pending", "gas_sent", "prefund_sent", "forward_sent", "forward_confirmed"];
 
 export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:relay", PAGE);
   const c = useQueueControls(q, "failed");
-  const toast = useToast();
   const [open, setOpen] = useState<RelayJobRow | null>(null);
 
   const data = useApi(
@@ -748,6 +815,10 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
     { key: "attempts", header: "Tries", align: "right", csv: (r) => r.attempts, render: (r) => <span className="num">{r.attempts}</span> },
     { key: "error", header: "Last error", csv: (r) => r.lastError ?? "", render: (r) => <ErrText value={r.lastError} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.at, render: (r) => <TimeCell iso={r.at} /> },
+    {
+      key: "actions", header: "",
+      render: (r) => <ResolveControls kind="relay" row={r} canDo={canHandle} compact onDone={() => data.reload()} />,
+    },
   ];
 
   if (open) {
@@ -776,30 +847,21 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
         ]}
         extra={
           <p className="rounded-lg border border-line bg-card p-3 text-xs text-muted">
-            No retry button — a failed relay job is terminal. For a refund job that gave up before any
-            value moved, the background tick has already auto-credited the balance back; a withdrawal
-            whose prefund leg already confirmed is left for a human to reconcile against the chain. Once
-            you have checked which case this is, mark it handled below.
+            {open.owedBack
+              ? "The money for this job is still owed and nothing has left treasury — you can credit it straight back, or retry the send."
+              : "This job already moved value on-chain, or the request was already resolved — check the chain, then Acknowledge."}
           </p>
         }
-        danger={open.status === "failed" && (open.handledAt || canHandle) ? (
-          <HandledZone
-            handledAt={open.handledAt} handledNote={open.handledNote} canMark={canHandle}
-            onMark={async (note) => {
-              await markRelayJobHandled(open.id, note);
-              toast.ok("Marked handled.");
-              setOpen(null);
-              data.reload();
-            }}
-          />
+        danger={open.status === "failed" ? (
+          <ResolveControls kind="relay" row={open} canDo={canHandle} onDone={() => { setOpen(null); data.reload(); }} />
         ) : undefined}
       />
     );
   }
 
   return (
-    <section className="mb-8">
-      <QueueHeader title="Payout relay jobs" tabs={RELAY_TABS} status={c.status} setStatus={c.setStatus}
+    <section className={shellCls("danger")}>
+      <QueueHeader title="Payout relay jobs" accent="danger" tabs={RELAY_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <DataTable<RelayJobRow>
         q={q} columns={columns} rows={rows}
@@ -824,12 +886,25 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
 // ======================================================================
 const RECON_PREVIEW = 6;
 
-export function ReconciliationPanel() {
+export function ReconciliationPanel({ canRecheck = false }: { canRecheck?: boolean }) {
   const [auto, setAuto] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
   const data = useApi(() => fetchReconciliation("bep20", 60), [], true, auto ? QUEUE_POLL_MS : undefined);
   const snaps = data.data?.snapshots ?? [];
   const shortfalls = snaps.filter((s) => s.delta < 0).length;
+
+  async function recheck() {
+    setBusy(true);
+    try {
+      const r = await recheckReconciliation("bep20");
+      const d = r.snapshot?.delta ?? 0;
+      toast.ok(d < 0 ? `Still short by ${Math.abs(d)} USDT.` : "Checked — no shortfall.");
+      data.reload();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
   // Show the newest handful and hide the rest behind "See more" — the check
   // runs hourly, so 60 rows is a full-height wall nobody reads past row 6. The
   // shortfall summary below still counts the whole window.
@@ -837,15 +912,28 @@ export function ReconciliationPanel() {
   const hiddenCount = snaps.length - shown.length;
 
   return (
-    <section className="mb-8">
+    <section className={shellCls("danger")}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Reconciliation history</h2>
-        <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload} auto={auto} setAuto={setAuto} />
+        <h2 className="flex items-center gap-2 font-bold text-brand-ink">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT.danger}`} aria-hidden />
+          Reconciliation history
+        </h2>
+        <div className="flex items-center gap-2">
+          {canRecheck && (
+            <button onClick={recheck} disabled={busy}
+              className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
+              {busy ? "Checking…" : "Re-check now"}
+            </button>
+          )}
+          <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload} auto={auto} setAuto={setAuto} />
+        </div>
       </div>
       <p className="mb-2 text-xs text-muted">
         Treasury + known-unswept on-chain balance vs. what the ledger says we owe, on BNB Smart Chain —
         one row per scheduled check. A negative delta is a shortfall: the treasury holds less than we owe.
-        A shortfall also pages staff on Telegram the moment it is first raised.
+        A shortfall also pages staff on Telegram the moment it is first raised. After you post a correcting
+        USDT adjustment on the affected user, hit <strong>Re-check now</strong> so the dashboard clears
+        without waiting the hour.
       </p>
       {data.error ? (
         <p className="rounded-lg border border-danger/30 bg-danger-tint/40 p-3 text-sm text-danger">{data.error}</p>

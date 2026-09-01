@@ -7,26 +7,15 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, bulkSetUserStatus, setUserReview, adjustUserPoints,
-  fetchStaffMembers, setStaffRole,
-  fetchMoney, downloadExport,
+  fetchStaffMembers, setStaffRole, downloadExport,
   type AdminUserRow, type StaffRole,
 } from "@/lib/api";
-import { formatPoints, formatMoney, formatUsdtAmount, timeAgo } from "@/lib/format";
+import { formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
 import { DataTable, type Column } from "@/components/staff/DataTable";
 import { StatusBadge, TimeCell, Points } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
-
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-line bg-card p-3">
-      <p className="text-xs text-muted">{label}</p>
-      <p className="num text-lg font-bold text-brand-ink">{value}</p>
-      {sub && <p className="text-xs text-muted">{sub}</p>}
-    </div>
-  );
-}
 
 // ---- Users list — on the shared DataTable (admin rebuild, Phase A) --------
 // Search / pagination / row count / CSV / bulk-suspend all come from the one
@@ -34,7 +23,9 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 // GET /staff/users grows the params; the columns are marked non-sortable
 // until then rather than faking a client-side sort of one page.
 export function UsersPanel() {
-  const q = useTableQuery("users", { pageSize: 25, sort: "created_at", dir: "desc" });
+  // Default to a short page (founder, 2026-09-01: "show five or six, then let
+  // me click for more" — the pager IS the "see more"). Staff can raise it.
+  const q = useTableQuery("users", { pageSize: 10, sort: "created_at", dir: "desc" });
   const users = useApi(
     () => searchUsers({
       q: q.search, limit: q.pageSize, offset: q.offset,
@@ -317,80 +308,7 @@ export function StaffRolesPanel() {
   );
 }
 
-// ---- Money view + export -------------------------------------------------
-export function MoneyPanel() {
-  const money = useApi(() => fetchMoney(10), []);
-  const { goToSection } = useStaffNav();
-
-  async function exportCsv(what: "ledger" | "withdrawals" | "audit") {
-    try { await downloadExport(what); }
-    catch (e) { window.alert((e as Error).message); }
-  }
-
-  if (money.loading) return <p className="mb-8 text-sm text-muted">Loading money…</p>;
-  if (money.error) return <p className="mb-8 text-sm text-danger">{money.error}</p>;
-  const m = money.data!;
-
-  return (
-    <section className="mb-8">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Money</h2>
-        <div className="flex gap-1.5">
-          {(["ledger", "withdrawals", "audit"] as const).map((w) => (
-            <button key={w} onClick={() => exportCsv(w)}
-              className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
-              Export {w}.csv
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* "Owed to users" is the number that matters: points people still hold and
-          can cash out. If it ever exceeds the treasury, you cannot pay everyone. */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile label="Owed to users (live)" value={formatPoints(m.points.outstanding)} sub={formatUsdtAmount(m.usdt.outstanding)} />
-        <Tile label="Paid out (all time)" value={formatPoints(m.points.paidPoints)} sub={formatUsdtAmount(m.usdt.paid)} />
-        <Tile label="Awaiting payout" value={formatPoints(m.points.pendingPoints)} sub={formatUsdtAmount(m.usdt.pending)} />
-        <Tile label="Fees kept" value={formatPoints(m.points.feePoints)} sub="from withdrawals" />
-      </div>
-      <p className="mt-2 text-xs text-muted">
-        Points created by hand (admin adjustments):{" "}
-        <span className="num font-semibold">{formatPoints(m.points.adjustments)}</span>. These were
-        not earned from a network — they come straight off your margin.
-      </p>
-
-      <div className="mb-1.5 mt-4 flex items-center justify-between">
-        <h3 className="font-semibold text-brand-ink">Recent staff actions</h3>
-        {/* The full, paginated log lives in the Audit section — this is a
-            glance, not the log (founder, 2026-08-27). */}
-        {m.auditTotal > m.recentAudit.length && (
-          <button onClick={() => goToSection("audit")} className="text-xs font-semibold text-brand hover:underline">
-            See more ({m.auditTotal} total)
-          </button>
-        )}
-      </div>
-      {m.recentAudit.length === 0 ? (
-        <p className="rounded-lg border border-line bg-card p-3 text-sm text-muted">Nothing yet.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table className="w-full min-w-[620px] text-xs">
-            <thead className="bg-brand-tint text-left uppercase text-brand">
-              <tr><th className="p-2">When</th><th className="p-2">Who</th><th className="p-2">Action</th><th className="p-2">Target</th><th className="p-2">Detail</th></tr>
-            </thead>
-            <tbody>
-              {m.recentAudit.map((a, i) => (
-                <tr key={i} className="border-t border-line">
-                  <td className="p-2 text-muted">{timeAgo(String(a.created_at))}</td>
-                  <td className="p-2">{String(a.actor_email)}</td>
-                  <td className="p-2 font-semibold text-brand-ink">{String(a.action)}</td>
-                  <td className="p-2">{String(a.target_email ?? "—")}</td>
-                  <td className="p-2 text-muted">{String(a.detail ?? "")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
+// The old MoneyPanel ("Owed vs paid" tiles + a "Recent staff actions" table)
+// was retired 2026-09-01: its tiles moved into the new Money → Overview
+// (components/staff/MoneyOverview.tsx), and the founder asked for the staff-
+// actions table to live ONLY in the Audit log, not be repeated here.

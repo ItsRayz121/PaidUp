@@ -312,5 +312,171 @@ console.log("\n-- reconciliation history --");
   check("returns the snapshot with a negative delta", d.snapshots.some((s) => s.delta < 0), JSON.stringify(d.snapshots));
 }
 
+// ---------------------------------------------------------------------------
+console.log("\n-- resolve a FAILED relay job (acknowledge / credit_back / retry) --");
+{
+  // withdrawal purpose, underlying request still at 'sending', prefund not
+  // broadcast => safe => owedBack + retryable.
+  const u = await mkUser("relay-resolve");
+  const wdId = newId();
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, created_at)
+     VALUES (?,?,?,?,?, 'sending', ?)`,
+    wdId, u, 1500, "bep20", `0xdst${TAG}`, tick(),
+  );
+  const jobId = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address,
+        amount_micro, needs_prefund, status, attempts, last_error, created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, 1500000, 1, 'failed', 15, 'insufficient gas', ?)`,
+    jobId, wdId, u, `0xfrom${TAG}`, `0xdst${TAG}`, tick(),
+  );
+
+  const list = await app.inject({ method: "GET", url: "/staff/relay-jobs?status=failed&limit=100", headers: authOf(admin) });
+  const lj = (list.json() as { rows: { id: string; owedBack: boolean; retryable: boolean; reqStatus: string }[] }).rows.find((r) => r.id === jobId)!;
+  check("failed relay row carries owedBack=true", lj?.owedBack === true, JSON.stringify(lj));
+  check("failed relay row carries retryable=true", lj?.retryable === true, JSON.stringify(lj));
+  check("failed relay row reports reqStatus='sending'", lj?.reqStatus === "sending", JSON.stringify(lj));
+
+  const noNote = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "acknowledge" } });
+  check("resolve without a note => 400", noNote.statusCode === 400, String(noNote.statusCode));
+
+  const notStaff = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(u), payload: { action: "acknowledge", note: "x" } });
+  check("an earner cannot resolve (403)", notStaff.statusCode === 403, String(notStaff.statusCode));
+
+  const cb = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "credit_back", note: "gas never funded, returning" } });
+  check("credit_back => 200", cb.statusCode === 200, cb.body);
+  const wdAfter = await sql.get<{ status: string }>("SELECT status FROM withdrawal_requests WHERE id = ?", wdId);
+  check("underlying withdrawal is now 'rejected'", wdAfter?.status === "rejected", JSON.stringify(wdAfter));
+  const creditRow = await sql.get<{ n: number }>(
+    "SELECT COUNT(*)::int AS n FROM ledger_entries WHERE source_ref_id = ? AND direction = 'credit' AND amount = 1500", wdId,
+  );
+  check("a +1500 compensating credit was posted once", Number(creditRow?.n) === 1, JSON.stringify(creditRow));
+  const jobAfter = await sql.get<{ handled_at: string | null }>("SELECT handled_at FROM payout_relay_jobs WHERE id = ?", jobId);
+  check("relay job is stamped handled", !!jobAfter?.handled_at, JSON.stringify(jobAfter));
+
+  const cb2 = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "credit_back", note: "again" } });
+  check("second credit_back => 409 (idempotent, not a double credit)", cb2.statusCode === 409, cb2.body);
+  const creditRow2 = await sql.get<{ n: number }>(
+    "SELECT COUNT(*)::int AS n FROM ledger_entries WHERE source_ref_id = ? AND direction = 'credit'", wdId,
+  );
+  check("still exactly one compensating credit", Number(creditRow2?.n) === 1, JSON.stringify(creditRow2));
+}
+
+{
+  // retry path: fresh failed job, still 'sending', safe => retry re-queues it.
+  const u = await mkUser("relay-retry");
+  const wdId = newId();
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, created_at)
+     VALUES (?,?,?,?,?, 'sending', ?)`,
+    wdId, u, 900, "bep20", `0xr${TAG}`, tick(),
+  );
+  const jobId = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address,
+        amount_micro, needs_prefund, status, attempts, last_error, created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, 900000, 1, 'failed', 15, 'rpc down', ?)`,
+    jobId, wdId, u, `0xf2${TAG}`, `0xr${TAG}`, tick(),
+  );
+  const retry = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "retry", note: "checked chain, nothing sent" } });
+  check("retry => 200", retry.statusCode === 200, retry.body);
+  const j = await sql.get<{ status: string; attempts: number; handled_at: string | null }>(
+    "SELECT status, attempts, handled_at FROM payout_relay_jobs WHERE id = ?", jobId,
+  );
+  check("job is back to 'pending', attempts reset, handled cleared", j?.status === "pending" && Number(j?.attempts) === 0 && !j?.handled_at, JSON.stringify(j));
+
+  // Now make it unsafe (prefund broadcast) and fail it again — retry must refuse.
+  await sql.run("UPDATE payout_relay_jobs SET status = 'failed', prefund_tx_hash = ? WHERE id = ?", `0xpre${TAG}`, jobId);
+  const retry2 = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "retry", note: "try again" } });
+  check("retry refused once value moved on-chain (409)", retry2.statusCode === 409, retry2.body);
+  const cbUnsafe = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "credit_back", note: "?" } });
+  check("credit_back also refused once value moved (409)", cbUnsafe.statusCode === 409, cbUnsafe.body);
+  const ack = await app.inject({ method: "POST", url: `/staff/relay-jobs/${jobId}/resolve`, headers: authOf(admin), payload: { action: "acknowledge", note: "checked chain, prefund landed, reconciling by hand" } });
+  check("acknowledge still works on the unsafe job (200)", ack.statusCode === 200, ack.body);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- resolve a FAILED BNB withdrawal (acknowledge / retry) --");
+{
+  const u = await mkUser("bnb-resolve");
+  const bnbId = newId();
+  await sql.run(
+    `INSERT INTO bnb_withdrawal_requests (id, user_id, chain, address, amount_wei, status, last_error, created_at)
+     VALUES (?,?,?,?,?, 'failed', 'no gas', ?)`,
+    bnbId, u, "bep20", `0xb${TAG}`, "500000000000000", tick(),
+  );
+  const list = await app.inject({ method: "GET", url: "/staff/bnb-withdrawals?status=failed&limit=100", headers: authOf(admin) });
+  const row = (list.json() as { rows: { id: string; owedBack: boolean; retryable: boolean }[] }).rows.find((r) => r.id === bnbId)!;
+  check("failed BNB row: owedBack=false, retryable=true (no tx hash)", row?.owedBack === false && row?.retryable === true, JSON.stringify(row));
+
+  const cbNo = await app.inject({ method: "POST", url: `/staff/bnb-withdrawals/${bnbId}/resolve`, headers: authOf(admin), payload: { action: "credit_back", note: "x" } });
+  check("BNB resolve rejects credit_back as an action (400)", cbNo.statusCode === 400, String(cbNo.statusCode));
+
+  const retry = await app.inject({ method: "POST", url: `/staff/bnb-withdrawals/${bnbId}/resolve`, headers: authOf(admin), payload: { action: "retry", note: "gas funded now" } });
+  check("BNB retry => 200", retry.statusCode === 200, retry.body);
+  const b = await sql.get<{ status: string; attempts: number }>("SELECT status, attempts FROM bnb_withdrawal_requests WHERE id = ?", bnbId);
+  check("BNB job back to 'pending', attempts reset", b?.status === "pending" && Number(b?.attempts) === 0, JSON.stringify(b));
+
+  // broadcast one, fail it — retry must refuse now.
+  await sql.run("UPDATE bnb_withdrawal_requests SET status = 'failed', tx_hash = ? WHERE id = ?", `0xtx${TAG}`, bnbId);
+  const retry2 = await app.inject({ method: "POST", url: `/staff/bnb-withdrawals/${bnbId}/resolve`, headers: authOf(admin), payload: { action: "retry", note: "again" } });
+  check("BNB retry refused once a tx was broadcast (409)", retry2.statusCode === 409, retry2.body);
+  const ack = await app.inject({ method: "POST", url: `/staff/bnb-withdrawals/${bnbId}/resolve`, headers: authOf(admin), payload: { action: "acknowledge", note: "tx reverted on chain, nothing owed" } });
+  check("BNB acknowledge => 200", ack.statusCode === 200, ack.body);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- reconciliation re-check on demand --");
+{
+  const rc = await app.inject({ method: "POST", url: "/staff/mining/reconciliation/recheck", headers: authOf(admin), payload: { chain: "bep20" } });
+  check("recheck => 200", rc.statusCode === 200, rc.body);
+  const body = rc.json() as { ok: boolean; chain: string; snapshot: { delta: number } | null };
+  check("recheck returns ok + a fresh snapshot", body.ok === true && body.chain === "bep20" && body.snapshot !== null, JSON.stringify(body).slice(0, 200));
+  const asEarner = await app.inject({ method: "POST", url: "/staff/mining/reconciliation/recheck", headers: authOf(agent), payload: {} });
+  check("an agent without analytics.view cannot recheck (403)", asEarner.statusCode === 403, String(asEarner.statusCode));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- money overview (held now + inflow/outflow windows) --");
+{
+  // A confirmed deposit credit (money IN) and a paid withdrawal (money OUT),
+  // both dated NOW so they land in every window including h1.
+  const u = await mkUser("overview");
+  await sql.run(
+    `INSERT INTO usdt_ledger (id, user_id, amount, direction, source_type, chain, created_at)
+     VALUES (?,?,?, 'credit', 'topup', 'bep20', ?)`,
+    newId(), u, 5_000_000, now(),
+  );
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, fee_points, created_at, paid_at)
+     VALUES (?,?,?,?,?, 'paid', 0, ?, ?)`,
+    newId(), u, 1000, "bep20", `0xovw${TAG}`, now(), now(),
+  );
+
+  const res = await app.inject({ method: "GET", url: "/staff/money/overview", headers: authOf(admin) });
+  check("200", res.statusCode === 200, res.body);
+  const o = res.json() as {
+    heldNow: { treasuryTotalMicro: number; outstandingPoints: number; usdtDepositLiabilityMicro: number };
+    windows: string[];
+    flows: Record<string, { depositsInMicro: number; outMicro: number; netMicro: number; withdrawalsOutMicro: number }>;
+    latest: { withdrawals: unknown[]; deposits: unknown[]; refunds: unknown[]; bnb: unknown[]; relayFailed: unknown[] };
+    owed: { paidPoints: number; pendingPoints: number };
+  };
+  check("all six windows present", ["h1", "h24", "d7", "d30", "d365", "all"].every((k) => o.windows.includes(k) && o.flows[k]), JSON.stringify(o.windows));
+  check("h1 deposits-in includes the 5 USDT just credited", o.flows.h1.depositsInMicro >= 5_000_000, String(o.flows.h1.depositsInMicro));
+  check("h1 withdrawals-out includes the 1000-pt payout (=1 USDT)", o.flows.h1.withdrawalsOutMicro >= 1_000_000, String(o.flows.h1.withdrawalsOutMicro));
+  check("net = in - out for h1", o.flows.h1.netMicro === o.flows.h1.depositsInMicro - o.flows.h1.outMicro, JSON.stringify(o.flows.h1));
+  const ledgerSum = Number((await sql.get<{ v: string | number }>("SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger"))?.v ?? -1);
+  check("held-now USDT deposit liability == SUM(usdt_ledger)", o.heldNow.usdtDepositLiabilityMicro === ledgerSum, `${o.heldNow.usdtDepositLiabilityMicro} vs ${ledgerSum}`);
+  check("latest lists are arrays", Array.isArray(o.latest.withdrawals) && Array.isArray(o.latest.relayFailed), JSON.stringify(Object.keys(o.latest)));
+  check("owed.paidPoints > 0 after a paid withdrawal exists", o.owed.paidPoints >= 1000, String(o.owed.paidPoints));
+
+  const asEarner = await app.inject({ method: "GET", url: "/staff/money/overview", headers: authOf(u) });
+  check("an earner cannot read the money overview (403)", asEarner.statusCode === 403, String(asEarner.statusCode));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

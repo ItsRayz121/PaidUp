@@ -46,6 +46,8 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers" },
 
   // --- deep links to individual panels -------------------------------------
+  { label: "Money overview", short: "Overview", section: "money", anchor: "p-overview", hint: "Money & payouts",
+    keywords: "money overview held treasury inflow outflow deposits withdrawals net flow balance", needs: ["withdrawals.view"] },
   { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals", hint: "Money & payouts",
     keywords: "withdraw payout cash out pay approve reject mark paid", needs: ["withdrawals.view"] },
   { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-usdt-deposits", hint: "Money & payouts",
@@ -62,9 +64,6 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "reconcile treasury shortfall snapshot ledger owed delta", needs: ["analytics.view"] },
   { label: "Withdrawal fee & auto-approve limits", short: "Fees & limits", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
     keywords: "fee fees gas ceiling auto withdraw refund limit approval 100 usdt step up charge", needs: ["settings.manage"] },
-  { label: "Money owed vs paid", short: "Money", section: "money", anchor: "p-money", hint: "Money & payouts",
-    keywords: "balance owed liability reconcile", needs: ["money.view"] },
-
   { label: "Users list", short: "Users", section: "users", anchor: "p-users", hint: "Users & IDs",
     keywords: "search find user suspend restore export csv bulk review hold", needs: ["users.list"] },
   { label: "Verify IDs (KYC)", short: "IDs (KYC)", section: "users", anchor: "p-kyc", hint: "Users & IDs",
@@ -98,14 +97,6 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Staff alerts (Telegram)", short: "Alerts", section: "settings", anchor: "p-alerts", hint: "Features & settings",
     keywords: "alert telegram paging chat test notify", needs: ["infra.view"] },
 ];
-
-// The panels inside one section, in order — for the in-section table of
-// contents (SectionToc). Same permission filter as the sidebar and the search.
-export function panelsInSection(section: SectionId, has: (p: UiPermission) => boolean): SearchDest[] {
-  return DESTINATIONS.filter(
-    (d) => d.section === section && d.anchor && (!d.needs || d.needs.every(has)),
-  );
-}
 
 function score(d: SearchDest, words: string[]): number {
   const label = d.label.toLowerCase();
@@ -290,37 +281,6 @@ export function StaffSearch({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-// A row of chips at the top of a multi-panel section — "this section contains:
-// Withdrawals · Deposits · Refunds · Treasury · Fees & limits · Money" — each
-// scrolling to its panel. Solves "I clicked the section but the thing I want
-// is a long scroll down and nothing told me it was there".
-export function SectionToc({
-  section, has, onJump,
-}: {
-  section: SectionId;
-  has: (p: UiPermission) => boolean;
-  onJump: (anchor: string) => void;
-}) {
-  const panels = panelsInSection(section, has);
-  if (panels.length < 2) return null; // one panel: nothing to navigate within
-
-  return (
-    <div className="mb-4 flex flex-wrap items-center gap-1.5 border-b border-line pb-3">
-      <span className="mr-1 text-xs font-semibold uppercase text-muted">In this section</span>
-      {panels.map((d) => (
-        <button
-          key={d.anchor}
-          type="button"
-          onClick={() => onJump(d.anchor!)}
-          className="rounded-full border border-line bg-card px-3 py-1 text-xs font-semibold text-brand hover:bg-brand-tint"
-        >
-          {d.short ?? d.label}
-        </button>
-      ))}
     </div>
   );
 }

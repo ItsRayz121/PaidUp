@@ -16,6 +16,7 @@ import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
+import { reconcileChain } from "../deposits/reconcile.ts";
 import { alertsEnabled, sendStaffAlert } from "../alerts.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
@@ -455,7 +456,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     // `treasuryAddress`, `treasuryChain` are unchanged; `total`/`offset`/`limit`
     // are additive.
     const p = z.object({
-      status: z.enum(["pending", "confirmed", "rejected"]).default("pending"),
+      status: z.enum(["pending", "confirmed", "rejected", "all"]).default("pending"),
       q: z.string().max(120).optional(),
       sort: z.enum(["created_at", "amount", "status"]).optional(),
       dir: z.enum(["asc", "desc"]).optional(),
@@ -463,14 +464,16 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       offset: z.coerce.number().int().min(0).default(0),
     }).parse((req.query as Record<string, unknown>) ?? {});
 
-    const where = ["t.status = ?"];
-    const wp: unknown[] = [p.status];
+    // status=all drops the filter (founder, 2026-09-01: an "All" tab).
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (p.status !== "all") { where.push("t.status = ?"); wp.push(p.status); }
     const term = (p.q ?? "").trim().toLowerCase();
     if (term) {
       where.push("(LOWER(u.email) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(t.id) = ? OR LOWER(t.tx_hash) LIKE ?)");
       wp.push(`%${term}%`, `%${term}%`, term, `%${term}%`);
     }
-    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const sortCol = { created_at: "t.created_at", amount: "t.amount", status: "t.status" }[p.sort ?? "created_at"];
     const dir = p.dir === "asc" ? "ASC" : "DESC";
 
@@ -590,7 +593,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     // Server-side search / sort / paginate (admin rebuild, Phase C). `refunds`
     // is unchanged; `total`/`offset`/`limit` are additive.
     const p = z.object({
-      status: z.enum(["pending", "sending", "paid", "rejected"]).default("pending"),
+      status: z.enum(["pending", "sending", "paid", "rejected", "all"]).default("pending"),
       q: z.string().max(120).optional(),
       sort: z.enum(["created_at", "amount", "status"]).optional(),
       dir: z.enum(["asc", "desc"]).optional(),
@@ -598,14 +601,16 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       offset: z.coerce.number().int().min(0).default(0),
     }).parse((req.query as Record<string, unknown>) ?? {});
 
-    const where = ["r.status = ?"];
-    const wp: unknown[] = [p.status];
+    // status=all drops the filter (founder, 2026-09-01: an "All" tab).
+    const where: string[] = [];
+    const wp: unknown[] = [];
+    if (p.status !== "all") { where.push("r.status = ?"); wp.push(p.status); }
     const term = (p.q ?? "").trim().toLowerCase();
     if (term) {
       where.push("(LOWER(u.email) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(r.id) = ? OR LOWER(r.address) LIKE ? OR LOWER(r.tx_hash) LIKE ?)");
       wp.push(`%${term}%`, `%${term}%`, term, `%${term}%`, `%${term}%`);
     }
-    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const sortCol = { created_at: "r.created_at", amount: "r.amount", status: "r.status" }[p.sort ?? "created_at"];
     const dir = p.dir === "asc" ? "ASC" : "DESC";
 
@@ -791,6 +796,29 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         ledgerTotal: usdtFromMicro(Number(r.ledger_total)),
         delta: usdtFromMicro(Number(r.delta)),
       })),
+    };
+  }));
+
+  // Run the reconciliation check NOW (founder, 2026-09-01: a corrected treasury
+  // shortfall must clear without waiting the hourly tick). Reuses the exact same
+  // `reconcileChain` the scheduled job calls — this only changes WHEN it runs.
+  // Writes a fresh snapshot and returns it; a shortfall that has been fixed
+  // comes back with a non-negative delta and the dashboard tile goes green.
+  app.post("/staff/mining/reconciliation/recheck", staffGuard("analytics.view", async (_ctx, req) => {
+    const b = z.object({ chain: z.string().min(1).max(20).default("bep20") }).parse(req.body ?? {});
+    await reconcileChain(b.chain);
+    const latest = await sql.get<Record<string, unknown>>(
+      `SELECT * FROM treasury_balance_snapshots WHERE chain = ? ORDER BY checked_at DESC LIMIT 1`, b.chain,
+    );
+    return {
+      ok: true,
+      chain: b.chain,
+      snapshot: latest ? {
+        ...latest,
+        onchainBalance: usdtFromMicro(Number(latest.onchain_balance)),
+        ledgerTotal: usdtFromMicro(Number(latest.ledger_total)),
+        delta: usdtFromMicro(Number(latest.delta)),
+      } : null,
     };
   }));
 

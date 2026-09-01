@@ -12,10 +12,12 @@
 // red only while something is still open; once everything is handled it turns
 // green ("all clear"). "5 total · 3 cleared · 2 open" is the whole point: you
 // can see what you already dealt with, not just what is left.
+import { useState } from "react";
 import { useApi } from "@/lib/hooks";
-import { fetchStaffDashboard, type AttentionSignal } from "@/lib/api";
+import { fetchStaffDashboard, recheckReconciliation, type AttentionSignal } from "@/lib/api";
 import { useStaffNav, type SectionId } from "@/lib/staffNav";
 import { TimeCell, Spinner, ErrorRow } from "./primitives";
+import { useToast } from "./toast";
 
 // A plain queue size (leaves the queue when done — no "cleared" history to show).
 type CountTile = { kind: "count"; label: string; value: number; section: SectionId; anchor?: string; tone: "warn" | "bad" };
@@ -26,6 +28,19 @@ type Tile = CountTile | SignalTile;
 export function DashboardOverview() {
   const d = useApi(fetchStaffDashboard, [], true, 30_000);
   const { goToSection } = useStaffNav();
+  const toast = useToast();
+  const [rechecking, setRechecking] = useState<string | null>(null);
+
+  async function recheck(chain: string) {
+    setRechecking(chain);
+    try {
+      const r = await recheckReconciliation(chain);
+      const delta = r.snapshot?.delta ?? 0;
+      toast.ok(delta < 0 ? `${chain}: still short by ${Math.abs(delta)} USDT.` : `${chain}: no shortfall now.`);
+      d.reload();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setRechecking(null); }
+  }
 
   if (d.loading && !d.data) return <Spinner label="Loading dashboard…" />;
   if (d.error) return <ErrorRow message={d.error} onRetry={d.reload} />;
@@ -108,36 +123,20 @@ export function DashboardOverview() {
             corrected — fix it with a USDT adjustment on the affected user (Users &amp; IDs → open the user → Adjust USDT).
           </p>
           {d.data.reconciliation.filter((r) => r.delta < 0).map((r) => (
-            <p key={r.chain} className="num text-xs text-muted">
-              {r.chain}: {(r.delta / 1e6).toFixed(2)} USDT short · checked <TimeCell iso={r.checkedAt} />
+            <p key={r.chain} className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <span className="num">{r.chain}: {(r.delta / 1e6).toFixed(2)} USDT short · checked <TimeCell iso={r.checkedAt} /></span>
+              <button onClick={() => recheck(r.chain)} disabled={rechecking === r.chain}
+                className="rounded-md bg-brand px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50">
+                {rechecking === r.chain ? "Checking…" : "Re-check now"}
+              </button>
             </p>
           ))}
         </div>
       )}
 
-      <h3 className="mb-2 mt-6 font-bold text-brand-ink">Recent admin activity</h3>
-      {d.data.recentActivity.length === 0 ? (
-        <p className="rounded-lg border border-line bg-card p-3 text-sm text-muted">Nothing yet.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table className="w-full min-w-[560px] text-xs">
-            <thead className="bg-brand-tint/60 text-left uppercase text-brand">
-              <tr><th className="p-2">When</th><th className="p-2">Action</th><th className="p-2">Who</th><th className="p-2">On</th><th className="p-2">Detail</th></tr>
-            </thead>
-            <tbody>
-              {d.data.recentActivity.map((r, i) => (
-                <tr key={i} className="border-t border-line">
-                  <td className="p-2"><TimeCell iso={r.created_at} /></td>
-                  <td className="p-2 font-semibold text-brand-ink">{r.action}</td>
-                  <td className="p-2 text-muted">{r.actor_email ?? "—"}</td>
-                  <td className="p-2 text-muted">{r.target_email ?? "—"}</td>
-                  <td className="p-2 text-muted">{r.detail ?? ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* "Recent admin activity" used to live here. Removed 2026-09-01
+          (founder): it duplicated the Audit log, which is one click away and is
+          the single place the full record belongs. */}
     </section>
   );
 }

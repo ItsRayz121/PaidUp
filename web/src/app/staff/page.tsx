@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useStaffSession, useApi } from "@/lib/hooks";
 import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
@@ -12,7 +12,7 @@ import {
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
 import { SupportQueuePanel } from "@/components/staff/SupportQueue";
-import { UsersPanel, StaffRolesPanel, MoneyPanel } from "@/components/admin";
+import { UsersPanel, StaffRolesPanel } from "@/components/admin";
 import { MiningAdminSection } from "@/components/mining-admin";
 import {
   WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
@@ -28,10 +28,11 @@ import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
-import { StaffSearch, SectionToc } from "@/components/staff-search";
+import { StaffSearch } from "@/components/staff-search";
 import { ToastProvider } from "@/components/staff/toast";
 import { UserLookupScreen } from "@/components/staff/UserDetail";
 import { DashboardOverview } from "@/components/staff/DashboardOverview";
+import { MoneyOverview } from "@/components/staff/MoneyOverview";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -86,6 +87,32 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
 ];
 
+// ---- Sub-panels within a section ------------------------------------------
+// Founder, 2026-09-01: "one thing per screen". A section that has more than one
+// job to do (Money & payouts, Users & IDs, …) shows a horizontal sub-tab bar
+// under its title and mounts exactly ONE panel at a time — never the old stack
+// of every panel scrolled together. `need` gates a tab the same way a section
+// is gated; a tab the role can't use is never shown, and picking a search
+// deep-link jumps straight to the right tab (`#money/p-withdrawals`).
+type PanelDef = { id: string; label: string; need?: UiPermission; node: ReactNode };
+
+function SubTabs({ items, active, onPick }: {
+  items: { id: string; label: string }[]; active: string; onPick: (id: string) => void;
+}) {
+  return (
+    <nav className="mb-4 flex gap-1 overflow-x-auto border-b border-line pb-2">
+      {items.map((t) => (
+        <button key={t.id} onClick={() => onPick(t.id)}
+          className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+            active === t.id ? "bg-brand text-white" : "text-brand hover:bg-brand-tint"
+          }`}>
+          {t.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export default function StaffPage() {
   const { user, ready } = useStaffSession();
   const [lookupTarget, setLookupTarget] = useState<string | null>(null);
@@ -94,41 +121,37 @@ export default function StaffPage() {
   // Which sections this user can see, in order.
   const visible = SECTIONS.filter((s) => canAny(user, s.needs));
   const [section, setSection] = useState<SectionId | null>(null);
-  // Restore the section from the URL hash so a reload (or a shared link) lands
-  // on the same screen. Falls back to the first section the role can see.
+  // The active sub-tab within the section (founder, 2026-09-01: "one thing per
+  // screen"). null = fall back to the section's first visible panel.
+  const [panelId, setPanelId] = useState<string | null>(null);
+  // Restore section + sub-tab from the URL hash (`#money/p-withdrawals`) so a
+  // reload or a shared link lands on the same screen. The hash isn't readable
+  // during the static prerender, so it can't be state's initial value.
   useEffect(() => {
     if (!ready || section !== null || visible.length === 0) return;
-    const fromHash = window.location.hash.replace("#", "") as SectionId;
-    // Syncing FROM the URL hash (an external system) once auth resolves — the
-    // hash isn't readable during the static prerender, so it can't be state's
-    // initial value.
+    const [h, p] = window.location.hash.replace("#", "").split("/");
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSection(visible.some((s) => s.id === fromHash) ? fromHash : visible[0].id);
+    setSection(visible.some((s) => s.id === h) ? (h as SectionId) : visible[0].id);
+    if (p) setPanelId(p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, visible.length]);
-  function go(id: SectionId) {
+  function go(id: SectionId, pid?: string) {
     setSection(id);
-    window.history.replaceState(null, "", `#${id}`);
+    setPanelId(pid ?? null);
+    window.history.replaceState(null, "", pid ? `#${id}/${pid}` : `#${id}`);
   }
-  // Search result picked: switch section, then (once the new section's panels
-  // have mounted) scroll the chosen panel into view. The timeout waits out the
-  // state update + remount — the target does not exist in the DOM yet when go()
-  // returns.
-  function goToDest(id: SectionId, anchor?: string) {
-    go(id);
-    if (anchor) {
-      setTimeout(() => {
-        document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 80);
-    } else {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+  // Search result / stat tile picked: switch to that section and sub-tab, then
+  // scroll to the top — there is only one panel per screen now, nothing to
+  // scroll *to* within it.
+  function goToDest(id: SectionId, pid?: string) {
+    go(id, pid);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  // "view ledger" on a withdrawal jumps to the Users section with the search
-  // pre-filled — the lookup lives there now.
+  // "view ledger" on a withdrawal jumps to the Users section, Look-up sub-tab,
+  // with the search pre-filled.
   function openLedger(userId: string) {
     setLookupTarget(userId);
-    go("users");
+    go("users", "p-lookup");
   }
 
   if (!ready) return <div className="p-6 text-muted">Loading…</div>;
@@ -169,6 +192,48 @@ export default function StaffPage() {
       ))}
     </>
   );
+
+  // The multi-panel sections, each as an ordered list of sub-tabs. Built here
+  // (not a module constant) because the panel nodes close over `may`,
+  // `lookupTarget` etc. Only the ACTIVE panel is placed in the tree below, so
+  // only its data fetches fire.
+  const SECTION_PANELS: Partial<Record<SectionId, PanelDef[]>> = {
+    money: [
+      { id: "p-overview", label: "Overview", need: "withdrawals.view", node: <MoneyOverview /> },
+      { id: "p-withdrawals", label: "Withdrawals", need: "withdrawals.view", node: <WithdrawalsPanel canOpenLedger={may("users.view")} /> },
+      { id: "p-usdt-deposits", label: "Deposits", need: "deposits.view", node: <DepositsPanel canDecide={may("deposits.decide")} /> },
+      { id: "p-usdt-refunds", label: "Refunds", need: "refunds.view", node: <RefundsPanel canDecide={may("refunds.decide")} /> },
+      { id: "p-bnb-withdrawals", label: "BNB out", need: "withdrawals.view", node: <BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /> },
+      { id: "p-relay-jobs", label: "Relay jobs", need: "withdrawals.view", node: <RelayJobsPanel canHandle={may("withdrawals.decide")} /> },
+      { id: "p-treasury", label: "Treasury", need: "treasury.view", node: <TreasuryPanel /> },
+      { id: "p-reconciliation", label: "Reconciliation", need: "analytics.view", node: <ReconciliationPanel canRecheck={may("analytics.view")} /> },
+      { id: "p-withdrawal-fee", label: "Fees & limits", need: "settings.manage", node: <WithdrawalFeePanel /> },
+    ],
+    users: [
+      { id: "p-users", label: "Users", need: "users.list", node: <UsersPanel /> },
+      { id: "p-kyc", label: "Verify IDs", need: "kyc.view", node: <KycPanel /> },
+      { id: "p-lookup", label: "Look up a user", need: "users.view", node: <UserLookupScreen target={lookupTarget} onCleared={() => setLookupTarget(null)} /> },
+      { id: "p-fraud", label: "Fraud flags", need: "fraud.view", node: <FraudPanel canResolve={may("fraud.resolve")} /> },
+    ],
+    tasks: [
+      { id: "p-tasks", label: "Our own tasks", need: "tasks.view", node: <TasksAdminPanel /> },
+      { id: "p-proofs", label: "Task proofs", need: "tasks.review", node: <ProofReviewPanel /> },
+      { id: "p-networks", label: "Ad networks", need: "networks.manage", node: <NetworkPanel /> },
+    ],
+    growth: [
+      { id: "p-referrals", label: "Referrals", need: "referrals.manage", node: <ReferralPanel /> },
+      { id: "p-leaderboard", label: "Leaderboard", need: "leaderboard.manage", node: <LeaderboardPanel /> },
+    ],
+    messages: [
+      { id: "p-broadcast", label: "Send a message", need: "notifications.send", node: <BroadcastPanel /> },
+      { id: "p-content", label: "Home screen cards", need: "content.manage", node: <ContentPanel /> },
+    ],
+    settings: [
+      { id: "p-flags", label: "Features", need: "flags.manage", node: <FeatureFlagsPanel /> },
+      { id: "p-settings", label: "Settings", need: "settings.manage", node: <GlobalSettingsPanel /> },
+      { id: "p-alerts", label: "Staff alerts", need: "infra.view", node: <StaffAlertsPanel /> },
+    ],
+  };
 
   return (
     <ToastProvider>
@@ -213,8 +278,7 @@ export default function StaffPage() {
 
         <main className="min-w-0 flex-1">
         <StaffNavContext.Provider value={{ goToSection: goToDest, openUser: openLedger }}>
-          {/* Map of what's in the current section — jumps to each panel. */}
-          {section && <SectionToc section={section} has={may} onJump={(a) => goToDest(section, a)} />}
+          {/* Dashboard is a deliberate single scroll — an overview, not a queue. */}
           {section === "dashboard" && may("analytics.view") && (
             <>
               <Panel id="p-attention" title="Needs attention"><DashboardOverview /></Panel>
@@ -231,72 +295,6 @@ export default function StaffPage() {
             </>
           )}
 
-          {section === "money" && (
-            <>
-              {may("withdrawals.view") && (
-                <Panel id="p-withdrawals" title="Withdrawals"><WithdrawalsPanel canOpenLedger={may("users.view")} /></Panel>
-              )}
-              {/* Money IN. Confirming a pasted tx hash credits real USDT, so it
-                  is gated on `deposits.view` and the buttons inside on
-                  `deposits.decide` — a read-only role sees the queue and cannot
-                  act on it.
-                  ⚠️ `canDecide` IS NOT DECORATION. Manager and Operations hold
-                  `deposits.view`/`refunds.view` but NOT the matching `.decide`
-                  (permissions.ts), and moving these panels here is what first
-                  showed them to those roles. Without the prop they render live
-                  Confirm/Reject buttons that 403 on click — a staff member told
-                  they can act on real money, then refused after clicking. */}
-              {may("deposits.view") && (
-                <Panel id="p-usdt-deposits" title="USDT deposits"><DepositsPanel canDecide={may("deposits.decide")} /></Panel>
-              )}
-              {/* Money back OUT: a user's own unspent deposit, returned. */}
-              {may("refunds.view") && (
-                <Panel id="p-usdt-refunds" title="USDT refunds"><RefundsPanel canDecide={may("refunds.decide")} /></Panel>
-              )}
-              {/* Failed-money surfaces that never had a screen before Phase C —
-                  the dashboard only ever counted them. Read-only: a failed
-                  native send / relay job is terminal and needs a human on the
-                  chain, not a retry button. */}
-              {may("withdrawals.view") && (
-                <Panel id="p-bnb-withdrawals" title="BNB withdrawals"><BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /></Panel>
-              )}
-              {may("withdrawals.view") && (
-                <Panel id="p-relay-jobs" title="Payout relay jobs"><RelayJobsPanel canHandle={may("withdrawals.decide")} /></Panel>
-              )}
-              {/* The treasury (hot) wallet: where payouts are sent from. */}
-              {may("treasury.view") && <Panel id="p-treasury" title="Treasury wallet"><TreasuryPanel /></Panel>}
-              {/* Treasury vs. what the ledger says we owe, one row per hourly check. */}
-              {may("analytics.view") && <Panel id="p-reconciliation" title="Reconciliation history"><ReconciliationPanel /></Panel>}
-              {may("settings.manage") && <Panel id="p-withdrawal-fee" title="Withdrawal fee & auto-approve limits"><WithdrawalFeePanel /></Panel>}
-              {/* What you owe users vs what you've paid. */}
-              {may("money.view") && <Panel id="p-money" title="Money"><MoneyPanel /></Panel>}
-            </>
-          )}
-
-          {section === "users" && (
-            <>
-              {/* Find, pay, suspend a user. */}
-              {may("users.list") && <Panel id="p-users" title="Users"><UsersPanel /></Panel>}
-              {/* ID review. Deliberately narrower than the rest of the panel:
-                  nobody else needs to see a stranger's national ID card. */}
-              {may("kyc.view") && <Panel id="p-kyc" title="Verify IDs"><KycPanel /></Panel>}
-              {/* Dispute lookup. */}
-              {may("users.view") && <Panel id="p-lookup" title="Look up a user"><UserLookupScreen target={lookupTarget} onCleared={() => setLookupTarget(null)} /></Panel>}
-              {may("fraud.view") && <Panel id="p-fraud" title="Fraud flags"><FraudPanel canResolve={may("fraud.resolve")} /></Panel>}
-            </>
-          )}
-
-          {section === "tasks" && (
-            <>
-              {/* Our own custom tasks. */}
-              {may("tasks.view") && <Panel id="p-tasks" title="Our own tasks"><TasksAdminPanel /></Panel>}
-              {/* Task proof review. */}
-              {may("tasks.review") && <Panel id="p-proofs" title="Task proofs"><ProofReviewPanel /></Panel>}
-              {/* Ad-network config. */}
-              {may("networks.manage") && <Panel id="p-networks" title="Ad networks"><NetworkPanel /></Panel>}
-            </>
-          )}
-
           {section === "mining" && (
             <Panel id="p-mining" title="Mining (ROZI)">
               <section className="mb-8">
@@ -304,20 +302,6 @@ export default function StaffPage() {
                 <MiningAdminSection />
               </section>
             </Panel>
-          )}
-
-          {section === "growth" && (
-            <>
-              {may("referrals.manage") && <Panel id="p-referrals" title="Referrals"><ReferralPanel /></Panel>}
-              {may("leaderboard.manage") && <Panel id="p-leaderboard" title="Leaderboard"><LeaderboardPanel /></Panel>}
-            </>
-          )}
-
-          {section === "messages" && (
-            <>
-              {may("notifications.send") && <Panel id="p-broadcast" title="Send a message"><BroadcastPanel /></Panel>}
-              {may("content.manage") && <Panel id="p-content" title="Home screen cards"><ContentPanel /></Panel>}
-            </>
           )}
 
           {section === "support" && may("support.view") && (
@@ -328,17 +312,26 @@ export default function StaffPage() {
             <Panel title="Audit log"><AuditPanel /></Panel>
           )}
 
-          {section === "settings" && (
-            <>
-              {may("flags.manage") && <Panel id="p-flags" title="Features"><FeatureFlagsPanel /></Panel>}
-              {may("settings.manage") && <Panel id="p-settings" title="Settings"><GlobalSettingsPanel /></Panel>}
-              {may("infra.view") && <Panel id="p-alerts" title="Staff alerts"><StaffAlertsPanel /></Panel>}
-            </>
-          )}
-
           {section === "team" && may("staff.manage") && (
             <Panel title="Staff & roles"><StaffRolesPanel /></Panel>
           )}
+
+          {/* Multi-panel sections: one sub-tab bar, one mounted panel. */}
+          {section && SECTION_PANELS[section] && (() => {
+            const defs = SECTION_PANELS[section]!.filter((d) => !d.need || may(d.need));
+            if (defs.length === 0) return null;
+            const active = defs.find((d) => d.id === panelId) ?? defs[0];
+            return (
+              <>
+                {defs.length > 1 && (
+                  <SubTabs items={defs} active={active.id} onPick={(pid) => go(section, pid)} />
+                )}
+                {/* key on the panel id so switching sub-tabs gives a fresh error
+                    boundary — a crash in one panel must not stick to the next. */}
+                <Panel key={active.id} id={active.id} title={active.label}>{active.node}</Panel>
+              </>
+            );
+          })()}
         </StaffNavContext.Provider>
         </main>
       </div>
@@ -348,28 +341,36 @@ export default function StaffPage() {
 }
 
 
+const FRAUD_PREVIEW = 6;
+
 function FraudPanel({ canResolve }: { canResolve: boolean }) {
   const [auto, setAuto] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const fraud = useApi(fetchFraud, [], true, auto ? QUEUE_POLL_MS : undefined);
   const { openUser } = useStaffNav();
+  const all = fraud.data?.flags ?? [];
+  // Preview the newest handful; the rest sit behind "See more" (founder,
+  // 2026-09-01: "show five or six then let me click for more").
+  const shown = showAll ? all : all.slice(0, FRAUD_PREVIEW);
   return (
     <section>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-brand-ink">Open fraud flags</h2>
+        <h2 className="font-bold text-brand-ink">Open fraud flags{all.length > 0 ? ` (${all.length})` : ""}</h2>
         <RefreshBar updatedAt={fraud.updatedAt} loading={fraud.loading} onRefresh={fraud.reload} auto={auto} setAuto={setAuto} />
       </div>
       {fraud.loading ? <p className="text-sm text-muted">Loading…</p>
         : fraud.error ? <p className="text-sm text-danger">{fraud.error}</p>
-        : (fraud.data?.flags.length ?? 0) === 0 ? (
+        : all.length === 0 ? (
           <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No open flags. Good.</p>
         ) : (
+          <>
           <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr><th className="p-2.5">User</th><th className="p-2.5">Type</th><th className="p-2.5">Severity</th><th className="p-2.5">Detail</th><th className="p-2.5">When</th><th className="p-2.5">Action</th></tr>
               </thead>
               <tbody>
-                {fraud.data!.flags.map((f, i) => (
+                {shown.map((f, i) => (
                   <tr key={i} className="border-t border-line">
                     <td className="p-2.5">
                       {f.user_id ? (
@@ -394,6 +395,13 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
               </tbody>
             </table>
           </div>
+          {(all.length > FRAUD_PREVIEW) && (
+            <button onClick={() => setShowAll(!showAll)}
+              className="mt-2 text-xs font-semibold text-brand hover:underline">
+              {showAll ? "Show less" : `See more (${all.length - FRAUD_PREVIEW})`}
+            </button>
+          )}
+          </>
         )}
     </section>
   );
