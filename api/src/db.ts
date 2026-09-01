@@ -1420,9 +1420,13 @@ const MIGRATIONS = `
          reward_rozi_micro = points * 1000000,
          points = 0
    WHERE source = 'custom' AND reward_type = 'points' AND points > 0;
+  -- ⚠️ MUST list every status the later migration (see 'deleted' below) allows.
+  -- This block runs first; once a task has been soft-deleted, re-adding a
+  -- constraint WITHOUT 'deleted' fails ("violated by some row") and the API
+  -- crash-loops on boot before it ever reaches the fuller definition.
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
   ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
-    CHECK (status IN ('draft','scheduled','active','paused','disabled','exhausted','ended'));
+    CHECK (status IN ('draft','scheduled','active','paused','disabled','exhausted','ended','deleted'));
 
   -- Owned task images. Keeping the bytes in Postgres makes this deployment-safe
   -- on Railway/Vercel without trusting a remote tracking URL or writing to an
