@@ -42,7 +42,9 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Messages & content", section: "messages", keywords: "broadcast announcement notification home cards" },
   { label: "Support tickets", section: "support", keywords: "help complaints replies" },
   { label: "Audit log", section: "audit", keywords: "history changes who did what" },
-  { label: "Features & settings", section: "settings", keywords: "flags toggles config alerts" },
+  { label: "Feature flags", section: "flags", keywords: "flags toggles features on off" },
+  { label: "Global settings", section: "settings", keywords: "settings config app name support email maintenance" },
+  { label: "Staff alerts", section: "alerts", keywords: "alerts telegram paging notifications infra" },
   { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers" },
 
   // --- deep links to individual panels -------------------------------------
@@ -90,11 +92,11 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Home screen cards", short: "Home cards", section: "messages", anchor: "p-content", hint: "Messages & content",
     keywords: "content block banner home card schedule", needs: ["content.manage"] },
 
-  { label: "Feature flags", short: "Flags", section: "settings", anchor: "p-flags", hint: "Features & settings",
+  { label: "Feature flags", short: "Flags", section: "flags", anchor: "p-flags", hint: "Feature flags",
     keywords: "flag toggle enable disable transfers ads deposits conversion kyc", needs: ["flags.manage"] },
-  { label: "Global settings", short: "Settings", section: "settings", anchor: "p-settings", hint: "Features & settings",
+  { label: "Global settings", short: "Settings", section: "settings", anchor: "p-settings", hint: "Global settings",
     keywords: "settings minimum withdrawal points config value", needs: ["settings.manage"] },
-  { label: "Staff alerts (Telegram)", short: "Alerts", section: "settings", anchor: "p-alerts", hint: "Features & settings",
+  { label: "Staff alerts (Telegram)", short: "Alerts", section: "alerts", anchor: "p-alerts", hint: "Staff alerts",
     keywords: "alert telegram paging chat test notify", needs: ["infra.view"] },
 ];
 

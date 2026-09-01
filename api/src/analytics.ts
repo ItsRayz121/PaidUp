@@ -70,7 +70,7 @@ export async function loadAnalytics(days = 30) {
     // Tasks
     taskStarts30d, completions30d, credited30d,
     proofsSubmitted30d, proofsApproved30d, proofsPending,
-    completionsToday,
+    completionsToday, taskOpens30d, proofsRejected30d,
     // Mining
     activeMiners, sessions30d, roziMinedToday,
     // Money
@@ -103,6 +103,9 @@ export async function loadAnalytics(days = 30) {
     scalar("SELECT COUNT(*)::int AS v FROM task_proofs WHERE status = 'approved' AND created_at >= ?", since),
     scalar("SELECT COUNT(*)::int AS v FROM task_proofs WHERE status = 'pending'"),
     scalar("SELECT COUNT(*)::int AS v FROM task_completions WHERE status = 'credited' AND created_at >= ?", startOfToday),
+    // The very top of the funnel: users who opened a task's detail page.
+    scalar("SELECT COUNT(DISTINCT user_id)::int AS v FROM task_opens WHERE last_at >= ?", since),
+    scalar("SELECT COUNT(*)::int AS v FROM task_proofs WHERE status = 'rejected' AND created_at >= ?", since),
 
     // A miner is "active" if they have a session that has not ended yet.
     scalar("SELECT COUNT(DISTINCT user_id)::int AS v FROM mining_sessions WHERE status = 'active'"),
@@ -284,10 +287,12 @@ export async function loadAnalytics(days = 30) {
       sampleWindow: retention.length,
     },
     tasks: {
+      opened: taskOpens30d,
       starts: taskStarts30d, verified: completions30d, credited: credited30d,
       completionRate: pct(credited30d, taskStarts30d),
+      openedToCreditedRate: pct(credited30d, taskOpens30d),
       proofsSubmitted: proofsSubmitted30d, proofsApproved: proofsApproved30d,
-      proofsPending,
+      proofsRejected: proofsRejected30d, proofsPending,
       approvalRate: pct(proofsApproved30d, proofsSubmitted30d),
       completionsToday,
     },

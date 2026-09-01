@@ -8,12 +8,14 @@ import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchMiningSettings, updateMiningSettings, fetchMiningStats, settleMining,
+  fetchMiningEpochs,
+  fetchAllocations, createAllocation, updateAllocation, deleteAllocation,
   fetchAdminRigs, updateAdminRig,
   fetchAdminBoosters, createAdminBooster, updateAdminBooster,
   fetchConversion, openConversionWindow,
   settleConversionWindow, fetchStoreAdmin, createStoreItem, updateStoreItem,
   fetchRedemptions, decideRedemption,
-  type MiningStats,
+  type MiningStats, type AllocationBucket,
 } from "@/lib/api";
 // The staff panel deliberately still shows POINTS, not USDT. This is where the
 // ledger is reconciled, and hiding the underlying unit from the people checking
@@ -24,22 +26,27 @@ import { useStaffNav } from "@/lib/staffNav";
 const n = (v: number) => v.toLocaleString();
 
 // Grouped so the panel reads as the spec does, rather than as one flat wall of
-// inputs. Labels spell out what the number actually does to the economy.
-const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
+// inputs. Each field is its own bordered box: label, a plain-English one-liner
+// (docs/MINING_GLOSSARY.md), then the input. `keys` is [settingKey, label, help?].
+const GROUPS: { title: string; note?: string; keys: [string, string, string?][] }[] = [
   {
     title: "Emission model",
     note: "\"pi\" = each miner earns their own base rate × their multipliers; nobody else's mining reduces it, and a halving is a clean 50% cut to the person. \"pool\" = the old Bitcoin-style fixed daily pot split pro-rata (a user's earnings then fall from halving AND dilution, stacked). Must be exactly \"pi\" or \"pool\" — the API refuses anything else, because a typo would silently re-price everyone.",
     keys: [
-      ["emissionModel", "Model — \"pi\" or \"pool\""],
+      ["emissionModel", "Model — \"pi\" or \"pool\"",
+        "The rule that decides how much ROZI everyone earns each day. Leave on \"pi\"."],
     ],
   },
   {
     title: "Pi model — rate & halving",
-    note: "Base rate is what a BASELINE miner (no multipliers) earns for a full day. Multipliers multiply it. The rate HALVES each time the user base crosses a milestone — that is the throttle, and it is what stops growth draining the pool. Keep the effective rate above ~10: below that, someone who mined only part of a day rounds down to zero and earns nothing.",
+    note: "Base rate is what a BASELINE miner (no multipliers) earns for a full day. Multipliers multiply it. The rate HALVES each time the user base crosses a milestone — that is the throttle, and it is what stops growth draining the pool.",
     keys: [
-      ["piBaseRate", "Base rate (ROZI/day, baseline miner)"],
-      ["piHalvingUsers", "Halve at user counts (comma-separated)"],
-      ["piReferenceHours", "A \"full day\" of mining = N hours"],
+      ["piBaseRate", "Base rate (ROZI/day, baseline miner)",
+        "The headline 'how fast is mining' number: ROZI a plain miner earns in a full day before any bonus. Rig prices are tied to this — change one, change the other."],
+      ["piHalvingUsers", "Halve at user counts (comma-separated)",
+        "Each time the verified-user count crosses one of these, the base rate is cut in half. People are what drain the pool, so people are what slow it."],
+      ["piReferenceHours", "A \"full day\" of mining = N hours",
+        "How many hours of mining count as one full day for the base-rate calc. 24 = a real day."],
     ],
   },
   {
@@ -48,27 +55,36 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
     keys: [
       ["baseEmission", "ROZI emitted per day (E₀)"],
       ["halvingEpochs", "Halve emission every N days"],
-      ["supplyCap", "Hard supply cap (ROZI, ever)"],
+      ["supplyCap", "Hard supply cap (ROZI, ever)",
+        "The most ROZI mining can ever create. Enforced at settlement under both models. ⚠️ This number can go UP but never DOWN — cutting it after people mine devalues what they hold."],
     ],
   },
   {
     title: "Sessions & hashrate",
+    note: "\"Hashrate\" is a user's personal mining power (shown to users as \"mining speed\"). It is base + rig power, then multiplied by streak and boosts. Higher hashrate = more ROZI per session.",
     keys: [
-      ["sessionHours", "Session length (hours)"],
-      ["baseHashrate", "Base hashrate (everyone)"],
-      ["maxHashrate", "Max hashrate per user"],
-      ["streakStepPct", "Streak bonus per day (%)"],
-      ["streakCapDays", "Streak caps at (days)"],
+      ["sessionHours", "Session length (hours)",
+        "How long one \"Start mining\" session runs before the user has to start another."],
+      ["baseHashrate", "Base hashrate (everyone)",
+        "The mining speed every miner starts with, before rigs, streak or boosts."],
+      ["maxHashrate", "Max hashrate per user",
+        "A ceiling on total mining speed — the one hard limit on how fast any single account can mine."],
+      ["streakStepPct", "Streak bonus per day (%)",
+        "Mining on consecutive days adds this % to speed each day (a \"boost\" that builds automatically)."],
+      ["streakCapDays", "Streak caps at (days)",
+        "The streak stops growing after this many days (e.g. 20 days × 5% = ×2 speed, then flat)."],
     ],
   },
   {
     title: "Boosts",
     note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. THE AD BOOST IS FLAT, not a percentage (founder, 2026-08-30): each watched ad adds \"Ad boost (flat speed)\" to the miner's speed AFTER all multipliers, so one ad is +1 and four ads is +4 no matter how big the miner is. \"Ad boost (%)\" is kept as a separate knob but ships at 0 — set it above 0 only if you want a percentage ad boost back on top of the flat one. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get three formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost), the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost), and the BANNER zone id (an In-Page Push zone — small dismissible bar shown on the mining screen only; passive impressions, no boost). Each empty value disables its own part.",
     keys: [
-      ["taskBoostPct", "Task boost (%)"],
+      ["taskBoostPct", "Task boost (%)",
+        "Finishing a credited task adds this % to mining speed for a while. This is the line that makes mining feed the offerwall — set it to 0 and mining becomes a pure cost."],
       ["taskBoostHours", "Task boost lasts (hours)"],
       ["taskBoostMaxStack", "Max task boosts stacked"],
-      ["adBoostFlat", "Ad boost (flat speed added per ad)"],
+      ["adBoostFlat", "Ad boost (flat speed added per ad)",
+        "Each ad a user watches adds this much to their speed AFTER all multipliers — one ad = +1, four ads = +4, regardless of how big the miner is."],
       ["adBoostPct", "Ad boost (%) — extra, ships at 0"],
       ["adBoostHours", "Ad boost lasts (hours)"],
       ["adBoostMaxStack", "Max ad boosts stacked"],
@@ -103,9 +119,12 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
   },
   {
     title: "Conversion & admin",
+    note: "The Conversion Window is the only path from ROZI to Points. When you OPEN one, you commit a fixed pot of Points; users burn ROZI into the window; at close each user gets pot × (their burn ÷ everyone's burn). There is deliberately NO fixed ROZI→Points rate — the split floats with how much everyone burned. Ships OFF.",
     keys: [
-      ["conversionEnabled", "Conversion on (1) / off (0)"],
-      ["conversionSharePct", "Suggested pot = this % of margin"],
+      ["conversionEnabled", "Conversion on (1) / off (0)",
+        "Master switch for the ROZI→Points conversion window. Off until the founder decides to open one."],
+      ["conversionSharePct", "Suggested pot = this % of margin",
+        "When you open a window, the panel suggests a pot this big as a share of the period's real margin. A suggestion, not a rule."],
       // The per-user ceiling. The pot caps what the BUSINESS pays out in total;
       // this caps what any ONE account can ever extract, measured against what
       // that account mined over its whole life. 100 = no ceiling.
@@ -147,6 +166,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string][] }[] = [
 const MINING_TABS = [
   { id: "overview", label: "Overview" },
   { id: "settings", label: "Economy settings" },
+  { id: "allocation", label: "Allocation" },
   { id: "conversion", label: "Conversion" },
   { id: "store", label: "Store" },
   { id: "rigs", label: "Rigs" },
@@ -170,6 +190,7 @@ export function MiningAdminSection() {
       </div>
       {tab === "overview" && <MiningOverviewPanel />}
       {tab === "settings" && <EconomySettingsPanel />}
+      {tab === "allocation" && <AllocationPanel />}
       {tab === "conversion" && <ConversionPanel />}
       {tab === "store" && <StorePanel />}
       {tab === "rigs" && <RigPanel />}
@@ -260,18 +281,24 @@ export function EconomySettingsPanel() {
       ) : (
         <div className="space-y-4">
           {GROUPS.map((g) => (
-            <div key={g.title} className="rounded-lg border border-line bg-card p-3">
+            <div key={g.title} className="rounded-lg border border-line bg-bg/40 p-3">
               <h4 className="text-sm font-bold text-brand-ink">{g.title}</h4>
               {g.note && <p className="mt-1 text-xs text-muted">{g.note}</p>}
+              {/* Each setting is its own bordered box — label, one-line
+                  explainer, then the input — so the fields read as distinct
+                  controls rather than a wall of rows (founder, 2026-09-01). */}
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {g.keys.map(([key, label]) => (
-                  <label key={key} className="flex items-center justify-between gap-3 text-xs">
-                    <span className="min-w-0 flex-1 text-muted">{label}</span>
+                {g.keys.map(([key, label, help]) => (
+                  <label key={key} className={`block rounded-md border bg-card p-2.5 ${
+                    draft[key] !== undefined ? "border-brand" : "border-line"
+                  }`}>
+                    <span className="block text-xs font-semibold text-brand-ink">{label}</span>
+                    {help && <span className="mt-0.5 block text-[11px] leading-snug text-muted">{help}</span>}
                     <input
                       value={draft[key] ?? String(cur[key] ?? "")}
                       onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                      className={`w-32 shrink-0 rounded-md border px-2 py-1 text-right font-mono ${
-                        draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line"
+                      className={`mt-1.5 w-full rounded-md border px-2 py-1 text-right font-mono text-sm ${
+                        draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line bg-bg/50"
                       }`}
                     />
                   </label>
@@ -280,6 +307,145 @@ export function EconomySettingsPanel() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Token allocation (planning / bookkeeping) --------------------------
+// ⚠️ NOTHING HERE MINTS OR MOVES ROZI. ROZI is not on-chain; a non-mining
+// bucket has no balance behind it. supplyCap stays the one enforced number and
+// equals the mining bucket. This screen records the PLAN and lets it be edited.
+const EMPTY_ALLOC = { bucket: "", label: "", amountRozi: 0, cliffMonths: 0, vestMonths: 0, startDate: "", notes: "" };
+
+function AllocationPanel() {
+  const a = useApi(fetchAllocations, []);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState<typeof EMPTY_ALLOC>(EMPTY_ALLOC);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function run(fn: () => Promise<unknown>) {
+    setMsg(null);
+    try { await fn(); a.reload(); setEditing(null); setAdding(false); }
+    catch (e) { setMsg((e as Error).message); }
+  }
+
+  const d = a.data;
+  const AL = "block text-[11px] font-semibold uppercase text-muted";
+  const AI = "mt-1 w-full rounded-md border border-line bg-card px-2 py-1 text-sm outline-none";
+  const editRow = (b: AllocationBucket) => setForm({
+    bucket: b.bucket, label: b.label, amountRozi: b.amountRozi,
+    cliffMonths: b.cliffMonths, vestMonths: b.vestMonths,
+    startDate: b.startDate ?? "", notes: b.notes ?? "",
+  });
+  const payload = () => ({
+    bucket: form.bucket.trim(), label: form.label.trim(), amountRozi: Number(form.amountRozi),
+    cliffMonths: Number(form.cliffMonths), vestMonths: Number(form.vestMonths),
+    startDate: form.startDate.trim() || null, notes: form.notes.trim() || null,
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-pending/40 bg-pending-tint/20 p-2.5 text-xs text-brand-ink">
+        A <strong>plan</strong>, not a wallet. Nothing here mints or moves ROZI — the token is not on-chain,
+        and a non-mining bucket has no balance behind it. The <strong>Community mining</strong> bucket is the
+        one real number: it equals the enforced supply cap, and its &ldquo;released&rdquo; figure is actual mining
+        emission, not a schedule.
+      </div>
+
+      {msg && <p className="rounded-md border border-line bg-card p-2 text-xs text-danger">{msg}</p>}
+      {!d ? <p className="text-sm text-muted">Loading…</p> : (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Stat label="Total supply (plan)" value={n(d.totalRozi)} sub="ROZI across all buckets" />
+            <Stat label="Mining cap" value={n(d.supplyCap)} sub="the enforced number" />
+            <Stat label="Mined so far" value={n(d.minedEmitted)} sub={`${n(d.minedRemaining)} left`} />
+            <Stat label="Buckets add to" value={`${d.pctSum}%`} sub={d.pctSum === 100 ? "balanced" : "should be 100%"} />
+          </div>
+          {d.pctSum !== 100 && (
+            <p className="rounded bg-pending-tint/40 p-1.5 text-[11px] font-semibold text-pending">
+              The buckets do not add up to 100% of the plan total. Adjust the amounts.
+            </p>
+          )}
+
+          <div className="space-y-2">
+            {d.buckets.map((b) => (
+              <div key={b.id} className="rounded-md border border-line bg-card p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-brand-ink">{b.label}
+                    <span className="ms-2 font-normal text-muted">{b.pctOfTotal}% · {n(b.amountRozi)} ROZI</span>
+                  </span>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => { setEditing(editing === b.id ? null : b.id); editRow(b); }}
+                      className="rounded bg-brand-tint px-2 py-0.5 font-semibold text-brand">
+                      {editing === b.id ? "Close" : "Edit"}
+                    </button>
+                    {b.bucket !== "mining" && (
+                      <button onClick={() => { if (window.confirm(`Remove the "${b.label}" bucket from the plan?`)) run(() => deleteAllocation(b.id)); }}
+                        className="rounded bg-danger px-2 py-0.5 font-semibold text-white">Delete</button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-1 text-muted">
+                  {b.isLive
+                    ? <>Released (mined): <span className="font-mono text-brand-ink">{n(b.releasedRozi)}</span> ({b.releasedPct}%)</>
+                    : <>Vested to date: <span className="font-mono text-brand-ink">{n(b.releasedRozi)}</span> ({b.releasedPct}%)
+                        {" · "}{b.cliffMonths}mo cliff, {b.vestMonths}mo linear{b.startDate ? `, from ${b.startDate.slice(0, 10)}` : ", not started"}</>}
+                </div>
+                {b.notes && <p className="mt-1 text-[11px] text-muted">{b.notes}</p>}
+                {editing === b.id && (
+                  <div className="mt-2 grid gap-2 border-t border-line pt-2 sm:grid-cols-3">
+                    <label><span className={AL}>Label</span>
+                      <input className={AI} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></label>
+                    <label><span className={AL}>Amount (whole ROZI)</span>
+                      <input type="number" className={AI} value={form.amountRozi} onChange={(e) => setForm({ ...form, amountRozi: Number(e.target.value) })} /></label>
+                    <label><span className={AL}>Start date (YYYY-MM-DD)</span>
+                      <input className={AI} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} placeholder="not started" /></label>
+                    <label><span className={AL}>Cliff (months)</span>
+                      <input type="number" className={AI} value={form.cliffMonths} onChange={(e) => setForm({ ...form, cliffMonths: Number(e.target.value) })} /></label>
+                    <label><span className={AL}>Vest (months, linear)</span>
+                      <input type="number" className={AI} value={form.vestMonths} onChange={(e) => setForm({ ...form, vestMonths: Number(e.target.value) })} /></label>
+                    <label className="sm:col-span-3"><span className={AL}>Notes</span>
+                      <input className={AI} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
+                    <div className="sm:col-span-3">
+                      <button onClick={() => run(() => updateAllocation(b.id, payload()))}
+                        className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white">Save</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {adding ? (
+            <div className="rounded-md border border-brand/40 bg-brand-tint/20 p-3">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <label><span className={AL}>Bucket key</span>
+                  <input className={AI} value={form.bucket} onChange={(e) => setForm({ ...form, bucket: e.target.value })} placeholder="e.g. advisors" /></label>
+                <label><span className={AL}>Label</span>
+                  <input className={AI} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></label>
+                <label><span className={AL}>Amount (whole ROZI)</span>
+                  <input type="number" className={AI} value={form.amountRozi} onChange={(e) => setForm({ ...form, amountRozi: Number(e.target.value) })} /></label>
+                <label><span className={AL}>Cliff (months)</span>
+                  <input type="number" className={AI} value={form.cliffMonths} onChange={(e) => setForm({ ...form, cliffMonths: Number(e.target.value) })} /></label>
+                <label><span className={AL}>Vest (months)</span>
+                  <input type="number" className={AI} value={form.vestMonths} onChange={(e) => setForm({ ...form, vestMonths: Number(e.target.value) })} /></label>
+                <label><span className={AL}>Start date</span>
+                  <input className={AI} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} placeholder="YYYY-MM-DD" /></label>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => run(() => createAllocation(payload()))}
+                  className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white">Add bucket</button>
+                <button onClick={() => { setAdding(false); setForm(EMPTY_ALLOC); }}
+                  className="rounded-md bg-brand-tint px-3 py-1 text-xs font-semibold text-brand">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => { setForm(EMPTY_ALLOC); setAdding(true); }}
+              className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand">+ Add a bucket</button>
+          )}
+        </>
       )}
     </div>
   );
@@ -387,28 +553,58 @@ export function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => v
         </p>
       )}
 
-      {s.epochs.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[520px] text-xs">
-            <thead className="text-left uppercase text-muted">
-              <tr>
-                <th className="py-1">Day</th><th>Emission</th><th>Miners</th>
-                <th>Emitted</th><th>Withheld</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.epochs.map((e) => (
-                <tr key={e.epoch} className="border-t border-line font-mono">
-                  <td className="py-1">{e.epoch}</td>
-                  <td>{n(e.emission)}</td>
-                  <td>{n(e.miners)}</td>
-                  <td>{n(e.emitted)}</td>
-                  <td className={e.withheld > 0 ? "text-danger" : ""}>{n(e.withheld)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <EpochHistory recent={s.epochs} />
+    </div>
+  );
+}
+
+// The day-by-day economy history. Starts with the 14 days the stats endpoint
+// already returned; "Show all days" pages the rest in (day 1 to now).
+function EpochHistory({ recent }: { recent: MiningStats["epochs"] }) {
+  const [rows, setRows] = useState(recent);
+  const [total, setTotal] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const PAGE = 60;
+
+  async function loadMore() {
+    setBusy(true);
+    try {
+      const page = await fetchMiningEpochs(PAGE, rows.length);
+      setTotal(page.total);
+      // Merge, keeping unique epochs, newest first.
+      const seen = new Set(rows.map((e) => e.epoch));
+      setRows([...rows, ...page.epochs.filter((e) => !seen.has(e.epoch))]);
+    } finally { setBusy(false); }
+  }
+
+  if (recent.length === 0) return null;
+  const more = total == null ? rows.length >= 14 : rows.length < total;
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[520px] text-xs">
+        <thead className="text-left uppercase text-muted">
+          <tr>
+            <th className="py-1">Day</th><th>Emission</th><th>Miners</th>
+            <th>Emitted</th><th>Withheld</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((e) => (
+            <tr key={e.epoch} className="border-t border-line font-mono">
+              <td className="py-1">{e.epoch}</td>
+              <td>{n(e.emission)}</td>
+              <td>{n(e.miners)}</td>
+              <td>{n(e.emitted)}</td>
+              <td className={e.withheld > 0 ? "text-danger" : ""}>{n(e.withheld)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {more && (
+        <button onClick={loadMore} disabled={busy}
+          className="mt-2 rounded-md bg-brand-tint px-3 py-1 text-xs font-semibold text-brand disabled:opacity-50">
+          {busy ? "Loading…" : total == null ? "Show all days" : `Show more (${rows.length} of ${total})`}
+        </button>
       )}
     </div>
   );

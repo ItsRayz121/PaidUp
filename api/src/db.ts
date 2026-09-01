@@ -1511,6 +1511,28 @@ const MIGRATIONS = `
   -- forever. Only touches already-resolved rows.
   UPDATE fraud_flags SET resolved_at = created_at
    WHERE resolved_by IS NOT NULL AND resolved_at IS NULL;
+
+  -- ---- TASK & REWARDS ADMIN (founder, 2026-09-01) ------------------------
+  -- A task can now be soft-deleted from the admin panel. A 'deleted' task is
+  -- hidden from the earner feed and from the default admin list, but the row
+  -- stays so historical task_completions / task_proofs still join to it.
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+    CHECK (status IN ('draft','scheduled','active','paused','disabled','exhausted','ended','deleted'));
+  -- A view-level signal, separate from task_participation (which is a START —
+  -- and drives "My tasks"). This one only counts a user OPENING the task's
+  -- detail page, so per-task analytics can show an
+  -- opened -> started -> proof -> approved -> credited funnel. Deliberately its
+  -- own table so writing to it never changes what the earner feed shows.
+  CREATE TABLE IF NOT EXISTS task_opens (
+    task_id   TEXT NOT NULL REFERENCES tasks(id),
+    user_id   TEXT NOT NULL REFERENCES users(id),
+    opens     INTEGER NOT NULL DEFAULT 1,
+    first_at  TEXT NOT NULL,
+    last_at   TEXT NOT NULL,
+    PRIMARY KEY (task_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_opens_task ON task_opens(task_id);
 `;
 
 // ---------------------------------------------------------------------------
@@ -1894,6 +1916,28 @@ const MINING_SCHEMA = `
     CHECK (source_type IN ('mining','rig_purchase','transfer_in','transfer_out',
                            'transfer_fee','conversion_burn','admin_adjustment',
                            'bonus','store_redemption','task_reward'));
+
+  -- ---- TOKEN ALLOCATION MODEL (founder, 2026-09-01) --------------------------
+  -- A PLANNING / BOOKKEEPING view of how the full ROZI supply is meant to be
+  -- split (MINING_SPEC.md § 3.1): community mining vs team / liquidity /
+  -- ecosystem / reserve, each with an optional vesting schedule.
+  --
+  -- WARNING: NOTHING HERE MINTS OR MOVES ROZI. ROZI is not on-chain; there is no
+  -- balance behind a non-mining bucket. supplyCap in mining/core.ts stays the
+  -- ONE enforced number and equals the community-mining bucket. This table only
+  -- records the plan and lets it be edited.
+  CREATE TABLE IF NOT EXISTS rozi_allocations (
+    id            TEXT PRIMARY KEY,
+    bucket        TEXT NOT NULL,           -- machine key: mining / team / liquidity / ecosystem / reserve / ...
+    label         TEXT NOT NULL,           -- what it's called on screen
+    amount_rozi   BIGINT NOT NULL,        -- whole ROZI allotted to this bucket
+    cliff_months  INTEGER NOT NULL DEFAULT 0,  -- nothing releases before this
+    vest_months   INTEGER NOT NULL DEFAULT 0,  -- then linear over this many (0 = fully unlocked at start)
+    start_date    TEXT,                    -- ISO date the schedule begins (null = not started)
+    notes         TEXT,
+    sort          INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL
+  );
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
@@ -1901,27 +1945,27 @@ const MINING_SCHEMA = `
 // Costs are in WHOLE ROZI (the ledger is in micro; the conversion happens at the
 // moment of the debit).
 //
-// ⚠️ RIG PRICES ARE A FUNCTION OF piBaseRate AND MUST MOVE WITH IT. They have
-// been rescaled three times: 10x down when the rate dropped 100 -> 10, 20x down
-// again when it dropped 10 -> 0.5 (2026-07-29, with the 21M cap), and 10x UP on
-// 2026-08-29.
+// ⚠️ RIG PRICES ARE A FUNCTION OF piBaseRate AND MUST MOVE WITH IT. Rescaled:
+// 10x down (rate 100 -> 10), 20x down again (10 -> 0.5, 2026-07-29 with the 21M
+// cap), 10x UP (2026-08-29), and re-based to a FIXED $0.10/ROZI on 2026-09-01
+// when the base rate went 0.5 -> 2.5.
 //
-// ⚠️ THE OLD "first rig ≈ five days of baseline mining" INVARIANT IS DELIBERATELY
-// SET ASIDE (founder, 2026-08-29). The ROZI price is now an aspirational /
-// "future" number; USDT (base_cost_usdt) is the real purchase path today. This
-// knowingly re-opens guardrail #7 (a USDT price on a rig that also has a ROZI
-// price publishes an implied ROZI value) — recorded as a dated founder override
-// in CLAUDE.md. See migrateRigPrices2026Usdt below for existing rows.
+// ⚠️ THE ROZI PRICE IS NOW SET FROM THE USDT PRICE AT A FIXED $0.10/ROZI (founder,
+// 2026-09-01): base_cost (whole ROZI) = base_cost_usdt_micro / 100_000. So the
+// $5 Old Phone costs 50 ROZI. This is a KNOWING re-open of guardrail #7 — a fixed
+// ROZI<->USD basis publishes an implied valuation — chosen by the founder and
+// recorded as a dated override in CLAUDE.md / MINING_SPEC.md § 6.2. ROZI stays
+// non-withdrawable; there is no buy-back. See migrateRigPricesDime below.
 //
 // base_cost / base_cost_usdt_micro are BOTH seeded here; base_cost is WHOLE ROZI
 // (converted to micro at the debit), base_cost_usdt_micro is MICRO-USDT.
 const SEED_RIGS: [string, string, string, number, number, number, number][] = [
-  // id, name, icon, base_cost, base_power, sort, base_cost_usdt_micro
-  ["old_phone", "Old Phone", "phone", 30, 5, 1, 5_000_000],
+  // id, name, icon, base_cost (= usdt / 0.10), base_power, sort, base_cost_usdt_micro
+  ["old_phone", "Old Phone", "phone", 50, 5, 1, 5_000_000],
   ["laptop", "Laptop", "laptop", 150, 25, 2, 15_000_000],
-  ["rig", "Mining Rig", "chip", 1_000, 150, 3, 40_000_000],
-  ["server", "Server Rack", "server", 6_000, 800, 4, 120_000_000],
-  ["datacentre", "Data Centre", "building", 37_500, 5_000, 5, 400_000_000],
+  ["rig", "Mining Rig", "chip", 400, 150, 3, 40_000_000],
+  ["server", "Server Rack", "server", 1_200, 800, 4, 120_000_000],
+  ["datacentre", "Data Centre", "building", 4_000, 5_000, 5, 400_000_000],
 ];
 
 // ONE-TIME: rescale every ROZI amount from whole ROZI to micro-ROZI (x1e6).
@@ -2031,6 +2075,34 @@ async function migrateRigPrices2026Usdt(): Promise<void> {
   console.log("MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.");
 }
 
+// ONE-TIME: re-base every rig's ROZI price to a FIXED $0.10/ROZI (founder,
+// 2026-09-01, alongside piBaseRate 0.5 -> 2.5). base_cost (whole ROZI) becomes
+// base_cost_usdt_micro / 100_000 — so a $5 machine costs 50 ROZI. Rows whose
+// USDT price an Admin cleared/never set keep their existing ROZI price. Gated on
+// a marker in the same transaction, same reason as the migrations above.
+async function migrateRigPricesDime(): Promise<void> {
+  const done = await sql.get<{ value: string }>(
+    "SELECT value FROM app_settings WHERE key = 'rig_prices_dime'");
+  if (done) return;
+
+  await sql.tx(async (t) => {
+    await t.run("SELECT pg_advisory_xact_lock(hashtext('rig-prices-dime'))");
+    const already = await t.get<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'rig_prices_dime'");
+    if (already) return;
+
+    // $0.10/ROZI: micro-USDT / 100_000 = whole ROZI. Only where a USDT price exists.
+    await t.run(
+      "UPDATE rigs SET base_cost = GREATEST(1, ROUND(base_cost_usdt / 100000.0)) WHERE base_cost_usdt IS NOT NULL AND base_cost_usdt > 0",
+    );
+    await t.run(
+      "INSERT INTO app_settings (key, value, updated_at) VALUES ('rig_prices_dime','1',?)",
+      now(),
+    );
+  });
+  console.log("MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.");
+}
+
 export async function initDb(): Promise<void> {
   await driver.exec(SCHEMA);
   await driver.exec(MIGRATIONS);
@@ -2038,6 +2110,7 @@ export async function initDb(): Promise<void> {
   await migrateRoziToMicro();
   await migrateRigCosts21m();
   await migrateRigPrices2026Usdt();
+  await migrateRigPricesDime();
   for (const [id, name, icon, baseCost, basePower, sort, baseCostUsdtMicro] of SEED_RIGS) {
     await sql.run(
       `INSERT INTO rigs (id, name, icon, base_cost, base_power, sort, base_cost_usdt, created_at)
@@ -2085,6 +2158,37 @@ export async function initDb(): Promise<void> {
      VALUES ('custom','Our own tasks','custom','active',0,15,5,100,?)
      ON CONFLICT (id) DO NOTHING`, now(),
   );
+  // Two example boosters, seeded DISABLED (founder, 2026-09-01). A booster is a
+  // temporary hashrate multiplier bought with Points (the cash currency, not
+  // ROZI) — a sink for Points that eases withdrawal pressure. These give an
+  // Admin something concrete to price and switch on in /staff → Mining →
+  // Boosters, rather than a blank form. Only inserted when absent.
+  for (const [id, name, pricePoints, multPct, hours] of [
+    ["boost_2x_24h", "2x speed — 24 hours", 300, 100, 24],
+    ["boost_3x_12h", "3x speed — 12 hours", 500, 200, 12],
+  ] as const) {
+    await sql.run(
+      `INSERT INTO boosters (id, name, price_points, multiplier_pct, hours, status, created_at)
+       VALUES (?,?,?,?,?, 'disabled', ?) ON CONFLICT (id) DO NOTHING`,
+      id, name, pricePoints, multPct, hours, now(),
+    );
+  }
+  // Default ROZI allocation buckets (MINING_SPEC.md § 3.1) — total 32,300,000,
+  // of which 21,000,000 is the enforced community-mining cap. Seeded only when
+  // absent, like the rig catalogue: an Admin owns this list at runtime.
+  for (const [id, bucket, label, amount, cliff, vest, sort] of [
+    ["alloc_mining",   "mining",    "Community mining",       21_000_000, 0, 0, 1],
+    ["alloc_liquidity","liquidity", "Liquidity",               3_230_000, 0, 0, 2],
+    ["alloc_team",     "team",      "Team / founder",          3_230_000, 6, 24, 3],
+    ["alloc_ecosystem","ecosystem", "Ecosystem & partnerships",3_230_000, 0, 12, 4],
+    ["alloc_reserve",  "reserve",   "Reserve",                 1_610_000, 0, 0, 5],
+  ] as const) {
+    await sql.run(
+      `INSERT INTO rozi_allocations (id, bucket, label, amount_rozi, cliff_months, vest_months, sort, created_at)
+       VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`,
+      id, bucket, label, amount, cliff, vest, sort, now(),
+    );
+  }
   // Default global settings (only inserted when absent). Withdrawal fee off (0)
   // by default so no user is surprised by a deduction until Admin sets one.
   await sql.run(

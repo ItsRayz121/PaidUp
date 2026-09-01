@@ -28,29 +28,32 @@ export async function allFlags(): Promise<Record<FlagId, boolean>> {
   const out = {} as Record<FlagId, boolean>;
   for (const id of FLAG_IDS) {
     const s = FLAGS[id].store;
+    // Most flags default ON (their feature was live before the switch); a flag
+    // marked defaultOff belongs to something not yet launched.
+    const dflt = FLAGS[id].defaultOff ? "0" : "1";
     if (s.kind === "mining") {
       out[id] = Number(mining[s.key]) === 1;
     } else if (s.kind === "setting") {
-      // Absent means ON — these features were live before they had a switch.
-      out[id] = (stored.get(s.key) ?? "1") === (s.onValue ?? "1");
+      out[id] = (stored.get(s.key) ?? dflt) === (s.onValue ?? "1");
     } else {
-      out[id] = (stored.get(flagKey(id)) ?? "1") === "1";
+      out[id] = (stored.get(flagKey(id)) ?? dflt) === "1";
     }
   }
   return out;
 }
 
-/** Read one flag. Defaults to ON for anything never written. */
+/** Read one flag. Defaults to ON, or OFF for a flag marked defaultOff. */
 export async function enabled(id: FlagId): Promise<boolean> {
   const s = FLAGS[id].store;
+  const dflt = FLAGS[id].defaultOff ? "0" : "1";
   if (s.kind === "mining") {
     const mining = await loadMiningSettings();
     return Number(mining[s.key]) === 1;
   }
   if (s.kind === "setting") {
-    return (await getSetting(s.key, "1")) === (s.onValue ?? "1");
+    return (await getSetting(s.key, dflt)) === (s.onValue ?? "1");
   }
-  return (await getSetting(flagKey(id), "1")) === "1";
+  return (await getSetting(flagKey(id), dflt)) === "1";
 }
 
 /**

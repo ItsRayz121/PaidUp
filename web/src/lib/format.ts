@@ -176,11 +176,12 @@ export const HERO_DECIMALS = 4;
 // ⚠️ WHAT THIS COSTS, stated once so it is not rediscovered as a surprise: a
 // fixed ratio between points and ROZI PUBLISHES AN IMPLIED ROZI PRICE. Points
 // have a public rate (1000 = 1 USDT), so 100 points = 1 ROZI says, arithmetically
-// and in public, that 1 ROZI = $0.01 — and against the 21M cap, that a $210,000
-// valuation. That is exactly the claim MINING_SPEC.md § 7 and the road map's
-// no-price rule exist to avoid making. It is the accepted, understood cost of
-// showing one currency; it is not an oversight, and it is why the ROZI road map
-// still must not print a price of its own on top of it.
+// and in public, that 1 ROZI = $0.10 — and against the 21M cap, a ~$2.1M
+// valuation. As of 2026-09-01 the founder has made this the ENFORCED basis for
+// rig ROZI prices too (a $5 machine costs 50 ROZI = $0.10 × 50), a knowing
+// re-open of guardrail #7 recorded in CLAUDE.md / MINING_SPEC.md § 6.2. ROZI is
+// still non-withdrawable and there is no buy-back; the road map still must not
+// print a price of its own on top of this.
 export const POINTS_PER_ROZI = 100;
 
 // Points -> micro-ROZI, so earnings can be added to a mined balance that is

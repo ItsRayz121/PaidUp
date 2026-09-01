@@ -70,6 +70,20 @@ check("USDT portion credited to earned ledger", await earnedUsdtBalanceMicroOf(e
 const history = await app.inject({ method: "GET", url: "/tasks?view=history", headers: auth(earner) });
 check("completed work appears in History", history.json().tasks.some((t: { id: string }) => t.id === taskId));
 
+// ---- GET /me/earnings: flag-gated lifetime summary (founder, 2026-09-01) ----
+const earnOff = await app.inject({ method: "GET", url: "/me/earnings", headers: auth(earner) });
+check("earnings: 403 while the earnings_view flag is off (its default)", earnOff.statusCode === 403, String(earnOff.statusCode));
+
+await sql.run("INSERT INTO app_settings (key, value, updated_at) VALUES ('flag.earnings_view','1',?) ON CONFLICT (key) DO UPDATE SET value='1'", now());
+const earnOn = await app.inject({ method: "GET", url: "/me/earnings", headers: auth(earner) });
+check("earnings: 200 once the flag is on", earnOn.statusCode === 200, earnOn.body.slice(0, 200));
+const ed = earnOn.json() as {
+  roziMicro: { fromTasks: number; total: number };
+  usdtMicro: { earnedUsdt: number; total: number };
+};
+check("earnings: the task's ROZI reward is counted (25 ROZI)", ed.roziMicro.fromTasks === 25_000_000, String(ed.roziMicro.fromTasks));
+check("earnings: the task's earned USDT is counted", ed.usdtMicro.earnedUsdt === 125_000, String(ed.usdtMicro.earnedUsdt));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 await app.close();
 if (fail) process.exit(1);

@@ -1135,4 +1135,149 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       return { ok: true };
     });
   }));
+
+  // ---- Full economy history (all days, paginated) ------------------------
+  // GET /staff/mining/stats caps the history at 14 for the overview. This is
+  // the "show all days" view — day 1 to now, newest first.
+  app.get("/staff/mining/epochs", staffGuard("mining.view", async (_ctx, req) => {
+    const qs = req.query as Record<string, string | undefined>;
+    const limit = Math.min(Math.max(Number(qs.limit ?? 30) || 30, 1), 200);
+    const offset = Math.max(Number(qs.offset ?? 0) || 0, 0);
+    const [rows, totalRow] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        "SELECT * FROM mining_epochs ORDER BY epoch DESC LIMIT ? OFFSET ?", limit, offset),
+      sql.get<{ n: string | number }>("SELECT COUNT(*) AS n FROM mining_epochs"),
+    ]);
+    return {
+      total: Number(totalRow?.n ?? rows.length),
+      limit, offset,
+      epochs: rows.map((e) => ({
+        ...e,
+        emission: fromMicro(Number(e.emission)),
+        total_shares: Number(e.total_shares),
+        emitted: fromMicro(Number(e.emitted)),
+        withheld: fromMicro(Number(e.withheld)),
+      })),
+    };
+  }));
+
+  // ---- Token allocation model (editable, with vesting) ------------------
+  // ⚠️ A PLANNING VIEW. Nothing here mints or moves ROZI — ROZI is not on-chain
+  // and no non-mining bucket has a balance behind it. `supplyCap` in
+  // mining/core.ts stays the one enforced number and equals the mining bucket.
+  const allocSchema = z.object({
+    bucket: z.string().trim().min(1).max(40),
+    label: z.string().trim().min(1).max(80),
+    amountRozi: z.number().int().min(0).max(1_000_000_000_000),
+    cliffMonths: z.number().int().min(0).max(120).default(0),
+    vestMonths: z.number().int().min(0).max(240).default(0),
+    startDate: z.string().max(40).nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+    sort: z.number().int().min(0).max(1000).optional(),
+  });
+
+  // Linear vest: nothing before the cliff, then straight-line over vestMonths
+  // (vestMonths 0 = fully unlocked the moment the cliff passes / at start).
+  function releasedRozi(a: {
+    amount_rozi: number; cliff_months: number; vest_months: number; start_date: string | null;
+  }, at = new Date()): number {
+    if (!a.start_date) return 0;
+    const start = new Date(a.start_date);
+    if (!Number.isFinite(start.getTime())) return 0;
+    const months = (at.getFullYear() - start.getFullYear()) * 12
+      + (at.getMonth() - start.getMonth())
+      + (at.getDate() >= start.getDate() ? 0 : -1);
+    if (months < a.cliff_months) return 0;
+    const frac = a.vest_months > 0
+      ? Math.min(1, (months - a.cliff_months) / a.vest_months)
+      : 1;
+    return Math.floor(Number(a.amount_rozi) * frac);
+  }
+
+  app.get("/staff/mining/allocations", staffGuard("mining.view", async () => {
+    const [rows, s, emittedMicro] = await Promise.all([
+      sql.all<{
+        id: string; bucket: string; label: string; amount_rozi: number;
+        cliff_months: number; vest_months: number; start_date: string | null;
+        notes: string | null; sort: number;
+      }>("SELECT * FROM rozi_allocations ORDER BY sort, created_at"),
+      loadMiningSettings(),
+      totalEmittedMicro(),
+    ]);
+    const emitted = fromMicro(Number(emittedMicro));
+    const totalRozi = rows.reduce((n, r) => n + Number(r.amount_rozi), 0);
+    return {
+      // The one enforced number, so the panel can show the mining bucket
+      // reconciled against reality rather than against its own plan.
+      supplyCap: s.supplyCap,
+      minedEmitted: emitted,
+      minedRemaining: Math.max(0, s.supplyCap - emitted),
+      totalRozi,
+      // %s must add to 100 to be a coherent plan — the panel warns if not.
+      pctSum: totalRozi > 0
+        ? Math.round(rows.reduce((n, r) => n + (Number(r.amount_rozi) / totalRozi) * 100, 0))
+        : 0,
+      buckets: rows.map((r) => {
+        const released = r.bucket === "mining" ? emitted : releasedRozi(r);
+        return {
+          id: r.id, bucket: r.bucket, label: r.label,
+          amountRozi: Number(r.amount_rozi),
+          pctOfTotal: totalRozi > 0 ? Math.round((Number(r.amount_rozi) / totalRozi) * 1000) / 10 : 0,
+          cliffMonths: r.cliff_months, vestMonths: r.vest_months,
+          startDate: r.start_date, notes: r.notes, sort: r.sort,
+          releasedRozi: released,
+          releasedPct: Number(r.amount_rozi) > 0
+            ? Math.round((released / Number(r.amount_rozi)) * 100) : 0,
+          // The mining bucket's "released" is real emission, not a schedule.
+          isLive: r.bucket === "mining",
+        };
+      }),
+    };
+  }));
+
+  app.post("/staff/mining/allocations", staffGuard("mining.manage", async ({ userId, role }, req) => {
+    const b = allocSchema.parse(req.body ?? {});
+    const id = newId();
+    await sql.run(
+      `INSERT INTO rozi_allocations (id, bucket, label, amount_rozi, cliff_months, vest_months, start_date, notes, sort, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      id, b.bucket, b.label, b.amountRozi, b.cliffMonths, b.vestMonths,
+      b.startDate ?? null, b.notes ?? null, b.sort ?? 0, now(),
+    );
+    await logAudit({ actorUserId: userId, actorRole: role, action: "rozi_allocation_create", detail: `${b.label} — ${b.amountRozi} ROZI` });
+    return { ok: true, id };
+  }));
+
+  app.patch("/staff/mining/allocations/:id", staffGuard("mining.manage", async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const b = allocSchema.partial().parse(req.body ?? {});
+    const existing = await sql.get<{ id: string }>("SELECT id FROM rozi_allocations WHERE id = ?", id);
+    if (!existing) throw Object.assign(new Error("Allocation not found."), { statusCode: 404 });
+    const sets: string[] = []; const vals: unknown[] = [];
+    const map: [keyof typeof b, string][] = [
+      ["bucket", "bucket"], ["label", "label"], ["amountRozi", "amount_rozi"],
+      ["cliffMonths", "cliff_months"], ["vestMonths", "vest_months"],
+      ["startDate", "start_date"], ["notes", "notes"], ["sort", "sort"],
+    ];
+    for (const [k, col] of map) {
+      if (b[k] !== undefined) { sets.push(`${col} = ?`); vals.push(b[k]); }
+    }
+    if (sets.length === 0) return { ok: true };
+    vals.push(id);
+    await sql.run(`UPDATE rozi_allocations SET ${sets.join(", ")} WHERE id = ?`, ...vals);
+    await logAudit({ actorUserId: userId, actorRole: role, action: "rozi_allocation_update", detail: `alloc ${id}: ${sets.map((s) => s.split(" = ")[0]).join(", ")}` });
+    return { ok: true };
+  }));
+
+  app.delete("/staff/mining/allocations/:id", staffGuard("mining.manage", async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const row = await sql.get<{ bucket: string; label: string }>("SELECT bucket, label FROM rozi_allocations WHERE id = ?", id);
+    if (!row) throw Object.assign(new Error("Allocation not found."), { statusCode: 404 });
+    if (row.bucket === "mining") {
+      throw Object.assign(new Error("The community-mining bucket cannot be deleted — it is the enforced supply cap."), { statusCode: 409 });
+    }
+    await sql.run("DELETE FROM rozi_allocations WHERE id = ?", id);
+    await logAudit({ actorUserId: userId, actorRole: role, action: "rozi_allocation_delete", detail: `${row.label}` });
+    return { ok: true };
+  }));
 }

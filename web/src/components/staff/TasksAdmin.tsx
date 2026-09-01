@@ -12,7 +12,7 @@
 // crediting or campaign path — the reusable pieces (TaskForm, FieldEditor,
 // CampaignBudget, TargetingSummary, TaskCard, ProofBody) are imported from the
 // old files, not reimplemented.
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column, type FilterDef } from "./DataTable";
@@ -22,6 +22,7 @@ import { useToast } from "./toast";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, updateTaskLifecycle,
+  deleteCustomTask, fetchTaskMetrics, fetchTasksOverview,
   fetchTaskProofs, decideTaskProof, decideTaskProofsBulk, taskAssetUrl,
   TASK_CATEGORY_LABELS,
   type CustomTask, type CustomTaskInput, type TaskProof,
@@ -96,13 +97,16 @@ const PAGE = { pageSize: 25, sort: "created_at", dir: "desc" as const };
 // ======================================================================
 // 1. Our own tasks (the campaign list + editor)
 // ======================================================================
+// ⚠️ These values are matched against the EFFECTIVE status server-side (the one
+// the badge shows), not the stored column — so filtering by "ended" returns
+// every task the badge calls "ended", including one whose ends_at just passed.
 const TASK_STATUS_FILTER: FilterDef = {
   key: "status", label: "Status", type: "select",
   options: [
     { value: "active", label: "active" }, { value: "draft", label: "draft" },
     { value: "scheduled", label: "scheduled" }, { value: "paused", label: "paused" },
     { value: "ended", label: "ended" }, { value: "disabled", label: "disabled" },
-    { value: "exhausted", label: "exhausted" },
+    { value: "exhausted", label: "exhausted" }, { value: "deleted", label: "deleted" },
   ],
 };
 
@@ -112,7 +116,7 @@ export function TasksAdminPanel() {
   const toast = useToast();
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [tab, setTab] = useState<"overview" | "edit">("overview");
+  const [tab, setTab] = useState<TaskDetailTab>("overview");
 
   const data = useApi(
     () => fetchCustomTasks({
@@ -124,6 +128,50 @@ export function TasksAdminPanel() {
   );
   const rows = data.data?.tasks ?? [];
   const open = openId ? rows.find((t) => t.id === openId) ?? null : null;
+
+  // The open task detail participates in browser history so the Back button
+  // CLOSES it instead of leaving /staff. (The old "Back logs me out" bug is
+  // fixed in lib/api.ts; this is the "Back should do the obvious thing" half.)
+  const pushedRef = useRef(false);
+  function openDetail(id: string) {
+    setOpenId(id); setTab("overview");
+    window.history.pushState({ staffTaskDetail: id }, "");
+    pushedRef.current = true;
+  }
+  function closeDetail() {
+    setOpenId(null); setTab("overview");
+    if (pushedRef.current) { pushedRef.current = false; window.history.back(); }
+  }
+  useEffect(() => {
+    const onPop = () => {
+      if (pushedRef.current) { pushedRef.current = false; setOpenId(null); setTab("overview"); }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  async function removeOne(t: CustomTask) {
+    if (!window.confirm(`Delete "${t.title}"? It disappears from the app and from this list. History is kept.`)) return;
+    try {
+      await deleteCustomTask(t.id);
+      toast.ok("Task deleted.");
+      closeDetail();
+      data.reload();
+    } catch (e) { toast.err((e as Error).message); }
+  }
+  async function removeMany(ids: string[]) {
+    if (!window.confirm(`Delete ${ids.length} task(s)? They disappear from the app and from this list. History is kept.`)) return;
+    // A bulk delete is N separate decisions — one task with paid completions
+    // fails on its own row (409) without stopping the rest.
+    let done = 0; const errs: string[] = [];
+    for (const id of ids) {
+      try { await deleteCustomTask(id); done++; }
+      catch (e) { errs.push((e as Error).message); }
+    }
+    if (errs.length === 0) toast.ok(`${done} task(s) deleted.`);
+    else toast.err(`${done} deleted, ${errs.length} skipped — ${[...new Set(errs)].join("; ")}`);
+    data.reload();
+  }
 
   async function lifecycle(t: CustomTask, action: "pause" | "resume" | "end") {
     if (action === "end" && !window.confirm("End this task? Users will no longer be able to start or submit it.")) return;
@@ -186,7 +234,7 @@ export function TasksAdminPanel() {
   if (open) {
     return (
       <DetailLayout
-        breadcrumb={[{ label: "Our own tasks", onClick: () => { setOpenId(null); setTab("overview"); } }, { label: open.title }]}
+        breadcrumb={[{ label: "Our own tasks", onClick: closeDetail }, { label: open.title }]}
         title={
           <span className="flex items-center gap-2">
             {open.logo_asset_id && <img src={taskAssetUrl(open.logo_asset_id)} alt=""
@@ -211,6 +259,14 @@ export function TasksAdminPanel() {
             ),
           },
           {
+            id: "metrics", label: "Metrics",
+            content: <TaskMetricsTab taskId={open.id} />,
+          },
+          {
+            id: "proofs", label: "Proofs",
+            content: <TaskProofsTab taskId={open.id} onDecided={() => data.reload()} />,
+          },
+          {
             id: "edit", label: "Edit",
             content: (
               <TaskEditor task={open}
@@ -219,7 +275,17 @@ export function TasksAdminPanel() {
           },
         ]}
         activeTab={tab}
-        onTab={(id) => setTab(id as "overview" | "edit")}
+        onTab={(id) => setTab(id as TaskDetailTab)}
+        dangerZone={
+          open.effectiveStatus === "deleted" ? (
+            <p className="text-xs text-muted">This task is deleted. History still points at it.</p>
+          ) : (
+            <button onClick={() => removeOne(open)}
+              className="rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-white">
+              Delete this task
+            </button>
+          )
+        }
       />
     );
   }
@@ -238,12 +304,14 @@ export function TasksAdminPanel() {
         Tasks you write yourself — no ad network behind them. A task never pays itself: a proof task is
         credited when you approve the proof; a postback task when a partner&rsquo;s server calls the signed URL.
       </p>
+      <TasksOverviewCard />
       <DataTable<CustomTask>
         q={q} columns={columns} rows={rows}
         total={data.data?.total ?? 0} loading={data.loading} error={data.error} onRetry={data.reload}
         getRowId={(t) => t.id}
-        onRowClick={(t) => { setOpenId(t.id); setTab("overview"); }}
+        onRowClick={(t) => openDetail(t.id)}
         filters={[TASK_STATUS_FILTER]}
+        bulkActions={[{ label: "Delete selected", tone: "danger", run: removeMany }]}
         searchPlaceholder="Search task title"
         emptyTitle="No tasks"
         emptyHint="Create one with “+ New task”."
@@ -257,15 +325,19 @@ export function TasksAdminPanel() {
 function TaskEditor({ task, onSaved }: { task: CustomTask; onSaved: () => void }) {
   const [form, setForm] = useState<CustomTaskInput>(() => taskToInput(task));
   const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   async function save() {
+    if (busy) return;
     if (form.title.trim().length < 3) { setMsg("Title is too short."); return; }
+    setBusy(true); setMsg(null);
     try { await updateCustomTask(task.id, form); onSaved(); }
     catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
   }
   return (
     <div>
       {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-danger">{msg}</p>}
-      <TaskForm value={form} editing onChange={setForm}
+      <TaskForm value={form} editing onChange={setForm} busy={busy}
         onCancel={() => { setForm(taskToInput(task)); setMsg(null); }} onSave={save} />
     </div>
   );
@@ -274,15 +346,181 @@ function TaskEditor({ task, onSaved }: { task: CustomTask; onSaved: () => void }
 function TaskCreator({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState<CustomTaskInput>(() => ({ ...EMPTY_TASK }));
   const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   async function save() {
+    // The guard is what stops a second click firing a second POST — the bug
+    // where one "Create task" produced two tasks.
+    if (busy) return;
     if (form.title.trim().length < 3) { setMsg("Title is too short."); return; }
+    setBusy(true); setMsg(null);
     try { await createCustomTask(form); onCreated(); }
     catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
   }
   return (
     <div>
       {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-danger">{msg}</p>}
-      <TaskForm value={form} editing={false} onChange={setForm} onCancel={onClose} onSave={save} />
+      <TaskForm value={form} editing={false} onChange={setForm} busy={busy} onCancel={onClose} onSave={save} />
+    </div>
+  );
+}
+
+type TaskDetailTab = "overview" | "metrics" | "proofs" | "edit";
+
+// A compact "all our campaigns" funnel above the list — the overall counterpart
+// to the per-task Metrics tab.
+function TasksOverviewCard() {
+  const o = useApi(fetchTasksOverview, []);
+  if (!o.data) return null;
+  const w = o.data.window30d;
+  const step = (label: string, value: number, sub?: string) => (
+    <div key={label} className="min-w-[84px] rounded-md border border-line bg-card px-2.5 py-1.5">
+      <div className="text-[10px] font-semibold uppercase text-muted">{label}</div>
+      <div className="num text-sm font-bold text-brand-ink">{value.toLocaleString()}</div>
+      {sub && <div className="text-[10px] text-muted">{sub}</div>}
+    </div>
+  );
+  return (
+    <div className="mb-3 rounded-lg border border-line bg-brand-tint/20 p-3">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-xs font-bold uppercase text-brand-ink">All tasks · last 30 days</span>
+        <span className="text-[11px] text-muted">
+          {o.data.campaigns.active} active of {o.data.campaigns.total} campaigns ·
+          {" "}opened → completed {w.openedToCompleted == null ? "—" : `${w.openedToCompleted}%`}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {step("Opened", w.opened)}
+        {step("Started", w.started)}
+        {step("Proof sent", w.submitted)}
+        {step("Approved", w.approved, w.approvalRate == null ? undefined : `${w.approvalRate}% approved`)}
+        {step("Rejected", w.rejected)}
+        {step("Waiting", w.pending)}
+        {step("Completed", w.completed)}
+      </div>
+    </div>
+  );
+}
+
+// ---- Metrics tab: one campaign's funnel + money -------------------------
+function pctLabel(n: number | null): string {
+  return n == null ? "—" : `${n}%`;
+}
+function MetricCell({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <div className="rounded-md border border-line bg-card p-3">
+      <div className="text-[11px] font-semibold uppercase text-muted">{label}</div>
+      <div className="num text-lg font-bold text-brand-ink">{value}</div>
+      {sub && <div className="text-[11px] text-muted">{sub}</div>}
+    </div>
+  );
+}
+function TaskMetricsTab({ taskId }: { taskId: string }) {
+  const m = useApi(() => fetchTaskMetrics(taskId), [taskId]);
+  if (m.loading && !m.data) return <p className="text-sm text-muted">Loading…</p>;
+  if (m.error) return <p className="text-sm text-danger">{m.error}</p>;
+  if (!m.data) return null;
+  const f = m.data.funnel;
+  const c = m.data.conversion;
+  const money = m.data.money;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MetricCell label="Opened" value={f.opened} sub={`${m.data.totalOpens} total opens`} />
+        <MetricCell label="Started" value={f.started} sub={`${pctLabel(c.openedToStarted)} of opened`} />
+        <MetricCell label="Proof sent" value={f.submitted} sub={`${pctLabel(c.startedToSubmitted)} of started`} />
+        <MetricCell label="Approved" value={f.approved} sub={`${pctLabel(c.submittedToApproved)} of sent`} />
+        <MetricCell label="Rejected" value={f.rejected} />
+        <MetricCell label="Waiting" value={f.pending} />
+        <MetricCell label="Completed" value={f.completed} sub={`${pctLabel(c.approvedToCompleted)} of approved`} />
+        <MetricCell label="Opened → completed" value={pctLabel(c.openedToCompleted)} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MetricCell label="Conversions" value={money.conversions}
+          sub={money.budgetUsedPct != null ? `${money.budgetUsedPct}% of budget` : "no cap"} />
+        <MetricCell label="ROZI paid" value={money.pointsPaid.toLocaleString()} />
+        <MetricCell label="Referral ROZI" value={money.referralPointsPaid.toLocaleString()} />
+        <MetricCell label="Margin" value={formatUsdtMicro(money.marginMicro)}
+          sub={`rev ${formatUsdtMicro(money.revenueMicro)}`} />
+      </div>
+      <div>
+        <div className="mb-1 text-[11px] font-semibold uppercase text-muted">Last 30 days</div>
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="w-full min-w-[420px] text-xs">
+            <thead className="bg-brand-tint text-left uppercase text-brand">
+              <tr><th className="p-2">Day</th><th className="p-2 text-right">Opens</th>
+                <th className="p-2 text-right">Proofs</th><th className="p-2 text-right">Approved</th>
+                <th className="p-2 text-right">Credited</th></tr>
+            </thead>
+            <tbody>
+              {m.data.series.filter((d) => d.opens || d.submitted || d.approved || d.credited).map((d) => (
+                <tr key={d.day} className="border-t border-line">
+                  <td className="p-2">{d.day}</td>
+                  <td className="num p-2 text-right">{d.opens}</td>
+                  <td className="num p-2 text-right">{d.submitted}</td>
+                  <td className="num p-2 text-right">{d.approved}</td>
+                  <td className="num p-2 text-right">{d.credited}</td>
+                </tr>
+              ))}
+              {m.data.series.every((d) => !d.opens && !d.submitted && !d.approved && !d.credited) && (
+                <tr><td colSpan={5} className="p-3 text-center text-muted">No activity yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Proofs tab: this task's proofs, scoped ---------------------------
+function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () => void }) {
+  const [status, setStatus] = useState("pending");
+  const toast = useToast();
+  const data = useApi(
+    () => fetchTaskProofs({ taskId, status, limit: 50, dir: "asc" }),
+    [taskId, status], true, QUEUE_POLL_MS,
+  );
+  const rows = data.data?.proofs ?? [];
+  async function decide(p: TaskProof, action: "approve" | "reject") {
+    let note: string | undefined;
+    if (action === "reject") {
+      const n = window.prompt("Why are you rejecting this? The user will see it.");
+      if (n === null) return;
+      note = n;
+    }
+    try {
+      const res = await decideTaskProof(p.id, action, note);
+      if (!res.ok) { toast.err(res.error ?? "Could not save."); return; }
+      toast.ok(action === "approve" ? "Approved." : "Rejected.");
+      data.reload(); onDecided();
+    } catch (e) { toast.err((e as Error).message); }
+  }
+  return (
+    <div className="space-y-3">
+      <StatusTabs options={PROOF_TABS} value={status} onChange={setStatus} counts={data.data?.counts} />
+      {data.loading && !data.data ? <p className="text-sm text-muted">Loading…</p>
+        : rows.length === 0 ? <p className="text-sm text-muted">No {status} proofs for this task.</p>
+        : rows.map((p) => (
+          <div key={p.id} className="rounded-md border border-line bg-card p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-brand-ink">
+                {p.user_handle ? `@${p.user_handle}` : p.user_email}
+                <span className="ms-2 text-xs font-normal text-muted">{p.user_email}</span>
+              </span>
+              <TimeCell iso={p.created_at} />
+            </div>
+            <ProofBody proof={p} />
+            {status === "pending" && (
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => decide(p, "approve")}
+                  className="rounded-md bg-success px-3 py-1 text-xs font-semibold text-white">Approve</button>
+                <button onClick={() => decide(p, "reject")}
+                  className="rounded-md bg-danger px-3 py-1 text-xs font-semibold text-white">Reject</button>
+              </div>
+            )}
+          </div>
+        ))}
     </div>
   );
 }

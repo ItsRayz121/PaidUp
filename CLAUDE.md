@@ -2498,6 +2498,111 @@ These override convenience or speed at every step:
     — a human identifies the user (join `usdt_topups`↔`chain_deposits` on
     `tx_hash`) and posts the adjustment.
 
+- **TASK/NETWORK + MINE/GROWTH ADMIN OVERHAUL + ROZI RETUNE (founder,
+  2026-09-01).** A founder review produced ~20 asks across a hard bug, admin
+  UX debt, missing task analytics, and tokenomics. Verified: full backend
+  matrix from a fresh DB — **90 unit + ~1,200 e2e checks across 29 suites, 0
+  failures** (mining 42, custody/signer/custodyseeds 8 ea, permissions 16,
+  flags 8; usdt 85, moneyadmin 82, stage7 78, stage6 70, stage5 67, mining
+  e2e 65, tasksadmin 57, wallet 52, usersadmin 50, stage4 48, payoutRelay 48,
+  taskbudget 46, analytics 46, telegram 45, kyc 43, deposits 37, profile 31,
+  store 29, referrals 26, conversion 25, fees 24, withdrawControls 21, admin
+  15, autoWithdraw 16, taskmarketplace 14, messagesadmin 14, push 9,
+  autoRefund 8, proxy 5); api + web typecheck, eslint, web production build
+  (37 routes); `security-review` — no findings.
+  - **THE ADMIN LOGOUT-ON-BACK BUG IS FIXED.** Root cause: `web/src/lib/
+    api.ts` cleared the session on **any** 401 from **any** request, and the
+    staff panel runs many background pollers through that one interceptor —
+    one transient/expired-token 401 silently wiped `localStorage`, and
+    nothing noticed until a page remounted (browser Back/Forward being the
+    common trigger), at which point `useRequireAuth` redirected to `/login`.
+    Now a 401 is **confirmed against `/auth/me`** before the session is
+    cleared (401/404 there ⇒ dead; otherwise a transient blip, session
+    kept + error surfaced); `onSessionEnded` redirects **immediately** when a
+    token is proven dead instead of deferring to the next nav;
+    `login/page.tsx` sends an authed staff user to `/staff` not `/`;
+    `getStoredUser` is try/catch-hardened; and `/staff` now uses
+    `history.pushState` + a `popstate` handler so Back walks the panel's
+    sections and the open task detail closes on Back instead of leaving
+    `/staff`.
+  - **Task & Rewards admin correctness.** ⓐ **No more double-create** —
+    Save is disabled while a create/update request is in flight
+    (`TaskForm` `busy`), and `POST /staff/tasks` now **rejects a duplicate
+    normalised title (409)**, which also makes a double-submit a no-op. ⓑ The
+    admin **status filter now agrees with the status badge**:
+    `GET /staff/tasks` filters on the *computed* effective status (a SQL
+    `CASE` mirroring `campaignState`), plus a 15-min sweep in `server.ts`
+    writes `status='ended'`/`'active'` when a schedule lapses/opens — an
+    expired campaign no longer shows only under "active" and never under
+    "ended". ⓒ **Tasks are deletable** — `DELETE /staff/tasks/:id` soft-sets
+    `status='deleted'` (new value in the CHECK + `taskLifecycle`), hidden
+    from the earner feed and the default admin list, blocked if the task has
+    paid out and isn't ended; wired to the `DataTable` bulk action + the
+    task-detail Danger zone. ⓓ **Per-field red validation** in `TaskForm`
+    (`validateTask` mirrors `upsertSchema` — e.g. minutes 0–600) turns a box
+    red at entry and blocks Save. ⓔ **Searchable country picker**
+    (`components/CountryPicker.tsx` + `lib/countries.ts`) replaces the
+    free-text "one per line" box and the users-list country filter.
+  - **Per-task metrics.** New `task_opens` table (a view-level signal,
+    separate from `task_participation` so it never changes the earner feed)
+    incremented on `GET /tasks/:id`. `GET /staff/tasks/:id/metrics` returns
+    the funnel — opened → started → proof submitted → approved → rejected →
+    credited — with step-to-step %s, this campaign's revenue/margin (reusing
+    `campaignMoney`), and a 30-day daily series; a **Metrics** and a
+    task-scoped **Proofs** tab were added to the task detail.
+    `GET /staff/tasks/overview` + a card on the list give the same funnel
+    across all own tasks; `analytics.ts`'s task block gained `opened` +
+    `proofsRejected`.
+  - **Mine admin readability.** Economy settings render as **individually
+    bordered field boxes** with a one-line plain-English explainer under each
+    (sourced from the new `docs/MINING_GLOSSARY.md`, which also answers the
+    founder's "what does emission model / halving / hashrate / boosts /
+    boosters / conversion mean" questions). New `GET /staff/mining/epochs`
+    (paginated) + a "Show all days" expander give the **full day-1-to-now**
+    economy history. Top-miner rows already deep-link to the User 360.
+  - **TOKEN ALLOCATION MODEL (editable + vesting).** New `rozi_allocations`
+    table seeded from `MINING_SPEC.md` §3.1 (mining 21M / liquidity / team
+    w/ 6-mo cliff + 24-mo vest / ecosystem / reserve — 32.3M total), an
+    **Allocation** tab under Mine with full CRUD
+    (`GET/POST/PATCH/DELETE /staff/mining/allocations`), a %-sum-to-100
+    check, and simulated released-to-date from each bucket's schedule.
+    ⚠️ **A PLANNING / BOOKKEEPING VIEW ONLY** — ROZI is not on-chain, nothing
+    is minted or moved, and `supplyCap` (21M) stays the one number enforced
+    at settlement and equals the mining bucket. The `mining` bucket cannot be
+    deleted and its "released" figure is real emission, not a schedule.
+  - ⚠️ **ROZI RETUNE — piBaseRate 0.5 → 2.5, and RIG PRICES RE-BASED TO A
+    FIXED $0.10/ROZI (founder, both knowing decisions).** The founder wants a
+    normal miner to see **2–3 ROZI/day at launch** (streak / referral /
+    boosts / rigs stack on top). Supply cap **UNCHANGED at 21M**; the runway
+    is preserved by making `piHalvingUsers` steeper/earlier
+    (`2000,10000,50000,250000,900000`) so the baseline halves five times to
+    ~0.078/day by ~1M verified users — the `daysOfSupply > 120` tripwire in
+    `mining.test.ts` still holds, and both pinned tests were updated in the
+    same change. Rig ROZI price is now `base_cost_usdt ÷ 0.10` (a $5 Old
+    Phone = 50 ROZI), via `SEED_RIGS` + one-time `migrateRigPricesDime`.
+    ⚠️ **This is a KNOWING re-open of guardrail #7** — a fixed ROZI↔USD basis
+    publishes an implied ~$2.1M valuation — recorded as a dated decision in
+    `MINING_SPEC.md` §6.2a. It aligns rig prices to the rate `POINTS_PER_ROZI`
+    + `POINTS_PER_USDT` *already* imply on screen rather than adding a new
+    claim. **ROZI stays non-withdrawable; no buy-back; no ROZI→USD cash
+    conversion.**
+  - **Growth / Messages / Features.** Top-inviter table (now "Top partners")
+    gained **inactive count + %** and column sorting — the shape of a
+    fake-signup farm on one row. In-panel explainers added to "Send a
+    message" and "Home screen cards". **Feature flags / Global settings /
+    Staff alerts are now three separate sidebar sections** (were sub-tabs of
+    one), each on its own permission.
+  - **Earner app.** "My tasks" and "History" now **group their cards** by
+    where each stands (Needs another try · In progress · Under review /
+    Completed · Closed). New flag-gated **`/earnings`** screen ("what you've
+    earned from the platform") + `GET /me/earnings` (lifetime totals by
+    source, derived from the ledgers) — ships **OFF** (`earnings_view`,
+    `defaultOff`) until real USDT payouts start; the profile link is hidden
+    while off and the endpoint 403s. Two example **boosters** are seeded
+    **disabled** so an Admin has something concrete to price, and
+    `/mine/boosters` explains that a booster is a temporary speed multiplier
+    bought with Points (not ROZI).
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a

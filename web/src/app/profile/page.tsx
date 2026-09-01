@@ -22,13 +22,15 @@ import {
 import { useRouter } from "next/navigation";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchKyc, fetchAvatar, clearSession, type KycState } from "@/lib/api";
+import { fetchKyc, fetchAvatar, fetchFeatures, clearSession, type KycState } from "@/lib/api";
 
 export default function ProfilePage() {
   const { user, ready } = useRequireAuth();
   const { t } = useI18n();
   const kyc = useApi(fetchKyc, []);
   const avatar = useApi(fetchAvatar, []);
+  const features = useApi(fetchFeatures, []);
+  const earningsOn = features.data?.features?.earnings_view === true;
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
@@ -93,6 +95,14 @@ export default function ProfilePage() {
             label={t("profile.verifyId")}
             hint={t("profile.verifyIdOffHint")}
             badge={<PlainBadge label={t("profile.comingSoon")} tone="brand" />}
+          />
+        )}
+        {earningsOn && (
+          <Row
+            href="/earnings"
+            Icon={GiftIcon}
+            label="Your earnings"
+            hint="Everything you've earned from the platform"
           />
         )}
         <Row

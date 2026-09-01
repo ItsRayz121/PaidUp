@@ -216,6 +216,23 @@ function validateSchedule(startsAt?: string | null, endsAt?: string | null) {
   }
 }
 
+// Is there already a LIVE custom task with this wording? Normalised the same way
+// on both sides (trim, collapse inner whitespace, lowercase). `exceptId` skips
+// the task being renamed. Deleted/ended tasks do not count — their title is free
+// to reuse.
+async function duplicateTitle(title: string, exceptId?: string): Promise<boolean> {
+  const norm = title.trim().replace(/\s+/g, " ").toLowerCase();
+  const row = await sql.get<{ id: string }>(
+    `SELECT id FROM tasks
+      WHERE source = 'custom' AND status NOT IN ('deleted','ended')
+        AND lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) = ?
+        ${exceptId ? "AND id <> ?" : ""}
+      LIMIT 1`,
+    ...(exceptId ? [norm, exceptId] : [norm]),
+  );
+  return !!row;
+}
+
 export async function staffTaskRoutes(app: FastifyInstance) {
   // Owned, immutable task asset. Public because <img> cannot attach the app's
   // bearer token; ids are opaque and the bytes are validated at upload.
@@ -277,7 +294,30 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const where: string[] = ["t.source = 'custom'"];
     const wp: unknown[] = [];
     if (search) { where.push("LOWER(t.title) LIKE ?"); wp.push(`%${search}%`); }
-    if (statusF) { where.push("t.status = ?"); wp.push(statusF); }
+    // ⚠️ FILTER ON THE *EFFECTIVE* STATUS, NOT THE STORED COLUMN. This mirrors
+    // campaignState() in taskLifecycle.ts: a task stored as 'active' whose
+    // ends_at has passed READS as 'ended' in the badge. The old `t.status = ?`
+    // did not — so an expired campaign appeared under the "active" filter and
+    // never under "ended", which is the "ended task still showing / active not
+    // showing" bug. The 15-min sweep in server.ts also writes the stored
+    // column, so this stays exact AND self-heals.
+    const nowIso = now();
+    const EFFECTIVE = `
+      CASE
+        WHEN t.status = 'disabled' THEN 'paused'
+        WHEN t.status IN ('draft','paused','exhausted','ended','deleted') THEN t.status
+        WHEN t.ends_at IS NOT NULL AND t.ends_at <= ? THEN 'ended'
+        WHEN t.starts_at IS NOT NULL AND t.starts_at > ? THEN 'scheduled'
+        ELSE 'active'
+      END`;
+    if (statusF) {
+      where.push(`(${EFFECTIVE}) = ?`);
+      wp.push(nowIso, nowIso, statusF);
+    } else {
+      // A soft-deleted task is hidden from the default list; filter by
+      // status=deleted to review them.
+      where.push("t.status <> 'deleted'");
+    }
     const whereSql = `WHERE ${where.join(" AND ")}`;
 
     const SORTS: Record<string, string> = {
@@ -348,6 +388,17 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // ---- Create a custom task -----------------------------------------------
   app.post("/staff/tasks", staffGuard("tasks.manage", async ({ userId, role }, req) => {
     const b = upsertSchema.parse(req.body ?? {});
+    // No two LIVE tasks with the same wording (founder, 2026-09-01). Normalised
+    // — trim, collapse inner whitespace, lowercase — so "Join  our channel " and
+    // "join our channel" collide. This also makes a double-submit safe: the
+    // second POST is a 409, not a second row. A deleted or ended task never
+    // blocks reusing its title.
+    if (await duplicateTitle(b.title)) {
+      throw Object.assign(
+        new Error("A task with this name already exists. Rename it, or edit the one you already have."),
+        { statusCode: 409 },
+      );
+    }
     const reward = normalizeReward(b.rewardType, b.points, b.rewardRoziMicro, b.rewardUsdtMicro);
     validateReward(reward.rewardType, reward.rewardRoziMicro, b.rewardUsdtMicro);
     validateSchedule(b.startsAt, b.endsAt);
@@ -419,6 +470,12 @@ export async function staffTaskRoutes(app: FastifyInstance) {
        FROM tasks WHERE id = ? AND source = 'custom'`, id,
     );
     if (!existing) return { ok: false, error: "not found" };
+    if (b.title !== undefined && await duplicateTitle(b.title, id)) {
+      throw Object.assign(
+        new Error("Another task already uses this name. Pick a different one."),
+        { statusCode: 409 },
+      );
+    }
 
     // Only touch/validate the reward when the request actually changes one —
     // an existing row is already valid, and a plain budget PATCH must not have
@@ -534,6 +591,165 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     await sql.run("UPDATE tasks SET status = ? WHERE id = ?", status, id);
     await logAudit({ actorUserId: userId, actorRole: role, action: `custom_task_${action}`, detail: `task ${id}: ${task.status} -> ${status}` });
     return { ok: true, status };
+  }));
+
+  // ---- Delete a custom task (soft) -------------------------------------------
+  // Sets status='deleted'. The row stays so historical task_completions /
+  // task_proofs still join; it is hidden from the earner feed and from the
+  // default admin list. A task that has PAID OUT must be ended first — deleting
+  // one that users are mid-flight on would strand their proofs with nothing to
+  // point at in the panel.
+  app.delete("/staff/tasks/:id", staffGuard("tasks.manage", async ({ userId, role }, req) => {
+    const id = (req.params as { id: string }).id;
+    const task = await sql.get<{ status: string; title: string }>(
+      "SELECT status, title FROM tasks WHERE id = ? AND source = 'custom'", id,
+    );
+    if (!task) throw Object.assign(new Error("Task not found."), { statusCode: 404 });
+    if (task.status === "deleted") return { ok: true };
+    const credited = await sql.get<{ n: string | number }>(
+      "SELECT COUNT(*) AS n FROM task_completions WHERE task_id = ? AND status = 'credited'", id,
+    );
+    if (Number(credited?.n ?? 0) > 0 && task.status !== "ended") {
+      throw Object.assign(
+        new Error("This task has already paid out to users. End it first, then delete it."),
+        { statusCode: 409 },
+      );
+    }
+    await sql.run("UPDATE tasks SET status = 'deleted' WHERE id = ?", id);
+    await logAudit({ actorUserId: userId, actorRole: role, action: "custom_task_delete", detail: `task ${id}: ${task.title}` });
+    return { ok: true };
+  }));
+
+  // ---- Overall task funnel (all our campaigns, last 30 days + all-time) ----
+  app.get("/staff/tasks/overview", staffGuard("tasks.view", async () => {
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const g = async (sql30: string, sqlAll: string): Promise<{ d30: number; all: number }> => {
+      const [a, b] = await Promise.all([
+        sql.get<{ n: number }>(sql30, since), sql.get<{ n: number }>(sqlAll),
+      ]);
+      return { d30: Number(a?.n ?? 0), all: Number(b?.n ?? 0) };
+    };
+    // Only OUR OWN tasks (source='custom') — network offerwall funnels are a
+    // different shape and live on the networks screen.
+    const own = "AND task_id IN (SELECT id FROM tasks WHERE source = 'custom')";
+    const [opened, started, submitted, approved, rejected, pending, completed, campaigns] = await Promise.all([
+      g(`SELECT COUNT(DISTINCT user_id)::int AS n FROM task_opens WHERE last_at >= ? ${own}`,
+        `SELECT COUNT(DISTINCT user_id)::int AS n FROM task_opens WHERE 1=1 ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_participation WHERE started_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_participation WHERE 1=1 ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_proofs WHERE created_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_proofs WHERE 1=1 ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='approved' AND created_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='approved' ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='rejected' AND created_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='rejected' ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='pending' AND created_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_proofs WHERE status='pending' ${own}`),
+      g(`SELECT COUNT(*)::int AS n FROM task_completions WHERE status='credited' AND created_at >= ? ${own}`,
+        `SELECT COUNT(*)::int AS n FROM task_completions WHERE status='credited' ${own}`),
+      sql.get<{ active: number; total: number }>(
+        `SELECT COUNT(*) FILTER (WHERE status IN ('active','scheduled'))::int AS active,
+                COUNT(*) FILTER (WHERE status <> 'deleted')::int AS total
+           FROM tasks WHERE source = 'custom'`),
+    ]);
+    const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : null);
+    return {
+      window30d: { opened: opened.d30, started: started.d30, submitted: submitted.d30,
+        approved: approved.d30, rejected: rejected.d30, pending: pending.d30, completed: completed.d30,
+        openedToCompleted: pct(completed.d30, opened.d30),
+        approvalRate: pct(approved.d30, submitted.d30) },
+      allTime: { opened: opened.all, started: started.all, submitted: submitted.all,
+        approved: approved.all, rejected: rejected.all, pending: pending.all, completed: completed.all },
+      campaigns: { active: Number(campaigns?.active ?? 0), total: Number(campaigns?.total ?? 0) },
+    };
+  }));
+
+  // ---- Per-task metrics (the funnel + money for ONE campaign) --------------
+  // opened -> started -> proof submitted -> approved -> credited, each an
+  // absolute count plus the step-to-step conversion %, plus this campaign's
+  // revenue/margin (reusing campaignMoney) and a 30-day daily series. Every
+  // number is DERIVED from a table that already exists — no counter to drift.
+  app.get("/staff/tasks/:id/metrics", staffGuard("tasks.view", async (_ctx, req) => {
+    const id = (req.params as { id: string }).id;
+    const task = await sql.get<{ id: string; title: string; budget_conversions: number | null }>(
+      "SELECT id, title, budget_conversions FROM tasks WHERE id = ? AND source = 'custom'", id,
+    );
+    if (!task) throw Object.assign(new Error("Task not found."), { statusCode: 404 });
+
+    const num = (v: unknown) => Number(v ?? 0);
+    const [opensRow, startedRow, proofRow, creditedRow, money, series] = await Promise.all([
+      sql.get<{ users: number; opens: number }>(
+        "SELECT COUNT(*)::int AS users, COALESCE(SUM(opens),0)::int AS opens FROM task_opens WHERE task_id = ?", id),
+      sql.get<{ n: number }>("SELECT COUNT(*)::int AS n FROM task_participation WHERE task_id = ?", id),
+      sql.get<{ submitted: number; approved: number; rejected: number; pending: number }>(
+        `SELECT COUNT(*)::int AS submitted,
+                COUNT(*) FILTER (WHERE status='approved')::int AS approved,
+                COUNT(*) FILTER (WHERE status='rejected')::int AS rejected,
+                COUNT(*) FILTER (WHERE status='pending')::int  AS pending
+           FROM task_proofs WHERE task_id = ?`, id),
+      sql.get<{ n: number }>("SELECT COUNT(*)::int AS n FROM task_completions WHERE task_id = ? AND status = 'credited'", id),
+      campaignMoney(config.pointsPerUsdt),
+      sql.all<{ day: string; opens: number; submitted: number; approved: number; credited: number }>(
+        `SELECT d.day,
+                COALESCE(o.opens,0)::int      AS opens,
+                COALESCE(p.submitted,0)::int  AS submitted,
+                COALESCE(p.approved,0)::int   AS approved,
+                COALESCE(c.credited,0)::int   AS credited
+           FROM (
+             SELECT to_char(gs::date,'YYYY-MM-DD') AS day
+               FROM generate_series(now() - interval '29 days', now(), interval '1 day') gs
+           ) d
+           LEFT JOIN (SELECT substr(last_at,1,10) AS day, SUM(opens) AS opens
+                        FROM task_opens WHERE task_id = ? GROUP BY 1) o ON o.day = d.day
+           LEFT JOIN (SELECT substr(created_at,1,10) AS day,
+                             COUNT(*) AS submitted,
+                             COUNT(*) FILTER (WHERE status='approved') AS approved
+                        FROM task_proofs WHERE task_id = ? GROUP BY 1) p ON p.day = d.day
+           LEFT JOIN (SELECT substr(COALESCE(verified_at, created_at),1,10) AS day, COUNT(*) AS credited
+                        FROM task_completions WHERE task_id = ? AND status='credited' GROUP BY 1) c ON c.day = d.day
+          ORDER BY d.day`,
+        id, id, id),
+    ]);
+
+    const opened = num(opensRow?.users);
+    const started = num(startedRow?.n);
+    const submitted = num(proofRow?.submitted);
+    const approved = num(proofRow?.approved);
+    const rejected = num(proofRow?.rejected);
+    const pending = num(proofRow?.pending);
+    const completed = num(creditedRow?.n);
+    const m = money.get(id);
+    const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : null);
+
+    return {
+      taskId: id,
+      title: task.title,
+      funnel: {
+        opened, started, submitted, approved, rejected, pending, completed,
+      },
+      conversion: {
+        // Each step relative to the one before it — where users drop off.
+        openedToStarted: pct(started, opened),
+        startedToSubmitted: pct(submitted, started),
+        submittedToApproved: pct(approved, submitted),
+        approvedToCompleted: pct(completed, approved),
+        // And the whole thing end to end.
+        openedToCompleted: pct(completed, opened),
+      },
+      money: {
+        conversions: m?.conversions ?? completed,
+        pointsPaid: m?.points ?? 0,
+        usdtPaidMicro: m?.usdtMicro ?? 0,
+        referralPointsPaid: m?.referralPoints ?? 0,
+        revenueMicro: m?.revenueMicro ?? 0,
+        marginMicro: m?.marginMicro ?? 0,
+        budgetConversions: task.budget_conversions,
+        budgetUsedPct: task.budget_conversions && task.budget_conversions > 0
+          ? Math.min(100, Math.round((completed / task.budget_conversions) * 100)) : null,
+      },
+      totalOpens: num(opensRow?.opens),
+      series,
+    };
   }));
 
   // ---- A task's input fields (Stage 7) ------------------------------------

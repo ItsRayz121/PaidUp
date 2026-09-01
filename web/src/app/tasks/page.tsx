@@ -6,7 +6,26 @@ import { Button } from "@/components/ui";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView } from "@/lib/api";
+import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView, type Task } from "@/lib/api";
+
+// "My tasks" and "History" show their cards under a heading for where each one
+// stands. Order matters: what is waiting on the USER comes before what is
+// waiting on us.
+function groupsFor(view: TaskView, list: Task[]): { label: string; items: Task[] }[] {
+  const pick = (...states: string[]) => list.filter((x) => states.includes(x.userState ?? ""));
+  if (view === "mine") {
+    return [
+      { label: "Needs another try", items: pick("rejected_retryable") },
+      { label: "In progress", items: pick("started", "not_started") },
+      { label: "Under review", items: pick("pending_review") },
+    ].filter((g) => g.items.length > 0);
+  }
+  // history
+  return [
+    { label: "Completed", items: pick("completed") },
+    { label: "Closed", items: list.filter((x) => x.userState !== "completed") },
+  ].filter((g) => g.items.length > 0);
+}
 
 export default function TasksPage() {
   const { ready } = useRequireAuth();
@@ -88,7 +107,19 @@ export default function TasksPage() {
         <EmptyState title={empty.title} body={empty.body} />
       ) : (
         <>
-          <TaskFlow tasks={list} />
+          {/* "Available" is one flat list. "My tasks" and "History" group the
+              cards by where they stand, so a user can see at a glance what is
+              waiting on them vs. waiting on us. */}
+          {view === "available" ? (
+            <TaskFlow tasks={list} />
+          ) : (
+            groupsFor(view, list).map((g) => (
+              <section key={g.label} className="space-y-2">
+                <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{g.label}</h2>
+                <TaskFlow tasks={g.items} />
+              </section>
+            ))
+          )}
           {tasks.data?.nextCursor !== null && !category && (
             <div className="mt-4"><Button variant="ghost" size="md" onClick={() => setLimit((n) => n + 12)}>
               Load more tasks
