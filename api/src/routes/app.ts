@@ -468,11 +468,13 @@ export async function appRoutes(app: FastifyInstance) {
     const one = async (q: string, ...a: unknown[]) =>
       Number((await sql.get<{ v: number }>(q, ...a))?.v ?? 0);
 
-    const [taskPoints, referralPoints, bonusPoints, adjustPoints,
+    const [taskPoints, referralPoints, adjustPoints,
       withdrawnPoints, earnedUsdtMicro, minedRoziMicro, taskRoziMicro] = await Promise.all([
       one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'task_completion' AND amount > 0", userId),
       one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'referral_bonus' AND amount > 0", userId),
-      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'bonus' AND amount > 0", userId),
+      // The Points ledger's only positive non-task, non-referral source is a
+      // staff adjustment (ledger_entries.source_type CHECK — there is no 'bonus'
+      // value on this ledger; the first-task invite bonus is a 'referral_bonus').
       one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'admin_adjustment' AND amount > 0", userId),
       one("SELECT COALESCE(SUM(ABS(le.amount)),0)::int AS v FROM ledger_entries le JOIN withdrawal_requests w ON w.id = le.source_ref_id WHERE le.user_id = ? AND le.source_type = 'withdrawal' AND w.status = 'paid'", userId),
       one("SELECT COALESCE(SUM(amount),0)::bigint AS v FROM earned_usdt_ledger WHERE user_id = ? AND direction = 'credit'", userId),
@@ -481,13 +483,13 @@ export async function appRoutes(app: FastifyInstance) {
     ]);
 
     const pointsToUsdtMicro = (p: number) => Math.round((p / pointsPerUsdt) * 1e6);
-    const totalPoints = taskPoints + referralPoints + bonusPoints + adjustPoints;
+    const totalPoints = taskPoints + referralPoints + adjustPoints;
     return {
       pointsPerUsdt,
       // Points-denominated earnings, and the same figures as USDT at the real
       // payout rate.
       points: {
-        tasks: taskPoints, referrals: referralPoints, bonuses: bonusPoints + adjustPoints,
+        tasks: taskPoints, referrals: referralPoints, bonuses: adjustPoints,
         total: totalPoints, withdrawn: withdrawnPoints,
       },
       usdtMicro: {
