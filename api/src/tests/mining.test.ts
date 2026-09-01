@@ -452,46 +452,48 @@ test("PI: THE OLD FAILURE MODE IS FIXED — a low rate still pays a partial day"
   assert.ok(piMicro(BASELINE_FULL_DAY / 3, 2) > 0);
   assert.equal(pi(BASELINE_FULL_DAY / 3, 2), 0.666666); // floored to the millionth
 
-  // The real launch numbers. Base rate 0.5/day, one 8-hour session out of a 24h
-  // reference day => a third of 0.5.
-  assert.equal(pi(BASELINE_FULL_DAY / 3, D.piBaseRate), 0.166666);
+  // The real launch numbers. Base rate 2.5/day, one 8-hour session out of a 24h
+  // reference day => a third of 2.5.
+  assert.equal(pi(BASELINE_FULL_DAY / 3, D.piBaseRate), 0.833333);
 
   // And it survives all five halvings:
-  // 0.5 -> 0.25 -> 0.125 -> 0.0625 -> 0.03125 -> 0.015625.
+  // 2.5 -> 1.25 -> 0.625 -> 0.3125 -> 0.15625 -> 0.078125.
   // A single 8h session at the FINAL rate still pays a real, non-zero number.
-  // This is the assertion that makes the 21M supply safe to ship: the rate got
-  // 20x smaller, and the micro-ROZI ledger absorbed it without rounding anyone's
-  // work down to nothing.
+  // This is the assertion that makes the 21M supply safe to ship: even after
+  // five halvings the micro-ROZI ledger absorbs the rate without rounding
+  // anyone's work down to nothing.
   const finalRate = piBaseRateFor(
     9_999_999, D.piBaseRate, parseMilestones(D.piHalvingUsers));
-  assert.equal(finalRate, 0.015625);
+  assert.equal(finalRate, 0.078125);
   assert.ok(piMicro(BASELINE_FULL_DAY / 3, finalRate) > 0,
     "an 8h session at the fully-halved rate must still pay something");
-  assert.equal(pi(BASELINE_FULL_DAY / 3, finalRate), 0.005208);
+  assert.equal(pi(BASELINE_FULL_DAY / 3, finalRate), 0.026041);
 });
 
-test("PI: the launch rate of 0.5/day is what the founder asked for", () => {
-  // A baseline miner, mining a full reference day, earns exactly 0.5 ROZI
-  // (founder, 2026-07-29 — cut from 10 when the cap went 650M -> 21M).
-  assert.equal(D.piBaseRate, 0.5);
-  assert.equal(pi(BASELINE_FULL_DAY, D.piBaseRate), 0.5);
-  // Scarcity is the product: this is a number a person can hold in their head.
+test("PI: the launch rate of 2.5/day is what the founder asked for", () => {
+  // A baseline miner, mining a full reference day, earns exactly 2.5 ROZI
+  // (founder, 2026-09-01 — raised from 0.5 so a normal miner sees 2–3/day at
+  // launch, with the halving milestones made steeper to keep the 21M runway).
+  assert.equal(D.piBaseRate, 2.5);
+  assert.equal(pi(BASELINE_FULL_DAY, D.piBaseRate), 2.5);
+  // Still a number a person can hold in their head.
   assert.ok(D.piBaseRate <= 10);
 });
 
 test("THE SUPPLY CAP AND THE MINING RATE ARE ONE DECISION, NOT TWO", () => {
-  // The tripwire on the retune. These two numbers were cut together on purpose
-  // (650M -> 21M, 10/day -> 0.5/day) and they only make sense together: the cap
-  // says how much can ever exist, the rate says how fast it leaves. Move one
-  // without the other and either the pool empties in months or nobody can mine
-  // anything worth holding.
+  // The tripwire on the retune. The cap says how much can ever exist, the rate
+  // says how fast it leaves, and the halving milestones are the brake. Move one
+  // without the others and either the pool empties in months or nobody can mine
+  // anything worth holding. The rate went 0.5 -> 2.5 (founder, 2026-09-01) and
+  // the milestones went steeper/earlier in the same change to keep this green.
   assert.equal(D.supplyCap, 21_000_000);
-  assert.equal(D.piBaseRate, 0.5);
+  assert.equal(D.piBaseRate, 2.5);
 
   // The runway, stated as arithmetic rather than as a comment nobody re-runs.
-  // At 1M users the rate has halved three times (10k/50k/250k passed, 1M is the
-  // fourth), so an engaged miner at x3 multipliers on two thirds of a day earns
-  // 0.0625 * 3 * 0.667 = ~0.125/day. A million of them is ~125k/day.
+  // At ~1M users the rate has halved FIVE times (2k/10k/50k/250k/900k all
+  // passed), so 2.5 / 32 = ~0.078/day baseline; an engaged miner at x3 on two
+  // thirds of a day earns 0.078 * 3 * 0.667 = ~0.156/day. A million of them is
+  // ~156k/day, and 21M / 156k > 120 days.
   const rateAt1M = piBaseRateFor(
     999_999, D.piBaseRate, parseMilestones(D.piHalvingUsers));
   const perEngagedMinerPerDay = rateAt1M * 3 * (2 / 3);

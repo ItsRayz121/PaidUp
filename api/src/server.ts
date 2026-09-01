@@ -198,6 +198,31 @@ async function tickSettlement() {
     // and the epoch stays unsettled (not half-settled) because it is one tx.
     app.log.error({ err }, "Mining settlement tick failed");
   }
+  // Keep a task's STORED status in step with its schedule, so the admin list's
+  // status filter agrees with the status badge (which is computed from
+  // starts_at/ends_at by campaignState). Without this, a task whose ends_at
+  // passed sits stored as 'active' — showing "ended" in the badge but only
+  // matching the "active" filter. The list route also filters on the computed
+  // value, so this is belt-and-braces; it also keeps every other query that
+  // reads the raw column honest.
+  try {
+    const nowIso = new Date().toISOString();
+    await sql.run(
+      `UPDATE tasks SET status = 'active'
+        WHERE source = 'custom' AND status = 'scheduled'
+          AND (starts_at IS NULL OR starts_at <= ?)
+          AND (ends_at IS NULL OR ends_at > ?)`,
+      nowIso, nowIso,
+    );
+    await sql.run(
+      `UPDATE tasks SET status = 'ended'
+        WHERE source = 'custom' AND status IN ('active','scheduled')
+          AND ends_at IS NOT NULL AND ends_at <= ?`,
+      nowIso,
+    );
+  } catch (err) {
+    app.log.error({ err }, "Task schedule sweep failed");
+  }
   // Housekeeping on the same tick: drop dead login/reset codes. Every code
   // expires within minutes, so anything older than a day is unreachable — it
   // only makes the table (and the per-login index lookups) grow forever.

@@ -71,9 +71,10 @@ export function BroadcastPanel() {
       <div className="rounded-lg border border-line bg-card p-3">
         <h3 className="font-bold text-brand-ink">Send a message</h3>
         <p className="mt-1 text-xs text-muted">
-          It lands in the app&apos;s <strong>inbox</strong>, where nothing interrupts anyone. Plain,
-          everyday English only — the same rule as the rest of the app. Never promise money, a date
-          or a price.
+          A one-off message to a chosen group of users. It lands in the app&apos;s <strong>inbox</strong>,
+          where nothing interrupts anyone; ticking &ldquo;also buzz their phone&rdquo; sends a push
+          notification on top. It is sent <strong>immediately and cannot be recalled</strong>. Plain,
+          everyday English only — never promise money, a date or a price.
         </p>
 
         <div className="mt-3">
@@ -244,7 +245,9 @@ export function ContentPanel() {
       <div className="rounded-lg border border-line bg-card p-3">
         <h3 className="font-bold text-brand-ink">{editing ? "Edit card" : "New home card"}</h3>
         <p className="mt-1 text-xs text-muted">
-          These show on the app&apos;s home screen, above everything else. Keep them short and plain.
+          A dismissible card at the top of every user&apos;s home screen — a tone colour, an optional
+          button that deep-links inside the app, and an optional show-from / hide-after window. Unlike
+          a message, it stays on screen until the user dismisses it. Keep it short and plain.
           {/* The two rules the road map keeps, restated where the text is typed. */}
           {" "}<strong>Never state a price for ROZI, and never give a date we have not met.</strong>
         </p>

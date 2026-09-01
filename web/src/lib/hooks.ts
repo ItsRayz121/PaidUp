@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getToken, getStoredUser, storeUser, fetchMe, type SessionUser } from "./api";
+import { getToken, getStoredUser, storeUser, fetchMe, onSessionEnded, type SessionUser } from "./api";
 import { permissionsKnown } from "./permissions";
 
 // Redirect to /login if there's no session. Returns the stored user once known.
@@ -22,6 +22,10 @@ export function useRequireAuth(): { user: SessionUser | null; ready: boolean } {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUser(getStoredUser());
     setReady(true);
+    // If the token is proven dead WHILE this screen is mounted (api.ts confirms
+    // it against /auth/me), go to /login right away — don't wait for the next
+    // navigation to notice, which is what made a browser Back read as a logout.
+    return onSessionEnded(() => router.replace("/login"));
   }, [router]);
 
   return { user, ready };

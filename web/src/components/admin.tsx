@@ -13,6 +13,7 @@ import {
 import { formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
+import { COUNTRY_OPTIONS } from "@/lib/countries";
 import { DataTable, type Column } from "@/components/staff/DataTable";
 import { StatusBadge, TimeCell, Points } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
@@ -122,7 +123,8 @@ export function UsersPanel() {
           { key: "flagged", label: "Fraud flags", type: "select", options: [{ value: "1", label: "has open" }] },
           { key: "held", label: "Payouts held", type: "select", options: [{ value: "1", label: "yes" }] },
           { key: "review", label: "Under review", type: "select", options: [{ value: "1", label: "yes" }] },
-          { key: "country", label: "Country", type: "text", placeholder: "Country" },
+          { key: "country", label: "Country", type: "select",
+            options: COUNTRY_OPTIONS.map((c) => ({ value: c, label: c })) },
         ]}
         toolbarRight={
           <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">

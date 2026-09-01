@@ -212,10 +212,12 @@ console.log("\n-- part 41: the totals are derived from the ledger, not a counter
   check("activation rate is a whole percent, computed once",
     d.totals.activationPct === Math.round((d.totals.activatedUsers / d.totals.referredUsers) * 100));
 
-  const me = (d.topReferrers as { id: string; invites: number; activeInvites: number; points: number }[])
+  const me = (d.topReferrers as { id: string; invites: number; activeInvites: number; inactiveInvites: number; inactivePct: number; points: number }[])
     .find((x) => x.id === inviter);
   check("the inviter appears in the top list with real counts",
     me?.invites === 2 && me?.activeInvites === 1 && me?.points === 250, JSON.stringify(me));
+  check("...and its inactive count + % (2 invites, 1 active => 1 inactive, 50%)",
+    me?.inactiveInvites === 1 && me?.inactivePct === 50, JSON.stringify(me));
   check("open fraud flags ride along, so a ring is visible on the same row",
     typeof (d.topReferrers as { openFlags: number }[])[0]?.openFlags === "number");
   // A lurker with no completion must not be counted as active.
@@ -340,6 +342,56 @@ console.log("\n-- the permissions these screens are gated on --");
   })).statusCode === 403);
   check("machines stay admin-only — a marketing role cannot reprice a rig",
     (await app.inject({ method: "GET", url: "/staff/mining/rigs", headers: authOf(marketing) })).statusCode === 403);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- token allocation model + full economy history (2026-09-01) --");
+{
+  const list = await app.inject({ method: "GET", url: "/staff/mining/allocations", headers: authOf(admin) });
+  check("allocations: 200", list.statusCode === 200, list.body.slice(0, 200));
+  const d = list.json() as {
+    supplyCap: number; totalRozi: number; pctSum: number;
+    buckets: { id: string; bucket: string; amountRozi: number; isLive: boolean; releasedRozi: number }[];
+  };
+  check("allocations: seeded with 5 buckets totalling 32,300,000",
+    d.buckets.length === 5 && d.totalRozi === 32_300_000, `${d.buckets.length} / ${d.totalRozi}`);
+  check("allocations: the mining bucket equals the enforced cap",
+    d.buckets.find((b) => b.bucket === "mining")?.amountRozi === d.supplyCap);
+  check("allocations: %s add to 100", d.pctSum === 100, String(d.pctSum));
+  check("allocations: the mining bucket's 'released' is real emission, flagged live",
+    d.buckets.find((b) => b.bucket === "mining")?.isLive === true);
+
+  // Vesting math: a team bucket started 12 months ago, 6mo cliff + 24mo linear,
+  // should be (12-6)/24 = 25% released.
+  const team = d.buckets.find((b) => b.bucket === "team")!;
+  const start = new Date(); start.setMonth(start.getMonth() - 12);
+  await app.inject({
+    method: "PATCH", url: `/staff/mining/allocations/${team.id}`, headers: authOf(admin),
+    payload: { startDate: start.toISOString().slice(0, 10), cliffMonths: 6, vestMonths: 24 },
+  });
+  const after = (await app.inject({ method: "GET", url: "/staff/mining/allocations", headers: authOf(admin) })).json() as {
+    buckets: { bucket: string; releasedPct: number }[];
+  };
+  check("vesting: 12mo in, 6mo cliff + 24mo linear => ~25% released",
+    after.buckets.find((b) => b.bucket === "team")?.releasedPct === 25,
+    String(after.buckets.find((b) => b.bucket === "team")?.releasedPct));
+
+  check("allocations: the mining bucket cannot be deleted",
+    (await app.inject({ method: "DELETE", url: `/staff/mining/allocations/${d.buckets.find((b) => b.bucket === "mining")!.id}`, headers: authOf(admin) })).statusCode === 409);
+
+  const added = await app.inject({
+    method: "POST", url: "/staff/mining/allocations", headers: authOf(admin),
+    payload: { bucket: "advisors", label: "Advisors", amountRozi: 100000, cliffMonths: 3, vestMonths: 12 },
+  });
+  check("allocations: a new bucket can be added", added.statusCode === 200);
+  const newId = (added.json() as { id: string }).id;
+  check("allocations: ...and deleted", (await app.inject({ method: "DELETE", url: `/staff/mining/allocations/${newId}`, headers: authOf(admin) })).statusCode === 200);
+
+  check("allocations: a marketing role cannot edit the plan",
+    (await app.inject({ method: "POST", url: "/staff/mining/allocations", headers: authOf(marketing), payload: { bucket: "x", label: "x", amountRozi: 1 } })).statusCode === 403);
+
+  const ep = await app.inject({ method: "GET", url: "/staff/mining/epochs?limit=5&offset=0", headers: authOf(admin) });
+  check("epochs: paginated history endpoint returns 200 + total", ep.statusCode === 200 && "total" in ep.json());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

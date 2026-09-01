@@ -1,5 +1,6 @@
-// Client-side API wrapper. All calls attach the saved token. On 401 it clears
-// the session so the app can send the user back to /login.
+// Client-side API wrapper. All calls attach the saved token. A 401 is confirmed
+// against /auth/me before the session is cleared (see handleUnauthorized) — a
+// stray 401 from one background poller must not sign the user out.
 // Base URL: set NEXT_PUBLIC_API_URL for deployed frontend (the Railway URL);
 // defaults to the local backend for dev.
 
@@ -75,7 +76,16 @@ export function getToken(): string | null {
 export function getStoredUser(): SessionUser | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(USER_KEY);
-  return raw ? (JSON.parse(raw) as SessionUser) : null;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as SessionUser;
+  } catch {
+    // Corrupt JSON in storage would otherwise throw on every render that reads
+    // the user (and take the whole screen down with it). Drop it and behave as
+    // signed-out.
+    window.localStorage.removeItem(USER_KEY);
+    return null;
+  }
 }
 export function setSession(token: string, user: SessionUser) {
   window.localStorage.setItem(TOKEN_KEY, token);
@@ -90,6 +100,52 @@ export function storeUser(user: SessionUser) {
 export function clearSession() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
+}
+
+// Screens register here so they can send the user to /login the INSTANT the
+// token is proven dead, instead of the app discovering a zombie session on the
+// next navigation. That deferred discovery is why "click Back in the admin
+// panel" looked like it logged you out: a stray 401 from one of the panel's
+// many background pollers cleared the session silently, and nothing acted on it
+// until a page remounted and its auth check redirected.
+type SessionEndedCb = () => void;
+const sessionEndedCbs = new Set<SessionEndedCb>();
+export function onSessionEnded(cb: SessionEndedCb): () => void {
+  sessionEndedCbs.add(cb);
+  return () => { sessionEndedCbs.delete(cb); };
+}
+function endSession() {
+  clearSession();
+  for (const cb of [...sessionEndedCbs]) {
+    try { cb(); } catch { /* a listener throwing must not stop the others */ }
+  }
+}
+
+// A 401 no longer clears the session on its own. A panel full of pollers all
+// share this one path, so one flaky request must not sign everyone out. The
+// session only ends when the token is genuinely dead:
+//   - a 401 FROM /auth/me is authoritative,
+//   - any other 401 is confirmed with a single /auth/me probe first
+//     (401 or 404 there => dead; anything else => a transient blip, keep the
+//     session and just surface the error).
+let unauthorizedProbe: Promise<void> | null = null;
+async function handleUnauthorized(path: string): Promise<void> {
+  const token = getToken();
+  if (!token) return; // already signed out — nothing to confirm
+  if (path === "/auth/me") { endSession(); return; }
+  if (!unauthorizedProbe) {
+    unauthorizedProbe = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, { headers: { authorization: `Bearer ${token}` } });
+        if (res.status === 401 || res.status === 404) endSession();
+      } catch {
+        // Network error while probing — do NOT destroy the session over a blip.
+      } finally {
+        unauthorizedProbe = null;
+      }
+    })();
+  }
+  await unauthorizedProbe;
 }
 
 export class ApiError extends Error {
@@ -136,7 +192,7 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   try { body = await res.json(); } catch { /* empty body */ }
 
   if (!res.ok) {
-    if (res.status === 401) clearSession();
+    if (res.status === 401) await handleUnauthorized(path);
     const msg = (body as { error?: string })?.error || "Something went wrong. Please try again.";
     throw new ApiError(msg, res.status, (body as Record<string, unknown>) ?? {});
   }
@@ -326,6 +382,19 @@ export const fetchBalance = () =>
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export type UsdtTaskReward = { id: string; amountMicro: number; completionId: string | null; label: string; at: string };
 export const fetchUsdtTaskRewards = () => apiFetch<{ rewards: UsdtTaskReward[] }>("/wallet/usdt-task-rewards");
+
+// Public feature-flag snapshot. Used to hide screens for features not launched.
+export const fetchFeatures = () => apiFetch<{ features: Record<string, boolean> }>("/features");
+
+// Lifetime "what you've earned from the platform" (earner app). 403s while the
+// earnings_view flag is off — screens treat that as "not available yet".
+export type Earnings = {
+  pointsPerUsdt: number;
+  points: { tasks: number; referrals: number; bonuses: number; total: number; withdrawn: number };
+  usdtMicro: { fromPoints: number; earnedUsdt: number; withdrawn: number; total: number };
+  roziMicro: { mined: number; fromTasks: number; total: number };
+};
+export const fetchEarnings = () => apiFetch<Earnings>("/me/earnings");
 export type TaskView = "available" | "mine" | "history";
 export const fetchTasks = (view: TaskView = "available", cursor = 0, limit = 12) =>
   apiFetch<{ tasks: Task[]; nextCursor: number | null; total: number; view: TaskView }>(
@@ -937,7 +1006,7 @@ export type CustomTask = {
   // a campaign hits its budget — an Admin never picks it, which is why the input
   // type below does not offer it.
   status: string;
-  effectiveStatus: "draft" | "scheduled" | "active" | "paused" | "exhausted" | "ended";
+  effectiveStatus: "draft" | "scheduled" | "active" | "paused" | "exhausted" | "ended" | "deleted";
   created_at: string; has_secret: boolean; credited_count: number; pending_proofs: number;
   // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
   // null on either cap = unlimited. Every figure below is computed server-side
@@ -1028,6 +1097,11 @@ export const updateTaskLifecycle = (id: string, action: "pause" | "resume" | "en
   apiFetch<{ ok: boolean; error?: string; status?: string }>(`/staff/tasks/${id}/lifecycle`, {
     method: "POST", body: JSON.stringify({ action }),
   });
+// Soft-delete: the row is kept (history still joins) but the task disappears
+// from the earner feed and the default admin list. A task that has paid out
+// must be ended first — the API returns 409 in that case.
+export const deleteCustomTask = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/staff/tasks/${id}`, { method: "DELETE" });
 export const createEarnedUsdtWithdrawal = (amountUsdtMicro: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
     method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address, stepUpCode }),
@@ -1104,6 +1178,46 @@ export const decideTaskProofsBulk = (ids: string[], action: "approve" | "reject"
     ok: boolean; done: number; failed: number; creditedPoints: number; creditedUsdtMicro: number;
     results: { id: string; ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number }[];
   }>("/staff/task-proofs/bulk", { method: "POST", body: JSON.stringify({ ids, action, note }) });
+
+// One campaign's funnel: opened -> started -> proof submitted -> approved ->
+// credited, each with the step-to-step drop-off %, plus its money and a 30-day
+// daily series. All derived server-side (api/src/routes/staffTasks.ts).
+export type TaskMetrics = {
+  taskId: string; title: string;
+  funnel: {
+    opened: number; started: number; submitted: number;
+    approved: number; rejected: number; pending: number; completed: number;
+  };
+  conversion: {
+    openedToStarted: number | null; startedToSubmitted: number | null;
+    submittedToApproved: number | null; approvedToCompleted: number | null;
+    openedToCompleted: number | null;
+  };
+  money: {
+    conversions: number; pointsPaid: number; usdtPaidMicro: number;
+    referralPointsPaid: number; revenueMicro: number; marginMicro: number;
+    budgetConversions: number | null; budgetUsedPct: number | null;
+  };
+  totalOpens: number;
+  series: { day: string; opens: number; submitted: number; approved: number; credited: number }[];
+};
+export const fetchTaskMetrics = (id: string) =>
+  apiFetch<TaskMetrics>(`/staff/tasks/${id}/metrics`);
+
+export type TasksOverview = {
+  window30d: {
+    opened: number; started: number; submitted: number; approved: number;
+    rejected: number; pending: number; completed: number;
+    openedToCompleted: number | null; approvalRate: number | null;
+  };
+  allTime: {
+    opened: number; started: number; submitted: number; approved: number;
+    rejected: number; pending: number; completed: number;
+  };
+  campaigns: { active: number; total: number };
+};
+export const fetchTasksOverview = () =>
+  apiFetch<TasksOverview>("/staff/tasks/overview");
 
 // ---- Manager: KPI dashboard ----------------------------------------------
 export type Kpis = {
@@ -1580,6 +1694,40 @@ export const settleMining = (epoch?: number) =>
     method: "POST", body: JSON.stringify(epoch != null ? { epoch } : {}),
   });
 
+// The full day-by-day economy history (the stats endpoint caps at 14).
+export type MiningEpochPage = {
+  total: number; limit: number; offset: number;
+  epochs: MiningStats["epochs"];
+};
+export const fetchMiningEpochs = (limit = 30, offset = 0) =>
+  apiFetch<MiningEpochPage>(`/staff/mining/epochs?limit=${limit}&offset=${offset}`);
+
+// ---- Token allocation model (planning / bookkeeping — nothing is minted) ---
+export type AllocationBucket = {
+  id: string; bucket: string; label: string;
+  amountRozi: number; pctOfTotal: number;
+  cliffMonths: number; vestMonths: number; startDate: string | null;
+  notes: string | null; sort: number;
+  releasedRozi: number; releasedPct: number; isLive: boolean;
+};
+export type AllocationOverview = {
+  supplyCap: number; minedEmitted: number; minedRemaining: number;
+  totalRozi: number; pctSum: number;
+  buckets: AllocationBucket[];
+};
+export type AllocationInput = {
+  bucket: string; label: string; amountRozi: number;
+  cliffMonths?: number; vestMonths?: number;
+  startDate?: string | null; notes?: string | null; sort?: number;
+};
+export const fetchAllocations = () => apiFetch<AllocationOverview>("/staff/mining/allocations");
+export const createAllocation = (input: AllocationInput) =>
+  apiFetch<{ ok: boolean; id: string }>("/staff/mining/allocations", { method: "POST", body: JSON.stringify(input) });
+export const updateAllocation = (id: string, patch: Partial<AllocationInput>) =>
+  apiFetch<{ ok: boolean }>(`/staff/mining/allocations/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const deleteAllocation = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/staff/mining/allocations/${id}`, { method: "DELETE" });
+
 export type AdminRig = {
   id: string; name: string; icon: string; base_cost: number; cost_growth: number;
   base_power: number; power_growth: number; max_level: number; sort: number; status: string;
@@ -1629,7 +1777,8 @@ export type ReferralAdmin = {
   };
   topReferrers: {
     id: string; email: string; status: string; points: number;
-    invites: number; activeInvites: number; openFlags: number;
+    invites: number; activeInvites: number;
+    inactiveInvites: number; inactivePct: number; openFlags: number;
   }[];
 };
 export const fetchReferralAdmin = () => apiFetch<ReferralAdmin>("/staff/referrals");

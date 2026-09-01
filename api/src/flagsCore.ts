@@ -32,7 +32,8 @@ export type FlagId =
   | "rozi_transfers" | "usdt_deposits" | "usdt_withdrawals"
   | "bnb_deposits" | "bnb_withdrawals"
   | "mining" | "machines" | "tasks" | "surveys" | "advertisements"
-  | "referrals" | "kyc" | "telegram" | "leaderboard" | "rozi_conversion";
+  | "referrals" | "kyc" | "telegram" | "leaderboard" | "rozi_conversion"
+  | "earnings_view";
 
 type Store =
   // Lives in a `mining.*` app_settings row — the existing switch for that feature.
@@ -55,6 +56,12 @@ type FlagDef = {
    * one of these off in an incident and believes the door is shut.
    */
   displayOnly?: boolean;
+  /**
+   * Almost every flag defaults ON — its feature was live before it had a
+   * switch. A flag for something NOT YET launched defaults OFF instead, so
+   * deploying the registry does not turn the feature on.
+   */
+  defaultOff?: boolean;
 };
 
 export const FLAGS: Record<FlagId, FlagDef> = {
@@ -164,6 +171,17 @@ export const FLAGS: Record<FlagId, FlagDef> = {
     effect: "The leaderboard page shows nothing.",
     store: { kind: "flag" },
     enforcedAt: "GET /leaderboard",
+  },
+  earnings_view: {
+    label: "Earnings summary (earner app)",
+    effect:
+      "Shows a user a 'what you've earned from the platform' page. Built ahead " +
+      "of real USDT payouts and kept OFF until those start — turning it on early " +
+      "shows people a number they cannot yet act on.",
+    store: { kind: "flag" },
+    enforcedAt: "GET /me/earnings — 403; the /earnings page and the profile link are hidden",
+    displayOnly: false,
+    defaultOff: true,
   },
 };
 

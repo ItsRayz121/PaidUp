@@ -969,7 +969,7 @@ const copy: Record<string, string> = {
   // immediately on purchase; its effect shows up in the existing "Boosts"
   // row on /mine, so this screen only needs to sell it.
   "boosters.title": "Speed boosters",
-  "boosters.subtitle": "Spend money you have earned to mine faster for a while.",
+  "boosters.subtitle": "Spend money you have earned to mine faster for a set number of hours. It runs out on its own — your mining speed goes back to normal after that.",
   "boosters.yourMoney": "Your task and referral earnings",
   "boosters.effect": "+{pct}% speed for {hours} hours",
   "boosters.get": "Get this",

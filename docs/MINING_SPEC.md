@@ -422,6 +422,25 @@ Inviting **already** pays real withdrawable money, funded from margin: L1/L2 % o
 a friend's task points plus the first-task bonus, all in Points, all
 Admin-tunable (`PATCH /staff/networks/referrals/all`).
 
+### 6.2a — A FIXED $0.10/ROZI RIG-PRICE BASIS (founder, 2026-09-01)
+
+A **decision with a date**, so it is not mistaken for drift. Alongside raising
+`piBaseRate` 0.5 → 2.5, the founder chose to make **1 ROZI = 0.10 USDT the
+enforced basis for rig ROZI prices**: `base_cost` (whole ROZI) =
+`base_cost_usdt_micro / 100_000`, so a $5 machine costs 50 ROZI
+(`SEED_RIGS` + `migrateRigPricesDime` in `api/src/db.ts`).
+
+This **knowingly re-opens guardrail #7** — a fixed ROZI↔USD basis publishes an
+implied valuation (~$2.1M against the 21M cap). It was chosen anyway, on the
+reasoning that the rate is *already* implied on screen by
+`POINTS_PER_ROZI = 100` + `POINTS_PER_USDT = 1000`, so this aligns rig prices to
+the number users already see rather than adding a new one.
+
+**What did NOT change:** ROZI is still **non-withdrawable**. There is no
+buy-back, no ROZI→USD cash conversion, and the road map still must not print a
+price of its own. The supply cap stays **21,000,000** and is still the one
+number enforced at settlement.
+
 ---
 
 ## 7. Trading — what we will and will not build

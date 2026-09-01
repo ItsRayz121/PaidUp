@@ -68,23 +68,27 @@ export const MINING_DEFAULTS = {
   // -- "pi" model (§ 3.2). ROZI/day for a BASELINE miner: no multipliers, mining
   //    a full reference day. A miner with x2 multipliers earns twice this.
   //
-  //    0.5/day (founder decision, 2026-07-29, cut from 10 alongside the supply cap
-  //    — see supplyCap below). Deliberately a SMALL number: a token people count
-  //    in single digits feels scarce, and scarcity is the entire product here. It
-  //    survives all five halvings down to 0.015625/day because the ledger holds
-  //    millionths (see ROZI_SCALE above) — under the old whole-ROZI ledger a rate
-  //    this low would have paid partial days literally nothing.
-  //
-  //    A typical engaged miner (streak + task boost + an ad) runs at x3 and mines
-  //    maybe two thirds of the reference day, so ~1 ROZI/day. That is the number
-  //    to sanity-check any retune against.
-  piBaseRate: 0.5,
+  //    2.5/day (founder decision, 2026-09-01 — raised from 0.5). The founder
+  //    wants a normal miner to see 2–3 ROZI a day at launch, with streak /
+  //    referral / boosts / rigs stacking on top. The supply cap is UNCHANGED at
+  //    21M, so the runway is preserved by making the halving milestones bite
+  //    harder and sooner (see piHalvingUsers) — every halving is still a clean
+  //    50% cut to the person, there are just more of them as the base grows. By
+  //    ~1M verified users the baseline has halved five times to ~0.078/day.
+  //    ⚠️ RIG PRICES ARE A FUNCTION OF THIS (SEED_RIGS in db.ts). They were
+  //    re-based to a fixed $0.10/ROZI at the same time — retune one, retune both.
+  piBaseRate: 2.5,
 
   // Base rate HALVES each time the user base crosses one of these counts. This is
   // the throttle: growth is what drains the pool, so growth is what slows the tap.
   // A calendar halving cannot do this — 10x the users on day one would empty the
   // pool regardless of what the calendar said.
-  piHalvingUsers: "10000,50000,250000,1000000,5000000",
+  //
+  // Steeper + earlier than the original 10k/50k/250k/1M/5M (founder, 2026-09-01):
+  // with the base rate 5x higher, five halvings have to be reached by ~1M users
+  // or a million miners drain the 21M pool inside ~35 days. At these milestones
+  // the runway stays > 120 days (see the tripwire in mining.test.ts).
+  piHalvingUsers: "2000,10000,50000,250000,900000",
 
   // What counts as "a full day's mining" for the rate. 24h at 8h sessions means a
   // user has to come back ~3x a day to earn the full rate — which is the retention

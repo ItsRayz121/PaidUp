@@ -112,6 +112,69 @@ console.log("\n-- GET /staff/tasks: search by title, existing money fields intac
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- no duplicate wording + soft delete (founder, 2026-09-01) --");
+{
+  const first = await createTask({
+    title: `${TAG} Only One Of These`, verifyMode: "proof", rewardType: "rozi",
+    rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false, status: "active",
+  });
+  check("first create with a fresh title succeeds", first.ok === true, JSON.stringify(first));
+
+  const dupExact = await app.inject({
+    method: "POST", url: "/staff/tasks", headers: authOf(admin),
+    payload: { title: `${TAG} Only One Of These`, verifyMode: "proof", rewardType: "rozi", rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false },
+  });
+  check("an identical title is refused with 409", dupExact.statusCode === 409, `${dupExact.statusCode} ${dupExact.body.slice(0, 120)}`);
+
+  const dupNorm = await app.inject({
+    method: "POST", url: "/staff/tasks", headers: authOf(admin),
+    payload: { title: `  ${TAG}   only one OF these `, verifyMode: "proof", rewardType: "rozi", rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false },
+  });
+  check("...and so is the same title with different spacing/case", dupNorm.statusCode === 409, String(dupNorm.statusCode));
+
+  // Delete it, then the title is free again.
+  const del = await app.inject({ method: "DELETE", url: `/staff/tasks/${first.id}`, headers: authOf(admin) });
+  check("DELETE soft-deletes the task", del.statusCode === 200 && (del.json() as { ok: boolean }).ok === true);
+
+  const listDefault = await app.inject({ method: "GET", url: `/staff/tasks?q=${TAG}%20only%20one&limit=100`, headers: authOf(admin) });
+  check("a deleted task is gone from the default admin list",
+    (listDefault.json() as { tasks: unknown[] }).tasks.length === 0, listDefault.body.slice(0, 200));
+
+  const listDeleted = await app.inject({ method: "GET", url: `/staff/tasks?q=${TAG}%20only%20one&status=deleted&limit=100`, headers: authOf(admin) });
+  check("...but visible under the status=deleted filter",
+    (listDeleted.json() as { tasks: { effectiveStatus: string }[] }).tasks.some((t) => t.effectiveStatus === "deleted"));
+
+  const reuse = await createTask({
+    title: `${TAG} Only One Of These`, verifyMode: "proof", rewardType: "rozi",
+    rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false, status: "active",
+  });
+  check("the freed title can be reused after delete", reuse.ok === true, JSON.stringify(reuse));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- effective status: an expired campaign reads as 'ended' --");
+{
+  const t = await createTask({
+    title: `${TAG} Expired Campaign`, verifyMode: "proof", rewardType: "rozi",
+    rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false, status: "active",
+  });
+  // Push ends_at into the past directly — the same state a task reaches when its
+  // schedule lapses before the 15-min sweep runs.
+  await sql.run("UPDATE tasks SET ends_at = ? WHERE id = ?", "2000-01-01T00:00:00Z", t.id);
+
+  const asActive = await app.inject({ method: "GET", url: `/staff/tasks?q=${TAG}%20expired&status=active&limit=100`, headers: authOf(admin) });
+  check("the expired task does NOT match status=active", (asActive.json() as { tasks: unknown[] }).tasks.length === 0);
+
+  const asEnded = await app.inject({ method: "GET", url: `/staff/tasks?q=${TAG}%20expired&status=ended&limit=100`, headers: authOf(admin) });
+  const ed = asEnded.json() as { tasks: { id: string; status: string; effectiveStatus: string }[] };
+  check("...it matches status=ended (the value the badge shows)",
+    ed.tasks.length === 1 && ed.tasks[0].id === t.id && ed.tasks[0].effectiveStatus === "ended",
+    JSON.stringify(ed.tasks));
+  check("...even though its stored column is still 'active' until the sweep",
+    ed.tasks[0].status === "active", ed.tasks[0].status);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- GET /staff/task-proofs: pagination + total + counts --");
 {
   // 5 users each submit the same tap-to-confirm task -> 5 pending proofs.
@@ -152,6 +215,68 @@ console.log("\n-- GET /staff/task-proofs: pagination + total + counts --");
   check("search finds the one user by email", sr.proofs.length === 1 && sr.proofs[0].user_email.includes(`${TAG}-p2@`));
   check("...total follows the search (1)", sr.total === 1, String(sr.total));
   check("...but counts still report the whole backlog", sr.counts.pending === d1.counts.pending, `${sr.counts.pending} vs ${d1.counts.pending}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- per-task metrics: the funnel adds up (founder, 2026-09-01) --");
+{
+  const t = await createTask({
+    title: `${TAG} Funnel Task`, verifyMode: "proof", rewardType: "rozi",
+    rewardRoziMicro: 2_000_000, countries: ["ALL"], proofRequired: true,
+    proofLabel: "Your username", status: "active",
+  });
+  const tid = t.id!;
+
+  // 3 users open it; 2 of those start it; 2 submit a proof; 1 is approved.
+  const fu = await Promise.all([0, 1, 2].map((i) => mkUser(`fn${i}`)));
+  for (const u of fu) await app.inject({ method: "GET", url: `/tasks/${tid}`, headers: authOf(u) });
+  for (const u of fu.slice(0, 2)) await app.inject({ method: "POST", url: `/tasks/${tid}/start`, headers: authOf(u) });
+  const proofIds: string[] = [];
+  for (const u of fu.slice(0, 2)) {
+    const r = await app.inject({ method: "POST", url: `/tasks/${tid}/proof`, headers: authOf(u), payload: { proof: "done" } });
+    proofIds.push((r.json() as { proofId?: string; id?: string }).proofId ?? (r.json() as { id?: string }).id ?? "");
+  }
+  // Approve the first via the staff queue.
+  const queue = await app.inject({ method: "GET", url: `/staff/task-proofs?taskId=${tid}&status=pending&limit=50`, headers: authOf(agent) });
+  const firstProof = (queue.json() as { proofs: { id: string }[] }).proofs[0];
+  await app.inject({ method: "POST", url: `/staff/task-proofs/${firstProof.id}/decision`, headers: authOf(agent), payload: { action: "approve" } });
+
+  const m = await app.inject({ method: "GET", url: `/staff/tasks/${tid}/metrics`, headers: authOf(admin) });
+  check("metrics: 200", m.statusCode === 200, m.body.slice(0, 200));
+  const md = m.json() as {
+    funnel: { opened: number; started: number; submitted: number; approved: number; pending: number; completed: number };
+    conversion: { openedToStarted: number | null };
+    totalOpens: number;
+  };
+  check("metrics: opened counts the 3 viewers", md.funnel.opened === 3, String(md.funnel.opened));
+  check("metrics: started counts the 2 who tapped start", md.funnel.started === 2, String(md.funnel.started));
+  check("metrics: submitted counts the 2 proofs", md.funnel.submitted === 2, String(md.funnel.submitted));
+  check("metrics: approved is 1", md.funnel.approved === 1, String(md.funnel.approved));
+  check("metrics: pending is the other 1", md.funnel.pending === 1, String(md.funnel.pending));
+  check("metrics: completed (credited) is 1", md.funnel.completed === 1, String(md.funnel.completed));
+  check("metrics: opened->started rate is 67%", md.conversion.openedToStarted === 67, String(md.conversion.openedToStarted));
+
+  // A task nobody has touched returns a clean zero funnel.
+  const dead = await createTask({
+    title: `${TAG} Untouched Task`, verifyMode: "proof", rewardType: "rozi",
+    rewardRoziMicro: 1_000_000, countries: ["ALL"], proofRequired: false, status: "active",
+  });
+  const zm = await app.inject({ method: "GET", url: `/staff/tasks/${dead.id}/metrics`, headers: authOf(admin) });
+  const zd = zm.json() as { funnel: { opened: number; completed: number }; conversion: { openedToCompleted: number | null } };
+  check("metrics: an untouched task is all zeros", zd.funnel.opened === 0 && zd.funnel.completed === 0);
+  check("metrics: ...and its conversion % is null, not NaN or 0", zd.conversion.openedToCompleted === null);
+
+  // The overview rolls this campaign in.
+  const ov = await app.inject({ method: "GET", url: "/staff/tasks/overview", headers: authOf(admin) });
+  check("overview: 200", ov.statusCode === 200);
+  const od = ov.json() as { window30d: { opened: number; completed: number }; campaigns: { active: number; total: number } };
+  check("overview: opened >= 3 (this campaign's viewers included)", od.window30d.opened >= 3, String(od.window30d.opened));
+  check("overview: completed >= 1", od.window30d.completed >= 1, String(od.window30d.completed));
+  check("overview: campaign counts are present", od.campaigns.total >= 2 && od.campaigns.active >= 2);
+
+  // A non-staff user cannot read either.
+  check("metrics: outsider gets 403",
+    (await app.inject({ method: "GET", url: `/staff/tasks/${tid}/metrics`, headers: authOf(outsider) })).statusCode === 403);
 }
 
 // ---------------------------------------------------------------------------

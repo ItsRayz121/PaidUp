@@ -171,8 +171,15 @@ const miner = await mkUser("miner");
 await creditRozi(miner, 10_000, "test float");
 
 const before = await hashrateOf(miner);
-const rig = await sql.get<{ id: string; base_cost: number; cost_growth: number; base_power: number; power_growth: number; max_level: number }>(
+const rig = await sql.get<{ id: string; base_cost: number; base_cost_usdt: number | null; cost_growth: number; base_power: number; power_growth: number; max_level: number }>(
   "SELECT * FROM rigs WHERE id = 'old_phone'");
+// Rig ROZI prices are re-based to a fixed $0.10/ROZI (founder, 2026-09-01):
+// base_cost = base_cost_usdt / 0.10. The $5 Old Phone is 50 ROZI.
+check("RIG PRICING: Old Phone seeds at 50 ROZI ($5 at $0.10/ROZI)",
+  Number(rig!.base_cost) === 50, `base_cost=${rig!.base_cost}`);
+check("RIG PRICING: ...and that is its USDT price / 0.10",
+  Number(rig!.base_cost) === Math.round(Number(rig!.base_cost_usdt ?? 0) / 100_000),
+  `usdt_micro=${rig!.base_cost_usdt}`);
 const cost = rigUpgradeCost({
   baseCost: Number(rig!.base_cost), costGrowth: rig!.cost_growth,
   basePower: rig!.base_power, powerGrowth: rig!.power_growth, maxLevel: rig!.max_level,

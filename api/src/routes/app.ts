@@ -99,6 +99,9 @@ export async function appRoutes(app: FastifyInstance) {
 
     const visible = rows.flatMap((t) => {
         const lifecycle = campaignState(t as { status: string; starts_at?: string | null; ends_at?: string | null });
+        // A soft-deleted task is gone from every earner view, even for a user
+        // who had already started it.
+        if (lifecycle === "deleted") return [];
         const gate = eligibility(t as unknown as TargetingRow, ctx);
         // Never qualifies => not shown at all. Can qualify later => shown with
         // the reason, so the rule is something to work towards rather than a
@@ -204,6 +207,16 @@ export async function appRoutes(app: FastifyInstance) {
     // A hidden task 404s from here too — the feed hid it, and a detail page that
     // renders it anyway is exactly the hole this route would otherwise open.
     if (!gate.ok && gate.hide) return { ok: false, error: gate.reason };
+
+    // Record the open — a view-level signal for per-task analytics, SEPARATE
+    // from task_participation (which is a START and is what drives "My tasks").
+    // Fire-and-forget: an analytics write must never delay or fail this read.
+    const openAt = now();
+    void sql.run(
+      `INSERT INTO task_opens (task_id, user_id, opens, first_at, last_at) VALUES (?,?,1,?,?)
+       ON CONFLICT (task_id, user_id) DO UPDATE SET opens = task_opens.opens + 1, last_at = EXCLUDED.last_at`,
+      id, userId, openAt, openAt,
+    ).catch(() => {});
 
     const proof = await sql.get<{
       status: string; review_note: string | null; created_at: string;
@@ -441,6 +454,55 @@ export async function appRoutes(app: FastifyInstance) {
       label: r.task_title ? `Task reward — ${r.task_title}` : r.note ?? "Task reward",
       at: r.created_at,
     })) };
+  }));
+
+  // "What you've earned from the platform" — a lifetime summary for the earner
+  // app, DERIVED from the ledgers (no counter). Built ahead of real USDT
+  // payouts and gated behind the earnings_view flag, which ships OFF: turning it
+  // on early shows a number the user cannot yet act on. See flagsCore.ts.
+  app.get("/me/earnings", guard(async (userId) => {
+    if (!(await flagEnabled("earnings_view"))) {
+      throw { statusCode: 403, message: "This is turned off right now." };
+    }
+    const pointsPerUsdt = config.pointsPerUsdt;
+    const one = async (q: string, ...a: unknown[]) =>
+      Number((await sql.get<{ v: number }>(q, ...a))?.v ?? 0);
+
+    const [taskPoints, referralPoints, bonusPoints, adjustPoints,
+      withdrawnPoints, earnedUsdtMicro, minedRoziMicro, taskRoziMicro] = await Promise.all([
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'task_completion' AND amount > 0", userId),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'referral_bonus' AND amount > 0", userId),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'bonus' AND amount > 0", userId),
+      one("SELECT COALESCE(SUM(amount),0)::int AS v FROM ledger_entries WHERE user_id = ? AND source_type = 'admin_adjustment' AND amount > 0", userId),
+      one("SELECT COALESCE(SUM(ABS(le.amount)),0)::int AS v FROM ledger_entries le JOIN withdrawal_requests w ON w.id = le.source_ref_id WHERE le.user_id = ? AND le.source_type = 'withdrawal' AND w.status = 'paid'", userId),
+      one("SELECT COALESCE(SUM(amount),0)::bigint AS v FROM earned_usdt_ledger WHERE user_id = ? AND direction = 'credit'", userId),
+      one("SELECT COALESCE(SUM(amount),0)::bigint AS v FROM rozi_ledger WHERE user_id = ? AND source_type = 'mining' AND amount > 0", userId),
+      one("SELECT COALESCE(SUM(amount),0)::bigint AS v FROM rozi_ledger WHERE user_id = ? AND source_type = 'task_reward' AND amount > 0", userId),
+    ]);
+
+    const pointsToUsdtMicro = (p: number) => Math.round((p / pointsPerUsdt) * 1e6);
+    const totalPoints = taskPoints + referralPoints + bonusPoints + adjustPoints;
+    return {
+      pointsPerUsdt,
+      // Points-denominated earnings, and the same figures as USDT at the real
+      // payout rate.
+      points: {
+        tasks: taskPoints, referrals: referralPoints, bonuses: bonusPoints + adjustPoints,
+        total: totalPoints, withdrawn: withdrawnPoints,
+      },
+      usdtMicro: {
+        fromPoints: pointsToUsdtMicro(totalPoints),
+        earnedUsdt: earnedUsdtMicro,
+        withdrawn: pointsToUsdtMicro(withdrawnPoints),
+        // The single "you have earned" number: points-as-USDT + real earned USDT.
+        total: pointsToUsdtMicro(totalPoints) + earnedUsdtMicro,
+      },
+      roziMicro: {
+        mined: minedRoziMicro,
+        fromTasks: taskRoziMicro,
+        total: minedRoziMicro + taskRoziMicro,
+      },
+    };
   }));
 
   // Referral earnings kept SEPARATE from task earnings (user story).

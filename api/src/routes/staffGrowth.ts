@@ -149,11 +149,20 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
         // rate", so two screens cannot quote two numbers.
         activationPct: referredUsers === 0 ? 0 : Math.round((activatedUsers / referredUsers) * 100),
       },
-      topReferrers: top.map((r) => ({
-        id: r.id, email: r.email, status: r.status,
-        points: r.points, invites: r.invites, activeInvites: r.active_invites,
-        openFlags: r.open_flags,
-      })),
+      topReferrers: top.map((r) => {
+        const invites = Number(r.invites ?? 0);
+        const active = Number(r.active_invites ?? 0);
+        return {
+          id: r.id, email: r.email, status: r.status,
+          points: r.points, invites, activeInvites: active,
+          // The other half of the story: invites that signed up and did nothing.
+          // A high count here next to a high invite count is the shape of a
+          // fake-signup farm.
+          inactiveInvites: Math.max(0, invites - active),
+          inactivePct: invites === 0 ? 0 : Math.round(((invites - active) / invites) * 100),
+          openFlags: r.open_flags,
+        };
+      }),
     };
   }));
 

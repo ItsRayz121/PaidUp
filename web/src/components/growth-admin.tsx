@@ -196,27 +196,46 @@ function NetworkRates({ d }: { d: ReferralAdmin }) {
   );
 }
 
+type SortKey = "points" | "invites" | "activeInvites" | "inactivePct";
+
 function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
   const { openUser } = useStaffNav();
+  const [sort, setSort] = useState<SortKey>("points");
+  const sorted = [...rows].sort((a, b) => (b[sort] as number) - (a[sort] as number));
+  // A render helper, not a component (react-hooks/static-components).
+  const sortBtn = (k: SortKey, label: string) => (
+    <button onClick={() => setSort(k)}
+      className={`uppercase ${sort === k ? "font-bold text-brand-ink" : "hover:text-brand-ink"}`}>
+      {label}{sort === k ? " ▼" : ""}
+    </button>
+  );
   return (
     <div className="rounded-lg border border-line bg-card p-3">
-      <h3 className="font-bold text-brand-ink">Top inviters</h3>
+      <h3 className="font-bold text-brand-ink">Top partners</h3>
       <p className="mt-1 text-xs text-muted">
-        By what we have actually paid them. <strong>Invites</strong> is signups;{" "}
-        <strong>active</strong> is how many of those ever finished a task — a large gap between the
-        two, on one account, is the shape of a signup farm.
+        <strong>Invites</strong> is signups; <strong>Active</strong> is how many finished a task;{" "}
+        <strong>Inactive</strong> is the rest. A big Inactive % next to a big invite count on one
+        account is the shape of a fake-signup farm. Tap a column to sort.
       </p>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-muted">Nobody has earned a referral bonus yet.</p>
       ) : (
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[520px] text-xs">
+          <table className="w-full min-w-[560px] text-xs">
             <thead className="text-left uppercase text-muted">
-              <tr><th className="py-1">User</th><th>Paid</th><th>Invites</th><th>Active</th><th>Flags</th></tr>
+              <tr>
+                <th className="py-1">User</th>
+                <th>{sortBtn("points", "Paid")}</th>
+                <th>{sortBtn("invites", "Invites")}</th>
+                <th>{sortBtn("activeInvites", "Active")}</th>
+                <th>{sortBtn("inactivePct", "Inactive")}</th>
+                <th>Flags</th>
+              </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {sorted.map((r) => {
                 const dead = r.invites >= 5 && r.activeInvites === 0;
+                const farmish = r.invites >= 5 && r.inactivePct >= 80;
                 return (
                   <tr key={r.id} className="border-t border-line">
                     <td className="py-1.5">
@@ -226,6 +245,9 @@ function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
                     <td className="font-mono">{formatPoints(r.points)}</td>
                     <td className="font-mono">{n(r.invites)}</td>
                     <td className={`font-mono ${dead ? "font-bold text-danger" : ""}`}>{n(r.activeInvites)}</td>
+                    <td className={`font-mono ${farmish ? "font-bold text-danger" : "text-muted"}`}>
+                      {n(r.inactiveInvites)} · {r.inactivePct}%
+                    </td>
                     <td className={r.openFlags > 0 ? "font-bold text-danger" : "text-muted"}>
                       {r.openFlags || "—"}
                     </td>

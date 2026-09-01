@@ -8,7 +8,7 @@ import { LogoLockup } from "@/components/Logo";
 import { useI18n } from "@/lib/i18n";
 import {
   register, verifyEmail, login, forgotPassword, resetPassword, fetchTelegramConfig,
-  setSession, getToken, ApiError, type SessionUser,
+  setSession, getToken, getStoredUser, ApiError, type SessionUser,
 } from "@/lib/api";
 
 type Mode = "login" | "register" | "verify" | "forgot" | "reset";
@@ -100,8 +100,11 @@ function LoginForm() {
 
   // Already signed in? Skip to the app — UNLESS they were sent here on purpose
   // to reset their password, in which case bouncing them away is the bug.
+  // A staff account goes to /staff, not the earner home (matches finish()).
   useEffect(() => {
-    if (getToken() && mode !== "forgot" && mode !== "reset") router.replace("/");
+    if (getToken() && mode !== "forgot" && mode !== "reset") {
+      router.replace(getStoredUser()?.role ? "/staff" : "/");
+    }
   }, [router, mode]);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);

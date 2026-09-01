@@ -20,6 +20,68 @@ import {
   type TaskProof,
 } from "@/lib/api";
 import { formatPoints, formatUsdtMicro, timeAgo } from "@/lib/format";
+import { CountryPicker } from "@/components/CountryPicker";
+
+// Per-field checks, MIRRORING api/src/routes/staffTasks.ts `upsertSchema`. This
+// is entry-point feedback (a red box the moment a value is out of range), not
+// the gate — the server still refuses a bad payload. Keep the numbers in step
+// with the schema.
+export type TaskFieldErrors = Partial<Record<keyof CustomTaskInput | "schedule", string>>;
+export function validateTask(v: CustomTaskInput): TaskFieldErrors {
+  const e: TaskFieldErrors = {};
+  const t = v.title.trim();
+  if (t.length < 3) e.title = "At least 3 characters.";
+  else if (t.length > 120) e.title = "120 characters max.";
+
+  if (v.minutes != null && (!Number.isInteger(v.minutes) || v.minutes < 0 || v.minutes > 600)) {
+    e.minutes = "A whole number from 0 to 600.";
+  }
+  if (v.priority != null && (!Number.isInteger(v.priority) || v.priority < -1000 || v.priority > 1000)) {
+    e.priority = "A whole number from -1000 to 1000.";
+  }
+  if (v.rewardType !== "usdt" && !(v.rewardRoziMicro > 0)) e.rewardRoziMicro = "Set a ROZI amount above 0.";
+  if (v.rewardType !== "rozi" && !(v.rewardUsdtMicro > 0)) e.rewardUsdtMicro = "Set a USDT amount above 0.";
+
+  const dayRange = (n: number | null | undefined) =>
+    n != null && (!Number.isInteger(n) || n < 0 || n > 3650);
+  if (dayRange(v.targetMinAccountDays)) e.targetMinAccountDays = "0 to 3650 days.";
+  if (dayRange(v.targetMaxAccountDays)) e.targetMaxAccountDays = "0 to 3650 days.";
+  if (v.targetMinAccountDays != null && v.targetMaxAccountDays != null
+      && v.targetMaxAccountDays <= v.targetMinAccountDays) {
+    e.targetMaxAccountDays = "Must be more than the 'at least' age, or nobody qualifies.";
+  }
+  if (v.targetMinCompleted != null && (!Number.isInteger(v.targetMinCompleted)
+      || v.targetMinCompleted < 0 || v.targetMinCompleted > 10_000)) {
+    e.targetMinCompleted = "0 to 10,000 tasks.";
+  }
+
+  const pos = (n: number | null | undefined) => n != null && (!Number.isInteger(n) || n <= 0);
+  if (pos(v.budgetConversions) || (v.budgetConversions != null && v.budgetConversions > 10_000_000)) {
+    e.budgetConversions = "A whole number from 1 to 10,000,000, or blank for no limit.";
+  }
+  if (pos(v.budgetPoints) || (v.budgetPoints != null && v.budgetPoints > 1_000_000_000)) {
+    e.budgetPoints = "A whole number from 1 to 1,000,000,000, or blank for no limit.";
+  }
+  if (v.budgetUsdtMicro != null && v.budgetUsdtMicro <= 0) {
+    e.budgetUsdtMicro = "Above 0, or blank for no limit.";
+  }
+  if (v.revenuePerConversionMicro != null
+      && (v.revenuePerConversionMicro < 0 || v.revenuePerConversionMicro > 1_000_000_000)) {
+    e.revenuePerConversionMicro = "From $0 to $1,000.";
+  }
+
+  if (v.actionUrl && v.actionUrl.trim() !== "") {
+    try {
+      if (!/^https?:$/.test(new URL(v.actionUrl).protocol)) throw new Error();
+    } catch { e.actionUrl = "Must start with http:// or https://"; }
+  }
+  if (v.buttonLabel && v.buttonLabel.length > 40) e.buttonLabel = "40 characters max.";
+
+  if (v.startsAt && v.endsAt && Date.parse(v.endsAt) <= Date.parse(v.startsAt)) {
+    e.schedule = "The end time must be after the start time.";
+  }
+  return e;
+}
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "") || "http://localhost:4000";
@@ -86,15 +148,29 @@ export function taskToInput(t: CustomTask): CustomTaskInput {
   };
 }
 
-export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
+export function TaskForm({ value, editing, onChange, onCancel, onSave, busy }: {
   value: CustomTaskInput; editing: boolean;
   onChange: (v: CustomTaskInput) => void; onCancel: () => void; onSave: () => void;
+  // Disables Save while a create/update request is in flight, so a second click
+  // cannot fire a second POST (which is how a task got created twice).
+  busy?: boolean;
 }) {
   const set = <K extends keyof CustomTaskInput>(k: K, v: CustomTaskInput[K]) => onChange({ ...value, [k]: v });
   const L = "block text-[11px] font-semibold uppercase text-muted";
   const I = "mt-1 w-full rounded-md border border-line bg-card px-2 py-1.5 text-sm outline-none";
   const [logoBusy, setLogoBusy] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
+
+  // Live per-field validation — a value out of range turns its box red at the
+  // point of entry, and Save is blocked until every box is valid. The server
+  // still re-checks (validateTask mirrors its schema).
+  const errors = validateTask(value);
+  const hasErrors = Object.keys(errors).length > 0;
+  const ec = (k: keyof TaskFieldErrors) => (errors[k] ? " border-danger bg-danger-tint/20" : "");
+  // A render helper, not a component — it must not be defined as a component in
+  // render (react-hooks/static-components).
+  const err = (k: keyof TaskFieldErrors) =>
+    errors[k] ? <span className="mt-1 block text-[11px] font-semibold text-danger">{errors[k]}</span> : null;
 
   async function chooseLogo(file?: File) {
     if (!file) return;
@@ -120,7 +196,8 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
       <h3 className="text-sm font-bold text-brand-ink">{editing ? "Edit task" : "New task"}</h3>
       <div className="mt-2 grid gap-3 sm:grid-cols-2">
         <label className="sm:col-span-2"><span className={L}>Title (what the user sees)</span>
-          <input className={I} value={value.title} onChange={(e) => set("title", e.target.value)} /></label>
+          <input className={I + ec("title")} value={value.title} onChange={(e) => set("title", e.target.value)} />
+          {err("title")}</label>
         <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
           <p className="text-[11px] font-semibold uppercase text-muted">Reward</p>
           <div className="mt-2 grid gap-3 sm:grid-cols-3">
@@ -135,13 +212,15 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
                 <option value="both">ROZI + USDT</option>
               </select></label>
             {value.rewardType !== "usdt" && <label><span className={L}>ROZI</span>
-              <input type="number" min={1} step="1" className={I}
+              <input type="number" min={1} step="1" className={I + ec("rewardRoziMicro")}
                 value={(value.rewardRoziMicro / 1_000_000).toString()}
-                onChange={(e) => set("rewardRoziMicro", Math.round(Number(e.target.value) * 1_000_000))} /></label>}
+                onChange={(e) => set("rewardRoziMicro", Math.round(Number(e.target.value) * 1_000_000))} />
+              {err("rewardRoziMicro")}</label>}
             {value.rewardType !== "rozi" && <label><span className={L}>USDT</span>
-              <input type="number" min="0.000001" step="0.000001" className={I}
+              <input type="number" min="0.000001" step="0.000001" className={I + ec("rewardUsdtMicro")}
                 value={(value.rewardUsdtMicro / 1_000_000).toString()}
-                onChange={(e) => set("rewardUsdtMicro", Math.round(Number(e.target.value) * 1_000_000))} /></label>}
+                onChange={(e) => set("rewardUsdtMicro", Math.round(Number(e.target.value) * 1_000_000))} />
+              {err("rewardUsdtMicro")}</label>}
           </div>
           <p className="mt-2 text-xs font-semibold text-brand-ink">
             User receives {value.rewardRoziMicro > 0 ? `${(value.rewardRoziMicro / 1_000_000).toLocaleString()} ROZI` : ""}
@@ -162,11 +241,13 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
             link a user is sent to. Full width: a link is long, and a half-width
             box hides the end of it, which is exactly where a typo lives. */}
         <label className="sm:col-span-2"><span className={L}>Link / button URL (optional)</span>
-          <input className={I} placeholder="https://…" value={value.actionUrl}
-            onChange={(e) => set("actionUrl", e.target.value)} /></label>
+          <input className={I + ec("actionUrl")} placeholder="https://…" value={value.actionUrl}
+            onChange={(e) => set("actionUrl", e.target.value)} />
+          {err("actionUrl")}</label>
         <label><span className={L}>Button label</span>
-          <input className={I} maxLength={40} value={value.buttonLabel ?? ""}
-            onChange={(e) => set("buttonLabel", e.target.value)} /></label>
+          <input className={I + ec("buttonLabel")} maxLength={40} value={value.buttonLabel ?? ""}
+            onChange={(e) => set("buttonLabel", e.target.value)} />
+          {err("buttonLabel")}</label>
         <div className="sm:col-span-2 rounded-md border border-line bg-card p-3">
           <p className={L}>Task logo</p>
           <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -228,8 +309,9 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
           </div>
         )}
         <label><span className={L}>About how many minutes</span>
-          <input type="number" className={I} value={value.minutes}
-            onChange={(e) => set("minutes", Number(e.target.value))} /></label>
+          <input type="number" min={0} max={600} className={I + ec("minutes")} value={value.minutes}
+            onChange={(e) => set("minutes", Number(e.target.value))} />
+          {err("minutes")}</label>
         <label><span className={L}>Category (earner app filter)</span>
           <select className={I} value={value.category ?? ""}
             onChange={(e) => set("category", e.target.value)}>
@@ -247,18 +329,20 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
               <option value="active">Active</option><option value="paused">Paused</option>
               <option value="ended">Ended</option>
             </select></label>
-            <label><span className={L}>Starts at</span><input type="datetime-local" className={I}
+            <label><span className={L}>Starts at</span><input type="datetime-local" className={I + ec("schedule")}
               value={toLocalInput(value.startsAt)} onChange={(e) => set("startsAt", fromLocalInput(e.target.value))} /></label>
-            <label><span className={L}>Ends at</span><input type="datetime-local" className={I}
+            <label><span className={L}>Ends at</span><input type="datetime-local" className={I + ec("schedule")}
               value={toLocalInput(value.endsAt)} onChange={(e) => set("endsAt", fromLocalInput(e.target.value))} /></label>
           </div>
+          {err("schedule")}
           <div className="mt-3 flex flex-wrap gap-4">
             <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={value.featured ?? false}
               onChange={(e) => set("featured", e.target.checked)} /> Featured</label>
             <label className="flex items-center gap-2 text-xs">Priority
-              <input type="number" className="w-24 rounded-md border border-line px-2 py-1" value={value.priority ?? 0}
+              <input type="number" className={`w-24 rounded-md border px-2 py-1${errors.priority ? " border-danger" : " border-line"}`} value={value.priority ?? 0}
                 onChange={(e) => set("priority", Number(e.target.value))} /></label>
           </div>
+          {err("priority")}
         </div>
 
         {/* ---- Targeting (Stage 7) ----------------------------------------
@@ -272,26 +356,27 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
             the two rules below show it locked, with the reason, because they can still get there.
           </p>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <label className="sm:col-span-2"><span className={L}>Countries — one per line, or ALL</span>
-              <textarea className={I} rows={2} placeholder="ALL"
-                value={(value.countries ?? ["ALL"]).join("\n")}
-                onChange={(e) => set("countries",
-                  e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))} /></label>
+            <div className="sm:col-span-2"><span className={L}>Countries</span>
+              <CountryPicker className="mt-1" value={value.countries ?? ["ALL"]}
+                onChange={(list) => set("countries", list)} /></div>
             <label><span className={L}>Account at least N days old</span>
-              <input type="number" min={0} className={I} placeholder="no limit"
+              <input type="number" min={0} max={3650} className={I + ec("targetMinAccountDays")} placeholder="no limit"
                 value={value.targetMinAccountDays ?? ""}
                 onChange={(e) => set("targetMinAccountDays",
-                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+                  e.target.value === "" ? null : Number(e.target.value))} />
+              {err("targetMinAccountDays")}</label>
             <label><span className={L}>Only accounts under N days old</span>
-              <input type="number" min={0} className={I} placeholder="no limit"
+              <input type="number" min={0} max={3650} className={I + ec("targetMaxAccountDays")} placeholder="no limit"
                 value={value.targetMaxAccountDays ?? ""}
                 onChange={(e) => set("targetMaxAccountDays",
-                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+                  e.target.value === "" ? null : Number(e.target.value))} />
+              {err("targetMaxAccountDays")}</label>
             <label className="sm:col-span-2"><span className={L}>Must have finished N tasks already</span>
-              <input type="number" min={0} className={I} placeholder="no limit"
+              <input type="number" min={0} max={10000} className={I + ec("targetMinCompleted")} placeholder="no limit"
                 value={value.targetMinCompleted ?? ""}
                 onChange={(e) => set("targetMinCompleted",
-                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+                  e.target.value === "" ? null : Number(e.target.value))} />
+              {err("targetMinCompleted")}</label>
           </div>
         </div>
 
@@ -308,36 +393,43 @@ export function TaskForm({ value, editing, onChange, onCancel, onSave }: {
           </p>
           <div className="mt-2 grid gap-3 sm:grid-cols-4">
             <label><span className={L}>Max conversions</span>
-              <input type="number" min={1} className={I} placeholder="no limit"
+              <input type="number" min={1} className={I + ec("budgetConversions")} placeholder="no limit"
                 value={value.budgetConversions ?? ""}
                 onChange={(e) => set("budgetConversions",
-                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+                  e.target.value === "" ? null : Number(e.target.value))} />
+              {err("budgetConversions")}</label>
             <label><span className={L}>Max ROZI to pay</span>
-              <input type="number" min={1} className={I} placeholder="no limit"
+              <input type="number" min={1} className={I + ec("budgetPoints")} placeholder="no limit"
                 value={value.budgetPoints ?? ""}
                 onChange={(e) => set("budgetPoints",
-                  e.target.value === "" ? null : Number(e.target.value))} /></label>
+                  e.target.value === "" ? null : Number(e.target.value))} />
+              {err("budgetPoints")}</label>
             <label><span className={L}>Max USDT to pay</span>
-              <input type="number" min="0.000001" step="0.000001" className={I} placeholder="no limit"
+              <input type="number" min="0.000001" step="0.000001" className={I + ec("budgetUsdtMicro")} placeholder="no limit"
                 value={value.budgetUsdtMicro ? value.budgetUsdtMicro / 1e6 : ""}
                 onChange={(e) => set("budgetUsdtMicro",
-                  e.target.value === "" ? null : Math.round(Number(e.target.value) * 1e6))} /></label>
+                  e.target.value === "" ? null : Math.round(Number(e.target.value) * 1e6))} />
+              {err("budgetUsdtMicro")}</label>
             {/* Entered in dollars, stored in micro-USD — an integer, so no
                 campaign's margin is ever computed from a float. */}
             <label><span className={L}>They pay us / conversion ($)</span>
-              <input type="number" min={0} step="0.001" className={I} placeholder="0.00"
+              <input type="number" min={0} step="0.001" className={I + ec("revenuePerConversionMicro")} placeholder="0.00"
                 value={value.revenuePerConversionMicro
                   ? value.revenuePerConversionMicro / 1e6 : ""}
                 onChange={(e) => set("revenuePerConversionMicro",
-                  e.target.value === "" ? 0 : Math.round(Number(e.target.value) * 1e6))} /></label>
+                  e.target.value === "" ? 0 : Math.round(Number(e.target.value) * 1e6))} />
+              {err("revenuePerConversionMicro")}</label>
           </div>
         </div>
       </div>
-      <div className="mt-3 flex gap-2">
-        <button onClick={onSave} className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">
-          {editing ? "Save changes" : "Create task"}
+      <div className="mt-3 flex items-center gap-2">
+        <button onClick={onSave} disabled={busy || hasErrors}
+          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+          {busy ? "Saving…" : editing ? "Save changes" : "Create task"}
         </button>
-        <button onClick={onCancel} className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand">
+        {hasErrors && <span className="text-[11px] font-semibold text-danger">Fix the red fields first.</span>}
+        <button onClick={onCancel} disabled={busy}
+          className="rounded-md bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand disabled:opacity-50">
           Cancel
         </button>
       </div>

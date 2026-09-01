@@ -87,7 +87,12 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "messages", label: "Messages & content", needs: ["notifications.send", "content.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
-  { id: "settings", label: "Features & settings", needs: ["flags.manage", "settings.manage", "infra.view"] },
+  // Founder, 2026-09-01: "a different page for each — flags, settings, alerts".
+  // Each is its own sidebar entry now, gated on its own permission, instead of
+  // three sub-tabs under one "Features & settings" section.
+  { id: "flags", label: "Feature flags", needs: ["flags.manage"] },
+  { id: "settings", label: "Global settings", needs: ["settings.manage"] },
+  { id: "alerts", label: "Staff alerts", needs: ["infra.view"] },
   { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
 ];
 
@@ -139,11 +144,31 @@ export default function StaffPage() {
     if (p) setPanelId(p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, visible.length]);
+  function applyHash(hash: string) {
+    const [h, p] = hash.replace(/^#/, "").split("/");
+    setSection(visible.some((s) => s.id === h) ? (h as SectionId) : (visible[0]?.id ?? null));
+    setPanelId(p || null);
+  }
   function go(id: SectionId, pid?: string) {
+    const next = pid ? `#${id}/${pid}` : `#${id}`;
     setSection(id);
     setPanelId(pid ?? null);
-    window.history.replaceState(null, "", pid ? `#${id}/${pid}` : `#${id}`);
+    // pushState (not replaceState) so the browser Back button walks back through
+    // the sections the user visited and only LEAVES /staff once there is nothing
+    // left to go back to — instead of Back always exiting the panel on the first
+    // press. Same-target clicks don't stack an entry.
+    if (`#${window.location.hash.replace(/^#/, "")}` !== next) {
+      window.history.pushState(null, "", next);
+    }
   }
+  // Browser Back/Forward within the panel: re-apply section + sub-tab from the
+  // hash rather than unmounting /staff.
+  useEffect(() => {
+    const onPop = () => applyHash(window.location.hash);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible.length]);
   // Search result / stat tile picked: switch to that section and sub-tab, then
   // scroll to the top — there is only one panel per screen now, nothing to
   // scroll *to* within it.
@@ -220,8 +245,11 @@ export default function StaffPage() {
       { id: "p-fraud", label: "Fraud flags", need: "fraud.view", node: <FraudPanel canResolve={may("fraud.resolve")} /> },
     ],
     tasks: [
-      { id: "p-tasks", label: "Our own tasks", need: "tasks.view", node: <TasksAdminPanel /> },
-      { id: "p-proofs", label: "Task proofs", need: "tasks.review", node: <ProofReviewPanel /> },
+      // ⚠️ One panel is mounted at a time (see the single `active.node` below) —
+      // "Our tasks" never renders network / commission config, and "Ad networks"
+      // never renders the task editor. The tabs just switch which is on screen.
+      { id: "p-tasks", label: "Our tasks", need: "tasks.view", node: <TasksAdminPanel /> },
+      { id: "p-proofs", label: "Proofs", need: "tasks.review", node: <ProofReviewPanel /> },
       { id: "p-networks", label: "Ad networks", need: "networks.manage", node: <NetworkPanel /> },
     ],
     growth: [
@@ -231,11 +259,6 @@ export default function StaffPage() {
     messages: [
       { id: "p-broadcast", label: "Send a message", need: "notifications.send", node: <BroadcastPanel /> },
       { id: "p-content", label: "Home screen cards", need: "content.manage", node: <ContentPanel /> },
-    ],
-    settings: [
-      { id: "p-flags", label: "Features", need: "flags.manage", node: <FeatureFlagsPanel /> },
-      { id: "p-settings", label: "Settings", need: "settings.manage", node: <GlobalSettingsPanel /> },
-      { id: "p-alerts", label: "Staff alerts", need: "infra.view", node: <StaffAlertsPanel /> },
     ],
   };
 
@@ -314,6 +337,18 @@ export default function StaffPage() {
 
           {section === "audit" && may("audit.view") && (
             <Panel title="Audit log"><AuditPanel /></Panel>
+          )}
+
+          {section === "flags" && may("flags.manage") && (
+            <Panel id="p-flags" title="Feature flags"><FeatureFlagsPanel /></Panel>
+          )}
+
+          {section === "settings" && may("settings.manage") && (
+            <Panel id="p-settings" title="Global settings"><GlobalSettingsPanel /></Panel>
+          )}
+
+          {section === "alerts" && may("infra.view") && (
+            <Panel id="p-alerts" title="Staff alerts"><StaffAlertsPanel /></Panel>
           )}
 
           {section === "team" && may("staff.manage") && (
