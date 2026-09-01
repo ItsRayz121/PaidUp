@@ -716,7 +716,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
         </div>
       ),
     },
-    { key: "amount", header: "Amount", align: "right", csv: (r) => r.amountWei, render: (r) => <span className="num">{formatBnbWei(r.amountWei)} BNB</span> },
+    { key: "amount", header: "Amount", align: "right", csv: (r) => r.amountWei, render: (r) => <span className="num">{formatBnbWei(r.amountWei)}</span> },
     { key: "address", header: "To", csv: (r) => r.address, render: (r) => <Addr value={r.address} /> },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "attempts", header: "Tries", align: "right", csv: (r) => r.attempts, render: (r) => <span className="num">{r.attempts}</span> },
@@ -737,7 +737,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
         badges={<StatusBadge status={open.status} />}
         userId={open.userId}
         fields={[
-          F("Amount", <span className="num">{formatBnbWei(open.amountWei)} BNB</span>),
+          F("Amount", <span className="num">{formatBnbWei(open.amountWei)}</span>),
           F("Chain", <span className="uppercase">{open.chain}</span>),
           F("To address", <CopyId value={open.address} />),
           F("Status", <StatusBadge status={open.status} />),

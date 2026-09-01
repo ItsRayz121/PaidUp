@@ -92,7 +92,8 @@ export function MoneyOverview() {
   const o: TOverview = d.data;
   const f = o.flows[win] ?? o.flows.all;
   const chains = Object.keys(o.heldNow.treasuryMicro);
-  const bnbOut = formatBnbWei(f.bnbOutWei);
+  // formatBnbWei returns "…BNB" already — don't append the unit again.
+  const hasBnbOut = f.bnbOutWei !== "0" && f.bnbOutWei !== "";
 
   return (
     <section className="mb-8 space-y-5">
@@ -147,7 +148,7 @@ export function MoneyOverview() {
           <Card tone="out" label="Money out" value={formatUsdtMicro(f.outMicro)}>
             <p>Withdrawals sent: {formatUsdtMicro(f.withdrawalsOutMicro)}</p>
             <p>Deposit refunds: {formatUsdtMicro(f.refundsOutMicro)}</p>
-            {bnbOut !== "0" && <p>BNB gas out: {bnbOut}</p>}
+            {hasBnbOut && <p>BNB gas out: {formatBnbWei(f.bnbOutWei)}</p>}
           </Card>
           <Card tone="net" label="Net flow" value={`${f.netMicro >= 0 ? "+" : "−"}${formatUsdtMicro(Math.abs(f.netMicro))}`}>
             <p>{f.netMicro >= 0 ? "more came in than went out" : "more went out than came in"}</p>
@@ -172,7 +173,7 @@ export function MoneyOverview() {
         <LatestList title="Latest refunds" onOpen={() => goToSection("money", "p-usdt-refunds")}
           rows={o.latest.refunds.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
         <LatestList title="Latest BNB withdrawals" onOpen={() => goToSection("money", "p-bnb-withdrawals")}
-          rows={o.latest.bnb.map((r) => ({ ...r, amount: `${formatBnbWei(r.wei)} BNB` }))} />
+          rows={o.latest.bnb.map((r) => ({ ...r, amount: formatBnbWei(r.wei) }))} />
         <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-relay-jobs")}
           rows={o.latest.relayFailed.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
       </div>

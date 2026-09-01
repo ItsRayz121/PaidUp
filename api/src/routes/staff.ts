@@ -2008,7 +2008,7 @@ export async function staffRoutes(app: FastifyInstance) {
     async function flowFor(since: string | null) {
       const g = (col: string) => (since ? ` AND ${col} >= ?` : "");
       const a = since ? [since] : [];
-      const [depIn, wdOutPts, rfOutMicro, bnbOutWei] = await Promise.all([
+      const [depIn, wdOutPts, rfOutMicro, bnbRow] = await Promise.all([
         // Money IN: confirmed USDT deposit credits.
         scalarM(`SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger WHERE direction='credit' AND source_type='topup'${g("created_at")}`, ...a),
         // Money OUT: what was actually SENT — net of the withdrawal fee, keyed
@@ -2016,8 +2016,14 @@ export async function staffRoutes(app: FastifyInstance) {
         scalarM(`SELECT COALESCE(SUM(amount - COALESCE(fee_points,0)),0) AS v FROM withdrawal_requests WHERE status='paid'${g("paid_at")}`, ...a),
         // Money OUT: deposit refunds, net of the gas fee, keyed on reviewed_at.
         scalarM(`SELECT COALESCE(SUM(amount - COALESCE(fee_micro,0)),0) AS v FROM usdt_refund_requests WHERE status='paid'${g("reviewed_at")}`, ...a),
-        // BNB gas sent out (wei, decimal string).
-        scalarM(`SELECT COALESCE(SUM(CAST(amount_wei AS NUMERIC)),0)::text AS v FROM bnb_withdrawal_requests WHERE status='paid'${g("completed_at")}`, ...a),
+        // BNB gas sent out. Kept as a STRING all the way — wei is 18-decimal
+        // and a running total quickly exceeds Number.MAX_SAFE_INTEGER; a
+        // Number round-trip would silently lose precision and then render
+        // "0 BNB" once it hit scientific notation.
+        sql.get<{ v: string | number }>(
+          `SELECT COALESCE(SUM(CAST(amount_wei AS NUMERIC)),0)::text AS v FROM bnb_withdrawal_requests WHERE status='paid'${g("completed_at")}`,
+          ...a,
+        ),
       ]);
       const withdrawalsOutMicro = toMicro(wdOutPts);
       const outMicro = withdrawalsOutMicro + rfOutMicro;
@@ -2026,7 +2032,7 @@ export async function staffRoutes(app: FastifyInstance) {
         withdrawalsOutMicro,
         refundsOutMicro: rfOutMicro,
         outMicro,
-        bnbOutWei: String(bnbOutWei),
+        bnbOutWei: String(bnbRow?.v ?? "0"),
         netMicro: depIn - outMicro,
       };
     }

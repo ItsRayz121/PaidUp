@@ -530,19 +530,6 @@ export const fetchRelayJobs = (p: MoneyListParams = {}) =>
   apiFetch<{ rows: RelayJobRow[]; total: number; offset: number; limit: number }>(
     `/staff/relay-jobs?${moneyQs({ status: "failed", ...p })}`);
 
-// Acknowledge a FAILED relay job / BNB withdrawal — a staff "I checked this,
-// nothing more to do" that takes the row out of the dashboard's red count.
-// Never retries or moves money. (Superseded by *resolve* below, kept for any
-// old caller.)
-export const markRelayJobHandled = (id: string, note?: string) =>
-  apiFetch<{ ok: true }>(`/staff/relay-jobs/${id}/handled`, {
-    method: "POST", body: JSON.stringify({ note }),
-  });
-export const markBnbWithdrawalHandled = (id: string, note?: string) =>
-  apiFetch<{ ok: true }>(`/staff/bnb-withdrawals/${id}/handled`, {
-    method: "POST", body: JSON.stringify({ note }),
-  });
-
 // Resolve a FAILED relay job / BNB withdrawal from the queue (founder,
 // 2026-09-01). `acknowledge` = mark handled; `credit_back` = reject the request
 // and return the money (relay only, when still owed + safe); `retry` = re-queue

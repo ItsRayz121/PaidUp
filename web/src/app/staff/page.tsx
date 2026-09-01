@@ -61,7 +61,11 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // hold. Finance owns money in and money out and held `deposits.decide` +
   // `refunds.decide`, yet could not reach either screen. Deposits are money,
   // not mining.
-  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "deposits.view", "refunds.view", "treasury.view", "money.view", "settings.manage"] },
+  // `money.view` used to gate the old "Owed vs paid" panel; that panel's
+  // numbers moved into Money → Overview (gated on withdrawals.view), so the
+  // permission no longer maps to a panel and is dropped from this list — a
+  // money.view-only role would otherwise land on an empty section.
+  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "deposits.view", "refunds.view", "treasury.view", "settings.manage"] },
   { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
   { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
   // ⚠️ `mining.view` is deliberately NOT here. The Mining section's tabs

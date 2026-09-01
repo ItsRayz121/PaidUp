@@ -5,7 +5,7 @@
 //
 // The panel is one hash-routed page with ~11 sections and ~30 sub-panels
 // inside them. This is a flat index of every place worth jumping to; typing
-// filters it and picking a result switches section (and scrolls to the panel).
+// filters it and picking a result switches to that section and its sub-tab.
 //
 // The list is filtered the SAME way the sidebar is — a destination whose
 // section the role can't see, or whose own `needs` the role lacks, is never
@@ -19,9 +19,9 @@ import { SearchIcon } from "@/components/icons";
 export type SearchDest = {
   label: string;
   section: SectionId;
-  /** Panel id (see <Panel id="…">) to scroll to after switching section. */
+  /** Panel id (the sub-tab, e.g. "p-withdrawals") to open after switching section. */
   anchor?: string;
-  /** Short chip label for the in-section table of contents. Falls back to `label`. */
+  /** Short label kept for a future compact display. Falls back to `label`. */
   short?: string;
   /** Small grey text on the right — which section it lives in. */
   hint?: string;
