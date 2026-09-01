@@ -113,6 +113,10 @@ export function toLocalInput(value?: string | null): string {
 
 export const fromLocalInput = (value: string): string | null => value ? new Date(value).toISOString() : null;
 
+// BIGINT columns arrive as strings from pg; keep null as null, coerce the rest.
+const numOrNull = (v: number | string | null | undefined): number | null =>
+  v == null ? null : Number(v);
+
 // Map a stored CustomTask row onto the editable CustomTaskInput the form takes.
 // Split out of the old inline TasksPanel so the Phase D detail view can reuse it.
 export function taskToInput(t: CustomTask): CustomTaskInput {
@@ -136,10 +140,15 @@ export function taskToInput(t: CustomTask): CustomTaskInput {
     // budget reopens it server-side; saving without one exhausts it again on
     // the next completion, which is correct either way.
     status: t.status === "exhausted" ? "active" : t.status as CustomTaskInput["status"],
+    // ⚠️ budget_points, budget_usdt_micro and revenue_per_conversion_micro are
+    // BIGINT columns — the pg driver hands them back as STRINGS. Saving the form
+    // without retyping these fields sent the raw "0" straight back and the API's
+    // z.number() schema rejected it ("expected number, received string"). Coerce
+    // on load, the same way the reward_* fields above already do.
     budgetConversions: t.budget_conversions,
-    budgetPoints: t.budget_points,
-    budgetUsdtMicro: t.budget_usdt_micro,
-    revenuePerConversionMicro: t.revenue_per_conversion_micro,
+    budgetPoints: numOrNull(t.budget_points),
+    budgetUsdtMicro: numOrNull(t.budget_usdt_micro),
+    revenuePerConversionMicro: Number(t.revenue_per_conversion_micro ?? 0),
     category: t.category ?? "",
     countries: t.countries.length > 0 ? t.countries : ["ALL"],
     targetMinAccountDays: t.target_min_account_days,

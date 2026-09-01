@@ -139,13 +139,18 @@ const upsertSchema = z.object({
   // ---- Campaign budget + revenue (brief parts 15 + 16) --------------------
   // null clears a cap back to unlimited; undefined leaves it alone. Both are
   // needed: "no budget" is a real, common state and has to be settable.
-  budgetConversions: z.number().int().positive().max(10_000_000).nullable().optional(),
-  budgetPoints: z.number().int().positive().max(1_000_000_000).nullable().optional(),
-  budgetUsdtMicro: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  // ⚠️ z.coerce here on purpose: these map to BIGINT columns, and pg returns
+  // BIGINT as a STRING. The staff form loads a row and can POST it straight
+  // back, so a schema of plain z.number() rejected an untouched "0" with
+  // "expected number, received string". The union keeps null (= clear the cap)
+  // meaningful — z.coerce.number() alone would turn null into 0.
+  budgetConversions: z.union([z.null(), z.coerce.number().int().positive().max(10_000_000)]).optional(),
+  budgetPoints: z.union([z.null(), z.coerce.number().int().positive().max(1_000_000_000)]).optional(),
+  budgetUsdtMicro: z.union([z.null(), z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)]).optional(),
   // What the partner pays US per conversion, in micro-USD. Entered as dollars
   // in the panel and converted there; stored as an integer so no campaign's
   // margin is computed from a float.
-  revenuePerConversionMicro: z.number().int().min(0).max(1_000_000_000).optional(),
+  revenuePerConversionMicro: z.coerce.number().int().min(0).max(1_000_000_000).optional(),
   // ---- Category + targeting (Stage 7) -------------------------------------
   // "" clears the category back to uncategorised. An unknown value is refused
   // here rather than stored, so the earner app's chip list can never be handed
