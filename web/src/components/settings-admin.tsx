@@ -140,7 +140,7 @@ export function GlobalSettingsPanel() {
   const toast = useToast();
   const [form, setForm] = useState({
     appName: "", supportEmail: "", supportTelegram: "",
-    minWithdrawPoints: 0, maintenanceMessage: "",
+    minWithdrawPoints: 0, ticketAutoCloseHours: 3, maintenanceMessage: "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -156,6 +156,7 @@ export function GlobalSettingsPanel() {
       appName: d.appName, supportEmail: d.supportEmail,
       supportTelegram: d.supportTelegram,
       minWithdrawPoints: d.minWithdrawPoints,
+      ticketAutoCloseHours: d.ticketAutoCloseHours,
       maintenanceMessage: d.maintenanceMessage,
     });
   }, [settings.data]);
@@ -241,6 +242,15 @@ export function GlobalSettingsPanel() {
           <span className="mt-0.5 block text-xs text-muted">
             1000 points = 1 USDT. Raising this makes cashing out slower for
             everyone — check it is still reachable in a week of ordinary earning.
+          </span>
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold text-muted">Close a chat with no reply after (hours)</span>
+          <input className={field} type="number" min={0} max={720} value={form.ticketAutoCloseHours}
+            onChange={(e) => setForm({ ...form, ticketAutoCloseHours: Number(e.target.value) })} />
+          <span className="mt-0.5 block text-xs text-muted">
+            Once staff answer a ticket and the user does not reply, it closes itself
+            after this many hours. 0 turns auto-close off.
           </span>
         </label>
         <label className="block">

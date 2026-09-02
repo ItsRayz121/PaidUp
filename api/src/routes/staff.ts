@@ -11,8 +11,9 @@ import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
-import { kycFeatureEnabled } from "../kyc.ts";
+import { kycFeatureEnabled, parseDataUrl } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
+import { ticketAutoCloseHoursNow } from "../settingsRuntime.ts";
 import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
 import { loadAnalytics } from "../analytics.ts";
 
@@ -1060,6 +1061,10 @@ export async function staffRoutes(app: FastifyInstance) {
     // A minimum that can be tuned without a redeploy. Falls back to the
     // env-configured value, so an untouched instance behaves exactly as before.
     minWithdrawPoints: Number(await getSetting("min_withdraw_points", "")) || config.minWithdrawPoints,
+    // How long an "answered" ticket waits with no reply before it auto-closes
+    // (founder, 2026-09-02: "professional support chat" — hours, not the old
+    // days-based default). 0 = never auto-close.
+    ticketAutoCloseHours: await ticketAutoCloseHoursNow(),
     // Maintenance mode: earners see a "back soon" screen and every earning or
     // money route refuses. Staff routes are deliberately UNAFFECTED — the
     // reason you turn this on is usually so staff can go and fix something.
@@ -1090,6 +1095,9 @@ export async function staffRoutes(app: FastifyInstance) {
     supportEmail: z.string().trim().max(120).optional(),
     supportTelegram: z.string().trim().max(120).optional(),
     minWithdrawPoints: z.number().int().min(1).max(10_000_000).optional(),
+    // 0 turns auto-close off. A support chat, not a week-long queue — see
+    // settingsRuntime.ts's ticketAutoCloseHoursNow().
+    ticketAutoCloseHours: z.number().int().min(0).max(720).optional(),
     maintenanceMode: z.boolean().optional(),
     maintenanceMessage: z.string().trim().max(300).optional(),
     // Treasury (hot wallet) address per chain. Empty string clears it.
@@ -1140,6 +1148,9 @@ export async function staffRoutes(app: FastifyInstance) {
         previousValue: wasMin, newValue: parsed.data.minWithdrawPoints,
         actorIp: req.ip,
       });
+    }
+    if (parsed.data.ticketAutoCloseHours !== undefined) {
+      await setSetting("ticket_auto_close_hours", String(parsed.data.ticketAutoCloseHours));
     }
     if (parsed.data.maintenanceMessage !== undefined) {
       await setSetting("maintenance_message", parsed.data.maintenanceMessage);
@@ -1243,7 +1254,15 @@ export async function staffRoutes(app: FastifyInstance) {
                 u.username AS user_username, u.display_name AS user_display_name,
                 u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
            (SELECT COUNT(*)::int FROM ticket_messages m
-             WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count
+             WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count,
+           -- A preview line for the list (founder, 2026-09-02: "how the actual
+           -- support chat should look" — a real inbox shows the last message,
+           -- not just a subject). Internal notes are excluded here too — this
+           -- is staff's own queue, but a note is written FOR staff, not as a
+           -- stand-in for what the conversation actually said.
+           (SELECT m.body FROM ticket_messages m
+             WHERE m.ticket_id = ti.id AND m.author_role <> 'internal'
+             ORDER BY m.created_at DESC LIMIT 1) AS last_message
          FROM support_tickets ti
          JOIN users u ON u.id = ti.user_id
          LEFT JOIN users a ON a.id = ti.assigned_to
@@ -1274,6 +1293,7 @@ export async function staffRoutes(app: FastifyInstance) {
         userUsername: t.user_username ?? null, userDisplayName: t.user_display_name ?? null,
         userTelegramUsername: t.user_telegram_username ?? null, userTelegramName: t.user_telegram_name ?? null,
         status: t.status, messageCount: t.message_count,
+        lastMessage: t.last_message,
         assignedTo: t.assigned_to, assigneeEmail: t.assignee_email,
         at: t.created_at, updatedAt: t.updated_at,
       })),
@@ -1297,7 +1317,7 @@ export async function staffRoutes(app: FastifyInstance) {
     // them from the people who wrote them would defeat the point. The earner
     // endpoint is where they are filtered out (routes/app.ts).
     const messages = await sql.all(
-      `SELECT m.id, m.author_role, m.body, m.created_at, au.email AS author_email
+      `SELECT m.id, m.author_role, m.body, m.image, m.created_at, au.email AS author_email
        FROM ticket_messages m LEFT JOIN users au ON au.id = m.author_id
        WHERE m.ticket_id = ? ORDER BY m.created_at ASC`, id,
     );
@@ -1308,6 +1328,7 @@ export async function staffRoutes(app: FastifyInstance) {
         userTelegramUsername: ticket.user_telegram_username ?? null, userTelegramName: ticket.user_telegram_name ?? null,
         userStatus: ticket.user_status, kycStatus: ticket.kyc_status, country: ticket.country,
         subject: ticket.subject, status: ticket.status, at: ticket.created_at,
+        updatedAt: ticket.updated_at, rating: ticket.rating,
         assignedTo: ticket.assigned_to, assigneeEmail: ticket.assignee_email,
       },
       messages,
@@ -1321,12 +1342,25 @@ export async function staffRoutes(app: FastifyInstance) {
     // It is where an agent writes what they would say to a colleague, on the
     // ticket, so the next person to open it does not start from nothing.
     internal: z.boolean().optional(),
+    // One optional image, same magic-byte-sniffed shape as the earner side —
+    // see routes/app.ts's parseTicketImage comment for why this is checked as
+    // strictly as an avatar upload, not more loosely because it's "internal".
+    image: z.string().max(3_000_000).optional().nullable(),
   });
+  const TICKET_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
   app.post("/staff/tickets/:id/reply", staffGuard("support.reply", async ({ userId }, req, reply) => {
     const parsed = replySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Type a reply first." });
     const id = (req.params as { id: string }).id;
     const internal = parsed.data.internal === true;
+    let image: string | null = null;
+    if (parsed.data.image) {
+      const parsedImg = parseDataUrl(parsed.data.image, "ticket");
+      if (parsedImg.bytes.length > TICKET_IMAGE_MAX_BYTES) {
+        return reply.code(413).send({ error: "That photo is too big. Try a smaller one." });
+      }
+      image = `data:${parsedImg.mime};base64,${parsedImg.bytes.toString("base64")}`;
+    }
 
     const ticket = await sql.get<{ id: string; user_id: string; status: string }>(
       "SELECT id, user_id, status FROM support_tickets WHERE id = ?", id);
@@ -1334,8 +1368,8 @@ export async function staffRoutes(app: FastifyInstance) {
 
     await sql.tx(async (t) => {
       await t.run(
-        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?,?,?,?,?)",
-        newId(), id, internal ? "internal" : "staff", userId, parsed.data.message, now(),
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, image, created_at) VALUES (?,?,?,?,?,?,?)",
+        newId(), id, internal ? "internal" : "staff", userId, parsed.data.message, image, now(),
       );
       // A note changes nothing the user can see, so it must not move the
       // status either: marking a ticket "answered" because someone wrote a

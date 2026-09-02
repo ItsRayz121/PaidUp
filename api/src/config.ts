@@ -388,11 +388,18 @@ export const config = {
   depositScanIntervalMs: Number(process.env.DEPOSIT_SCAN_INTERVAL_MS ?? 20_000),
 
   // Support tickets sitting in 'answered' (staff replied last, user never
-  // came back) auto-close after this many days — see ticketAutoClose.ts. 0
+  // came back) auto-close after this many HOURS — see ticketAutoClose.ts. 0
   // turns it off. A ticket a user never replies to is not the same as an
   // unresolved one; leaving it open forever just pads the "open" count staff
   // watch on the dashboard.
-  ticketAutoCloseDays: Number(process.env.TICKET_AUTO_CLOSE_DAYS ?? 7),
+  //
+  // ⚠️ CHANGED FROM DAYS TO HOURS (founder, 2026-09-02: "if the other person
+  // do not reply for more than two or three hours, then chat should be
+  // closed" — a professional support chat, not a week-long ticket queue).
+  // Admin-tunable in /staff → Global settings via
+  // settingsRuntime.ts's ticketAutoCloseHoursNow(), which wins over this
+  // default the moment anyone sets it there.
+  ticketAutoCloseHours: Number(process.env.TICKET_AUTO_CLOSE_HOURS ?? 3),
 
   // Kill switch for deposits/adapters/evmNative.ts (the BNB block-by-block
   // walker). Default OFF (founder, 2026-08-13 — real billing incident: this

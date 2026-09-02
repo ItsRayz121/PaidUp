@@ -990,19 +990,25 @@ export const resolveFraud = (id: string, note?: string) =>
 // /support/tickets filters internal notes out server-side (routes/app.ts), so a
 // user can never receive one — stating that in the type keeps the two views
 // from being quietly merged later. The staff view has its own wider type below.
-export type TicketMessage = { author_role: "user" | "staff"; body: string; created_at: string };
+export type TicketMessage = { author_role: "user" | "staff"; body: string; image?: string | null; created_at: string };
+export type TicketRating = "bad" | "okay" | "great";
 export type MyTicket = {
   id: string; subject: string; status: "open" | "answered" | "closed";
-  at: string; updatedAt: string; messages: TicketMessage[];
+  at: string; updatedAt: string; rating: TicketRating | null; messages: TicketMessage[];
 };
 export const fetchMyTickets = () => apiFetch<{ tickets: MyTicket[] }>("/support/tickets");
-export const createTicket = (subject: string, message: string) =>
+export const createTicket = (subject: string, message: string, image?: string | null) =>
   apiFetch<{ ticket: { id: string } }>("/support/tickets", {
-    method: "POST", body: JSON.stringify({ subject, message }),
+    method: "POST", body: JSON.stringify({ subject, message, image: image || undefined }),
   });
-export const replyToMyTicket = (id: string, message: string) =>
+export const replyToMyTicket = (id: string, message: string, image?: string | null) =>
   apiFetch<{ ok: true }>(`/support/tickets/${id}/messages`, {
-    method: "POST", body: JSON.stringify({ message }),
+    method: "POST", body: JSON.stringify({ message, image: image || undefined }),
+  });
+// "How was our support?" — only accepted once, on a closed ticket.
+export const rateTicket = (id: string, rating: TicketRating) =>
+  apiFetch<{ ok: true }>(`/support/tickets/${id}/rating`, {
+    method: "POST", body: JSON.stringify({ rating }),
   });
 
 // ---- Support tickets (staff side) ----------------------------------------
@@ -1011,6 +1017,9 @@ export type StaffTicket = {
   userUsername?: string | null; userDisplayName?: string | null;
   userTelegramUsername?: string | null; userTelegramName?: string | null;
   status: string; messageCount: number; at: string; updatedAt: string;
+  // Newest non-internal message, for a list preview (founder, 2026-09-02: a
+  // real inbox shows what was last said, not just a subject line).
+  lastMessage: string | null;
   // Who has picked this up. Null = still in the pool.
   assignedTo: string | null; assigneeEmail: string | null;
 };
@@ -1039,15 +1048,15 @@ export const fetchStaffTickets = (
 // from the earner-facing `TicketMessage` above.
 export type StaffTicketMessage = {
   author_role: "user" | "staff" | "internal";
-  body: string; created_at: string; author_email?: string | null;
+  body: string; image?: string | null; created_at: string; author_email?: string | null;
 };
 export const fetchStaffTicket = (id: string) =>
   apiFetch<{ ticket: Record<string, unknown>; messages: StaffTicketMessage[] }>(`/staff/tickets/${id}`);
 // `internal: true` writes a note the USER NEVER SEES and sends no push. The
 // filter that keeps it from them lives in the API (GET /support/tickets).
-export const replyStaffTicket = (id: string, message: string, close = false, internal = false) =>
+export const replyStaffTicket = (id: string, message: string, close = false, internal = false, image?: string | null) =>
   apiFetch<{ ok: true }>(`/staff/tickets/${id}/reply`, {
-    method: "POST", body: JSON.stringify({ message, close, internal }),
+    method: "POST", body: JSON.stringify({ message, close, internal, image: image || undefined }),
   });
 export const patchStaffTicket = (id: string, patch: { assignedTo?: string | null; status?: string }) =>
   apiFetch<{ ok: true }>(`/staff/tickets/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
@@ -1440,6 +1449,7 @@ export const fetchSettings = () =>
     // Global settings (brief part 45).
     appName: string; supportEmail: string; supportTelegram: string;
     minWithdrawPoints: number;
+    ticketAutoCloseHours: number;
     maintenanceMode: boolean; maintenanceMessage: string;
   }>("/staff/settings");
 export const updateSettings = (patch: {
@@ -1454,6 +1464,7 @@ export const updateSettings = (patch: {
   supportEmail?: string;
   supportTelegram?: string;
   minWithdrawPoints?: number;
+  ticketAutoCloseHours?: number;
   maintenanceMode?: boolean;
   maintenanceMessage?: string;
 }) =>

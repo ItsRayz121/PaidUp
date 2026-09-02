@@ -9,11 +9,13 @@
 //   npm run test:messagesadmin
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import { initDb, sql, now, newId } from "../db.ts";
+import { initDb, sql, now, newId, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { appRoutes } from "../routes/app.ts";
 import { staffRoutes } from "../routes/staff.ts";
 import { staffNotifyRoutes } from "../routes/staffNotify.ts";
+import { tickTicketAutoClose } from "../ticketAutoClose.ts";
+import { ticketAutoCloseHoursNow } from "../settingsRuntime.ts";
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -172,6 +174,137 @@ console.log("\n-- edit / pause / resume / delete an already-sent broadcast --");
   check("editing a deleted message is refused", editDeleted.statusCode === 400);
 
   check("a non-staff user gets 403 on pause", (await app.inject({ method: "POST", url: `/staff/notifications/${bId}/pause`, headers: authOf(outsider) })).statusCode === 403);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- 'How was our support?' rating, one per ticket, closed only --");
+{
+  const u = await mkUser("rater");
+  const open = await app.inject({
+    method: "POST", url: "/support/tickets", headers: authOf(u),
+    payload: { subject: `${TAG} rating ticket`, message: "help" },
+  });
+  const tid = (open.json() as { ticket: { id: string } }).ticket.id;
+
+  const rateWhileOpen = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/rating`, headers: authOf(u),
+    payload: { rating: "great" },
+  });
+  check("cannot rate an open ticket", rateWhileOpen.statusCode === 400, rateWhileOpen.body);
+
+  await app.inject({
+    method: "POST", url: `/staff/tickets/${tid}/reply`, headers: authOf(agent),
+    payload: { message: "closing this out", close: true },
+  });
+
+  const rateBad = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/rating`, headers: authOf(u),
+    payload: { rating: "nonsense" },
+  });
+  check("an invalid rating value is refused", rateBad.statusCode === 400);
+
+  const rateOk = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/rating`, headers: authOf(u),
+    payload: { rating: "great" },
+  });
+  check("rating a closed ticket is accepted", rateOk.statusCode === 200, rateOk.body);
+
+  const rateAgain = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/rating`, headers: authOf(u),
+    payload: { rating: "bad" },
+  });
+  check("a second rating on the same ticket is refused (one, ever)", rateAgain.statusCode === 400);
+
+  const mine = (await app.inject({ method: "GET", url: "/support/tickets", headers: authOf(u) })).json() as { tickets: { id: string; rating: string | null }[] };
+  const own = mine.tickets.find((x) => x.id === tid);
+  check("the rating shown back to the user is still 'great', not 'bad'", own?.rating === "great", JSON.stringify(own));
+
+  const staffView = (await app.inject({ method: "GET", url: `/staff/tickets/${tid}`, headers: authOf(agent) })).json() as { ticket: { rating: string | null } };
+  check("staff also sees the rating", staffView.ticket.rating === "great");
+
+  const otherUser = await mkUser("stranger");
+  const rateOthers = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/rating`, headers: authOf(otherUser),
+    payload: { rating: "bad" },
+  });
+  check("a different user cannot rate someone else's ticket", rateOthers.statusCode === 400);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- an image attachment is magic-byte sniffed, on both sides --");
+{
+  // A real, minimal JPEG: the SOI marker (ff d8 ff) is what the sniffer looks
+  // for — same fixture shape as kyc.e2e.ts.
+  const JPEG = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+    Buffer.from("JFIF-ish body, long enough to be a plausible photo".repeat(4)),
+  ]);
+  const jpegUrl = `data:image/jpeg;base64,${JPEG.toString("base64")}`;
+  const svgDressedAsJpeg = `data:image/jpeg;base64,${Buffer.from("<svg onload=alert(1)>").toString("base64")}`;
+
+  const u = await mkUser("photographer");
+  const created = await app.inject({
+    method: "POST", url: "/support/tickets", headers: authOf(u),
+    payload: { subject: `${TAG} with a photo`, message: "see attached", image: jpegUrl },
+  });
+  check("a real JPEG on the first message is accepted", created.statusCode === 200, created.body);
+  const tid = (created.json() as { ticket: { id: string } }).ticket.id;
+
+  const mine = (await app.inject({ method: "GET", url: "/support/tickets", headers: authOf(u) })).json() as { tickets: { id: string; messages: { image: string | null }[] }[] };
+  const ticket = mine.tickets.find((x) => x.id === tid);
+  check("the image comes back on the user's own message", !!ticket?.messages[0]?.image);
+
+  const forged = await app.inject({
+    method: "POST", url: `/support/tickets/${tid}/messages`, headers: authOf(u),
+    payload: { message: "one more thing", image: svgDressedAsJpeg },
+  });
+  check("an SVG payload dressed as a JPEG is refused, not stored", forged.statusCode === 400, forged.body);
+
+  const staffReply = await app.inject({
+    method: "POST", url: `/staff/tickets/${tid}/reply`, headers: authOf(agent),
+    payload: { message: "got your photo, thanks", image: jpegUrl },
+  });
+  check("staff can attach a photo to a reply too", staffReply.statusCode === 200, staffReply.body);
+  const staffView = (await app.inject({ method: "GET", url: `/staff/tickets/${tid}`, headers: authOf(agent) })).json() as { messages: { author_role: string; image: string | null }[] };
+  const staffMsg = staffView.messages.find((m) => m.author_role === "staff");
+  check("staff's own reply carries its image back too", !!staffMsg?.image);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- auto-close is admin-tunable in HOURS, not the old fixed days --");
+{
+  check("default is config.ticketAutoCloseHours (3)", (await ticketAutoCloseHoursNow()) === config.ticketAutoCloseHours);
+
+  await setSetting("ticket_auto_close_hours", "1");
+  check("an admin override of 1 hour is honoured", (await ticketAutoCloseHoursNow()) === 1);
+
+  await setSetting("ticket_auto_close_hours", "0");
+  check("0 is honoured as a real 'off' value, not treated as unset", (await ticketAutoCloseHoursNow()) === 0);
+  const offRun = await tickTicketAutoClose();
+  check("tick does nothing while the setting is 0", offRun.closed === 0);
+
+  await setSetting("ticket_auto_close_hours", "1");
+  const u = await mkUser("waiter");
+  const t = await app.inject({
+    method: "POST", url: "/support/tickets", headers: authOf(u),
+    payload: { subject: `${TAG} stale answered`, message: "please help" },
+  });
+  const tid = (t.json() as { ticket: { id: string } }).ticket.id;
+  await app.inject({
+    method: "POST", url: `/staff/tickets/${tid}/reply`, headers: authOf(agent),
+    payload: { message: "here's the answer" },
+  });
+  // Back-date updated_at past the 1-hour window rather than waiting for one.
+  await sql.run(
+    "UPDATE support_tickets SET updated_at = ? WHERE id = ?",
+    new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), tid,
+  );
+  const ran = await tickTicketAutoClose();
+  check("a stale 'answered' ticket past the 1-hour window is closed", ran.closed >= 1, JSON.stringify(ran));
+  const after = (await app.inject({ method: "GET", url: `/staff/tickets/${tid}`, headers: authOf(agent) })).json() as { ticket: { status: string } };
+  check("its status is now closed", after.ticket.status === "closed");
+
+  await setSetting("ticket_auto_close_hours", "");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

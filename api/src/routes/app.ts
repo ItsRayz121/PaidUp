@@ -15,6 +15,7 @@ import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
 import { campaignState, unavailableMessage } from "../taskLifecycle.ts";
 import { recordDevice } from "../fraud.ts";
+import { parseDataUrl } from "../kyc.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -803,22 +804,41 @@ export async function appRoutes(app: FastifyInstance) {
   // ---- Support: earner-facing help tickets --------------------------------
   // Simple English, one screen. A ticket is a subject + a thread of messages;
   // staff answer from the Agent queue.
+  //
+  // A message may carry ONE image (founder, 2026-09-02: "upload of the
+  // images, so that on both sides"). MAGIC-BYTE SNIFFED via the same
+  // parseDataUrl() the avatar and KYC uploads already use — a ticket photo is
+  // served straight back into the page, so a file claiming to be a JPEG and
+  // actually being an SVG script is exactly the stored-XSS risk avatar.ts's
+  // own comment warns about, not a lesser one on a "less important" screen.
+  const TICKET_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+  function parseTicketImage(image: string | undefined | null): string | null {
+    if (!image) return null;
+    const { bytes, mime } = parseDataUrl(image, "ticket");
+    if (bytes.length > TICKET_IMAGE_MAX_BYTES) {
+      throw { statusCode: 413, message: "That photo is too big. Try a smaller one." };
+    }
+    return `data:${mime};base64,${bytes.toString("base64")}`;
+  }
+
   const newTicketSchema = z.object({
     subject: z.string().min(1).max(120),
     message: z.string().min(1).max(2000),
+    image: z.string().max(3_000_000).optional().nullable(),
   });
   app.post("/support/tickets", guard(async (userId, req, reply) => {
     const parsed = newTicketSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Add a short subject and your message." });
     const id = newId();
+    const image = parseTicketImage(parsed.data.image);
     await sql.tx(async (t) => {
       await t.run(
         "INSERT INTO support_tickets (id, user_id, subject, status, created_at, updated_at) VALUES (?,?,?, 'open', ?, ?)",
         id, userId, parsed.data.subject, now(), now(),
       );
       await t.run(
-        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'user', ?,?,?)",
-        newId(), id, userId, parsed.data.message, now(),
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, image, created_at) VALUES (?,?, 'user', ?,?,?,?)",
+        newId(), id, userId, parsed.data.message, image, now(),
       );
     });
     return { ticket: { id, subject: parsed.data.subject, status: "open" } };
@@ -828,11 +848,11 @@ export async function appRoutes(app: FastifyInstance) {
   // the tickets + one for ALL their messages — not one query per ticket.
   app.get("/support/tickets", guard(async (userId) => {
     const tickets = await sql.all<Record<string, unknown>>(
-      "SELECT id, subject, status, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC",
+      "SELECT id, subject, status, rating, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC",
       userId,
     );
     const messages = tickets.length === 0 ? [] : await sql.all<{
-      ticket_id: string; author_role: string; body: string; created_at: string;
+      ticket_id: string; author_role: string; body: string; image: string | null; created_at: string;
     }>(
       // ⚠️ `author_role <> 'internal'` IS THE ONLY THING PROTECTING A STAFF
       // NOTE FROM THE PERSON IT IS ABOUT (brief part 40). An internal note is
@@ -840,28 +860,32 @@ export async function appRoutes(app: FastifyInstance) {
       // list before paying" — the CHECK constraint in db.ts permits the value,
       // it does not hide it. This filter does. There is a regression test that
       // posts one and then reads the ticket back as the user.
-      `SELECT m.ticket_id, m.author_role, m.body, m.created_at
+      `SELECT m.ticket_id, m.author_role, m.body, m.image, m.created_at
        FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
        WHERE s.user_id = ? AND m.author_role <> 'internal'
        ORDER BY m.created_at ASC`,
       userId,
     );
-    const byTicket = new Map<string, { author_role: string; body: string; created_at: string }[]>();
+    const byTicket = new Map<string, { author_role: string; body: string; image: string | null; created_at: string }[]>();
     for (const m of messages) {
       const list = byTicket.get(m.ticket_id) ?? [];
-      list.push({ author_role: m.author_role, body: m.body, created_at: m.created_at });
+      list.push({ author_role: m.author_role, body: m.body, image: m.image, created_at: m.created_at });
       byTicket.set(m.ticket_id, list);
     }
     return {
       tickets: tickets.map((t) => ({
         id: t.id, subject: t.subject, status: t.status, at: t.created_at,
-        updatedAt: t.updated_at, messages: byTicket.get(t.id as string) ?? [],
+        updatedAt: t.updated_at, rating: t.rating,
+        messages: byTicket.get(t.id as string) ?? [],
       })),
     };
   }));
 
   // Add a message to my own ticket (reopens it so staff see it again).
-  const replySchema = z.object({ message: z.string().min(1).max(2000) });
+  const replySchema = z.object({
+    message: z.string().min(1).max(2000),
+    image: z.string().max(3_000_000).optional().nullable(),
+  });
   app.post("/support/tickets/:id/messages", guard(async (userId, req, reply) => {
     const parsed = replySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Type your message first." });
@@ -869,13 +893,34 @@ export async function appRoutes(app: FastifyInstance) {
     // Ownership check — a user may only post to their own ticket.
     const ticket = await sql.get<{ id: string }>("SELECT id FROM support_tickets WHERE id = ? AND user_id = ?", id, userId);
     if (!ticket) return reply.code(404).send({ error: "Ticket not found." });
+    const image = parseTicketImage(parsed.data.image);
     await sql.tx(async (t) => {
       await t.run(
-        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?, 'user', ?,?,?)",
-        newId(), id, userId, parsed.data.message, now(),
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, image, created_at) VALUES (?,?, 'user', ?,?,?,?)",
+        newId(), id, userId, parsed.data.message, image, now(),
       );
       await t.run("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", now(), id);
     });
+    return { ok: true };
+  }));
+
+  // "How was our support?" — one rating, ever, per ticket (founder, 2026-09-02).
+  // Only accepted once the ticket is CLOSED and has never been rated: the WHERE
+  // clause does the enforcement (not a pre-read + separate write), so two
+  // taps racing each other can only ever have one of them actually change a row.
+  const ratingSchema = z.object({ rating: z.enum(["bad", "okay", "great"]) });
+  app.post("/support/tickets/:id/rating", guard(async (userId, req, reply) => {
+    const parsed = ratingSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Pick Bad, Okay or Great." });
+    const id = (req.params as { id: string }).id;
+    const res = await sql.run(
+      `UPDATE support_tickets SET rating = ?, rated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'closed' AND rating IS NULL`,
+      parsed.data.rating, now(), id, userId,
+    );
+    if (!res.rowCount) {
+      return reply.code(400).send({ error: "This ticket cannot be rated right now." });
+    }
     return { ok: true };
   }));
 }

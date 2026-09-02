@@ -45,6 +45,9 @@ export function SupportQueuePanel() {
       render: (t) => (
         <div className="min-w-0">
           <span className="block truncate font-medium text-brand-ink">{t.subject}</span>
+          {/* A real inbox shows what was last said, not just the subject line
+              (founder, 2026-09-02). */}
+          {t.lastMessage && <span className="block truncate text-xs text-muted">{t.lastMessage}</span>}
           {status === "all" && <StatusBadge status={t.status} />}
         </div>
       ),
@@ -69,10 +72,21 @@ export function SupportQueuePanel() {
   ];
 
   if (open) {
+    // The person asking, not the ticket id, is the headline (founder,
+    // 2026-09-02: "show the user name of the person instead of ticket"). The
+    // subject stays visible as a subline, and the ticket/user ids are still a
+    // tap away as CopyId chips.
+    const identity = displayIdentity({
+      email: open.userEmail, username: open.userUsername, displayName: open.userDisplayName,
+      telegramUsername: open.userTelegramUsername, telegramName: open.userTelegramName,
+    });
     return (
       <DetailLayout
-        breadcrumb={[{ label: "Support tickets", onClick: () => setOpen(null) }, { label: open.subject }]}
-        title={open.subject}
+        breadcrumb={[{ label: "Support tickets", onClick: () => setOpen(null) }, { label: identity }]}
+        title={<>
+          {identity}
+          <span className="mt-0.5 block text-sm font-normal text-muted">{open.subject}</span>
+        </>}
         ids={[{ label: "ticket", value: open.id }, { label: "user", value: open.userId }]}
         badges={<StatusBadge status={open.status} />}
         tabs={[{

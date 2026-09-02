@@ -49,7 +49,7 @@ export function DetailLayout(p: Props) {
       </nav>
 
       {/* header */}
-      <div className="rounded-lg border border-line bg-card p-4">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-lg font-bold text-brand-ink">{p.title}</h2>

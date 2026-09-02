@@ -111,6 +111,13 @@ export const SearchIcon = (p: IconProps) => (
 export const SlidersIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M18 18h2" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></svg>
 );
+export const ImageIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <circle cx="8.5" cy="9.5" r="1.5" />
+    <path d="m5 18 5-5.5 3 3 3-4 4 6.5" />
+  </svg>
+);
 export const InboxIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M4 13h4l2 3h4l2-3h4" /><path d="M5 13 6.5 5h11L19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-5Z" /></svg>
 );

@@ -28,3 +28,19 @@ export async function minWithdrawPointsNow(): Promise<number> {
 export async function appName(): Promise<string> {
   return (await getSetting("app_name", "")) || "RoziPay";
 }
+
+/**
+ * How many hours an "answered" ticket waits with no reply before it
+ * auto-closes (ticketAutoClose.ts). 0 = never auto-close.
+ *
+ * Unlike minWithdrawPointsNow, 0 is a real, deliberate value here (not "not
+ * set") — so an unset row (getSetting returns "") falls back to the config
+ * default, but an explicit "0" is honoured as "off" rather than being
+ * treated as invalid and silently replaced.
+ */
+export async function ticketAutoCloseHoursNow(): Promise<number> {
+  const raw = await getSetting("ticket_auto_close_hours", "");
+  if (raw === "") return config.ticketAutoCloseHours;
+  const stored = Number(raw);
+  return Number.isFinite(stored) && stored >= 0 ? stored : config.ticketAutoCloseHours;
+}

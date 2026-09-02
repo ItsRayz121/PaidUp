@@ -10,9 +10,11 @@ import {
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo, displayIdentity } from "@/lib/format";
+import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { useToast } from "@/components/staff/toast";
+import { toTicketImageDataUrl } from "@/lib/imageUpload";
+import { ImageIcon, XIcon } from "@/components/icons";
 
 // ---- Live refresh bar (founder, 2026-08-27) --------------------------------
 // The money/fraud queues were pull-on-load only — open the panel, see a
@@ -130,16 +132,23 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
   const thread = useApi(() => fetchStaffTicket(id), [id]);
   const [reply, setReply] = useState("");
   const [internal, setInternal] = useState(false);
+  const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function send(close: boolean) {
     setBusy(true); setErr(null);
     try {
-      await replyStaffTicket(id, reply.trim(), close, internal);
-      setReply(""); setInternal(false); thread.reload(); onChange();
+      await replyStaffTicket(id, reply.trim(), close, internal, image);
+      setReply(""); setInternal(false); setImage(null); thread.reload(); onChange();
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
+  }
+
+  async function pickImage(file: File | undefined) {
+    if (!file) return;
+    try { setImage(await toTicketImageDataUrl(file)); }
+    catch (e) { setErr((e as Error).message); }
   }
 
   async function patch(p: { assignedTo?: string | null; status?: string }) {
@@ -155,17 +164,11 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
 
   return (
     <div className="space-y-3 border-t border-line p-3">
-      {/* Who this person is, before you answer them. A support reply written
-          without knowing their ID status or country is where wrong answers
-          come from. */}
+      {/* WHO this is now leads the page (DetailLayout's title, in
+          SupportQueue.tsx) — this line is the context a reply needs beyond
+          the name: country, ID status, account status. */}
       <p className="text-xs text-muted">
-        {displayIdentity({
-          email: info.userEmail as string | null, username: info.userUsername as string | null,
-          displayName: info.userDisplayName as string | null,
-          telegramUsername: info.userTelegramUsername as string | null,
-          telegramName: info.userTelegramName as string | null,
-        })}
-        {info.country ? ` · ${String(info.country)}` : ""}
+        {info.country ? String(info.country) : "Country unknown"}
         {` · id: ${String(info.kycStatus ?? "none")}`}
         {String(info.userStatus) !== "active" && (
           <span className="ms-1 font-semibold text-danger">account {String(info.userStatus)}</span>
@@ -186,6 +189,10 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
                 : `max-w-[85%] rounded-lg p-2 text-sm ${isStaff ? "ml-auto bg-brand text-white" : "bg-brand-tint text-brand-ink"}`
             }>
               <p className="whitespace-pre-wrap">{m.body}</p>
+              {m.image && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.image} alt="" className="mt-1.5 max-h-56 w-auto rounded" />
+              )}
               <p className={`mt-1 text-[11px] ${isStaff && !isNote ? "text-white/70" : "text-muted"}`}>
                 {isNote ? "Internal note — the user cannot see this" : isStaff ? "Staff" : "User"}
                 {" · "}{timeAgo(m.created_at)}
@@ -193,6 +200,19 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
             </div>
           );
         })}
+        {/* The closed state used to just hide the reply box with nothing
+            marking WHEN it closed (founder, 2026-09-02: a proper "chat
+            closed" divider). updatedAt is the ticket's own last-touched
+            time, which for a closed ticket is exactly the close moment —
+            nothing can update a closed ticket without reopening it first. */}
+        {String(info.status) === "closed" && (
+          <div className="flex items-center gap-2 py-1 text-[11px] text-muted">
+            <span className="h-px flex-1 bg-line" aria-hidden />
+            Chat closed{info.updatedAt ? ` · ${timeAgo(String(info.updatedAt))}` : ""}
+            {info.rating ? ` · rated ${String(info.rating)}` : " · not rated yet"}
+            <span className="h-px flex-1 bg-line" aria-hidden />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-1.5 text-xs">
@@ -216,6 +236,21 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
         className={`w-full rounded-md border p-2 text-sm outline-none ${
           internal ? "border-dashed border-pending bg-pending-tint/30" : "border-line bg-card"
         }`} />
+      {image ? (
+        <div className="flex items-center gap-2 text-xs">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={image} alt="" className="h-12 w-12 rounded object-cover" />
+          <span className="text-muted">Photo attached</span>
+          <button type="button" onClick={() => setImage(null)} disabled={busy}
+            className="rounded-full bg-brand-tint p-1 text-brand disabled:opacity-50"><XIcon size={13} /></button>
+        </div>
+      ) : (
+        <label className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded border border-line px-2 py-1 text-xs font-semibold text-brand">
+          <ImageIcon size={14} /> Attach a photo
+          <input type="file" accept="image/*" className="hidden" disabled={busy}
+            onChange={(e) => pickImage(e.target.files?.[0])} />
+        </label>
+      )}
       <label className="flex items-center gap-1.5 text-xs text-muted">
         <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
         Internal note — not sent to the user, and it leaves the ticket open

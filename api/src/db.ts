@@ -540,6 +540,19 @@ const MIGRATIONS = `
   ALTER TABLE ticket_messages ADD CONSTRAINT ticket_messages_author_role_check
     CHECK (author_role IN ('user','staff','internal'));
   ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+  -- A CSAT rating (founder, 2026-09-02: "how was our support?"). One rating,
+  -- ever, per ticket — the route only accepts it while status = 'closed' AND
+  -- rating IS NULL, so a reopened-then-reclosed ticket cannot be re-rated to
+  -- overwrite an honest bad score with a better one.
+  ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS rating TEXT CHECK (rating IN ('bad','okay','great'));
+  ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS rated_at TEXT;
+  -- One optional image per message, on both sides (founder, 2026-09-02: "there
+  -- should be option for upload of the images, so that on both sides"). Stored
+  -- the same shape as user_avatars.image (a data: URL, MAGIC-BYTE SNIFFED by
+  -- the same parseDataUrl() the avatar and KYC uploads already use — a support
+  -- chat photo is served straight back into the page, so the same stored-XSS
+  -- risk applies, not a lesser one).
+  ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS image TEXT;
 
   -- ---- STAFF ROLES & AUDIT ------------------------------------------------
   -- Roles are job-shaped now, not a three-rung ladder (see permissions.ts for

@@ -3,7 +3,7 @@
 // A ticket in status 'answered' means staff replied last and the status has
 // not moved since — a user reply flips it straight back to 'open'
 // (routes/app.ts). So an 'answered' ticket whose `updated_at` is older than
-// config.ticketAutoCloseDays is, by construction, "we answered, and they
+// the admin-tunable auto-close window is, by construction, "we answered, and they
 // never replied again." That is not the same thing as an unresolved ticket,
 // and leaving it open forever just inflates the "open tickets" number the
 // dashboard and every support agent watches.
@@ -13,13 +13,14 @@
 // staff-only note) so the ticket's own thread explains why it closed itself,
 // rather than a ticket just going quiet with no record of what happened.
 import { sql, now, newId } from "./db.ts";
-import { config } from "./config.ts";
+import { ticketAutoCloseHoursNow } from "./settingsRuntime.ts";
 
 const SYSTEM_AUTHOR = "system:auto-close";
 
 export async function tickTicketAutoClose(): Promise<{ closed: number }> {
-  if (config.ticketAutoCloseDays <= 0) return { closed: 0 };
-  const cutoff = new Date(Date.now() - config.ticketAutoCloseDays * 24 * 60 * 60 * 1000).toISOString();
+  const hours = await ticketAutoCloseHoursNow();
+  if (hours <= 0) return { closed: 0 };
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
   const stale = await sql.all<{ id: string }>(
     "SELECT id FROM support_tickets WHERE status = 'answered' AND updated_at < ?",
@@ -39,7 +40,7 @@ export async function tickTicketAutoClose(): Promise<{ closed: number }> {
       await tx.run(
         "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, created_at) VALUES (?,?,?,?,?,?)",
         newId(), t.id, "internal", SYSTEM_AUTHOR,
-        `Closed automatically — no reply from the user for ${config.ticketAutoCloseDays} days after our answer.`,
+        `Closed automatically — no reply from the user for ${hours} hour${hours === 1 ? "" : "s"} after our answer.`,
         now(),
       );
       await tx.run(

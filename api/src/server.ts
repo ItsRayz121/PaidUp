@@ -300,11 +300,17 @@ setInterval(() => {
 }, RECONCILE_INTERVAL_MS).unref();
 
 // ---- Support tickets: auto-close a stale 'answered' ticket — ticketAutoClose.ts
-// Same cadence as reconciliation above: not time-critical, one pass an hour is
-// plenty for a days-long staleness window.
+// ⚠️ ITS OWN, FINER cadence — NOT the hourly reconcile interval above. The
+// window this checks against is admin-tunable in HOURS now (default 3,
+// founder 2026-09-02: "close after two or three hours"), so an hourly tick
+// could sit for up to another full hour past a short window before catching
+// it — a third of the window itself. A cheap SELECT every 10 minutes keeps
+// the close within a small fraction of whatever the admin sets, even at the
+// lowest sane setting.
+const TICKET_AUTO_CLOSE_TICK_MS = 10 * 60 * 1000;
 setInterval(() => {
   void tickTicketAutoClose().catch((err) => app.log.error({ err }, "Ticket auto-close tick failed"));
-}, RECONCILE_INTERVAL_MS).unref();
+}, TICKET_AUTO_CLOSE_TICK_MS).unref();
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
