@@ -301,16 +301,16 @@ async function failJob(
     };
   }
 
-  const r = await t.get<{ user_id: string; amount: string }>(
+  const r = await t.get<{ user_id: string; amount: string; chain: string }>(
     `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = 'system:auto', reviewed_at = ?
-     WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+     WHERE id = ? AND status = 'sending' RETURNING user_id, amount, chain`,
     `Could not send automatically: ${error}`, now(), job.request_id,
   );
   if (!r) return null;
   await postUsdt({
     userId: r.user_id, micro: Number(r.amount), direction: "credit",
     sourceType: "refund", sourceRefId: job.request_id,
-    note: "Could not send automatically — money returned to your balance",
+    note: "Could not send automatically — money returned to your balance", chain: r.chain,
   }, t);
   return {
     userId: r.user_id, title: "About your refund",

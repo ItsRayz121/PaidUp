@@ -721,9 +721,9 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     const b = z.object({ reason: z.string().min(3).max(300) }).parse(req.body);
 
     return sql.tx(async (t) => {
-      const claimed = await t.get<{ user_id: string; amount: string }>(
+      const claimed = await t.get<{ user_id: string; amount: string; chain: string }>(
         `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = ?, reviewed_at = ?
-         WHERE id = ? AND status = 'pending' RETURNING user_id, amount`,
+         WHERE id = ? AND status = 'pending' RETURNING user_id, amount, chain`,
         b.reason, userId, now(), id,
       );
       if (!claimed) throw { statusCode: 409, message: "That refund was already handled." };
@@ -734,6 +734,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       await postUsdt({
         userId: claimed.user_id, micro: Number(claimed.amount), direction: "credit",
         sourceType: "refund", sourceRefId: id, note: "Refund declined — money returned to your balance",
+        chain: claimed.chain,
       }, t);
       await logAudit({
         actorUserId: userId, actorRole: role, action: "usdt_refund_reject",
