@@ -868,7 +868,12 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // else.
   app.get("/staff/task-proofs", staffGuard("tasks.review", async (_ctx, req) => {
     const q = req.query as { status?: string; taskId?: string; q?: string; sort?: string; dir?: string; limit?: string; offset?: string };
-    const status = z.enum(["pending", "approved", "rejected"]).catch("pending").parse(q.status);
+    // Two-step release (2026-09-01) split the old "approved" bucket in two:
+    //   reward_pending — an Agent accepted the evidence, reward not sent yet
+    //   paid           — creditCompletion() has run, reward on the user's balance
+    // `approved` is still accepted from an older client and means `paid`.
+    const rawStatus = z.enum(["pending", "reward_pending", "paid", "approved", "rejected"]).catch("pending").parse(q.status);
+    const status = rawStatus === "approved" ? "paid" : rawStatus;
     const taskId = (q.taskId ?? "").trim();
     const search = (q.q ?? "").trim().toLowerCase();
     // Pagination (admin rebuild, Phase D). The queue used to hand back up to 200
@@ -878,8 +883,13 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     // Oldest-waiting-first is the review default; a whitelisted toggle only.
     const dir = q.dir === "desc" ? "DESC" : "ASC";
 
-    const where: string[] = ["p.status = ?"];
-    const args: unknown[] = [status];
+    const statusWhere =
+      status === "pending" ? "p.status = 'pending'"
+      : status === "reward_pending" ? "p.status = 'approved' AND p.reward_status = 'pending'"
+      : status === "paid" ? "p.status = 'approved' AND p.reward_status = 'sent'"
+      : "p.status = 'rejected'";
+    const where: string[] = [`(${statusWhere})`];
+    const args: unknown[] = [];
     if (taskId) { where.push("p.task_id = ?"); args.push(taskId); }
     if (search) {
       // Email or @handle. LOWER on both sides rather than ILIKE so PGlite and
@@ -890,20 +900,30 @@ export async function staffTaskRoutes(app: FastifyInstance) {
 
     const proofs = await sql.all<Record<string, unknown>>(
       `SELECT p.id, p.task_id, p.user_id, p.proof_text, p.answers, p.status, p.review_note,
-              p.created_at, p.reviewed_at,
+              p.created_at, p.reviewed_at, p.reward_status, p.released_at,
               u.email AS user_email, u.username AS user_handle, u.country AS user_country,
+              u.display_name AS user_display_name,
               u.created_at AS user_joined,
               COALESCE(p.task_title_snapshot, t.title) AS task_title,
               COALESCE(p.reward_points, t.points) AS task_points,
               COALESCE(p.reward_rozi_micro, t.reward_rozi_micro) AS task_rozi_micro,
               COALESCE(p.reward_usdt_micro, t.reward_usdt_micro) AS task_usdt_micro,
+              t.reward_rozi_micro AS task_defined_rozi_micro,
+              t.reward_usdt_micro AS task_defined_usdt_micro,
               t.proof_label, t.category,
               COALESCE(p.task_logo_asset_snapshot, t.logo_asset_id) AS task_logo_asset_id,
-              r.email AS reviewer_email
+              r.email AS reviewer_email,
+              rl.email AS releaser_email,
+              -- The user's saved cash-out wallet, so a reviewer can see where
+              -- their eventual USDT withdrawal will land. One chain is offered
+              -- (BEP20), so this join is one row.
+              pa.address AS user_payout_address, pa.verified_at AS user_payout_verified_at
        FROM task_proofs p
        JOIN users u ON u.id = p.user_id
        JOIN tasks t ON t.id = p.task_id
        LEFT JOIN users r ON r.id = p.reviewed_by
+       LEFT JOIN users rl ON rl.id = p.released_by
+       LEFT JOIN payout_addresses pa ON pa.user_id = p.user_id AND pa.chain = 'bep20'
        WHERE ${where.join(" AND ")}
        ORDER BY p.created_at ${dir} LIMIT ? OFFSET ?`,
       ...args, limit, offset,
@@ -917,11 +937,20 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     // ⚠️ THE COUNTS ARE OVER ALL PROOFS, NEVER THE CURRENT FILTER — the same
     // rule the support queue follows (stage 6). A "pending" number that shrank
     // because someone typed a search would be read as the backlog clearing.
-    const countRows = await sql.all<{ status: string; n: string | number }>(
-      "SELECT status, COUNT(*) AS n FROM task_proofs GROUP BY status",
+    const countRow = await sql.get<Record<string, string | number>>(
+      `SELECT
+         SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN status='approved' AND reward_status='pending' THEN 1 ELSE 0 END) AS reward_pending,
+         SUM(CASE WHEN status='approved' AND reward_status='sent' THEN 1 ELSE 0 END) AS paid,
+         SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS rejected
+       FROM task_proofs`,
     );
-    const counts = { pending: 0, approved: 0, rejected: 0 } as Record<string, number>;
-    for (const c of countRows) counts[c.status] = Number(c.n);
+    const counts = {
+      pending: Number(countRow?.pending ?? 0),
+      reward_pending: Number(countRow?.reward_pending ?? 0),
+      paid: Number(countRow?.paid ?? 0),
+      rejected: Number(countRow?.rejected ?? 0),
+    } as Record<string, number>;
 
     // The user's own record, so a reviewer can see a repeat rejection without
     // opening another screen. One grouped query for the whole page rather than
@@ -968,38 +997,63 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     };
   }));
 
-  // ---- Approve / reject a proof -------------------------------------------
+  // ---- Approve / reject a proof (STEP 1 — no credit) --------------------
+  //
+  // TWO-STEP RELEASE (founder, 2026-09-01). Approving a proof no longer pays
+  // it. It records the human decision on the EVIDENCE and locks in the reward
+  // amounts (the Agent may reduce either currency here — skip the USDT, zero
+  // the ROZI — but never raise it above what the user was promised). The
+  // reward lands only when `/release` runs creditCompletion(). So a user's
+  // journey reads: Under review -> Approved, reward on the way -> Reward sent.
   app.post("/staff/task-proofs/:id/decision", staffGuard("tasks.review", async ({ userId, role }, req) => {
     const proofId = (req.params as { id: string }).id;
     const b = z.object({
       action: z.enum(["approve", "reject"]),
       note: z.string().max(500).optional(),
+      // Agent-adjusted reward, in micro. Absent => the full promised amount.
+      roziMicro: z.number().int().nonnegative().optional(),
+      usdtMicro: z.number().int().nonnegative().optional(),
     }).parse(req.body ?? {});
-    return decideProof(app, { userId, role }, proofId, b.action, b.note);
+    return decideProof({ userId, role }, proofId, b.action, b.note, {
+      roziMicro: b.roziMicro, usdtMicro: b.usdtMicro,
+    });
+  }));
+
+  // ---- Release the reward (STEP 2 — the credit) ------------------------
+  // Runs the SAME creditCompletion() path a network postback uses (referral
+  // bonuses, velocity caps, campaign budget, mining boost). Idempotent: the
+  // completion is keyed on `proof:<id>`, so a double-release is a no-op.
+  app.post("/staff/task-proofs/:id/release", staffGuard("tasks.review", async ({ userId, role }, req) => {
+    const proofId = (req.params as { id: string }).id;
+    return releaseProof(app, { userId, role }, proofId);
   }));
 
   // ---- Decide several at once ---------------------------------------------
   //
   // ⚠️ A BULK DECISION IS N SEPARATE DECISIONS, NOT ONE. Each row goes through
-  // exactly the same creditCompletion() path as a single click, and each gets
-  // its own outcome back — because the interesting cases are per-row: one user
-  // is over a velocity cap, the campaign runs out of budget halfway down the
-  // list, a row was already reviewed in another tab. Wrapping the lot in one
-  // transaction would mean one blocked user silently undoing forty good
-  // approvals, and reporting a single ok/error would mean a reviewer believing
-  // they had cleared a queue they had not.
+  // exactly the same path as a single click, and each gets its own outcome
+  // back — because the interesting cases are per-row: one user is over a
+  // velocity cap, the campaign runs out of budget halfway down the list, a row
+  // was already reviewed in another tab. Wrapping the lot in one transaction
+  // would mean one blocked user silently undoing forty good approvals, and
+  // reporting a single ok/error would mean a reviewer believing they had
+  // cleared a queue they had not.
   app.post("/staff/task-proofs/bulk", staffGuard("tasks.review", async ({ userId, role }, req) => {
     const b = z.object({
       ids: z.array(z.string().max(64)).min(1).max(50),
-      action: z.enum(["approve", "reject"]),
+      action: z.enum(["approve", "reject", "release"]),
       note: z.string().max(500).optional(),
     }).parse(req.body ?? {});
 
     const results: { id: string; ok: boolean; error?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number }[] = [];
     for (const id of [...new Set(b.ids)]) {
-      const r = await decideProof(app, { userId, role }, id, b.action, b.note) as
-        { ok: boolean; error?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number };
-      results.push({ id, ok: r.ok, error: r.error, credited: r.credited, creditedRoziMicro: r.creditedRoziMicro, creditedUsdtMicro: r.creditedUsdtMicro });
+      const r = b.action === "release"
+        ? await releaseProof(app, { userId, role }, id)
+        : await decideProof({ userId, role }, id, b.action, b.note, {});
+      results.push({
+        id, ok: r.ok, error: r.error,
+        credited: r.credited, creditedRoziMicro: r.creditedRoziMicro, creditedUsdtMicro: r.creditedUsdtMicro,
+      });
     }
     return {
       ok: true,
@@ -1013,119 +1067,158 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 }
 
-// One decision, shared by the single-click route and the bulk route so the two
-// can never drift into different rules about what an approval means.
+type ProofOutcome = {
+  ok: boolean; error?: string; status?: string; duplicate?: boolean;
+  rewardStatus?: "pending" | "sent"; roziMicro?: number; usdtMicro?: number;
+  credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number;
+};
+
+// STEP 1. Accept or reject the evidence. NO ledger write happens here.
+// Shared by the single-click and bulk routes so the two can never drift.
 async function decideProof(
-  app: FastifyInstance,
   ctx: { userId: string; role: Role },
   proofId: string,
   action: "approve" | "reject",
   note: string | undefined,
-) {
-  {
-    const { userId, role } = ctx;
-    const b = { action, note };
+  amounts: { roziMicro?: number; usdtMicro?: number },
+): Promise<ProofOutcome> {
+  const { userId, role } = ctx;
 
-    const proof = await sql.get<{
-      id: string; task_id: string; user_id: string; status: string;
-      reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
-    }>(`SELECT id, task_id, user_id, status, reward_points, reward_rozi_micro, reward_usdt_micro
-         FROM task_proofs WHERE id = ?`, proofId);
-    if (!proof) return { ok: false, error: "not found" };
-    if (proof.status !== "pending") return { ok: false, error: "already reviewed" };
+  const proof = await sql.get<{
+    id: string; task_id: string; user_id: string; status: string; reward_status: string | null;
+    reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
+  }>(`SELECT id, task_id, user_id, status, reward_status, reward_points, reward_rozi_micro, reward_usdt_micro
+       FROM task_proofs WHERE id = ?`, proofId);
+  if (!proof) return { ok: false, error: "not found" };
 
-    if (b.action === "reject") {
-      await sql.run(
-        "UPDATE task_proofs SET status = 'rejected', review_note = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
-        b.note ?? null, userId, now(), proofId,
-      );
-      await logAudit({
-        actorUserId: userId, actorRole: role, action: "task_proof_reject",
-        targetUserId: proof.user_id, detail: `proof ${proofId}${b.note ? `: ${b.note}` : ""}`,
-      });
-      return { ok: true, status: "rejected" };
-    }
+  // Reject is allowed while still pending AND on a proof an Agent approved but
+  // has NOT released — nothing has been credited, so this is safe Agent-error
+  // recovery. Once the reward is sent, the decision is final.
+  const approvedUnreleased = proof.status === "approved" && proof.reward_status === "pending";
 
-    // APPROVE. Read the task's reward + this source's referral config, then run
-    // the SHARED credit path. externalId ties the credit to the proof, so a
-    // re-submission after this can't double-pay (idempotency on network+external_id).
-    const task = await sql.get<{
-      points: number; reward_rozi_micro: string | number; reward_usdt_micro: string | number;
-      reward_type: "points" | "rozi" | "usdt" | "both";
-    }>(
-      "SELECT points, reward_rozi_micro, reward_usdt_micro, reward_type FROM tasks WHERE id = ? AND source = 'custom'",
-      proof.task_id,
-    );
-    if (!task) return { ok: false, error: "task missing" };
-    // Snapshot on the proof wins — an edit after submission must not change
-    // what a waiting user was promised (same rule as fee_points on a
-    // withdrawal). Custom tasks pay real mined-token ROZI now (founder,
-    // 2026-08-29); `points` stays 0 for them.
-    const rewardPoints = proof.reward_points ?? task.points ?? 0;
-    const rewardRoziMicro = Number(proof.reward_rozi_micro ?? task.reward_rozi_micro ?? 0);
-    const rewardUsdtMicro = Number(proof.reward_usdt_micro ?? task.reward_usdt_micro ?? 0);
-    const rewardType = rewardRoziMicro > 0 && rewardUsdtMicro > 0 ? "both"
-      : rewardUsdtMicro > 0 ? "usdt"
-      : rewardRoziMicro > 0 ? "rozi"
-      : "points";
-
-    const net = await sql.get<NetworkRow>(
-      `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
-       FROM networks WHERE id = ?`, CUSTOM_NETWORK,
-    );
-
-    const outcome = await creditCompletion({
-      userId: proof.user_id, network: CUSTOM_NETWORK, externalId: `proof:${proofId}`,
-      taskId: proof.task_id, points: rewardPoints, usdtMicro: rewardUsdtMicro,
-      roziMicro: rewardRoziMicro,
-      rewardType, offerType: "custom",
-      payload: { proofId, approvedBy: userId },
-      net,
-      // A proof must NOT burn the external_id on a velocity block — see the field
-      // doc on CreditRequest. The proof simply stays pending and can be approved
-      // again once the user is back under their cap.
-      recordRejection: false,
-    }, app.log);
-
-    if (outcome.status === "velocity_blocked") {
-      // Leave the proof pending; tell the reviewer why nothing was credited.
-      return { ok: false, error: `Blocked by a fraud cap (${outcome.detail}). The user is over their daily limit — try again later.` };
-    }
-    // The campaign ran out mid-queue. The proof stays PENDING (recordRejection
-    // is false above, so nothing burned its external_id) — but unlike a velocity
-    // block, waiting will not fix this one, so the message says so. Raising the
-    // budget in the task editor makes the same proof approvable again.
-    if (outcome.status === "budget_exhausted") {
-      return {
-        ok: false,
-        error: `This campaign's budget is used up (${outcome.used} of ${outcome.cap} `
-          + `${outcome.reason === "points" ? "points" : outcome.reason === "usdt" ? "micro-USDT" : "conversions"}), so it has paused itself. `
-          + "Raise its budget in Our own tasks to approve this.",
-      };
-    }
-    if (outcome.status === "unknown_user") return { ok: false, error: "user not found" };
-    if (outcome.status === "duplicate") {
-      // Already credited (e.g. a double-click). Mark the proof approved to match.
-      await sql.run(
-        "UPDATE task_proofs SET status = 'approved', review_note = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
-        b.note ?? "already credited", userId, now(), proofId,
-      );
-      return { ok: true, status: "approved", duplicate: true };
-    }
-
-    // Credited. Record the human decision on the proof.
+  if (action === "reject") {
+    if (proof.status !== "pending" && !approvedUnreleased) return { ok: false, error: "already reviewed" };
     await sql.run(
-      "UPDATE task_proofs SET status = 'approved', review_note = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
-      b.note ?? null, userId, now(), proofId,
+      "UPDATE task_proofs SET status = 'rejected', reward_status = NULL, review_note = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+      note ?? null, userId, now(), proofId,
     );
     await logAudit({
-      actorUserId: userId, actorRole: role, action: "task_proof_approve",
-      targetUserId: proof.user_id,
-      detail: `proof ${proofId} -> ${outcome.roziMicro} micro-ROZI + ${outcome.usdtMicro} micro-USDT`,
+      actorUserId: userId, actorRole: role, action: "task_proof_reject",
+      targetUserId: proof.user_id, detail: `proof ${proofId}${note ? `: ${note}` : ""}`,
     });
+    return { ok: true, status: "rejected" };
+  }
+
+  // APPROVE.
+  if (proof.status !== "pending") return { ok: false, error: "already reviewed" };
+  const task = await sql.get<{ points: number; reward_rozi_micro: string | number; reward_usdt_micro: string | number }>(
+    "SELECT points, reward_rozi_micro, reward_usdt_micro FROM tasks WHERE id = ? AND source = 'custom'",
+    proof.task_id,
+  );
+  if (!task) return { ok: false, error: "task missing" };
+
+  // Ceiling = what the user was promised: the proof snapshot if set, else the
+  // task's value (same COALESCE the old one-step path used). The Agent's number
+  // is clamped into [0, ceiling] — an Agent can withhold a currency, never
+  // inflate a payout.
+  const roziCeil = Number(proof.reward_rozi_micro ?? task.reward_rozi_micro ?? 0);
+  const usdtCeil = Number(proof.reward_usdt_micro ?? task.reward_usdt_micro ?? 0);
+  const roziMicro = Math.min(roziCeil, Math.max(0, Math.trunc(amounts.roziMicro ?? roziCeil)));
+  const usdtMicro = Math.min(usdtCeil, Math.max(0, Math.trunc(amounts.usdtMicro ?? usdtCeil)));
+
+  await sql.run(
+    `UPDATE task_proofs SET status = 'approved', reward_status = 'pending',
+       reward_rozi_micro = ?, reward_usdt_micro = ?, review_note = ?, reviewed_by = ?, reviewed_at = ?
+     WHERE id = ?`,
+    roziMicro, usdtMicro, note ?? null, userId, now(), proofId,
+  );
+  await logAudit({
+    actorUserId: userId, actorRole: role, action: "task_proof_approve",
+    targetUserId: proof.user_id,
+    detail: `proof ${proofId} accepted -> reward on the way (${roziMicro} micro-ROZI + ${usdtMicro} micro-USDT)`,
+  });
+  return { ok: true, status: "approved", rewardStatus: "pending", roziMicro, usdtMicro };
+}
+
+// STEP 2. Pay the (possibly Agent-adjusted) reward through the shared credit
+// path. Only an approved, not-yet-released proof is eligible.
+async function releaseProof(
+  app: FastifyInstance,
+  ctx: { userId: string; role: Role },
+  proofId: string,
+): Promise<ProofOutcome> {
+  const { userId, role } = ctx;
+
+  const proof = await sql.get<{
+    id: string; task_id: string; user_id: string; status: string; reward_status: string | null;
+    reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
+  }>(`SELECT id, task_id, user_id, status, reward_status, reward_points, reward_rozi_micro, reward_usdt_micro
+       FROM task_proofs WHERE id = ?`, proofId);
+  if (!proof) return { ok: false, error: "not found" };
+  if (proof.status !== "approved" || proof.reward_status !== "pending") {
+    return { ok: false, error: proof.reward_status === "sent" ? "reward already sent" : "approve it first" };
+  }
+
+  const task = await sql.get<{ points: number; reward_rozi_micro: string | number; reward_usdt_micro: string | number }>(
+    "SELECT points, reward_rozi_micro, reward_usdt_micro FROM tasks WHERE id = ? AND source = 'custom'",
+    proof.task_id,
+  );
+  if (!task) return { ok: false, error: "task missing" };
+
+  // The snapshot on the proof is authoritative — it already holds the
+  // Agent-adjusted amounts written at approve time.
+  const rewardPoints = proof.reward_points ?? task.points ?? 0;
+  const rewardRoziMicro = Number(proof.reward_rozi_micro ?? task.reward_rozi_micro ?? 0);
+  const rewardUsdtMicro = Number(proof.reward_usdt_micro ?? task.reward_usdt_micro ?? 0);
+  const rewardType = rewardRoziMicro > 0 && rewardUsdtMicro > 0 ? "both"
+    : rewardUsdtMicro > 0 ? "usdt"
+    : rewardRoziMicro > 0 ? "rozi"
+    : "points";
+
+  const net = await sql.get<NetworkRow>(
+    `SELECT status, referral_bonus_pct, referral_bonus_pct_l2, referral_first_task_bonus, referral_bonus_days
+     FROM networks WHERE id = ?`, CUSTOM_NETWORK,
+  );
+
+  const outcome = await creditCompletion({
+    userId: proof.user_id, network: CUSTOM_NETWORK, externalId: `proof:${proofId}`,
+    taskId: proof.task_id, points: rewardPoints, usdtMicro: rewardUsdtMicro, roziMicro: rewardRoziMicro,
+    rewardType, offerType: "custom",
+    payload: { proofId, releasedBy: userId },
+    net,
+    // A blocked release must NOT burn the external_id — the proof stays
+    // 'reward pending' and can be released again once the block clears.
+    recordRejection: false,
+  }, app.log);
+
+  if (outcome.status === "velocity_blocked") {
+    return { ok: false, error: `Blocked by a fraud cap (${outcome.detail}). The user is over their daily limit — try again later.` };
+  }
+  if (outcome.status === "budget_exhausted") {
     return {
-      ok: true, status: "approved",
-      credited: outcome.points, creditedRoziMicro: outcome.roziMicro, creditedUsdtMicro: outcome.usdtMicro,
+      ok: false,
+      error: `This campaign's budget is used up (${outcome.used} of ${outcome.cap} `
+        + `${outcome.reason === "points" ? "points" : outcome.reason === "usdt" ? "micro-USDT" : "conversions"}), so it has paused itself. `
+        + "Raise its budget in Our own tasks to release this.",
     };
   }
+  if (outcome.status === "unknown_user") return { ok: false, error: "user not found" };
+
+  // credited OR duplicate (a double-release / earlier double-click) — either
+  // way the reward is now on the user's balance, so mark it sent.
+  await sql.run(
+    "UPDATE task_proofs SET reward_status = 'sent', released_by = ?, released_at = ? WHERE id = ?",
+    userId, now(), proofId,
+  );
+  if (outcome.status === "duplicate") return { ok: true, status: "paid", duplicate: true };
+
+  await logAudit({
+    actorUserId: userId, actorRole: role, action: "task_proof_release",
+    targetUserId: proof.user_id,
+    detail: `proof ${proofId} -> ${outcome.roziMicro} micro-ROZI + ${outcome.usdtMicro} micro-USDT`,
+  });
+  return {
+    ok: true, status: "paid",
+    credited: outcome.points, creditedRoziMicro: outcome.roziMicro, creditedUsdtMicro: outcome.usdtMicro,
+  };
 }

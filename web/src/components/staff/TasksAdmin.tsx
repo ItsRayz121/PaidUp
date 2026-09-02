@@ -23,7 +23,7 @@ import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, updateTaskLifecycle,
   deleteCustomTask, fetchTaskMetrics, fetchTasksOverview,
-  fetchTaskProofs, decideTaskProof, decideTaskProofsBulk, taskAssetUrl,
+  fetchTaskProofs, decideTaskProof, releaseTaskProof, decideTaskProofsBulk, taskAssetUrl,
   TASK_CATEGORY_LABELS,
   type CustomTask, type CustomTaskInput, type TaskProof,
 } from "@/lib/api";
@@ -83,6 +83,13 @@ function useQueueControls(q: TableApi, initialStatus: string) {
   const [auto, setAuto] = useState(true);
   const setStatus = (s: string) => { setStatusRaw(s); q.setPage(1); };
   return { status, setStatus, auto, setAuto, pollMs: auto ? QUEUE_POLL_MS : undefined };
+}
+
+// The synthetic display status: the DB `status` is 'approved' for BOTH
+// "reward on the way" and "paid", so split it on `reward_status`.
+function proofState(p: TaskProof): string {
+  if (p.status === "approved") return p.reward_status === "sent" ? "paid" : "reward_pending";
+  return p.status;
 }
 
 function rewardLabel(roziMicro: number, usdtMicro: number): string {
@@ -483,16 +490,28 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
   );
   const rows = data.data?.proofs ?? [];
   async function decide(p: TaskProof, action: "approve" | "reject") {
-    let note: string | undefined;
+    let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
       const n = window.prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
-      note = n;
+      opts = { note: n };
+    } else {
+      const a = askApproveAmounts(p);
+      if (a === null) return;
+      opts = a;
     }
     try {
-      const res = await decideTaskProof(p.id, action, note);
+      const res = await decideTaskProof(p.id, action, opts);
       if (!res.ok) { toast.err(res.error ?? "Could not save."); return; }
-      toast.ok(action === "approve" ? "Approved." : "Rejected.");
+      toast.ok(action === "approve" ? "Approved — reward on the way." : "Rejected.");
+      data.reload(); onDecided();
+    } catch (e) { toast.err((e as Error).message); }
+  }
+  async function release(p: TaskProof) {
+    try {
+      const res = await releaseTaskProof(p.id);
+      if (!res.ok) { toast.err(res.error ?? "Could not release."); return; }
+      toast.ok(`Reward sent — ${rewardLabel(res.creditedRoziMicro ?? 0, res.creditedUsdtMicro ?? 0)}.`);
       data.reload(); onDecided();
     } catch (e) { toast.err((e as Error).message); }
   }
@@ -500,7 +519,7 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
     <div className="space-y-3">
       <StatusTabs options={PROOF_TABS} value={status} onChange={setStatus} counts={data.data?.counts} />
       {data.loading && !data.data ? <p className="text-sm text-muted">Loading…</p>
-        : rows.length === 0 ? <p className="text-sm text-muted">No {status} proofs for this task.</p>
+        : rows.length === 0 ? <p className="text-sm text-muted">No {status.replace(/_/g, " ")} proofs for this task.</p>
         : rows.map((p) => (
           <div key={p.id} className="rounded-md border border-line bg-card p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -519,6 +538,17 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
                   className="rounded-md bg-danger px-3 py-1 text-xs font-semibold text-white">Reject</button>
               </div>
             )}
+            {status === "reward_pending" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted">
+                  Will send {rewardLabel(Number(p.task_rozi_micro ?? 0), Number(p.task_usdt_micro))}
+                </span>
+                <button onClick={() => release(p)}
+                  className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white">Send reward</button>
+                <button onClick={() => decide(p, "reject")}
+                  className="rounded-md bg-danger px-3 py-1 text-xs font-semibold text-white">Reject instead</button>
+              </div>
+            )}
           </div>
         ))}
     </div>
@@ -528,7 +558,40 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
 // ======================================================================
 // 2. Task proofs (the review queue)
 // ======================================================================
-const PROOF_TABS = ["pending", "approved", "rejected"];
+// Two-step release (2026-09-01): "reward pending" = an Agent accepted the
+// evidence but the reward has not been sent; "paid" = the reward was released
+// through creditCompletion().
+const PROOF_TABS = ["pending", "reward_pending", "paid", "rejected"];
+
+// Approve dialog — the Agent confirms (and may trim) the reward before it is
+// locked onto the proof. Cannot exceed what the user was promised.
+function askApproveAmounts(p: TaskProof): { roziMicro?: number; usdtMicro?: number; note?: string } | null {
+  const roziCeil = Number(p.task_rozi_micro ?? 0);
+  const usdtCeil = Number(p.task_usdt_micro ?? 0);
+  let roziMicro = roziCeil;
+  let usdtMicro = usdtCeil;
+  if (roziCeil > 0) {
+    const raw = window.prompt(
+      `ROZI to give (max ${(roziCeil / 1_000_000).toLocaleString()}). Enter 0 to skip it.`,
+      String(roziCeil / 1_000_000),
+    );
+    if (raw === null) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) { window.alert("Not a number."); return null; }
+    roziMicro = Math.min(roziCeil, Math.round(n * 1_000_000));
+  }
+  if (usdtCeil > 0) {
+    const raw = window.prompt(
+      `USDT to give (max ${(usdtCeil / 1_000_000).toFixed(3)}). Enter 0 to skip it.`,
+      String(usdtCeil / 1_000_000),
+    );
+    if (raw === null) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) { window.alert("Not a number."); return null; }
+    usdtMicro = Math.min(usdtCeil, Math.round(n * 1_000_000));
+  }
+  return { roziMicro, usdtMicro };
+}
 
 export function ProofReviewPanel() {
   const q = useTableQuery("tasks:proofs", { pageSize: 25, sort: "created_at", dir: "asc" });
@@ -549,18 +612,31 @@ export function ProofReviewPanel() {
   const taskOptions = data.data?.tasks ?? [];
 
   async function decide(p: TaskProof, action: "approve" | "reject") {
-    let note: string | undefined;
+    let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
       const n = window.prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
-      note = n;
+      opts = { note: n };
+    } else {
+      const a = askApproveAmounts(p);
+      if (a === null) return;
+      opts = a;
     }
     try {
-      const res = await decideTaskProof(p.id, action, note);
+      const res = await decideTaskProof(p.id, action, opts);
       if (!res.ok) { toast.err(res.error ?? "Could not save."); return; }
-      toast.ok(action === "approve"
-        ? `Approved — ${res.credited ?? 0} pts${res.creditedUsdtMicro ? ` + ${formatUsdtMicro(res.creditedUsdtMicro)}` : ""} credited.`
-        : "Rejected.");
+      toast.ok(action === "approve" ? "Approved — reward on the way." : "Rejected.");
+      data.reload();
+      setOpen(null);
+    } catch (e) { toast.err((e as Error).message); }
+  }
+
+  // STEP 2 — pay the reward. This is the one that touches the ledger.
+  async function release(p: TaskProof) {
+    try {
+      const res = await releaseTaskProof(p.id);
+      if (!res.ok) { toast.err(res.error ?? "Could not release."); return; }
+      toast.ok(`Reward sent — ${rewardLabel(res.creditedRoziMicro ?? 0, res.creditedUsdtMicro ?? 0)}.`);
       data.reload();
       setOpen(null);
     } catch (e) { toast.err((e as Error).message); }
@@ -569,8 +645,9 @@ export function ProofReviewPanel() {
   // ⚠️ A BULK DECISION IS N SEPARATE DECISIONS — the summary reports per-row, the
   // same contract decideTaskProofsBulk enforced in the old panel. One user over a
   // velocity cap, or a campaign hitting its budget mid-list, must not read as
-  // "queue cleared".
-  async function bulk(ids: string[], action: "approve" | "reject") {
+  // "queue cleared". Bulk approve pays the FULL promised amount (no per-row
+  // trimming) — trim from the single-row detail.
+  async function bulk(ids: string[], action: "approve" | "reject" | "release") {
     let note: string | undefined;
     if (action === "reject") {
       const n = window.prompt(`Why are you rejecting these ${ids.length}? Every one of them will see this.`);
@@ -580,10 +657,10 @@ export function ProofReviewPanel() {
     try {
       const res = await decideTaskProofsBulk(ids, action, note);
       const first = res.results.find((r) => !r.ok);
+      const paid = res.creditedRoziMicro || res.creditedUsdtMicro
+        ? ` — ${rewardLabel(res.creditedRoziMicro, res.creditedUsdtMicro)}` : "";
       toast.ok(
-        `${res.done} done, ${res.failed} not done`
-        + (res.creditedPoints ? ` — ${formatPoints(res.creditedPoints)} pts` : "")
-        + (res.creditedUsdtMicro ? ` + ${formatUsdtMicro(res.creditedUsdtMicro)}` : "")
+        `${res.done} done, ${res.failed} not done${paid}`
         + (first ? `. First problem: ${first.error}` : "."),
       );
       data.reload();
@@ -629,7 +706,7 @@ export function ProofReviewPanel() {
         </span>
       ),
     },
-    { key: "status", header: "Status", csv: (p) => p.status, render: (p) => <StatusBadge status={p.status} /> },
+    { key: "status", header: "Status", csv: (p) => proofState(p), render: (p) => <StatusBadge status={proofState(p)} /> },
     { key: "created_at", header: "Submitted", sortable: true, csv: (p) => p.created_at, render: (p) => <TimeCell iso={p.created_at} /> },
   ];
 
@@ -645,27 +722,56 @@ export function ProofReviewPanel() {
         breadcrumb={[{ label: "Task proofs", onClick: () => setOpen(null) }, { label: p.task_title }]}
         title={p.user_handle ? `@${p.user_handle}` : p.user_email}
         ids={[{ label: "proof", value: p.id }, { label: "user", value: p.user_id }, { label: "task", value: p.task_id }]}
-        badges={<StatusBadge status={p.status} />}
+        badges={<StatusBadge status={proofState(p)} />}
         tabs={[{
           id: "proof", label: "Proof",
           content: (
             <div className="space-y-3">
-              <div className="rounded-lg border border-line bg-card p-3 text-xs text-muted">
-                {p.user_email}{p.user_country ? ` · ${p.user_country}` : ""}
-                {(p.userHistory.approved > 0 || p.userHistory.rejected > 0) && (
-                  <> · before: <span className="text-success">{p.userHistory.approved} approved</span>
-                    {p.userHistory.rejected > 0 && <span className="text-danger"> · {p.userHistory.rejected} rejected</span>}</>
-                )}
-                {" · reward "}
-                <span className="num text-brand">
+              {/* Who this is — comprehensive, so a reviewer never leaves this
+                  screen to answer "who / where does their money go". */}
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg border border-line bg-card p-3 text-xs">
+                <dt className="text-muted">Name</dt>
+                <dd className="text-brand-ink">{p.user_display_name || "—"}</dd>
+                <dt className="text-muted">Handle</dt>
+                <dd className="text-brand-ink">{p.user_handle ? `@${p.user_handle}` : "—"}</dd>
+                <dt className="text-muted">Email</dt>
+                <dd className="break-all text-brand-ink">{p.user_email}</dd>
+                <dt className="text-muted">Country</dt>
+                <dd className="text-brand-ink">{p.user_country || "—"}</dd>
+                <dt className="text-muted">Joined</dt>
+                <dd className="text-brand-ink">{p.user_joined ? <TimeCell iso={p.user_joined} /> : "—"}</dd>
+                <dt className="text-muted">Cash-out wallet</dt>
+                <dd className="break-all font-mono text-brand-ink">
+                  {p.user_payout_address
+                    ? <>{p.user_payout_address}{p.user_payout_verified_at
+                        ? <span className="ms-1 font-sans text-success">· signed</span>
+                        : <span className="ms-1 font-sans text-muted">· typed in</span>}</>
+                    : <span className="font-sans text-muted">not set yet</span>}
+                </dd>
+                <dt className="text-muted">Reward</dt>
+                <dd className="num text-brand">
                   {p.task_points > 0 ? `${formatPoints(p.task_points)} pts` : rewardLabel(Number(p.task_rozi_micro ?? 0), Number(p.task_usdt_micro))}
-                </span>
-              </div>
+                </dd>
+                {(p.userHistory.approved > 0 || p.userHistory.rejected > 0) && (
+                  <>
+                    <dt className="text-muted">Before</dt>
+                    <dd>
+                      <span className="text-success">{p.userHistory.approved} approved</span>
+                      {p.userHistory.rejected > 0 && <span className="text-danger"> · {p.userHistory.rejected} rejected</span>}
+                    </dd>
+                  </>
+                )}
+              </dl>
               <ProofBody proof={p} />
               {p.review_note && <p className="text-xs text-muted">Note: {p.review_note}</p>}
               {p.reviewer_email && (
                 <p className="text-[11px] text-muted">
-                  Decided by {p.reviewer_email}{p.reviewed_at ? <> · <TimeCell iso={p.reviewed_at} /></> : null}
+                  Accepted by {p.reviewer_email}{p.reviewed_at ? <> · <TimeCell iso={p.reviewed_at} /></> : null}
+                </p>
+              )}
+              {p.releaser_email && (
+                <p className="text-[11px] text-muted">
+                  Reward sent by {p.releaser_email}{p.released_at ? <> · <TimeCell iso={p.released_at} /></> : null}
                 </p>
               )}
             </div>
@@ -676,9 +782,19 @@ export function ProofReviewPanel() {
         dangerZone={p.status === "pending" ? (
           <div className="flex flex-wrap gap-2">
             <button onClick={() => decide(p, "approve")}
-              className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white">Approve &amp; credit</button>
+              className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white">Approve (reward not sent yet)</button>
             <button onClick={() => decide(p, "reject")}
               className="rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-white">Reject</button>
+          </div>
+        ) : p.status === "approved" && p.reward_status === "pending" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">
+              Will send {rewardLabel(Number(p.task_rozi_micro ?? 0), Number(p.task_usdt_micro))} to {p.user_handle ? `@${p.user_handle}` : p.user_email}
+            </span>
+            <button onClick={() => release(p)}
+              className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white">Send reward</button>
+            <button onClick={() => decide(p, "reject")}
+              className="rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-white">Reject instead</button>
           </div>
         ) : undefined}
       />
@@ -691,8 +807,9 @@ export function ProofReviewPanel() {
         counts={counts as Record<string, number> | undefined}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <p className="mb-2 text-xs text-muted">
-        The evidence users send for our own tasks. Approving credits the reward through the same path a
-        network postback uses (referral bonuses, velocity caps). Counts are over ALL proofs, never this filter.
+        The evidence users send for our own tasks. <b>Two steps:</b> Approve accepts the answer and puts the
+        reward &ldquo;on the way&rdquo; (no money moves yet); <b>Send reward</b> then pays it through the same
+        path a network postback uses (referral bonuses, velocity caps). Counts are over ALL proofs, never this filter.
       </p>
       <DataTable<TaskProof>
         q={q} columns={columns} rows={rows}
@@ -701,10 +818,13 @@ export function ProofReviewPanel() {
         onRowClick={(p) => setOpen(p)}
         filters={filters}
         searchPlaceholder="Search email or @handle"
-        emptyTitle={`Nothing ${c.status}`}
+        emptyTitle={`Nothing ${c.status.replace(/_/g, " ")}`}
         exportName="task-proofs"
         bulkActions={c.status === "pending" ? [
           { label: "Approve picked", run: (ids) => bulk(ids, "approve") },
+          { label: "Reject picked", tone: "danger", run: (ids) => bulk(ids, "reject") },
+        ] : c.status === "reward_pending" ? [
+          { label: "Send reward to picked", run: (ids) => bulk(ids, "release") },
           { label: "Reject picked", tone: "danger", run: (ids) => bulk(ids, "reject") },
         ] : undefined}
       />

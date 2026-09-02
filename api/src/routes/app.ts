@@ -76,8 +76,8 @@ export async function appRoutes(app: FastifyInstance) {
     const ctx = await userContext(userId);
     // For our own 'proof' tasks, tell the user where they stand: have they
     // already submitted, was it approved, was it rejected? One query, not N.
-    const proofRows = await sql.all<{ task_id: string; status: string; review_note: string | null }>(
-      `SELECT DISTINCT ON (task_id) task_id, status, review_note
+    const proofRows = await sql.all<{ task_id: string; status: string; review_note: string | null; reward_status: string | null }>(
+      `SELECT DISTINCT ON (task_id) task_id, status, review_note, reward_status
        FROM task_proofs WHERE user_id = ? ORDER BY task_id, created_at DESC`,
       userId,
     );
@@ -108,9 +108,13 @@ export async function appRoutes(app: FastifyInstance) {
         // task that silently appears one day. See taskTargeting.ts.
         if (!gate.ok && gate.hide) return [];
         const proof = proofByTask.get(t.id as string);
-        const isDone = completed.has(t.id as string) || proof?.status === "approved";
-        const isMine = started.has(t.id as string) || proof?.status === "pending" || proof?.status === "rejected";
-        if (q.view === "available" && (lifecycle !== "active" || isDone || proof?.status === "pending")) return [];
+        // Two-step release (2026-09-01): an approved proof is 'reward on the
+        // way' until it is released. Only a SENT reward counts as done.
+        const rewardPending = proof?.status === "approved" && proof?.reward_status === "pending";
+        const rewardSent = proof?.status === "approved" && proof?.reward_status === "sent";
+        const isDone = completed.has(t.id as string) || rewardSent;
+        const isMine = started.has(t.id as string) || proof?.status === "pending" || proof?.status === "rejected" || rewardPending;
+        if (q.view === "available" && (lifecycle !== "active" || isDone || proof?.status === "pending" || rewardPending)) return [];
         if (q.view === "mine" && (!isMine || isDone)) return [];
         if (q.view === "history" && !isDone && !(lifecycle === "ended" && isMine)) return [];
         return [{
@@ -138,9 +142,11 @@ export async function appRoutes(app: FastifyInstance) {
           startsAt: t.starts_at ?? undefined,
           endsAt: t.ends_at ?? undefined,
           campaignStatus: lifecycle,
-          userState: isDone ? "completed" : proof?.status === "pending" ? "pending_review"
+          userState: isDone ? "completed" : rewardPending ? "reward_pending"
+            : proof?.status === "pending" ? "pending_review"
             : proof?.status === "rejected" ? "rejected_retryable" : isMine ? "started" : "not_started",
           proofStatus: proof?.status ?? undefined,
+          rewardStatus: proof?.reward_status ?? undefined,
           proofNote: proof?.review_note ?? undefined,
           // ---- Stage 7 ----------------------------------------------------
           category: t.category ?? undefined,
@@ -219,10 +225,10 @@ export async function appRoutes(app: FastifyInstance) {
     ).catch(() => {});
 
     const proof = await sql.get<{
-      status: string; review_note: string | null; created_at: string;
+      status: string; reward_status: string | null; review_note: string | null; created_at: string;
       reward_points: number | null; reward_rozi_micro: string | number | null; reward_usdt_micro: string | number | null;
     }>(
-      `SELECT status, review_note, created_at, reward_points, reward_rozi_micro, reward_usdt_micro FROM task_proofs
+      `SELECT status, reward_status, review_note, created_at, reward_points, reward_rozi_micro, reward_usdt_micro FROM task_proofs
        WHERE task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1`, id, userId,
     );
 
@@ -252,6 +258,7 @@ export async function appRoutes(app: FastifyInstance) {
         campaignStatus: lifecycle,
         category: t.category ?? undefined,
         proofStatus: proof?.status ?? undefined,
+        rewardStatus: proof?.reward_status ?? undefined,
         proofNote: proof?.review_note ?? undefined,
         lockedReason: gate.ok ? undefined : gate.reason,
       },
@@ -322,11 +329,19 @@ export async function appRoutes(app: FastifyInstance) {
       proofText = text.length > 0 ? text : "The user says they finished this task.";
     }
 
-    // Already approved? Nothing to do — don't let them farm a second payout.
-    const approved = await sql.get<{ id: string }>(
-      "SELECT id FROM task_proofs WHERE task_id = ? AND user_id = ? AND status = 'approved'", taskId, userId,
+    // Already approved (reward sent OR still on the way)? Nothing to do — don't
+    // let them farm a second payout.
+    const approved = await sql.get<{ reward_status: string | null }>(
+      "SELECT reward_status FROM task_proofs WHERE task_id = ? AND user_id = ? AND status = 'approved'", taskId, userId,
     );
-    if (approved) return { ok: false, error: "You already finished this task." };
+    if (approved) {
+      return {
+        ok: false,
+        error: approved.reward_status === "sent"
+          ? "You already finished this task."
+          : "We already accepted your answer — your reward is on the way.",
+      };
+    }
 
     // Replace any earlier pending/rejected attempt so the queue holds one row
     // per user per task. The partial unique index enforces one pending row.

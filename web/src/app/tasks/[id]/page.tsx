@@ -83,27 +83,26 @@ function TaskDetail({ task, fields, onSent }: {
           <div className="min-w-0 flex-1">
             <h1 className="font-bold leading-snug text-brand-ink">{task.title}</h1>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-              <span className="flex items-center gap-1"><ClockIcon size={13} /> About {task.minutes} min</span>
+              <span className="flex items-center gap-1 whitespace-nowrap"><ClockIcon size={13} /> About {task.minutes} min</span>
               {category && <span className="rounded-full bg-brand-tint px-2 py-0.5 font-semibold text-brand">{category}</span>}
             </p>
           </div>
         </div>
-        <div className="mt-3">
-          <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
-        </div>
-
         {task.instructions && (
           <div className="mt-4 whitespace-pre-line rounded-xl bg-brand-tint/50 p-3 text-sm text-brand-ink">
             {task.instructions}
           </div>
         )}
 
-        {/* Our own tasks aren't sponsored. A network task carries the disclosure
-            (guardrail #3) — see the note on the start button below. */}
-        <div className="mt-3 border-t border-line pt-2.5">
+        {/* The reward sits on the footer line, next to the source label (founder,
+            2026-09-01) — it reads better at the bottom than stacked under the
+            title. Our own tasks aren't sponsored; a network task carries the
+            disclosure (guardrail #3) — see the note on the start button below. */}
+        <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-2.5">
           {isOurs
             ? <span className="text-xs font-medium text-brand">RoziPay task</span>
             : <SponsoredTag network={task.network} />}
+          <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
         </div>
       </Card>
 
@@ -188,6 +187,20 @@ function ProofForm({ task, fields, onSent }: {
     finally { setBusy(false); }
   }
 
+  if (task.proofStatus === "approved" && task.rewardStatus === "pending") {
+    // Accepted, but the reward has not been released yet (two-step, 2026-09-01).
+    return (
+      <Card className="flex gap-3 border-pending/30 bg-pending-tint/50 p-4">
+        <ClockIcon size={20} className="mt-0.5 shrink-0 text-pending" />
+        <div>
+          <p className="font-semibold text-brand-ink">Approved — your reward is on the way</p>
+          <p className="mt-1 text-sm text-muted">
+            Our team accepted your answer. Your reward will be added to your balance shortly.
+          </p>
+        </div>
+      </Card>
+    );
+  }
   if (task.proofStatus === "approved") {
     return (
       <Card className="flex gap-3 border-success/30 bg-success-tint/60 p-4">
@@ -209,7 +222,7 @@ function ProofForm({ task, fields, onSent }: {
 
   return (
     <Card className="p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col items-start gap-1.5">
         <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
         <span className="text-sm text-muted">when we check your answer</span>
       </div>
@@ -242,7 +255,7 @@ function ProofForm({ task, fields, onSent }: {
           <textarea
             id="proof-box" rows={3} value={proof} onChange={(e) => setProof(e.target.value)}
             placeholder="Type your proof here (for example your username, or what you did)."
-            className="mt-2 w-full rounded-xl border border-line bg-bg p-3 text-sm outline-none focus:border-brand"
+            className="mt-2 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none placeholder:text-muted focus:border-brand"
           />
         </>
       ) : (
@@ -274,7 +287,11 @@ function looksLikeAddress(value: string, network: string): boolean {
 function FieldInput({ field, value, onChange }: {
   field: TaskField; value: string; onChange: (v: string) => void;
 }) {
-  const box = "mt-1.5 w-full rounded-xl border border-line bg-bg p-3 text-sm outline-none focus:border-brand";
+  // ⚠️ text-brand-ink + placeholder:text-muted are NOT optional — this is the
+  // only form in the app that inherits its text colour, and in the dark theme
+  // that renders near-invisible (founder screenshot, 2026-09-01). bg-card, not
+  // bg-bg, matches every other input.
+  const box = "mt-1.5 w-full rounded-xl border border-line bg-card p-3 text-sm text-brand-ink outline-none placeholder:text-muted focus:border-brand";
   // The keyboard the phone opens. On a $60 Android, being handed the number pad
   // for a number question is most of the difference between a form people finish
   // and one they abandon.
