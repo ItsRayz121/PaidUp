@@ -1329,8 +1329,9 @@ These override convenience or speed at every step:
     (`findOrCreateTelegramUser`), refreshed on every login. New
     `displayIdentity()` in `web/src/lib/format.ts` (@handle → @tg-username →
     name → email, never a raw `@telegram.local`) wired into top miners,
-    growth boards, top partners, invitee lists. ⚠️ Fraud / withdrawals /
-    support / audit tables still show raw email — not wired this pass.
+    growth boards, top partners, invitee lists. ~~⚠️ Fraud / withdrawals /
+    support / audit tables still show raw email — not wired this pass.~~
+    **CLOSED same day, see the follow-up entry below.**
   - **`piHalvingUsers`** edits as add/remove rows (`MilestoneEditor`),
     serialised back to the CSV string the API still takes.
   - **Staff alerts** merged into "Staff & roles" as a sub-tab (the standalone
@@ -1342,7 +1343,46 @@ These override convenience or speed at every step:
     fixed in code so it won't come back. (b) the one FAILED relay job (286
     tries, money already auto-returned) — open Money → Relay jobs → the row →
     "Mark as handled". No DELETE route was added (append-only spirit); "handled"
-    is the clear path and the tile then disappears.
+    is the clear path and the tile then disappears. **DONE — founder confirmed
+    both, same day, see the follow-up entry below.**
+
+- **THE SAME FOUNDER REVIEW, RE-VERIFIED AND THE LAST GAP CLOSED (2026-09-02,
+  later the same day).** The founder re-sent the full ~26-item voice memo
+  asking for a completion audit rather than assuming the earlier "DONE" claim.
+  Every item was re-checked against the LIVE CODE (grep + read, not the
+  changelog) rather than trusted from this file — borders, Title-Case
+  defaulting-to-"All" chips, the send-message button, the Growth "Per network"
+  sub-tab, the Money IA, `piHalvingUsers` as rows, Boosters/Conversion
+  relabels, and Staff alerts under Staff & roles all confirmed present in the
+  code as written above. The founder separately confirmed both one-click prod
+  actions (the `bep20: −2.00` adjust, the 286-try relay job marked handled)
+  are done.
+  - **The one real gap found — `displayIdentity` not reaching fraud /
+    withdrawal / support / audit — is now closed.** Every SELECT behind those
+    screens (`api/src/routes/staff.ts`: withdrawals, BNB withdrawals, relay
+    jobs, fraud flags, the support-ticket list + detail, the User 360 user row
+    + `invitedBy` + `invitees`; `api/src/routes/staffMining.ts`: USDT topups +
+    refunds) now also selects `username`, `display_name`,
+    `telegram_username`, `telegram_name`. Every render that used to show a raw
+    `userEmail`/`email` in those tables now calls `displayIdentity()`:
+    `MoneyQueues.tsx` (withdrawals/deposits/refunds/BNB/relay rows + detail
+    titles, via a shared `identityOf()` helper for the camelCase money-queue
+    shape), `staff/page.tsx` `FraudPanel`, `SupportQueue.tsx` (ticket list) +
+    `staff.tsx` `TicketThread` (the "who you're replying to" header), and
+    `UserDetail.tsx` (page title/breadcrumb, "Invited by", the invitees
+    table). The `email` FIELD itself is left visible where it already had its
+    own row (e.g. User 360's "Email" field, CSV exports) — only the identity
+    HEADLINE changed.
+  - ⚠️ **Noted but deliberately left alone**: `Disbursements.tsx` (the
+    admin-payout-batch screen) has the same `userEmail`-only pattern in two
+    spots. Not named in the founder's original list, so left for a future
+    pass — fix it the same way (add the four columns to whatever query feeds
+    `EligibleReward`, then `displayIdentity()` in the render) if it comes up.
+  - Verified: api + web typecheck, eslint, web production build (37 routes)
+    all clean; `test:usersadmin` (50), `test:moneyadmin` (82),
+    `test:messagesadmin` (14), `test:admin` (15), `test:stage6` (70) all green
+    — the fraud/support/withdrawal query changes touch none of their
+    assertions.
 
 - **PRODUCT AUDIT PASS: THE MONEY SCREENS STOP CONTRADICTING THEMSELVES
   (founder, 2026-08-09).** A 75-part product/UX/backend brief was audited against

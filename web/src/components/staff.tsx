@@ -10,7 +10,7 @@ import {
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
-import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
+import { formatPoints, formatMoney, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { useToast } from "@/components/staff/toast";
 
@@ -159,7 +159,12 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
           without knowing their ID status or country is where wrong answers
           come from. */}
       <p className="text-xs text-muted">
-        {String(info.userEmail)}
+        {displayIdentity({
+          email: info.userEmail as string | null, username: info.userUsername as string | null,
+          displayName: info.userDisplayName as string | null,
+          telegramUsername: info.userTelegramUsername as string | null,
+          telegramName: info.userTelegramName as string | null,
+        })}
         {info.country ? ` · ${String(info.country)}` : ""}
         {` · id: ${String(info.kycStatus ?? "none")}`}
         {String(info.userStatus) !== "active" && (

@@ -13,7 +13,7 @@ import {
   adjustUserPoints, adjustUserRozi, adjustUserUsdt, type StaffUserDetail,
   fetchEligibleRewards, quickSendReward, type EligibleReward,
 } from "@/lib/api";
-import { formatMoney, formatPoints, formatUsdtMicro } from "@/lib/format";
+import { formatMoney, formatPoints, formatUsdtMicro, displayIdentity } from "@/lib/format";
 
 type Row = Record<string, unknown>;
 const S = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -104,6 +104,15 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
   canDisburse?: boolean;
 }) {
   const u = d.user;
+  // Real @handle / Telegram name instead of a raw email — and for a
+  // Telegram-only account, instead of `tg…@telegram.local` (founder,
+  // 2026-09-02). The email field itself stays visible in its own "Email" row.
+  const identity = displayIdentity({
+    email: S(u.email) || null, username: u.username as string | null,
+    displayName: u.display_name as string | null,
+    telegramUsername: u.telegram_username as string | null,
+    telegramName: u.telegram_name as string | null,
+  });
   const toast = useToast();
   const [tab, setTab] = useState("overview");
   const [busy, setBusy] = useState(false);
@@ -353,7 +362,7 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
       content: (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-4 text-sm">
-            <Field label="Invited by">{d.invitedBy ? `${d.invitedBy.email} (${d.invitedBy.referral_code})` : "—"}</Field>
+            <Field label="Invited by">{d.invitedBy ? `${displayIdentity(d.invitedBy)} (${d.invitedBy.referral_code})` : "—"}</Field>
             <Field label="Directly invited">{d.inviteeCount}</Field>
             <Field label="Friends of friends">{d.referral.joined2Count}</Field>
             <Field label="Referral points earned"><Points value={d.referral.earnedPoints} /></Field>
@@ -362,9 +371,15 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
             <p className="mb-1 text-xs font-semibold uppercase text-muted">
               Invited {d.inviteeCount} {d.inviteeCount > d.invitees.length ? `— newest ${d.invitees.length}` : ""}
             </p>
-            <MiniTable head={["Email", "Status", "Joined"]} empty="Nobody yet."
+            <MiniTable head={["User", "Status", "Joined"]} empty="Nobody yet."
               rows={d.invitees.map((r: Row) => [
-                S(r.email), <StatusBadge key="s" status={S(r.status)} />, <TimeCell key="w" iso={S(r.created_at)} />,
+                displayIdentity({
+                  email: r.email as string | null, username: r.username as string | null,
+                  displayName: r.display_name as string | null,
+                  telegramUsername: r.telegram_username as string | null,
+                  telegramName: r.telegram_name as string | null,
+                }),
+                <StatusBadge key="s" status={S(r.status)} />, <TimeCell key="w" iso={S(r.created_at)} />,
               ])} />
           </div>
         </div>
@@ -399,8 +414,8 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
 
   return (
     <DetailLayout
-      breadcrumb={[{ label: "Users", onClick: onBack }, { label: S(u.email) }]}
-      title={S(u.email)}
+      breadcrumb={[{ label: "Users", onClick: onBack }, { label: identity }]}
+      title={identity}
       ids={[
         { label: "id", value: u.id },
         ...(u.username ? [{ label: "handle", value: `@${S(u.username)}` }] : []),

@@ -513,6 +513,8 @@ export const fetchLeaderboard = () =>
 // ---- Staff ----------------------------------------------------------------
 export type StaffWithdrawal = {
   id: string; userId: string; userEmail: string; amount: number;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
   chain: string; address: string | null; status: string; at: string; withinAgentLimit: boolean;
   // Whether the user proved this exact address is theirs by signing for it with
   // the wallet, as of the moment they asked. Optional so an older API build
@@ -572,6 +574,8 @@ export const fetchStaffQueue = (p: MoneyListParams | string = "pending") => {
 // staff view (a failed native send is terminal; see api/src/db.ts).
 export type StaffBnbWithdrawalRow = {
   id: string; userId: string; userEmail: string;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
   chain: string; address: string; amountWei: string;
   status: string; txHash: string | null; attempts: number;
   lastError: string | null; at: string; completedAt: string | null;
@@ -588,7 +592,10 @@ export const fetchStaffBnbWithdrawals = (p: MoneyListParams = {}) =>
 // or refund. Read-only (a failed job is terminal).
 export type RelayJobRow = {
   id: string; purpose: "withdrawal" | "refund"; requestId: string;
-  userId: string; userEmail: string; chain: string;
+  userId: string; userEmail: string;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
+  chain: string;
   fromAddress: string; toAddress: string; amountMicro: number; needsPrefund: boolean;
   status: string; gasTxHash: string | null; prefundTxHash: string | null;
   forwardTxHash: string | null; attempts: number; lastError: string | null;
@@ -789,7 +796,11 @@ export type StaffUserDetail = {
   usdtRefunds: Record<string, unknown>[]; usdtTopups: Record<string, unknown>[];
   withdrawals: Record<string, unknown>[];
   paidSummary: { count: number; totalPoints: number };
-  invitedBy: { id: string; email: string; referral_code: string } | null;
+  invitedBy: {
+    id: string; email: string; referral_code: string;
+    username: string | null; display_name: string | null;
+    telegram_username: string | null; telegram_name: string | null;
+  } | null;
   // ⚠️ `invitees` IS CAPPED AT 50 ROWS; `inviteeCount` IS THE REAL TOTAL. Never
   // show `invitees.length` as "how many did they invite" — that is the number a
   // referral-ring review turns on, and the list is a page, not the answer.
@@ -997,6 +1008,8 @@ export const replyToMyTicket = (id: string, message: string) =>
 // ---- Support tickets (staff side) ----------------------------------------
 export type StaffTicket = {
   id: string; userId: string; userEmail: string; subject: string;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
   status: string; messageCount: number; at: string; updatedAt: string;
   // Who has picked this up. Null = still in the pool.
   assignedTo: string | null; assigneeEmail: string | null;
@@ -1950,6 +1963,7 @@ export const unexcludeFromLeaderboard = (userId: string) =>
 // ---- USDT top-up review queue (staff) ---------------------------------------
 export type AdminTopup = {
   id: string; user_id: string; email: string; username: string | null;
+  display_name?: string | null; telegram_username?: string | null; telegram_name?: string | null;
   chain: string; tx_hash: string; amount: number; status: string;
   reject_reason: string | null; created_at: string;
 };
@@ -1974,6 +1988,7 @@ export const rejectTopup = (id: string, reason: string) =>
 // double-debit or a free top-up.
 export type AdminRefund = {
   id: string; user_id: string; email: string; username: string | null;
+  display_name?: string | null; telegram_username?: string | null; telegram_name?: string | null;
   chain: string; chainLabel: string; address: string; amount: number;
   // The gas fee (founder, 2026-08-08), snapshotted on the row. `amount` is
   // what was debited from the user; `netAmount` is what staff should ACTUALLY

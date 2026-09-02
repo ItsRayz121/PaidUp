@@ -95,6 +95,8 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow, owed, treasuryB, treasuryBa, treasuryAp] = await Promise.all([
       sql.all<Record<string, unknown>>(
         `SELECT w.*, u.email AS user_email,
+                u.username AS user_username, u.display_name AS user_display_name,
+                u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
                 j.status AS relay_status, j.from_address AS relay_from_address,
                 j.gas_tx_hash AS relay_gas_tx_hash, j.prefund_tx_hash AS relay_prefund_tx_hash,
                 j.forward_tx_hash AS relay_forward_tx_hash, j.last_error AS relay_last_error
@@ -146,7 +148,10 @@ export async function staffRoutes(app: FastifyInstance) {
         usdt: pointsToUsdt(Number(owed.net)),
       } : null,
       requests: rows.map((r) => ({
-        id: r.id, userId: r.user_id, userEmail: r.user_email, amount: r.amount,
+        id: r.id, userId: r.user_id, userEmail: r.user_email,
+        userUsername: r.user_username ?? null, userDisplayName: r.user_display_name ?? null,
+        userTelegramUsername: r.user_telegram_username ?? null, userTelegramName: r.user_telegram_name ?? null,
+        amount: r.amount,
         // ⚠️ THE FEE, AND WHAT IS ACTUALLY SENT. Both are snapshotted on the
         // row at request time, and manual payout is a human reading this screen
         // and sending USDT by hand. Showing only the gross `amount` — which is
@@ -361,7 +366,10 @@ export async function staffRoutes(app: FastifyInstance) {
 
     const [rows, totalRow] = await Promise.all([
       sql.all<Record<string, unknown>>(
-        `SELECT b.*, u.email AS user_email FROM bnb_withdrawal_requests b
+        `SELECT b.*, u.email AS user_email,
+                u.username AS user_username, u.display_name AS user_display_name,
+                u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name
+         FROM bnb_withdrawal_requests b
          JOIN users u ON u.id = b.user_id
          ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
         ...wp, limit, offset,
@@ -374,6 +382,8 @@ export async function staffRoutes(app: FastifyInstance) {
       total: Number(totalRow?.n ?? rows.length), offset, limit,
       rows: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email,
+        userUsername: r.user_username ?? null, userDisplayName: r.user_display_name ?? null,
+        userTelegramUsername: r.user_telegram_username ?? null, userTelegramName: r.user_telegram_name ?? null,
         chain: r.chain, address: r.address, amountWei: String(r.amount_wei),
         status: r.status, txHash: r.tx_hash ?? null, attempts: Number(r.attempts ?? 0),
         lastError: r.last_error ?? null, at: r.created_at, completedAt: r.completed_at ?? null,
@@ -503,6 +513,8 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow] = await Promise.all([
       sql.all<Record<string, unknown>>(
         `SELECT j.*, u.email AS user_email,
+                u.username AS user_username, u.display_name AS user_display_name,
+                u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
                 COALESCE(wr.status, rr.status) AS req_status
          FROM payout_relay_jobs j
          JOIN users u ON u.id = j.user_id
@@ -529,6 +541,8 @@ export async function staffRoutes(app: FastifyInstance) {
         return {
           id: r.id, purpose: r.purpose, requestId: r.request_id,
           userId: r.user_id, userEmail: r.user_email,
+          userUsername: r.user_username ?? null, userDisplayName: r.user_display_name ?? null,
+          userTelegramUsername: r.user_telegram_username ?? null, userTelegramName: r.user_telegram_name ?? null,
           chain: r.chain, fromAddress: r.from_address, toAddress: r.to_address,
           amountMicro: Number(r.amount_micro), needsPrefund: Boolean(r.needs_prefund),
           status: r.status, gasTxHash: r.gas_tx_hash ?? null, prefundTxHash: r.prefund_tx_hash ?? null,
@@ -689,7 +703,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const id = (req.params as { id: string }).id;
     const user = await sql.get<Record<string, unknown>>(
       `SELECT id, email, username, display_name, country, referral_code, status, created_at,
-              kyc_status, telegram_id,
+              kyc_status, telegram_id, telegram_username, telegram_name,
               withdrawal_hold_reason, withdrawal_hold_until, withdrawal_hold_at,
               under_review_reason, under_review_at,
               (SELECT email FROM users r WHERE r.id = users.under_review_by) AS under_review_by_email
@@ -746,12 +760,15 @@ export async function staffRoutes(app: FastifyInstance) {
 
     // Who invited them, and who they invited. Both directions, because a
     // referral-ring flag is unreadable without them.
-    const invitedBy = await sql.get<{ id: string; email: string; referral_code: string }>(
-      `SELECT u.id, u.email, u.referral_code FROM users u
-         WHERE u.id = (SELECT referred_by FROM users WHERE id = ?)`, id,
+    const invitedBy = await sql.get<{
+      id: string; email: string; referral_code: string; username: string | null;
+      display_name: string | null; telegram_username: string | null; telegram_name: string | null;
+    }>(
+      `SELECT u.id, u.email, u.referral_code, u.username, u.display_name, u.telegram_username, u.telegram_name
+         FROM users u WHERE u.id = (SELECT referred_by FROM users WHERE id = ?)`, id,
     );
     const invitees = await sql.all(
-      `SELECT id, email, status, created_at FROM users
+      `SELECT id, email, status, created_at, username, display_name, telegram_username, telegram_name FROM users
          WHERE referred_by = ? ORDER BY created_at DESC LIMIT 50`, id,
     );
     // ⚠️ COUNTED SEPARATELY, BECAUSE THE LIST IS CAPPED AT 50 AND THE COUNT IS
@@ -855,7 +872,10 @@ export async function staffRoutes(app: FastifyInstance) {
     // also hides flags for accounts suspended before that behaviour existed.
     // System flags with no user (reconciliation_mismatch) always pass.
     const flags = await sql.all(
-      `SELECT f.*, u.email AS user_email FROM fraud_flags f
+      `SELECT f.*, u.email AS user_email,
+              u.username AS user_username, u.display_name AS user_display_name,
+              u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name
+       FROM fraud_flags f
        LEFT JOIN users u ON u.id = f.user_id
        WHERE f.resolved_by IS NULL AND (f.user_id IS NULL OR u.status <> 'suspended')
        ORDER BY f.created_at DESC`,
@@ -1220,6 +1240,8 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow] = await Promise.all([
       sql.all<Record<string, unknown>>(
         `SELECT ti.*, u.email AS user_email, a.email AS assignee_email,
+                u.username AS user_username, u.display_name AS user_display_name,
+                u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
            (SELECT COUNT(*)::int FROM ticket_messages m
              WHERE m.ticket_id = ti.id AND m.author_role <> 'internal') AS message_count
          FROM support_tickets ti
@@ -1249,6 +1271,8 @@ export async function staffRoutes(app: FastifyInstance) {
       limit,
       tickets: rows.map((t) => ({
         id: t.id, userId: t.user_id, userEmail: t.user_email, subject: t.subject,
+        userUsername: t.user_username ?? null, userDisplayName: t.user_display_name ?? null,
+        userTelegramUsername: t.user_telegram_username ?? null, userTelegramName: t.user_telegram_name ?? null,
         status: t.status, messageCount: t.message_count,
         assignedTo: t.assigned_to, assigneeEmail: t.assignee_email,
         at: t.created_at, updatedAt: t.updated_at,
@@ -1260,6 +1284,8 @@ export async function staffRoutes(app: FastifyInstance) {
     const id = (req.params as { id: string }).id;
     const ticket = await sql.get<Record<string, unknown>>(
       `SELECT ti.*, u.email AS user_email, u.status AS user_status,
+              u.username AS user_username, u.display_name AS user_display_name,
+              u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
               u.kyc_status, u.country, a.email AS assignee_email
        FROM support_tickets ti
        JOIN users u ON u.id = ti.user_id
@@ -1278,6 +1304,8 @@ export async function staffRoutes(app: FastifyInstance) {
     return {
       ticket: {
         id: ticket.id, userId: ticket.user_id, userEmail: ticket.user_email,
+        userUsername: ticket.user_username ?? null, userDisplayName: ticket.user_display_name ?? null,
+        userTelegramUsername: ticket.user_telegram_username ?? null, userTelegramName: ticket.user_telegram_name ?? null,
         userStatus: ticket.user_status, kycStatus: ticket.kyc_status, country: ticket.country,
         subject: ticket.subject, status: ticket.status, at: ticket.created_at,
         assignedTo: ticket.assigned_to, assigneeEmail: ticket.assignee_email,

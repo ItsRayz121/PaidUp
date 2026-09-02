@@ -6,7 +6,7 @@ import { useStaffSession, useApi } from "@/lib/hooks";
 import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
 import { fetchFraud, setUserStatus, resolveFraud } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
+import { timeAgo, displayIdentity } from "@/lib/format";
 import {
   KpiDashboard, NetworkPanel,
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
@@ -456,15 +456,27 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
                 <tr><th className="p-2.5">User</th><th className="p-2.5">Type</th><th className="p-2.5">Severity</th><th className="p-2.5">Detail</th><th className="p-2.5">When</th><th className="p-2.5">Action</th></tr>
               </thead>
               <tbody>
-                {shown.map((f, i) => (
+                {shown.map((f, i) => {
+                  // Real @handle / Telegram name instead of a raw email — and
+                  // for a Telegram-only account, instead of
+                  // `tg…@telegram.local` (founder, 2026-09-02).
+                  const identity = f.user_id
+                    ? displayIdentity({
+                        email: f.user_email as string | null, username: f.user_username as string | null,
+                        displayName: f.user_display_name as string | null,
+                        telegramUsername: f.user_telegram_username as string | null,
+                        telegramName: f.user_telegram_name as string | null,
+                      })
+                    : String(f.user_email ?? "—");
+                  return (
                   <tr key={i} className="border-t border-line">
                     <td className="p-2.5">
                       {f.user_id ? (
                         <button onClick={() => openUser(String(f.user_id))} className="text-brand hover:underline">
-                          {String(f.user_email ?? f.user_id)}
+                          {identity}
                         </button>
                       ) : (
-                        String(f.user_email ?? "—")
+                        identity
                       )}
                     </td>
                     <td className="p-2.5">{String(f.flag_type)}</td>
@@ -474,11 +486,12 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
                     <td className="p-2.5">
                       {canResolve
                         ? <FlagActions id={String(f.id)} userId={f.user_id ? String(f.user_id) : null}
-                            label={String(f.user_email ?? f.user_id ?? "")} onDone={fraud.reload} />
+                            label={identity} onDone={fraud.reload} />
                         : <span className="text-xs text-muted">view only</span>}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

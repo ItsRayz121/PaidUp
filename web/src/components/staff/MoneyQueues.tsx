@@ -27,7 +27,7 @@ import {
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
-import { formatPoints, formatMoney, formatUsdtMicro, formatBnbWei } from "@/lib/format";
+import { formatPoints, formatMoney, formatUsdtMicro, formatBnbWei, displayIdentity } from "@/lib/format";
 
 // ---- shared bits --------------------------------------------------------
 
@@ -259,6 +259,21 @@ function ResolveControls({ kind, row, canDo, compact, onDone }: {
 
 const PAGE = { pageSize: 25, sort: "created_at", dir: "desc" as const };
 
+// Real @handle / Telegram name instead of a raw email — and for a
+// Telegram-only account, instead of `tg…@telegram.local` (founder,
+// 2026-09-02). Every money-queue row carries these camelCase `user*` fields
+// from the backend now; this just points displayIdentity at them.
+function identityOf(r: {
+  userEmail: string; userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
+}): string {
+  return displayIdentity({
+    email: r.userEmail, username: r.userUsername,
+    displayName: r.userDisplayName, telegramUsername: r.userTelegramUsername,
+    telegramName: r.userTelegramName,
+  });
+}
+
 // ======================================================================
 // 1. Withdrawals
 // ======================================================================
@@ -334,7 +349,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       key: "user", header: "User", csv: (r) => r.userEmail,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.userEmail}</span>
+          <span className="block truncate font-medium text-brand-ink">{identityOf(r)}</span>
           <span className="block truncate text-xs text-muted">{r.userId}</span>
         </div>
       ),
@@ -376,7 +391,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
     return (
       <MoneyDetail
         backLabel="Withdrawals" onBack={() => setOpen(null)}
-        title={open.userEmail}
+        title={identityOf(open)}
         idChips={[{ label: "request", value: open.id }, { label: "user", value: open.userId }]}
         badges={<StatusBadge status={open.status} />}
         userId={canOpenLedger ? open.userId : undefined}
@@ -491,7 +506,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
       key: "user", header: "User", csv: (r) => r.email,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.username ? `@${r.username}` : r.email}</span>
+          <span className="block truncate font-medium text-brand-ink">{displayIdentity(r)}</span>
           <span className="block truncate text-xs text-muted">{r.user_id}</span>
         </div>
       ),
@@ -508,7 +523,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
     return (
       <MoneyDetail
         backLabel="USDT deposits" onBack={() => setOpen(null)}
-        title={open.username ? `@${open.username}` : open.email}
+        title={displayIdentity(open)}
         idChips={[{ label: "topup", value: open.id }, { label: "user", value: open.user_id }, { label: "tx", value: open.tx_hash }]}
         badges={<StatusBadge status={open.status} />}
         userId={open.user_id}
@@ -610,7 +625,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
       key: "user", header: "User", csv: (r) => r.email,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.username ? `@${r.username}` : r.email}</span>
+          <span className="block truncate font-medium text-brand-ink">{displayIdentity(r)}</span>
           <span className="block truncate text-xs text-muted">{r.user_id}</span>
         </div>
       ),
@@ -645,7 +660,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
     return (
       <MoneyDetail
         backLabel="USDT refunds" onBack={() => setOpen(null)}
-        title={open.username ? `@${open.username}` : open.email}
+        title={displayIdentity(open)}
         idChips={[{ label: "refund", value: open.id }, { label: "user", value: open.user_id }]}
         badges={<StatusBadge status={open.status} />}
         userId={open.user_id}
@@ -711,7 +726,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
       key: "user", header: "User", csv: (r) => r.userEmail,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.userEmail}</span>
+          <span className="block truncate font-medium text-brand-ink">{identityOf(r)}</span>
           <span className="block truncate text-xs text-muted">{r.userId}</span>
         </div>
       ),
@@ -732,7 +747,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
     return (
       <MoneyDetail
         backLabel="BNB withdrawals" onBack={() => setOpen(null)}
-        title={open.userEmail}
+        title={identityOf(open)}
         idChips={[{ label: "request", value: open.id }, { label: "user", value: open.userId }]}
         badges={<StatusBadge status={open.status} />}
         userId={open.userId}
@@ -804,7 +819,7 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
       key: "user", header: "User", csv: (r) => r.userEmail,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.userEmail}</span>
+          <span className="block truncate font-medium text-brand-ink">{identityOf(r)}</span>
           <span className="block truncate text-xs text-muted">req {r.requestId}</span>
         </div>
       ),
@@ -825,7 +840,7 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
     return (
       <MoneyDetail
         backLabel="Payout relay jobs" onBack={() => setOpen(null)}
-        title={`${open.purpose} · ${open.userEmail}`}
+        title={`${open.purpose} · ${identityOf(open)}`}
         idChips={[{ label: "job", value: open.id }, { label: "request", value: open.requestId }, { label: "user", value: open.userId }]}
         badges={<StatusBadge status={open.status} />}
         userId={open.userId}

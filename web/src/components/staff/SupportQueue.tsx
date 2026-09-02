@@ -17,6 +17,7 @@ import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell } from "./primitives";
 import { RefreshBar, QUEUE_POLL_MS, TicketThread, TICKET_STATUSES } from "@/components/staff";
 import { fetchStaffTickets, type StaffTicket } from "@/lib/api";
+import { displayIdentity } from "@/lib/format";
 
 export function SupportQueuePanel() {
   const q = useTableQuery("support:tickets", { pageSize: 25, sort: "updated_at", dir: "asc" });
@@ -48,7 +49,15 @@ export function SupportQueuePanel() {
         </div>
       ),
     },
-    { key: "user", header: "User", csv: (t) => t.userEmail, render: (t) => <span className="truncate text-muted">{t.userEmail}</span> },
+    {
+      key: "user", header: "User", csv: (t) => t.userEmail,
+      render: (t) => <span className="truncate text-muted">
+        {displayIdentity({
+          email: t.userEmail, username: t.userUsername, displayName: t.userDisplayName,
+          telegramUsername: t.userTelegramUsername, telegramName: t.userTelegramName,
+        })}
+      </span>,
+    },
     { key: "messageCount", header: "Msgs", align: "right", csv: (t) => t.messageCount, render: (t) => <span className="num">{t.messageCount}</span> },
     {
       key: "assignee", header: "Owner", csv: (t) => t.assigneeEmail ?? "",

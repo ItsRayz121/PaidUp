@@ -481,7 +481,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
 
     const [rows, totalRow, s] = await Promise.all([
       sql.all<Record<string, unknown>>(
-        `SELECT t.*, u.email, u.username FROM usdt_topups t
+        `SELECT t.*, u.email, u.username, u.display_name, u.telegram_username, u.telegram_name FROM usdt_topups t
          JOIN users u ON u.id = t.user_id
          ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
         ...wp, p.limit, p.offset,
@@ -622,7 +622,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     // in-flight phase instead of looking stuck.
     const [rows, totalRow] = await Promise.all([
       sql.all<Record<string, unknown>>(
-        `SELECT r.*, u.email, u.username,
+        `SELECT r.*, u.email, u.username, u.display_name, u.telegram_username, u.telegram_name,
                 j.status AS relay_status, j.from_address AS relay_from_address,
                 j.gas_tx_hash AS relay_gas_tx_hash, j.forward_tx_hash AS relay_forward_tx_hash,
                 j.last_error AS relay_last_error
