@@ -630,6 +630,100 @@ export const fetchReconciliation = (chain = "bep20", limit = 50) =>
   apiFetch<{ chain: string; snapshots: ReconSnapshot[] }>(
     `/staff/mining/reconciliation?chain=${encodeURIComponent(chain)}&limit=${limit}`);
 
+// ---- Admin-driven reward disbursement (founder, 2026-09-02) --------------
+// Group approved-but-unreleased rewards into a batch and push them out.
+// 'balance' credits the in-app balance; 'onchain'/'manual'/'csv' also create a
+// payout to the user's saved address.
+export type DisbursementMode = "balance" | "onchain" | "manual" | "csv";
+export type DisbursementStatus =
+  | "pending" | "needs_address" | "released" | "sending" | "paid" | "failed" | "skipped";
+export type BatchStatus =
+  | "draft" | "processing" | "completed" | "partly_failed" | "cancelled";
+
+export type EligibleReward = {
+  proofId: string; userId: string; userEmail: string;
+  taskId: string; taskTitle: string;
+  points: number; usdtMicro: number; roziMicro: number;
+  approvedAt: string | null; inBatch: boolean;
+};
+export type DisbursementBatch = {
+  id: string; mode: DisbursementMode; status: BatchStatus;
+  note: string | null; createdBy: string; createdByEmail: string | null;
+  createdAt: string; completedAt: string | null;
+  countTotal: number; pointsTotal: number; usdtMicroTotal: number;
+  tally: Record<DisbursementStatus, number>;
+};
+export type DisbursementRow = {
+  id: string; batchId: string; userId: string; userEmail: string | null;
+  proofId: string | null; taskTitle: string | null;
+  amountPoints: number; usdtMicro: number; roziMicro: number;
+  sourceKind: "points" | "earned_usdt";
+  destChain: string | null; destAddress: string | null;
+  status: DisbursementStatus; txHash: string | null; error: string | null;
+  withdrawalRequestId: string | null; createdAt: string; settledAt: string | null;
+};
+
+export const fetchEligibleRewards = (p: { q?: string; userId?: string; limit?: number; offset?: number } = {}) =>
+  apiFetch<{ items: EligibleReward[]; total: number }>(
+    `/staff/disbursements/eligible?${new URLSearchParams(
+      Object.entries({ q: p.q ?? "", userId: p.userId ?? "", limit: String(p.limit ?? 50), offset: String(p.offset ?? 0) })
+        .filter(([, v]) => v !== ""),
+    ).toString()}`);
+
+export const fetchDisbursementBatches = (p: { status?: string; q?: string; limit?: number; offset?: number } = {}) =>
+  apiFetch<{ batches: DisbursementBatch[]; total: number }>(
+    `/staff/disbursements?${new URLSearchParams(
+      Object.entries({
+        status: p.status ?? "all", q: p.q ?? "",
+        limit: String(p.limit ?? 25), offset: String(p.offset ?? 0),
+      }).filter(([, v]) => v !== ""),
+    ).toString()}`);
+
+export const fetchDisbursementBatch = (id: string) =>
+  apiFetch<{ batch: DisbursementBatch; rows: DisbursementRow[] }>(`/staff/disbursements/${id}`);
+
+export const createDisbursementBatch = (body: {
+  mode: DisbursementMode; note?: string; proofIds?: string[]; allEligible?: boolean; q?: string;
+}) =>
+  apiFetch<{ batchId: string; added: number; skipped: { proofId: string; reason: string }[] }>(
+    "/staff/disbursements", { method: "POST", body: JSON.stringify(body) });
+
+export const runDisbursementBatch = (id: string) =>
+  apiFetch<{ processed: number; released: number; failed: number; results: { disbursementId: string; userId: string; status: string; error?: string }[] }>(
+    `/staff/disbursements/${id}/run`, { method: "POST" });
+
+export const cancelDisbursementBatch = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/staff/disbursements/${id}/cancel`, { method: "POST" });
+
+export const quickSendReward = (proofId: string, note?: string) =>
+  apiFetch<{ batchId: string; released: number; result: { status: string; error?: string } | null }>(
+    "/staff/disbursements/quick", { method: "POST", body: JSON.stringify({ proofId, note }) });
+
+export const markDisbursementRowPaid = (batchId: string, rowId: string, txHash: string) =>
+  apiFetch<{ ok: true; status: "paid" }>(
+    `/staff/disbursements/${batchId}/rows/${rowId}/mark-paid`,
+    { method: "POST", body: JSON.stringify({ txHash }) });
+
+export const reconcileDisbursement = (batchId: string, rows: { disbursementId: string; txHash: string }[]) =>
+  apiFetch<{ paid: string[]; unknown: string[]; notPayable: { id: string; status: string }[]; badHash: string[] }>(
+    `/staff/disbursements/${batchId}/reconcile`, { method: "POST", body: JSON.stringify({ rows }) });
+
+// The export is a Bearer-authed CSV — same reason downloadExport can't be a
+// plain <a href>.
+export async function downloadDisbursementCsv(batchId: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/staff/disbursements/${batchId}/export`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError("Export failed.", res.status);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `disbursement-${batchId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // Money & payouts overview (founder, 2026-09-01): what the platform holds right
 // now + inflow/outflow across six time windows + the latest 5 of each stream.
 // All figures derived server-side; USDT is micro (1e6) end to end.

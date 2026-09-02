@@ -1555,6 +1555,74 @@ const MIGRATIONS = `
     PRIMARY KEY (task_id, user_id)
   );
   CREATE INDEX IF NOT EXISTS idx_task_opens_task ON task_opens(task_id);
+
+  -- ---- ADMIN-DRIVEN REWARD DISBURSEMENT (founder, 2026-09-02) --------------
+  -- Until now the ONLY way money left the platform was a user-filed withdrawal
+  -- request (routes/withdrawals.ts). There was no admin-initiated "send the
+  -- rewards" step and no batching. This adds it: group approved-but-unreleased
+  -- rewards into a BATCH and push them out in one action.
+  --
+  --   'balance' mode  — runs the existing releaseProof()/creditCompletion()
+  --                     path per recipient. Credits the in-app balance. No gas,
+  --                     no treasury, no destination address. The default, and
+  --                     the safe one (append-only credits, idempotent on the
+  --                     completion's (network, external_id) index).
+  --   'onchain' / 'manual' / 'csv' — release to balance, THEN create a
+  --                     withdrawal_request to the user's SAVED payout address
+  --                     and let the existing settle / relay / manual-queue
+  --                     machinery run. A recipient with no saved address is
+  --                     'needs_address' and skipped; it never blocks the batch.
+  --
+  -- ⚠️ Every per-recipient action is its OWN decision, never one transaction —
+  -- one blocked user (velocity cap, exhausted campaign budget, no address)
+  -- must not undo the others. Same rule as the Stage-7 bulk proof decide.
+  CREATE TABLE IF NOT EXISTS payout_batches (
+    id               TEXT PRIMARY KEY,
+    mode             TEXT NOT NULL CHECK (mode IN ('balance','onchain','manual','csv')),
+    status           TEXT NOT NULL DEFAULT 'draft'
+                       CHECK (status IN ('draft','processing','completed','partly_failed','cancelled')),
+    note             TEXT,
+    created_by       TEXT NOT NULL REFERENCES users(id),
+    created_at       TEXT NOT NULL,
+    completed_at     TEXT,
+    -- Roll-up counters, recomputed from payout_disbursements after each run.
+    -- A convenience for the list screen, never the source of truth.
+    count_total      INTEGER NOT NULL DEFAULT 0,
+    points_total     BIGINT NOT NULL DEFAULT 0,
+    usdt_micro_total BIGINT NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_payout_batches_status ON payout_batches(status, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS payout_disbursements (
+    id             TEXT PRIMARY KEY,
+    batch_id       TEXT NOT NULL REFERENCES payout_batches(id),
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    -- The approved-but-unreleased proof this row pays. Nullable so the model
+    -- can grow other eligible sources later without a schema change.
+    proof_id       TEXT REFERENCES task_proofs(id),
+    amount_points  INTEGER NOT NULL DEFAULT 0,
+    usdt_micro     BIGINT NOT NULL DEFAULT 0,
+    rozi_micro     BIGINT NOT NULL DEFAULT 0,
+    source_kind    TEXT NOT NULL DEFAULT 'points'
+                     CHECK (source_kind IN ('points','earned_usdt')),
+    dest_chain     TEXT,
+    dest_address   TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','needs_address','released','sending','paid','failed','skipped')),
+    tx_hash        TEXT,
+    error          TEXT,
+    -- The withdrawal_requests row created for an onchain/manual/csv disbursement.
+    withdrawal_request_id TEXT REFERENCES withdrawal_requests(id),
+    created_at     TEXT NOT NULL,
+    settled_at     TEXT
+  );
+  -- Idempotency: one disbursement per PROOF per batch. Re-running a batch
+  -- re-reads existing rows instead of inserting again, and a proof already
+  -- released in an earlier batch can never be added to a second one.
+  CREATE UNIQUE INDEX IF NOT EXISTS payout_disbursements_one_per_proof
+    ON payout_disbursements(batch_id, proof_id) WHERE proof_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_payout_disbursements_batch ON payout_disbursements(batch_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_payout_disbursements_status ON payout_disbursements(status);
 `;
 
 // ---------------------------------------------------------------------------

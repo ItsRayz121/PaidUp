@@ -44,6 +44,7 @@ export const PERMISSIONS = {
   "withdrawals.view": R("agent"),
   "withdrawals.decide": W("agent"),        // approve / reject / mark paid
   "withdrawals.decide_any": W("manager"),  // without this, capped at agentApprovalMaxPoints
+  "disbursements.manage": W("admin"),      // admin-initiated batch reward payout — release / send / reconcile
   // Money in
   "deposits.view": R("manager"),
   "deposits.decide": W("admin"),           // confirm / reject a pasted tx hash
@@ -150,6 +151,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // — Finance: owns money in and money out, and cannot touch a campaign.
   finance: [
     "withdrawals.view", "withdrawals.decide", "withdrawals.decide_any",
+    "disbursements.manage",
     "deposits.view", "deposits.decide",
     "refunds.view", "refunds.decide",
     "treasury.view", "money.view",

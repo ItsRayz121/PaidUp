@@ -18,6 +18,7 @@ import {
   WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
   RelayJobsPanel, ReconciliationPanel,
 } from "@/components/staff/MoneyQueues";
+import { DisbursementsPanel } from "@/components/staff/Disbursements";
 import { Panel } from "@/components/boundary";
 import { LogoMark } from "@/components/Logo";
 import { TasksAdminPanel, ProofReviewPanel } from "@/components/staff/TasksAdmin";
@@ -65,7 +66,7 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // numbers moved into Money → Overview (gated on withdrawals.view), so the
   // permission no longer maps to a panel and is dropped from this list — a
   // money.view-only role would otherwise land on an empty section.
-  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "deposits.view", "refunds.view", "treasury.view", "settings.manage"] },
+  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "disbursements.manage", "deposits.view", "refunds.view", "treasury.view", "settings.manage"] },
   { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
   { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
   // ⚠️ `mining.view` is deliberately NOT here. The Mining section's tabs
@@ -232,6 +233,7 @@ export default function StaffPage() {
       { id: "p-withdrawals", label: "Withdrawals", need: "withdrawals.view", node: <WithdrawalsPanel canOpenLedger={may("users.view")} /> },
       { id: "p-usdt-deposits", label: "Deposits", need: "deposits.view", node: <DepositsPanel canDecide={may("deposits.decide")} /> },
       { id: "p-usdt-refunds", label: "Refunds", need: "refunds.view", node: <RefundsPanel canDecide={may("refunds.decide")} /> },
+      { id: "p-disbursements", label: "Disbursements", need: "disbursements.manage", node: <DisbursementsPanel canManage={may("disbursements.manage")} /> },
       { id: "p-bnb-withdrawals", label: "BNB out", need: "withdrawals.view", node: <BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /> },
       { id: "p-relay-jobs", label: "Relay jobs", need: "withdrawals.view", node: <RelayJobsPanel canHandle={may("withdrawals.decide")} /> },
       { id: "p-treasury", label: "Treasury", need: "treasury.view", node: <TreasuryPanel /> },
@@ -241,7 +243,7 @@ export default function StaffPage() {
     users: [
       { id: "p-users", label: "Users", need: "users.list", node: <UsersPanel /> },
       { id: "p-kyc", label: "Verify IDs", need: "kyc.view", node: <KycPanel /> },
-      { id: "p-lookup", label: "Look up a user", need: "users.view", node: <UserLookupScreen target={lookupTarget} onCleared={() => setLookupTarget(null)} /> },
+      { id: "p-lookup", label: "Look up a user", need: "users.view", node: <UserLookupScreen target={lookupTarget} onCleared={() => setLookupTarget(null)} canDisburse={may("disbursements.manage")} /> },
       { id: "p-fraud", label: "Fraud flags", need: "fraud.view", node: <FraudPanel canResolve={may("fraud.resolve")} /> },
     ],
     tasks: [

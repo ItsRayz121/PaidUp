@@ -2603,6 +2603,69 @@ These override convenience or speed at every step:
     `/mine/boosters` explains that a booster is a temporary speed multiplier
     bought with Points (not ROZI).
 
+- **ADMIN-DRIVEN REWARD DISBURSEMENT — a "send the rewards out" layer
+  (founder, 2026-09-02).** Until this, the ONLY way money left the platform
+  was a user-filed withdrawal request; there was no admin-initiated payout and
+  no batching. Now a staff member (`disbursements.manage` — admin + finance
+  only) groups approved-but-unreleased custom-task rewards into a **batch** and
+  pushes them out. Full plan + checklist: `docs/DISBURSEMENT_PLAN.md`. Verified:
+  new `npm run test:disbursements` (65 checks) + the full backend matrix
+  (36 suites) + api/web typecheck + eslint + `next build` + `security-review`
+  (no findings) all green.
+  - **Eligible = an approved custom-task proof whose reward has NOT been
+    released** (`task_proofs.reward_status='pending'` — the existing two-step
+    release, `routes/staffTasks.ts`, made batchable). ⚠️ **Network-postback
+    credits (CPX etc.) are deliberately NOT eligible** — they credit
+    immediately at postback time and must keep doing so or the earn→withdraw
+    loop breaks.
+  - **Four modes, admin picks per batch** (founder decision A):
+    - `balance` (the default, the safe one) — per recipient, runs the EXACT
+      `releaseProof()`/`creditCompletion()` path. Credits the in-app balance.
+      No address, no gas, no treasury. Append-only credits, idempotent on the
+      completion's `(network, external_id)` = `proof:<id>` index.
+    - `onchain` — releases to balance, then creates a `withdrawal_request`
+      (`source_kind='earned_usdt'`) to the user's **saved** payout address and
+      calls `tryAutoSettle()`. Reuses the whole settle/relay/queue/24h-cap/hold
+      machinery unchanged.
+    - `manual` / `csv` — same, but the request is left in the manual
+      Agent→Manager queue; staff mark it paid with a tx hash. `csv` adds a
+      recipient-list export + a `{disbursementId, txHash}` re-upload that
+      reconciles rows and reports paid / unknown / notPayable / badHash.
+  - ⚠️ **DECISION B: an admin push NEVER collects a destination address.**
+    `balance` needs none. `onchain`/`manual`/`csv` fall back to the user's
+    saved `payout_addresses` row; a recipient with none is marked
+    `needs_address` and **skipped** — it never blocks the rest of the batch,
+    and the reward still lands on their in-app balance for them to withdraw
+    themselves. No new forced address-collection step.
+  - ⚠️ **EACH RECIPIENT IS ITS OWN DECISION** (the Stage-7 bulk-proof-decide
+    rule). `runBatch` loops rows, each in its own transaction; one blocked
+    recipient (velocity cap, exhausted campaign budget, missing address) is
+    recorded `failed`/`needs_address` and the loop carries on. Never one big
+    transaction. A `failed`/`needs_address` row is retried on the next run;
+    `released`/`paid`/`sending` rows are not.
+  - ⚠️ **Guardrail #8**: `runPayoutRow`'s request-creation + USDT hold runs
+    under `pg_advisory_xact_lock(hashtext(userId))` so a concurrent user-filed
+    withdrawal serializes with it. `balance` mode needs no lock (append-only
+    credits, unique-index idempotency); concurrent runs of one batch are
+    serialized by a conditional `UPDATE … status='sending' WHERE status IN (…)`
+    claim per row.
+  - ⚠️ **Orphan recovery**: a row stuck at `sending` with `withdrawal_request_id
+    IS NULL` = a run that crashed mid-processing (a real in-flight payout always
+    gets its request id set in the same tx as `sending`). `runBatch` resets
+    those to `pending` before each run, and wraps every row processor in
+    try/catch — without both, a throw (vs a returned `{ok:false}`) left the row
+    invisible forever (`sending` is deliberately not retryable).
+  - ⚠️ **RELATED FIX in `payoutRelay.ts` `failJob`**: it credited **points**
+    back for a failed withdrawal regardless of `source_kind` — wrong ledger for
+    an `earned_usdt` withdrawal (which is what this feature creates in bulk, and
+    what a USDT-paying task's own withdrawal already was). Now branches on
+    `source_kind`, mirroring `staff.ts`'s manual reject. Regression test added.
+  - New tables `payout_batches` + `payout_disbursements` (workflow state, not
+    ledgers). New permission `disbursements.manage` (W/admin tier → `admin` +
+    `finance`). UI: `/staff → Money & payouts → Disbursements`
+    (`web/src/components/staff/Disbursements.tsx`), plus a "Rewards waiting to
+    be paid" card with one-click Send on the User 360.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
