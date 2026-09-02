@@ -463,6 +463,13 @@ export const config = {
   // ceiling: anything that can settle automatically does so with no code, and
   // anything above that is going to a human in the manual queue anyway.
   stepUpMinPoints: Number(process.env.STEP_UP_MIN_POINTS ?? 100000),
+
+  // ---- Admin-driven reward disbursement (founder, 2026-09-02) --------------
+  // The most recipients one batch may hold. A cap, not a target: a batch is
+  // run as N independent per-recipient decisions in a loop on one request, so
+  // an unbounded batch is an unbounded request. Raise via env if a real payout
+  // run needs more.
+  disbursementMaxRecipients: Number(process.env.DISBURSEMENT_MAX_RECIPIENTS ?? 500),
 };
 
 export const isProdSecretsMissing =

@@ -1067,7 +1067,7 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   }));
 }
 
-type ProofOutcome = {
+export type ProofOutcome = {
   ok: boolean; error?: string; status?: string; duplicate?: boolean;
   rewardStatus?: "pending" | "sent"; roziMicro?: number; usdtMicro?: number;
   credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number;
@@ -1142,7 +1142,12 @@ async function decideProof(
 
 // STEP 2. Pay the (possibly Agent-adjusted) reward through the shared credit
 // path. Only an approved, not-yet-released proof is eligible.
-async function releaseProof(
+//
+// Exported so the admin-driven disbursement layer (routes/staffDisbursements.ts,
+// founder 2026-09-02) reuses THIS exact function per recipient instead of
+// keeping a second copy of the release logic that could drift — same reasoning
+// as decideProof being shared by the single-click and bulk proof routes.
+export async function releaseProof(
   app: FastifyInstance,
   ctx: { userId: string; role: Role },
   proofId: string,

@@ -56,6 +56,8 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "topup top up deposit confirm tx hash credit", needs: ["deposits.view"] },
   { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-usdt-refunds", hint: "Money & payouts",
     keywords: "refund get money back return deposit", needs: ["refunds.view"] },
+  { label: "Reward disbursements", short: "Disbursements", section: "money", anchor: "p-disbursements", hint: "Money & payouts",
+    keywords: "disbursement batch pay rewards send all release bulk csv payout", needs: ["disbursements.manage"] },
   { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-bnb-withdrawals", hint: "Money & payouts",
     keywords: "bnb gas withdraw native failed", needs: ["withdrawals.view"] },
   { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-relay-jobs", hint: "Money & payouts",

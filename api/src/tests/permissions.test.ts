@@ -79,6 +79,14 @@ test("the brief's own role examples hold", () => {
   assert.ok(!hasPermission("finance", "networks.manage"));
 });
 
+test("only admin and finance can run a reward disbursement batch", () => {
+  // disbursements.manage releases approved rewards and can push them on-chain —
+  // squarely money-out, which is finance's job. Not operations (day-to-day, no
+  // treasury), not task_manager (reviews proofs, does not pay them).
+  const holders = ROLES.filter((r) => hasPermission(r, "disbursements.manage"));
+  assert.deepEqual(holders.sort(), ["admin", "finance"]);
+});
+
 test("finance and task_manager are NOT a ladder — neither contains the other", () => {
   // This is the entire reason the role list stopped being a ladder. If either
   // direction of containment is ever true, someone has flattened the model back

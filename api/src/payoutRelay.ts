@@ -65,7 +65,7 @@ import {
   createWalletClient, createPublicClient, http, fallback, parseUnits, erc20Abi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sql, now, newId, getOrCreateDepositWallet, postLedger, postUsdt, type TxApi } from "./db.ts";
+import { sql, now, newId, getOrCreateDepositWallet, postLedger, postUsdt, postEarnedUsdt, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { ONCHAIN_CHAINS } from "./payout.ts";
 import { treasurySignerKey } from "./signer.ts";
@@ -266,20 +266,38 @@ async function failJob(
   if (!safe) return null; // leave the request at 'sending' — a human must check the chain first
 
   if (job.purpose === "withdrawal") {
-    const w = await t.get<{ user_id: string; amount: number }>(
+    // ⚠️ RETURN THE HELD FUNDS IN THE CURRENCY THEY WERE HELD IN. A withdrawal
+    // can hold POINTS (source_kind='points') or TASK USDT (source_kind=
+    // 'earned_usdt' — earnings from a USDT-paying task, and the currency an
+    // admin reward disbursement pays out in). Crediting points back for an
+    // earned_usdt hold would refund the wrong ledger — the user's points go up
+    // for money that came out of their task-USDT balance. staff.ts's manual
+    // reject path already branches on source_kind for exactly this reason.
+    const w = await t.get<{ user_id: string; amount: number; source_kind: string; earned_usdt_micro: string | number }>(
       `UPDATE withdrawal_requests SET status = 'rejected', review_note = ?, reviewed_by = 'system:auto', reviewed_at = ?
-       WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+       WHERE id = ? AND status = 'sending' RETURNING user_id, amount, source_kind, earned_usdt_micro`,
       `Could not send automatically: ${error}`, now(), job.request_id,
     );
     if (!w) return null; // already resolved by staff in the meantime — nothing to do
-    await postLedger({
-      userId: w.user_id, points: w.amount, direction: "credit",
-      sourceType: "admin_adjustment", sourceRefId: job.request_id,
-      note: "Withdrawal could not be sent automatically — points returned",
-    }, t);
+    if (w.source_kind === "earned_usdt") {
+      await postEarnedUsdt({
+        userId: w.user_id, micro: Number(w.earned_usdt_micro), direction: "credit",
+        sourceType: "withdrawal_return", sourceRefId: job.request_id,
+        note: "Withdrawal could not be sent automatically — task USDT returned",
+      }, t);
+    } else {
+      await postLedger({
+        userId: w.user_id, points: w.amount, direction: "credit",
+        sourceType: "admin_adjustment", sourceRefId: job.request_id,
+        note: "Withdrawal could not be sent automatically — points returned",
+      }, t);
+    }
     return {
       userId: w.user_id, title: "About your withdrawal",
-      body: "We could not send this one. Your points are back in your wallet.", url: "/wallet",
+      body: w.source_kind === "earned_usdt"
+        ? "We could not send this one. Your task USDT is back in your wallet."
+        : "We could not send this one. Your points are back in your wallet.",
+      url: "/wallet",
     };
   }
 

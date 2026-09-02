@@ -4,15 +4,16 @@
 // Overview · Activity · Balances · Money · Referrals · Tickets · Audit, plus a
 // Danger zone. Every number is derived server-side from a table that already
 // exists (GET /staff/users/:id) — no per-user counter to drift.
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DetailLayout, type DetailTab } from "./DetailLayout";
 import { StatusBadge, TimeCell, Points, UsdtMicro } from "./primitives";
 import { useToast } from "./toast";
 import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
   adjustUserPoints, adjustUserRozi, adjustUserUsdt, type StaffUserDetail,
+  fetchEligibleRewards, quickSendReward, type EligibleReward,
 } from "@/lib/api";
-import { formatMoney, formatPoints } from "@/lib/format";
+import { formatMoney, formatPoints, formatUsdtMicro } from "@/lib/format";
 
 type Row = Record<string, unknown>;
 const S = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -47,10 +48,60 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function UserDetail({ d, onReload, onBack }: {
+// Approved rewards for this user that have not been released yet — with a
+// one-click "Send now" (balance mode) that runs the same path a disbursement
+// batch does. Only rendered for a staff member who can manage disbursements.
+function WaitingRewards({ userId }: { userId: string }) {
+  const toast = useToast();
+  const [items, setItems] = useState<EligibleReward[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(
+    () => fetchEligibleRewards({ userId, limit: 50 }).then((r) => setItems(r.items)).catch(() => setItems([])),
+    [userId],
+  );
+  useEffect(() => { void load(); }, [load]);
+
+  if (!items || items.length === 0) return null;
+  async function send(proofId: string) {
+    setBusy(proofId);
+    try {
+      const r = await quickSendReward(proofId);
+      if (r.released) toast.ok("Reward sent to their balance.");
+      else toast.err(r.result?.error ?? "Could not send that reward.");
+      await load();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(null); }
+  }
+  return (
+    <div className="rounded-lg border border-brand/30 bg-brand-tint/20 p-4">
+      <p className="mb-2 text-xs font-semibold uppercase text-brand">Rewards waiting to be paid</p>
+      <div className="space-y-1.5">
+        {items.map((it) => (
+          <div key={it.proofId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="min-w-0 truncate">
+              {it.taskTitle}
+              <span className="ml-2 num text-xs text-muted">
+                {it.usdtMicro > 0 ? formatUsdtMicro(it.usdtMicro) : ""}
+                {it.roziMicro > 0 ? ` ${(it.roziMicro / 1e6).toFixed(2)} ROZI` : ""}
+              </span>
+            </span>
+            <button disabled={busy === it.proofId} onClick={() => send(it.proofId)}
+              className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
+              {busy === it.proofId ? "Sending…" : "Send now"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
   d: StaffUserDetail;
   onReload: () => void;
   onBack: () => void;
+  canDisburse?: boolean;
 }) {
   const u = d.user;
   const toast = useToast();
@@ -160,6 +211,8 @@ export function UserDetail({ d, onReload, onBack }: {
               {u.under_review_by_email ? ` — by ${S(u.under_review_by_email)}` : ""}. Triage note only — it stops nothing.
             </p>
           )}
+
+          {canDisburse && <WaitingRewards userId={u.id} />}
 
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted">Devices &amp; IPs</p>
@@ -400,7 +453,7 @@ export function UserDetail({ d, onReload, onBack }: {
 // Standalone "find + open a user" screen (the Users & IDs → "Look up a user"
 // panel). Keeps its own small search box; the target prop lets a "view ledger"
 // link elsewhere in the console jump straight in.
-export function UserLookupScreen({ target, onCleared }: { target: string | null; onCleared?: () => void }) {
+export function UserLookupScreen({ target, onCleared, canDisburse = false }: { target: string | null; onCleared?: () => void; canDisburse?: boolean }) {
   const [id, setId] = useState(target ?? "");
   const [query, setQuery] = useState(target ?? "");
   const [data, setData] = useState<StaffUserDetail | null>(null);
@@ -441,6 +494,7 @@ export function UserLookupScreen({ target, onCleared }: { target: string | null;
       {data && (
         <UserDetail
           d={data}
+          canDisburse={canDisburse}
           onReload={() => load(query)}
           onBack={() => { setData(null); setId(""); setQuery(""); onCleared?.(); }}
         />

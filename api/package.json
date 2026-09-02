@@ -44,7 +44,8 @@
     "test:usersadmin": "tsx src/tests/usersAdmin.e2e.ts",
     "test:moneyadmin": "tsx src/tests/moneyAdmin.e2e.ts",
     "test:tasksadmin": "tsx src/tests/tasksAdmin.e2e.ts",
-    "test:messagesadmin": "tsx src/tests/messagesAdmin.e2e.ts"
+    "test:messagesadmin": "tsx src/tests/messagesAdmin.e2e.ts",
+    "test:disbursements": "tsx src/tests/disbursements.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

@@ -14,6 +14,7 @@ import type { SessionUser } from "./api";
 // and the API is the authority. Adding one here is a one-line change.
 export type UiPermission =
   | "withdrawals.view" | "withdrawals.decide"
+  | "disbursements.manage"
   | "deposits.view" | "deposits.decide"
   | "refunds.view" | "refunds.decide"
   | "treasury.view" | "money.view"
