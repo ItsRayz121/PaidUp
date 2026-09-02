@@ -143,6 +143,7 @@ export function ReferralPanel() {
       </div>
 
       <TopReferrers rows={d.topReferrers} />
+      <TopInviters rows={d.topReferrers} />
     </div>
   );
 }
@@ -306,6 +307,44 @@ function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
                   </Fragment>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A compact ranking below "Top partners" (founder, 2026-09-02: "you can add it
+// below top partners"). Same rows, same data — the Leaderboard tab's own "Top
+// inviters" board reads from a much stricter query (a PAID referral bonus,
+// api/src/leaderboard.ts) and stays empty until someone's invite has actually
+// earned money; this one reuses the already-working `topReferrers` fetch
+// (any invite counts) so there is a real "who invited the most people" answer
+// here even before anyone's referral bonus has paid out.
+function TopInviters({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
+  const { openUser } = useStaffNav();
+  const top = [...rows].sort((a, b) => b.invites - a.invites).slice(0, 10);
+  return (
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+      <h3 className="font-bold text-brand-ink">Top inviters</h3>
+      <p className="mt-1 text-xs text-muted">Ranked by invites sent, top 10.</p>
+      {top.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">Nobody qualifies yet.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[360px] text-xs">
+            <thead className="text-left uppercase text-muted">
+              <tr><th className="py-1">#</th><th>User</th><th>Invites</th></tr>
+            </thead>
+            <tbody>
+              {top.map((r, i) => (
+                <tr key={r.id} className="border-t border-line">
+                  <td className="py-1.5 font-mono text-muted">{i + 1}</td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r)}</button></td>
+                  <td className="font-mono">{n(r.invites)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
