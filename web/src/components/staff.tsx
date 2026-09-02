@@ -123,7 +123,7 @@ function Tile(
 // The queue that lists tickets moved onto the shared <DataTable> in Phase E
 // (components/staff/SupportQueue.tsx); this thread — the "who is this / read the
 // history / reply" panel — is unchanged and reused there inside a <DetailLayout>.
-export const TICKET_STATUSES = ["open", "answered", "closed", "all"];
+export const TICKET_STATUSES = ["all", "open", "answered", "closed"];
 
 export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
   const id = t.id;

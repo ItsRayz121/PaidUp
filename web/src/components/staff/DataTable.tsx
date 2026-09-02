@@ -181,7 +181,7 @@ export function DataTable<Row>(p: Props<Row>) {
       ) : rows.length === 0 ? (
         <EmptyState title={p.emptyTitle ?? "Nothing here"} hint={p.emptyHint ?? (q.search || activeFilterCount ? "Try a different search or clearing filters." : undefined)} />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
+        <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
               <tr>

@@ -17,7 +17,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column, type FilterDef } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell } from "./primitives";
+import { StatusBadge, TimeCell, StatusTabs } from "./primitives";
 import { useToast } from "./toast";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
@@ -34,27 +34,9 @@ import {
 
 // ---- shared bits -----------------------------------------------------------
 
-// A status tab strip. Same shape and reasoning as the money queues' StatusTabs:
-// a task/proof list is read one status at a time, so the status is a tab, not a
+// Status tabs are the shared `StatusTabs` primitive (./primitives) — a
+// task/proof list is read one status at a time, so the status is a tab, not a
 // "Clear filters"-able DataTable filter.
-function StatusTabs({ options, value, onChange, counts }: {
-  options: string[]; value: string; onChange: (s: string) => void;
-  counts?: Record<string, number>;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1">
-      {options.map((s) => (
-        <button key={s} onClick={() => onChange(s)}
-          className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-            value === s ? "bg-brand text-white" : "bg-brand-tint text-brand"
-          }`}>
-          {s.replace(/_/g, " ")}
-          {counts && counts[s] !== undefined && <span className="num ms-1 opacity-80">{counts[s]}</span>}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // Toolbar row: title on the left, tabs in the middle, live refresh on the right.
 function QueueHeader({ title, tabs, status, setStatus, counts, refresh, right }: {

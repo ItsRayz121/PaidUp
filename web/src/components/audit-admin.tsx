@@ -95,7 +95,7 @@ export function AuditPanel() {
         </p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-line">
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr>

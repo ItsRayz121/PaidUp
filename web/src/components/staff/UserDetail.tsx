@@ -20,9 +20,9 @@ const S = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const N = (v: unknown) => Number(v ?? 0);
 
 function MiniTable({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; empty: string }) {
-  if (rows.length === 0) return <p className="rounded-lg border border-line bg-card p-3 text-sm text-muted">{empty}</p>;
+  if (rows.length === 0) return <p className="rounded-lg border-2 border-line-strong bg-card p-3 text-sm text-muted">{empty}</p>;
   return (
-    <div className="overflow-x-auto rounded-lg border border-line">
+    <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
       <table className="w-full min-w-[520px] text-xs">
         <thead className="bg-brand-tint/60 text-left uppercase text-brand">
           <tr>{head.map((h) => <th key={h} className="p-2">{h}</th>)}</tr>
@@ -196,7 +196,7 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
       id: "overview", label: "Overview",
       content: (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-card p-4 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border-2 border-line-strong bg-card p-4 sm:grid-cols-3">
             <Field label="Email">{S(u.email)}</Field>
             <Field label="Handle">{u.username ? `@${S(u.username)}` : "—"}</Field>
             <Field label="Display name">{S(u.display_name) || "—"}</Field>

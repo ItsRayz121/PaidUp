@@ -16,7 +16,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId, Addr, ErrText } from "./primitives";
+import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
@@ -46,26 +46,11 @@ const ACCENT_DOT: Record<Accent, string> = {
   pending: "bg-pending", danger: "bg-danger", neutral: "bg-muted",
 };
 
-// A status tab strip. Kept separate from the DataTable filter bar on purpose:
-// a money queue is read one status at a time (the old panels were tabbed), and
-// a "Clear filters" that could wipe the status back to a surprising default is
-// the wrong affordance here.
-function StatusTabs({ options, value, onChange }: {
-  options: string[]; value: string; onChange: (s: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1">
-      {options.map((s) => (
-        <button key={s} onClick={() => onChange(s)}
-          className={`rounded-md border-2 px-2.5 py-1 text-xs font-semibold ${
-            value === s ? "border-brand bg-brand text-white" : "border-line-strong bg-brand-tint text-brand"
-          }`}>
-          {s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-        </button>
-      ))}
-    </div>
-  );
-}
+// Status tabs are now the shared `StatusTabs` primitive (./primitives) — kept
+// separate from the DataTable filter bar on purpose: a money queue is read
+// one status at a time (the old panels were tabbed), and a "Clear filters"
+// that could wipe the status back to a surprising default is the wrong
+// affordance here.
 
 // The toolbar row every money queue shares: status tabs on the left, the live
 // refresh bar on the right. `accent` draws a coloured dot by the title so each

@@ -177,6 +177,54 @@ export function Spinner({ label = "Loading…" }: { label?: string }) {
   return <p className="p-4 text-sm text-muted">{label}</p>;
 }
 
+// ---- status tabs -------------------------------------------------------
+// One tab-strip look for the whole panel (founder, 2026-09-02: "make the
+// boundaries very clear, everywhere"). Every status filter in the staff panel
+// used to be its own hand-rolled button row — three different border styles,
+// mixed casing, mixed ordering. This is now the only implementation; screens
+// that need a per-tab count (the proof/ticket queues) pass `counts`.
+// Label casing is ALWAYS Title Case here — pass the raw lowercase status
+// strings ("all", "open", "under_review") and this renders them consistently.
+export function StatusTabs({ options, value, onChange, counts }: {
+  options: string[]; value: string; onChange: (s: string) => void;
+  counts?: Record<string, number>;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {options.map((s) => (
+        <button key={s} type="button" onClick={() => onChange(s)}
+          className={`rounded-md border-2 px-2.5 py-1 text-xs font-semibold ${
+            value === s ? "border-brand bg-brand text-white" : "border-line-strong bg-brand-tint text-brand"
+          }`}>
+          {s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+          {counts && counts[s] !== undefined && <span className="num ms-1 opacity-80">{counts[s]}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---- tile ---------------------------------------------------------------
+// The strong-border card used on Dashboard / Money & payouts (founder,
+// 2026-09-02), now shared so every panel's stat cards match. `emphasis`
+// renders the title a touch bolder with a thin (not strong) divider under it
+// — "inside the boundary, make some things slightly prominent, but less than
+// the outer boundary".
+export function Tile({ children, emphasis, className = "" }: {
+  children: ReactNode; emphasis?: ReactNode; className?: string;
+}) {
+  return (
+    <div className={`rounded-lg border-2 border-line-strong bg-card p-3 ${className}`}>
+      {emphasis && (
+        <div className="mb-2 border-b border-line pb-1.5 font-semibold text-brand-ink">
+          {emphasis}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
 // ---- date field ------------------------------------------------------
 // The first real date picker in the app (founder, 2026-09-02: "a pre-built
 // date setup — select and tap"). Native <input type="date"> gives the phone's

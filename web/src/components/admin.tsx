@@ -263,7 +263,7 @@ export function StaffRolesPanel() {
           Without this the picker is nine words with no meaning, and whoever is
           appointing has to guess — which is how everyone ends up an admin. */}
       {roles.length > 0 && (
-        <details className="mb-3 rounded-lg border border-line bg-card p-3">
+        <details className="mb-3 rounded-lg border-2 border-line-strong bg-card p-3">
           <summary className="cursor-pointer text-sm font-semibold text-brand">
             What can each role do?
           </summary>
@@ -282,7 +282,7 @@ export function StaffRolesPanel() {
 
       {staff.loading ? <p className="text-sm text-muted">Loading…</p>
         : staff.error ? <p className="text-sm text-danger">{staff.error}</p> : (
-          <div className="overflow-x-auto rounded-lg border border-line">
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
             <table className="w-full min-w-[520px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr><th className="p-2.5">Email</th><th className="p-2.5">Role</th><th className="p-2.5">Since</th><th className="p-2.5">Change</th></tr>

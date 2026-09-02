@@ -34,6 +34,10 @@ import { ToastProvider } from "@/components/staff/toast";
 import { UserLookupScreen } from "@/components/staff/UserDetail";
 import { DashboardOverview } from "@/components/staff/DashboardOverview";
 import { MoneyOverview } from "@/components/staff/MoneyOverview";
+import {
+  ChartIcon, WalletIcon, ShieldIcon, TasksIcon, MineIcon, ReferIcon,
+  InboxIcon, HelpIcon, ClockIcon, SlidersIcon, GearIcon, ProfileIcon,
+} from "@/components/icons";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
 // Jargon (postback, fraud, ledger) is allowed here — never in the earner app.
@@ -100,6 +104,15 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // it is a staffing/ops concern, not its own top-level page.
   { id: "team", label: "Staff & roles", needs: ["staff.manage", "infra.view"] },
 ];
+
+// One icon per section (founder, 2026-09-02: "add some professional icons
+// across the admin panel"). Purely a nav wayfinding aid — every icon still
+// sits next to its text label, never carrying meaning alone.
+const SECTION_ICON: Record<SectionId, (p: { size?: number }) => ReactNode> = {
+  dashboard: ChartIcon, money: WalletIcon, users: ShieldIcon, tasks: TasksIcon,
+  mining: MineIcon, growth: ReferIcon, messages: InboxIcon, support: HelpIcon,
+  audit: ClockIcon, flags: SlidersIcon, settings: GearIcon, team: ProfileIcon,
+};
 
 // ---- Sub-panels within a section ------------------------------------------
 // Founder, 2026-09-01: "one thing per screen". A section that has more than one
@@ -216,14 +229,18 @@ export default function StaffPage() {
 
   const nav = (
     <>
-      {visible.map((s) => (
-        <button key={s.id} onClick={() => go(s.id)}
-          className={`block w-full whitespace-nowrap rounded-md px-3 py-2 text-left text-sm font-semibold transition-colors ${
-            section === s.id ? "bg-brand text-white" : "text-brand hover:bg-brand-tint"
-          }`}>
-          {s.label}
-        </button>
-      ))}
+      {visible.map((s) => {
+        const Icon = SECTION_ICON[s.id];
+        return (
+          <button key={s.id} onClick={() => go(s.id)}
+            className={`flex w-full items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              section === s.id ? "bg-brand text-white" : "text-brand hover:bg-brand-tint"
+            }`}>
+            <Icon size={16} />
+            {s.label}
+          </button>
+        );
+      })}
     </>
   );
 

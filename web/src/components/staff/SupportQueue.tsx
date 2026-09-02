@@ -14,14 +14,14 @@ import { useApi, useStaffSession } from "@/lib/hooks";
 import { useTableQuery } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell } from "./primitives";
+import { StatusBadge, TimeCell, StatusTabs } from "./primitives";
 import { RefreshBar, QUEUE_POLL_MS, TicketThread, TICKET_STATUSES } from "@/components/staff";
 import { fetchStaffTickets, type StaffTicket } from "@/lib/api";
 import { displayIdentity } from "@/lib/format";
 
 export function SupportQueuePanel() {
   const q = useTableQuery("support:tickets", { pageSize: 25, sort: "updated_at", dir: "asc" });
-  const [status, setStatusRaw] = useState("open");
+  const [status, setStatusRaw] = useState("all");
   const [mineOnly, setMineOnly] = useState(false);
   const [auto, setAuto] = useState(true);
   const [open, setOpen] = useState<StaffTicket | null>(null);
@@ -89,19 +89,9 @@ export function SupportQueuePanel() {
     <section className="mb-8">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold text-brand-ink">Support tickets</h2>
-        <div className="flex flex-wrap gap-1">
-          {TICKET_STATUSES.map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                status === s ? "bg-brand text-white" : "bg-brand-tint text-brand"
-              }`}>
-              {s}
-              {/* Over every ticket, never this filter — a per-filter count would
-                  always equal the list length and say nothing. */}
-              {s !== "all" && counts[s] !== undefined && <span className="num ms-1 opacity-70">{counts[s]}</span>}
-            </button>
-          ))}
-        </div>
+        {/* Counts are over EVERY ticket, never this filter — a per-filter count
+            would always equal the list length and say nothing. */}
+        <StatusTabs options={TICKET_STATUSES} value={status} onChange={setStatus} counts={counts} />
         <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload} auto={auto} setAuto={setAuto} />
       </div>
       <DataTable<StaffTicket>

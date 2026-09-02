@@ -130,7 +130,7 @@ function EligiblePool({ canManage, onCreated }: { canManage: boolean; onCreated:
       <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload} auto={auto} setAuto={setAuto} />
 
       {canManage && (
-        <div className="rounded-lg border border-line bg-card p-3">
+        <div className="rounded-lg border-2 border-line-strong bg-card p-3">
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs font-semibold text-muted">
               Mode

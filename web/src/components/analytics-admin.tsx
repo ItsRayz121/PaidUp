@@ -16,7 +16,7 @@ import { useStaffNav } from "@/lib/staffNav";
 const RANGES = [7, 30, 90];
 
 export function AnalyticsDashboard() {
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(7);
   const [asTable, setAsTable] = useState(false);
   const report = useApi(() => fetchAnalytics(days), [days]);
   const { goToSection } = useStaffNav();

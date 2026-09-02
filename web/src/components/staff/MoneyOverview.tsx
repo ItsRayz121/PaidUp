@@ -14,6 +14,7 @@ import { QUEUE_POLL_MS, RefreshBar } from "@/components/staff";
 import { useStaffNav } from "@/lib/staffNav";
 import { StatusBadge, TimeCell, Spinner, ErrorRow } from "./primitives";
 import { formatUsdtMicro, formatPoints, formatBnbWei } from "@/lib/format";
+import { ArrowDownIcon, ArrowUpIcon, ChartIcon } from "@/components/icons";
 
 const WINDOWS: { key: string; label: string }[] = [
   { key: "h1", label: "1 hour" },
@@ -33,9 +34,12 @@ function Card({ tone, label, value, children }: {
     net: "border-brand bg-brand-tint/40",
   }[tone];
   const num = { in: "text-success", out: "text-danger", net: "text-brand-ink" }[tone];
+  const Icon = { in: ArrowDownIcon, out: ArrowUpIcon, net: ChartIcon }[tone];
   return (
     <div className={`rounded-lg border-2 p-4 ${ring}`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+      <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <Icon size={13} /> {label}
+      </p>
       <p className={`num text-2xl font-bold ${num}`}>{value}</p>
       {children && <div className="mt-1 space-y-0.5 text-xs text-muted">{children}</div>}
     </div>
@@ -87,7 +91,7 @@ export function MoneyOverview() {
   const [auto, setAuto] = useState(true);
   const d = useApi(fetchMoneyOverview, [], true, auto ? QUEUE_POLL_MS : undefined);
   const { goToSection } = useStaffNav();
-  const [win, setWin] = useState("h24");
+  const [win, setWin] = useState("h1");
 
   if (d.loading && !d.data) return <Spinner label="Loading money overview…" />;
   if (d.error) return <ErrorRow message={d.error} onRetry={d.reload} />;

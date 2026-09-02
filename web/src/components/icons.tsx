@@ -58,6 +58,18 @@ export const XIcon = (p: IconProps) => (
 export const ArrowRightIcon = (p: IconProps) => (
   <svg {...base(p)}><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
 );
+export const ArrowDownIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 5v14" /><path d="m6 13 6 6 6-6" /></svg>
+);
+export const ArrowUpIcon = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></svg>
+);
+export const GearIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V20a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H4a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.6V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.6 1H20a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1Z" />
+  </svg>
+);
 export const GiftIcon = (p: IconProps) => (
   <svg {...base(p)}><rect x="3.5" y="9" width="17" height="12" rx="2" /><path d="M12 9v12M3.5 13h17" /><path d="M12 9C9 9 7.5 4 12 4c4.5 0 3 5 0 5Z" /></svg>
 );
