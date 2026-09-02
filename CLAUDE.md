@@ -2785,6 +2785,89 @@ These override convenience or speed at every step:
     (`web/src/components/staff/Disbursements.tsx`), plus a "Rewards waiting to
     be paid" card with one-click Send on the User 360.
 
+- **STAFF-PANEL PHONE REVIEW, PART TWO: TWO REAL BUGS, MONEY & PAYOUTS
+  REGROUPED, WHATSAPP-STYLE TICKETS (founder, 2026-09-02, same day).**
+  Verified: tasksAdmin (57), moneyAdmin (82), usersAdmin (50), admin (15),
+  stage7 (96), messagesAdmin (46), stage6 (70), permissions (17), stage4
+  (48), mining unit (42), mining e2e (65), all green; api + web typecheck,
+  eslint, web production build (37 routes) all clean; `security-review` —
+  no findings.
+  - ⚠️ **BUG: A TASK'S OWN PROOFS TAB SHOWED SITE-WIDE COUNTS.** "Paid 1 /
+    Rejected 1" chips sat next to an empty list because `GET
+    /staff/task-proofs`'s counts query had no `task_id` filter — it was
+    always counting every task's proofs, on purpose, for the GLOBAL Proofs
+    screen (`ProofReviewPanel`'s "counts never follow the filter" rule,
+    stage 6), and the per-task tab (`TaskProofsTab`) was reusing the same
+    endpoint response unmodified. Fixed with a `scopeCounts` param sent only
+    by the per-task tab; the global screen's behavior is untouched.
+  - ⚠️ **BUG: TOP MINERS SHOWED "TELEGRAM USER" FOR ACCOUNTS WITH A REAL
+    NAME ON FILE.** `displayIdentity()`'s fallback chain was correct; the
+    top-miners SQL in `staffMining.ts` simply never selected `display_name`/
+    `telegram_name`. Fixed at the query. `displayIdentity()` also gained an
+    opt-in `{ full: true }` mode that shows a handle AND a name together
+    (founder: "if they have a name, show that too") — used only where
+    there's room (User 360's header, the top-miners table); every narrow
+    table-cell caller is unchanged.
+  - **Approving a task proof no longer re-asks the amount.** The reward is
+    already whatever the task was configured to pay, and the server-side
+    `decideProof()` already defaulted to the full ceiling when the client
+    sent nothing (proven by the bulk-approve path, which always has). The
+    primary Approve button is now one click at full reward; "Approve a
+    different amount" is a small secondary action for the rare case a staff
+    member wants to trim a suspect submission below the ceiling.
+  - **A real "All" tab** on both proof-review screens (was Pending / Reward
+    pending / Paid / Rejected only).
+  - **Money & payouts: 11 flat sub-tabs → 6.** `Withdrawals` (USDT / BNB /
+    relay jobs — all three already shared the `withdrawals.view`
+    permission), `Deposits` (USDT deposits queue / USDT refunds queue /
+    top-up settings — three different permissions, an inline note explains
+    the deposits-queue-vs-top-up-settings distinction the founder asked
+    about), and `Treasury` (treasury balance / reconciliation history) each
+    now own an internal tab bar — same nested-tab pattern
+    `MiningAdminSection` already established, so the top-level
+    `SubTabs`/`SECTION_PANELS` mechanism didn't need to learn to nest.
+    `Overview`, `Disbursements` and `Fees & limits` are unchanged, flat.
+    ⚠️ **Every internal panel kept its own exact permission gate** — a
+    grouped tab is visible if the role holds ANY of its children's
+    permissions (`PanelDef.need` now also accepts an array), but each child
+    component still individually checks its own permission before
+    rendering, so nobody sees more than before. Dashboard tiles, the
+    "recent money out" jump links and the command-palette search entries
+    that used to deep-link to an exact old sub-tab now land on its new
+    group's first internal tab instead of the precise one — an accepted,
+    disclosed trade for fewer top-level tabs, not a bug.
+  - **User 360's Balances tab gained a 4th box: live BNB (gas)**, an
+    on-demand `GET /staff/users/:id/bnb-balance` read (reuses
+    `hasEnoughGasForDisplay`, never throws, never polls — the same billing
+    lesson the 2026-08-13/08-27 Alchemy entries above are about), split out
+    of the main user-detail endpoint so a slow RPC can never hold up the
+    rest of the page. Still four clearly labeled boxes, never a total
+    (guardrail #7) — BNB is explicitly captioned "for network fees only —
+    not spendable balance" since no ledger backs it on our side. The
+    points-as-USDT sub-line under the Points box was removed per explicit
+    request.
+  - **Support ticket thread, closer to a real chat**: Send reply / Send &
+    close now sit directly beside the input as one bar (photo-attach and
+    the internal-note checkbox moved to a smaller row underneath); a
+    message over 320 characters collapses with a "Show more" toggle instead
+    of pushing the input off screen; the ticket list shows open (left
+    accent) vs. closed (muted) at a glance regardless of which status tab
+    is active, via a new `rowClassName` prop on the shared `DataTable`
+    (additive — every other caller is unchanged).
+  - **Ticket auto-close moved from Global settings to its own card atop
+    Feature flags** (founder: "shift it... as a sub tab of the feature
+    flags"). Stays a plain admin-tunable number under the hood — same
+    `PATCH /staff/settings` call, 0 still means off — rather than being
+    forced into the strictly-boolean `FeatureFlag` row shape.
+  - **Two conceptual questions answered in conversation, not in code**:
+    (1) points vs. ROZI stays two ledgers by guardrail #7 — the earner app
+    already shows one number (ROZI); the fix here was making sure every
+    remaining staff-panel number is labeled with which ledger it's from,
+    same as User 360's boxes already were. (2) the conversion window is a
+    pot split pro-rata by burn share, never a fixed exchange rate — its
+    admin panel already states this in plain terms, confirmed by reading
+    it; no code change needed.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
