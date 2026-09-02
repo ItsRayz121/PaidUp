@@ -18,12 +18,13 @@ function groupsFor(view: TaskView, list: Task[]): { label: string; items: Task[]
       { label: "Needs another try", items: pick("rejected_retryable") },
       { label: "In progress", items: pick("started", "not_started") },
       { label: "Under review", items: pick("pending_review") },
+      { label: "Reward on the way", items: pick("reward_pending") },
     ].filter((g) => g.items.length > 0);
   }
   // history
   return [
     { label: "Completed", items: pick("completed") },
-    { label: "Closed", items: list.filter((x) => x.userState !== "completed") },
+    { label: "Ended campaigns", items: list.filter((x) => x.userState !== "completed") },
   ].filter((g) => g.items.length > 0);
 }
 
@@ -54,7 +55,7 @@ export default function TasksPage() {
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
   const empty = view === "mine"
-    ? { title: "No tasks in progress", body: "Choose an available task to start earning." }
+    ? { title: "Nothing here yet", body: "Start an available task and it will show up here while you finish it." }
     : view === "history"
       ? { title: "No task history yet", body: "Your completed tasks will appear here." }
       : { title: t("tasks.empty.title"), body: t("tasks.empty.body") };
@@ -72,7 +73,7 @@ export default function TasksPage() {
         {(["available", "mine", "history"] as TaskView[]).map((item) => (
           <button key={item} onClick={() => switchView(item)} aria-current={view === item ? "page" : undefined}
             className={`min-h-11 rounded-lg px-2 text-sm font-semibold ${view === item ? "bg-card text-brand shadow-sm" : "text-muted"}`}>
-            {item === "available" ? "Available" : item === "mine" ? "My tasks" : "History"}
+            {item === "available" ? "Available" : item === "mine" ? "My activity" : "History"}
           </button>
         ))}
       </nav>

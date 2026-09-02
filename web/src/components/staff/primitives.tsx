@@ -23,6 +23,7 @@ const STATUS_TONE: Record<string, Tone> = {
   // tasks / campaigns
   live: "good", draft: "neutral", paused: "warn", archived: "neutral",
   exhausted: "bad", scheduled: "info", ended: "neutral", deleted: "bad",
+  reward_pending: "warn",
   // tickets
   open: "warn", answered: "info", closed: "neutral", resolved: "good",
   // generic

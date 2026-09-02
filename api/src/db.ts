@@ -1462,6 +1462,24 @@ const MIGRATIONS = `
   ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS task_icon_snapshot TEXT;
   ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS task_logo_asset_snapshot TEXT;
 
+  -- TWO-STEP REWARD RELEASE (founder, 2026-09-01). Approving a proof no longer
+  -- credits it: status 'approved' now means "an Agent has accepted the evidence
+  -- and decided the amounts" (the Agent may adjust reward_rozi_micro /
+  -- reward_usdt_micro at that point). The reward lands only when a second
+  -- action releases it, which is what runs creditCompletion(). So the user's
+  -- visible journey is: Under review -> Approved (reward on the way) -> Reward
+  -- sent. reward_status: NULL while pending/rejected, 'pending' after approve,
+  -- 'sent' once creditCompletion() has run.
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS reward_status TEXT
+    CHECK (reward_status IN ('pending','sent'));
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS released_by TEXT REFERENCES users(id);
+  ALTER TABLE task_proofs ADD COLUMN IF NOT EXISTS released_at TEXT;
+  -- Backfill: every row already 'approved' was credited under the old one-step
+  -- flow, so its reward is 'sent'. Without this, all historical completed tasks
+  -- would show "reward on the way" forever.
+  UPDATE task_proofs SET reward_status = 'sent'
+    WHERE status = 'approved' AND reward_status IS NULL;
+
   -- Credited completions carry both reward magnitudes for budget reporting,
   -- history and replay-safe combined payouts.
   ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS usdt_micro BIGINT NOT NULL DEFAULT 0;

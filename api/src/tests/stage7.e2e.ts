@@ -402,6 +402,67 @@ console.log("\n-- the review dashboard --");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- two-step release: approve accepts, release pays, Agent can trim --");
+{
+  // A ROZI + USDT task. Promised: 40 ROZI + 0.20 USDT.
+  const t = await createTask({
+    title: `${TAG} two-step`, verifyMode: "proof", rewardType: "both",
+    rewardRoziMicro: 40_000_000, rewardUsdtMicro: 200_000,
+    countries: ["ALL"], proofRequired: false,
+  });
+  const taskId = t.body.id!;
+  const u = await mkUser("ts1");
+  await app.inject({ method: "POST", url: `/tasks/${taskId}/proof`, headers: authOf(u), payload: {} });
+  const p = await sql.get<{ id: string }>(
+    "SELECT id FROM task_proofs WHERE task_id = ? AND user_id = ?", taskId, u,
+  );
+
+  const stateOf = async (): Promise<string> => {
+    const r = await app.inject({ method: "GET", url: "/tasks?view=mine", headers: authOf(u) });
+    const row = (r.json() as { tasks: { id: string; userState?: string }[] }).tasks.find((x) => x.id === taskId);
+    return row?.userState ?? (await (async () => {
+      const h = await app.inject({ method: "GET", url: "/tasks?view=history", headers: authOf(u) });
+      return (h.json() as { tasks: { id: string; userState?: string }[] }).tasks.find((x) => x.id === taskId)?.userState ?? "gone";
+    })());
+  };
+
+  check("before review the user is 'under review'", (await stateOf()) === "pending_review");
+
+  // APPROVE with a trimmed reward: keep the ROZI, drop the USDT, and try to
+  // INFLATE the ROZI to 999 (must be clamped back to the promised 40).
+  const appr = await app.inject({
+    method: "POST", url: `/staff/task-proofs/${p!.id}/decision`, headers: authOf(agent),
+    payload: { action: "approve", roziMicro: 999_000_000, usdtMicro: 0 },
+  });
+  const ab = appr.json() as { ok: boolean; rewardStatus?: string; roziMicro?: number; usdtMicro?: number };
+  check("approve returns rewardStatus 'pending'", ab.ok && ab.rewardStatus === "pending", appr.body);
+  check("an Agent cannot inflate above what was promised", ab.roziMicro === 40_000_000, String(ab.roziMicro));
+  check("an Agent can drop a currency to zero", ab.usdtMicro === 0, String(ab.usdtMicro));
+  check("approve credits no ROZI yet", Number((await sql.get<{ b: number }>(
+    "SELECT COALESCE(SUM(amount),0)::int AS b FROM rozi_ledger WHERE user_id = ? AND source_type = 'task_reward'", u))?.b) === 0);
+  check("the user is now 'reward on the way'", (await stateOf()) === "reward_pending");
+
+  // RELEASE.
+  const rel = await app.inject({
+    method: "POST", url: `/staff/task-proofs/${p!.id}/release`, headers: authOf(agent),
+  });
+  const rbody = rel.json() as { ok: boolean; creditedRoziMicro?: number; creditedUsdtMicro?: number };
+  check("release credits the trimmed ROZI (40) and no USDT", rbody.ok
+    && rbody.creditedRoziMicro === 40_000_000 && rbody.creditedUsdtMicro === 0, rel.body);
+  check("the ROZI actually landed on the ledger", Number((await sql.get<{ b: number }>(
+    "SELECT COALESCE(SUM(amount),0)::int AS b FROM rozi_ledger WHERE user_id = ? AND source_type = 'task_reward'", u))?.b) === 40_000_000);
+  check("the user is now 'completed'", (await stateOf()) === "completed");
+
+  // Idempotent — a second release moves nothing.
+  const again = await app.inject({
+    method: "POST", url: `/staff/task-proofs/${p!.id}/release`, headers: authOf(agent),
+  });
+  check("re-release is refused (already sent)", (again.json() as { ok: boolean }).ok === false, again.body);
+  check("the ledger did not move on the second release", Number((await sql.get<{ b: number }>(
+    "SELECT COALESCE(SUM(amount),0)::int AS b FROM rozi_ledger WHERE user_id = ? AND source_type = 'task_reward'", u))?.b) === 40_000_000);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- ⚠️ A BULK DECISION IS N SEPARATE DECISIONS --");
 {
   // Three users on one task. One of them will already have been decided, so the
@@ -426,34 +487,78 @@ console.log("\n-- ⚠️ A BULK DECISION IS N SEPARATE DECISIONS --");
     payload: { action: "approve" },
   });
 
+  // STEP 1 — bulk approve. Two-step release (2026-09-01): approve ACCEPTS the
+  // evidence and moves nothing. The reward lands only on /release.
   const bulk = await app.inject({
     method: "POST", url: "/staff/task-proofs/bulk", headers: authOf(agent),
     payload: { ids, action: "approve" },
   });
   const b = bulk.json() as {
-    done: number; failed: number; creditedPoints: number; creditedRoziMicro: number;
+    done: number; failed: number; creditedRoziMicro: number;
     results: { id: string; ok: boolean; error?: string }[];
   };
   check("the two still open are approved", b.done === 2, JSON.stringify(b));
   check("the one already decided is reported as NOT done, not silently counted", b.failed === 1);
   check("...with its own reason", b.results.find((x) => !x.ok)?.error === "already reviewed");
-  // The task pays 25 ROZI; two approvals => 50 ROZI (50,000,000 micro).
-  check("the ROZI credited is reported", b.creditedRoziMicro === 50_000_000, String(b.creditedRoziMicro));
+  check("approve credits nothing — that is step two", b.creditedRoziMicro === 0, String(b.creditedRoziMicro));
 
-  // Every approval went through the shared credit path, so the ledger moved.
   for (const u of users) {
     const n = await sql.get<{ n: string | number }>(
       "SELECT COUNT(*) AS n FROM task_completions WHERE user_id = ? AND task_id = ? AND status = 'credited'",
       u, taskId,
     );
-    check(`each approved user really got a credited completion (${u.slice(0, 4)})`, Number(n?.n) === 1);
+    check(`no credited completion before release (${u.slice(0, 4)})`, Number(n?.n) === 0);
   }
 
-  const rejected = await app.inject({
+  // STEP 2 — bulk release, the credit.
+  const rel = await app.inject({
     method: "POST", url: "/staff/task-proofs/bulk", headers: authOf(agent),
-    payload: { ids: [ids[0]], action: "reject", note: "not this time" },
+    payload: { ids, action: "release" },
   });
-  check("re-deciding an approved row does nothing", (rejected.json() as { done: number }).done === 0);
+  const rb = rel.json() as { done: number; failed: number; creditedRoziMicro: number };
+  check("all three rewards released", rb.done === 3, JSON.stringify(rb));
+  // The task pays 25 ROZI; three releases => 75 ROZI (75,000,000 micro).
+  check("the ROZI credited is reported", rb.creditedRoziMicro === 75_000_000, String(rb.creditedRoziMicro));
+
+  for (const u of users) {
+    const n = await sql.get<{ n: string | number }>(
+      "SELECT COUNT(*) AS n FROM task_completions WHERE user_id = ? AND task_id = ? AND status = 'credited'",
+      u, taskId,
+    );
+    check(`each released user really got a credited completion (${u.slice(0, 4)})`, Number(n?.n) === 1);
+  }
+
+  const again = await app.inject({
+    method: "POST", url: "/staff/task-proofs/bulk", headers: authOf(agent),
+    payload: { ids, action: "release" },
+  });
+  check("re-releasing a sent reward does nothing", (again.json() as { done: number }).done === 0);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- reject is allowed on an approved, unreleased proof --");
+{
+  const t = await createTask({
+    title: `${TAG} reject-after-approve`, points: 10, verifyMode: "proof", countries: ["ALL"], proofRequired: false,
+  });
+  const u = await mkUser("raa");
+  await app.inject({ method: "POST", url: `/tasks/${t.body.id}/proof`, headers: authOf(u), payload: {} });
+  const p = await sql.get<{ id: string }>(
+    "SELECT id FROM task_proofs WHERE task_id = ? AND user_id = ?", t.body.id, u,
+  );
+  await app.inject({
+    method: "POST", url: `/staff/task-proofs/${p!.id}/decision`, headers: authOf(agent),
+    payload: { action: "approve" },
+  });
+  const rej = await app.inject({
+    method: "POST", url: `/staff/task-proofs/${p!.id}/decision`, headers: authOf(agent),
+    payload: { action: "reject", note: "changed my mind" },
+  });
+  check("an Agent can reject an approved proof that was never paid", (rej.json() as { ok: boolean }).ok === true, rej.body);
+  const after = await sql.get<{ status: string; reward_status: string | null }>(
+    "SELECT status, reward_status FROM task_proofs WHERE id = ?", p!.id,
+  );
+  check("...it goes back to rejected with no pending reward", after?.status === "rejected" && after?.reward_status === null);
 }
 
 // ---------------------------------------------------------------------------

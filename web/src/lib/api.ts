@@ -229,9 +229,12 @@ export type Task = {
   startsAt?: string;
   endsAt?: string;
   campaignStatus?: "draft" | "scheduled" | "active" | "paused" | "exhausted" | "ended";
-  userState?: "not_started" | "started" | "pending_review" | "rejected_retryable" | "completed";
+  userState?: "not_started" | "started" | "pending_review" | "reward_pending" | "rejected_retryable" | "completed";
   // The current user's standing on a 'proof' task, if they've submitted.
   proofStatus?: "pending" | "approved" | "rejected";
+  // Two-step release (2026-09-01): an approved proof is "reward on the way"
+  // ("pending") until an Agent releases it ("sent"). Absent for pending/rejected.
+  rewardStatus?: "pending" | "sent";
   proofNote?: string;
   // ---- Stage 7 -------------------------------------------------------------
   /** One of TASK_CATEGORIES (api/src/routes/staffTasks.ts). Absent = uncategorised. */
@@ -1133,11 +1136,25 @@ export type ProofAnswer = {
 export type TaskProof = {
   id: string; task_id: string; user_id: string; proof_text: string; status: string;
   review_note: string | null; created_at: string; reviewed_at: string | null;
+  /** Two-step release (2026-09-01). NULL while pending/rejected; 'pending' once
+   *  an Agent has approved the evidence; 'sent' once the reward was released. */
+  reward_status: "pending" | "sent" | null;
+  released_at: string | null; releaser_email: string | null;
   user_email: string; user_handle: string | null; user_country: string | null;
+  user_display_name: string | null;
   user_joined: string | null; reviewer_email: string | null;
+  /** The user's saved USDT cash-out address (BEP20), so a reviewer can see where
+   *  an eventual withdrawal lands. NULL if they have not set one. */
+  user_payout_address: string | null;
+  user_payout_verified_at: string | null;
   task_title: string; task_points: number; task_usdt_micro: number;
-  /** Mined-ROZI reward for a ROZI task (0/absent for points/USDT tasks). */
+  /** Mined-ROZI reward for a ROZI task (0/absent for points/USDT tasks). These
+   *  are the SNAPSHOT amounts (Agent-adjusted at approve time). */
   task_rozi_micro?: number;
+  /** The task's currently-defined reward — the ceiling an Agent can approve up
+   *  to. May differ from the snapshot if the campaign was edited after submit. */
+  task_defined_rozi_micro?: number;
+  task_defined_usdt_micro?: number;
   task_logo_asset_id: string | null; proof_label: string | null; category: string | null;
   /** Empty for tasks with no configured fields — those fall back to proof_text,
    *  which every row still carries. */
@@ -1148,8 +1165,9 @@ export type TaskProof = {
 };
 export type ProofQueue = {
   /** Over ALL proofs, never the current filter — a pending count that shrank
-   *  because someone typed a search reads as the backlog clearing. */
-  counts: { pending: number; approved: number; rejected: number };
+   *  because someone typed a search reads as the backlog clearing.
+   *  `reward_pending` = approved, reward not released; `paid` = reward sent. */
+  counts: { pending: number; reward_pending: number; paid: number; rejected: number };
   tasks: { id: string; title: string; pending: number }[];
   proofs: TaskProof[];
   /** For THIS filter (status + task + search) — drives the pager. */
@@ -1170,13 +1188,26 @@ export const fetchTaskProofs = (p: ProofListParams | string = "pending", taskId 
   qs.set("offset", String(o.offset ?? 0));
   return apiFetch<ProofQueue>(`/staff/task-proofs?${qs.toString()}`);
 };
-export const decideTaskProof = (id: string, action: "approve" | "reject", note?: string) =>
-  apiFetch<{ ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number; status?: string }>(
-    `/staff/task-proofs/${id}/decision`, { method: "POST", body: JSON.stringify({ action, note }) });
-export const decideTaskProofsBulk = (ids: string[], action: "approve" | "reject", note?: string) =>
+/** STEP 1 — accept or reject the evidence. Approving does NOT credit; it locks
+ *  in the reward amounts (an Agent may pass smaller `roziMicro`/`usdtMicro` to
+ *  withhold or reduce a currency — never inflate it). */
+export const decideTaskProof = (
+  id: string, action: "approve" | "reject",
+  opts?: { note?: string; roziMicro?: number; usdtMicro?: number },
+) =>
+  apiFetch<{ ok: boolean; error?: string; status?: string; rewardStatus?: string; roziMicro?: number; usdtMicro?: number }>(
+    `/staff/task-proofs/${id}/decision`,
+    { method: "POST", body: JSON.stringify({ action, ...opts }) });
+/** STEP 2 — pay the (possibly adjusted) reward through the shared credit path.
+ *  No request body — the proof id in the path is the whole input. */
+export const releaseTaskProof = (id: string) =>
+  apiFetch<{ ok: boolean; error?: string; status?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number }>(
+    `/staff/task-proofs/${id}/release`, { method: "POST" });
+export const decideTaskProofsBulk = (ids: string[], action: "approve" | "reject" | "release", note?: string) =>
   apiFetch<{
-    ok: boolean; done: number; failed: number; creditedPoints: number; creditedUsdtMicro: number;
-    results: { id: string; ok: boolean; error?: string; credited?: number; creditedUsdtMicro?: number }[];
+    ok: boolean; done: number; failed: number;
+    creditedPoints: number; creditedRoziMicro: number; creditedUsdtMicro: number;
+    results: { id: string; ok: boolean; error?: string; credited?: number; creditedRoziMicro?: number; creditedUsdtMicro?: number }[];
   }>("/staff/task-proofs/bulk", { method: "POST", body: JSON.stringify({ ids, action, note }) });
 
 // One campaign's funnel: opened -> started -> proof submitted -> approved ->

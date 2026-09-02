@@ -236,10 +236,13 @@ console.log("\n-- per-task metrics: the funnel adds up (founder, 2026-09-01) --"
     const r = await app.inject({ method: "POST", url: `/tasks/${tid}/proof`, headers: authOf(u), payload: { proof: "done" } });
     proofIds.push((r.json() as { proofId?: string; id?: string }).proofId ?? (r.json() as { id?: string }).id ?? "");
   }
-  // Approve the first via the staff queue.
+  // Approve then release the first via the staff queue (two-step, 2026-09-01:
+  // approve accepts the evidence, release pays it — the completion row that the
+  // funnel's "completed" step counts is written on release).
   const queue = await app.inject({ method: "GET", url: `/staff/task-proofs?taskId=${tid}&status=pending&limit=50`, headers: authOf(agent) });
   const firstProof = (queue.json() as { proofs: { id: string }[] }).proofs[0];
   await app.inject({ method: "POST", url: `/staff/task-proofs/${firstProof.id}/decision`, headers: authOf(agent), payload: { action: "approve" } });
+  await app.inject({ method: "POST", url: `/staff/task-proofs/${firstProof.id}/release`, headers: authOf(agent) });
 
   const m = await app.inject({ method: "GET", url: `/staff/tasks/${tid}/metrics`, headers: authOf(admin) });
   check("metrics: 200", m.statusCode === 200, m.body.slice(0, 200));

@@ -62,8 +62,13 @@ await app.inject({ method: "POST", url: `/staff/tasks/${taskId}/lifecycle`, head
 const available = await app.inject({ method: "GET", url: "/tasks?view=available", headers: auth(earner) });
 check("paused task leaves Available", !available.json().tasks.some((t: { id: string }) => t.id === taskId));
 
+// Two-step release (2026-09-01): approve accepts the evidence (no credit), then
+// release pays the reward through the shared credit path.
 const approved = await app.inject({ method: "POST", url: `/staff/task-proofs/${proof?.id}/decision`, headers: auth(admin), payload: { action: "approve" } });
-check("a proof filed before pause remains payable", approved.statusCode === 200 && approved.json().creditedUsdtMicro === 125_000, approved.body);
+check("approve is accepted", approved.statusCode === 200 && approved.json().rewardStatus === "pending", approved.body);
+check("approve credits nothing yet", await earnedUsdtBalanceMicroOf(earner) === 0);
+const released = await app.inject({ method: "POST", url: `/staff/task-proofs/${proof?.id}/release`, headers: auth(admin) });
+check("a proof filed before pause remains payable", released.statusCode === 200 && released.json().creditedUsdtMicro === 125_000, released.body);
 check("ROZI portion credited", Number((await sql.get<{ bal: number }>("SELECT COALESCE(SUM(amount),0)::int AS bal FROM rozi_ledger WHERE user_id=? AND source_type='task_reward'", earner))?.bal) === 25_000_000);
 check("USDT portion credited to earned ledger", await earnedUsdtBalanceMicroOf(earner) === 125_000);
 

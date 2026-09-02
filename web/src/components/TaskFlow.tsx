@@ -126,26 +126,25 @@ function TaskRowBody({ task }: { task: Task }) {
       ) : (
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><Icon size={22} /></span>
       )}
-      {/* The title gets its own row at full width, then time/reward/status on a
-          second row. ⚠️ ONE LINE, truncated (founder, 2026-08-29 — reversing
-          the 2026-08-28 "let it wrap to two lines" change): a wrapping title
-          pushed the list down to ~3 cards a screen. The full title is on the
-          task's own detail page. */}
+      {/* The title gets its own row at full width, then time/status on a second
+          row. ⚠️ ONE LINE, truncated (founder, 2026-08-29 — reversing the
+          2026-08-28 "let it wrap to two lines" change): a wrapping title pushed
+          the list down to ~3 cards a screen. The full title is on the task's own
+          detail page. The reward pill moved to the footer line (founder,
+          2026-09-01) — it was crowding this row and forcing "About N min" to
+          wrap to three lines. */}
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold text-brand-ink">
           {task.title}
         </span>
         <span className="mt-1.5 flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-xs text-muted">
+          <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted">
             <ClockIcon size={13} />
             About {task.minutes} min
           </span>
-          <span className="flex items-center gap-1.5">
-            <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
-            {task.lockedReason ? <LockIcon size={16} className="text-pending" />
-              : task.proofStatus ? <ProofBadge status={task.proofStatus} />
-              : <ArrowRightIcon size={18} className="text-muted" />}
-          </span>
+          {task.lockedReason ? <LockIcon size={16} className="text-pending" />
+            : task.proofStatus ? <ProofBadge status={task.proofStatus} rewardStatus={task.rewardStatus} />
+            : <ArrowRightIcon size={18} className="text-muted" />}
         </span>
       </span>
     </>
@@ -154,11 +153,13 @@ function TaskRowBody({ task }: { task: Task }) {
 
 function TaskCardFooter({ task }: { task: Task }) {
   return (
-    <div className="mt-2.5 border-t border-line pt-2">
-      {/* Our own tasks aren't sponsored — no third-party disclosure. */}
+    <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line pt-2">
+      {/* Our own tasks aren't sponsored — no third-party disclosure. The reward
+          pill lives here now (founder, 2026-09-01), next to the source label. */}
       {task.source === "custom"
         ? <span className="text-xs font-medium text-brand">RoziPay task</span>
         : <SponsoredTag network={task.network} />}
+      <RewardPill points={task.points} roziMicro={task.rewardRoziMicro} usdtMicro={task.rewardUsdtMicro} />
     </div>
   );
 }
@@ -195,12 +196,19 @@ export function TaskPreview({ task }: { task: Task }) {
 // a moment. The wait here is hours. "Rejected" keeps the standard word the rest
 // of the app now uses for the same outcome, and the task's own page already
 // tells the user they can fix it and send again.
-function ProofBadge({ status }: { status: "pending" | "approved" | "rejected" }) {
+//
+// Two-step release (2026-09-01): an approved proof is "Reward on the way" until
+// the reward is actually sent — only then is it "Completed".
+function ProofBadge({ status, rewardStatus }: {
+  status: "pending" | "approved" | "rejected"; rewardStatus?: "pending" | "sent";
+}) {
+  const key = status === "approved" && rewardStatus === "pending" ? "reward_pending" : status;
   const map = {
     pending: { label: "Under review", cls: "bg-pending-tint text-pending" },
+    reward_pending: { label: "Reward on the way", cls: "bg-pending-tint text-pending" },
     approved: { label: "Completed", cls: "bg-success-tint text-success" },
     rejected: { label: "Rejected", cls: "bg-danger-tint text-danger" },
-  }[status];
+  }[key];
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${map.cls}`}>{map.label}</span>;
 }
 
