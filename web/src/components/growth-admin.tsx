@@ -7,14 +7,14 @@
 // every figure on these two screens comes from the API that serves the earner
 // app, never from a constant typed into this file.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
-  fetchReferralAdmin, setReferralRatesForAll,
+  fetchReferralAdmin, setReferralRatesForAll, fetchReferralInvitees,
   fetchLeaderboardAdmin, excludeFromLeaderboard, unexcludeFromLeaderboard,
-  type ReferralAdmin,
+  type ReferralAdmin, type ReferralInvitee,
 } from "@/lib/api";
-import { formatPoints, timeAgo } from "@/lib/format";
+import { formatPoints, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -70,7 +70,7 @@ export function ReferralPanel() {
           is the only number a user has actually been told. Raising one network
           and leaving another below it changes nothing they can see — which is
           the mistake this whole screen exists to make visible. */}
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">What users are promised right now</h3>
         <p className="mt-1 text-xs text-muted">
           The invite screens advertise the <strong>lowest</strong> rate across active networks — a
@@ -89,7 +89,7 @@ export function ReferralPanel() {
 
       {/* One control, every row. Raising referral pay one network at a time does
           not raise what users see. */}
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="font-bold text-brand-ink">Set the rate on every network at once</h3>
           {dirty && (
@@ -127,10 +127,8 @@ export function ReferralPanel() {
         {msg && <p className="mt-2 rounded-md border border-line p-2 text-xs text-brand-ink">{msg}</p>}
       </div>
 
-      <NetworkRates d={d} />
-
       {/* Is referral spend buying users, or signups? */}
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">What it has cost, and what it bought</h3>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Stat label="Paid all time" value={formatPoints(d.totals.paidAll)} sub="points, from margin" />
@@ -149,9 +147,18 @@ export function ReferralPanel() {
   );
 }
 
+// Its own Growth sub-tab now (founder, 2026-09-02) — the per-network rate
+// breakdown is a different job from the advertised-rate summary.
+export function PerNetworkPanel() {
+  const data = useApi(fetchReferralAdmin, []);
+  if (data.loading) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (data.error || !data.data) return <p className="p-4 text-sm text-danger">{data.error}</p>;
+  return <NetworkRates d={data.data} />;
+}
+
 function NetworkRates({ d }: { d: ReferralAdmin }) {
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">Per network</h3>
       <p className="mt-1 text-xs text-muted">
         Rows marked <span className="rounded bg-pending-tint px-1 text-pending">floor</span> are the
@@ -198,9 +205,41 @@ function NetworkRates({ d }: { d: ReferralAdmin }) {
 
 type SortKey = "points" | "invites" | "activeInvites" | "inactivePct";
 
+function InviteeList({ id }: { id: string }) {
+  const data = useApi(() => fetchReferralInvitees(id), [id]);
+  if (data.loading) return <p className="p-2 text-xs text-muted">Loading invitees…</p>;
+  if (data.error || !data.data) return <p className="p-2 text-xs text-danger">{data.error}</p>;
+  const rows: ReferralInvitee[] = data.data.invitees;
+  if (rows.length === 0) return <p className="p-2 text-xs text-muted">No invitees.</p>;
+  const active = rows.filter((r) => r.active).length;
+  return (
+    <div className="rounded-md border-2 border-line-strong bg-bg/40 p-2">
+      <p className="mb-1 text-[11px] text-muted">
+        {rows.length} invited · <span className="font-semibold text-success">{active} active</span> ·{" "}
+        <span className="font-semibold text-danger">{rows.length - active} inactive</span>
+      </p>
+      <table className="w-full text-[11px]">
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-t border-line">
+              <td className="py-1">{displayIdentity(r)}</td>
+              <td className="text-muted">{timeAgo(r.joinedAt)}</td>
+              <td className="font-mono">{r.creditedTasks} task{r.creditedTasks === 1 ? "" : "s"}</td>
+              <td className={r.active ? "font-semibold text-success" : "text-muted"}>
+                {r.active ? "active" : "inactive"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
   const { openUser } = useStaffNav();
-  const [sort, setSort] = useState<SortKey>("points");
+  const [sort, setSort] = useState<SortKey>("invites");
+  const [open, setOpen] = useState<string | null>(null);
   const sorted = [...rows].sort((a, b) => (b[sort] as number) - (a[sort] as number));
   // A render helper, not a component (react-hooks/static-components).
   const sortBtn = (k: SortKey, label: string) => (
@@ -210,15 +249,16 @@ function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
     </button>
   );
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">Top partners</h3>
       <p className="mt-1 text-xs text-muted">
         <strong>Invites</strong> is signups; <strong>Active</strong> is how many finished a task;{" "}
         <strong>Inactive</strong> is the rest. A big Inactive % next to a big invite count on one
-        account is the shape of a fake-signup farm. Tap a column to sort.
+        account is the shape of a fake-signup farm. Tap a column to sort, tap a row to see the
+        invitees.
       </p>
       {rows.length === 0 ? (
-        <p className="mt-2 text-sm text-muted">Nobody has earned a referral bonus yet.</p>
+        <p className="mt-2 text-sm text-muted">Nobody has invited anyone yet.</p>
       ) : (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full min-w-[560px] text-xs">
@@ -236,22 +276,34 @@ function TopReferrers({ rows }: { rows: ReferralAdmin["topReferrers"] }) {
               {sorted.map((r) => {
                 const dead = r.invites >= 5 && r.activeInvites === 0;
                 const farmish = r.invites >= 5 && r.inactivePct >= 80;
+                const activePct = r.invites === 0 ? 0 : Math.round((r.activeInvites / r.invites) * 100);
                 return (
-                  <tr key={r.id} className="border-t border-line">
-                    <td className="py-1.5">
-                      <button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button>
-                      {r.status !== "active" && <span className="ms-1 text-danger">({r.status})</span>}
-                    </td>
-                    <td className="font-mono">{formatPoints(r.points)}</td>
-                    <td className="font-mono">{n(r.invites)}</td>
-                    <td className={`font-mono ${dead ? "font-bold text-danger" : ""}`}>{n(r.activeInvites)}</td>
-                    <td className={`font-mono ${farmish ? "font-bold text-danger" : "text-muted"}`}>
-                      {n(r.inactiveInvites)} · {r.inactivePct}%
-                    </td>
-                    <td className={r.openFlags > 0 ? "font-bold text-danger" : "text-muted"}>
-                      {r.openFlags || "—"}
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr className="cursor-pointer border-t border-line hover:bg-brand-tint/30"
+                      onClick={() => setOpen(open === r.id ? null : r.id)}>
+                      <td className="py-1.5">
+                        <button onClick={(e) => { e.stopPropagation(); openUser(r.id); }} className="text-brand-ink hover:underline">
+                          {displayIdentity(r)}
+                        </button>
+                        {r.status !== "active" && <span className="ms-1 text-danger">({r.status})</span>}
+                        <span className="ms-1 text-muted">{open === r.id ? "▾" : "▸"}</span>
+                      </td>
+                      <td className="font-mono">{formatPoints(r.points)}</td>
+                      <td className="font-mono">{n(r.invites)}</td>
+                      <td className={`font-mono ${dead ? "font-bold text-danger" : ""}`}>{n(r.activeInvites)} · {activePct}%</td>
+                      <td className={`font-mono ${farmish ? "font-bold text-danger" : "text-muted"}`}>
+                        {n(r.inactiveInvites)} · {r.inactivePct}%
+                      </td>
+                      <td className={r.openFlags > 0 ? "font-bold text-danger" : "text-muted"}>
+                        {r.openFlags || "—"}
+                      </td>
+                    </tr>
+                    {open === r.id && (
+                      <tr>
+                        <td colSpan={6} className="pb-2"><InviteeList id={r.id} /></td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -320,7 +372,7 @@ export function LeaderboardPanel() {
       {msg && <p className="rounded-md bg-danger-tint p-2 text-xs text-danger">{msg}</p>}
 
       {d.exclusions.length > 0 && (
-        <div className="rounded-lg border border-line bg-card p-3">
+        <div className="rounded-lg border-2 border-line-strong bg-card p-3">
           <h3 className="font-bold text-brand-ink">Hidden from the boards</h3>
           <table className="mt-2 w-full text-xs">
             <tbody>
@@ -351,7 +403,10 @@ export function LeaderboardPanel() {
 function Board(
   { title, rows, onHide, busy, showInvites }: {
     title: string;
-    rows: { rank: number; id: string; email: string; points: number; invites?: number }[];
+    rows: {
+      rank: number; id: string; email: string; points: number; invites?: number;
+      username?: string | null; telegramUsername?: string | null;
+    }[];
     onHide: (id: string, email: string) => void;
     busy: string | null;
     showInvites?: boolean;
@@ -359,7 +414,7 @@ function Board(
 ) {
   const { openUser } = useStaffNav();
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">{title}</h3>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-muted">Nobody qualifies yet.</p>
@@ -376,7 +431,7 @@ function Board(
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="py-1.5 font-mono text-muted">{r.rank}</td>
-                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button></td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r)}</button></td>
                   <td className="font-mono">{formatPoints(r.points)}</td>
                   {showInvites && <td className="font-mono">{r.invites ?? 0}</td>}
                   <td className="text-right">
@@ -397,7 +452,7 @@ function Board(
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-lg border border-line p-2">
+    <div className="rounded-lg border-2 border-line-strong p-2">
       <p className="text-[10px] uppercase text-muted">{label}</p>
       <p className="num font-semibold text-brand-ink">{value}</p>
       {sub && <p className="text-[10px] text-muted">{sub}</p>}

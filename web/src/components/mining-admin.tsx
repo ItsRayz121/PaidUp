@@ -20,7 +20,7 @@ import {
 // The staff panel deliberately still shows POINTS, not USDT. This is where the
 // ledger is reconciled, and hiding the underlying unit from the people checking
 // the numbers would make them harder to check, not easier.
-import { formatPoints } from "@/lib/format";
+import { formatPoints, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString();
@@ -80,7 +80,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string, string?][] 
     note: "The task boost is the line that makes mining feed the offerwall instead of competing with it. Lowering it to 0 turns mining into a pure cost. THE AD BOOST IS FLAT, not a percentage (founder, 2026-08-30): each watched ad adds \"Ad boost (flat speed)\" to the miner's speed AFTER all multipliers, so one ad is +1 and four ads is +4 no matter how big the miner is. \"Ad boost (%)\" is kept as a separate knob but ships at 0 — set it above 0 only if you want a percentage ad boost back on top of the flat one. NOTE: ads need adsEnabled=1 AND an ad provider set — the flag alone does nothing, on purpose, so you cannot switch on free boosts before the real ad tag is integrated. Monetag websites get three formats: the VIGNETTE zone id (ad around the Start-mining tap; passive, no boost), the DIRECT LINK url (the watch-to-boost button; server dwell timer + daily cap decide the boost), and the BANNER zone id (an In-Page Push zone — small dismissible bar shown on the mining screen only; passive impressions, no boost). Each empty value disables its own part.",
     keys: [
       ["taskBoostPct", "Task boost (%)",
-        "Finishing a credited task adds this % to mining speed for a while. This is the line that makes mining feed the offerwall — set it to 0 and mining becomes a pure cost."],
+        "Finishing a credited task adds this % to mining speed for a while. Worked example: a miner earning 10 ROZI/day, one task at +25% → mines at ×1.25 → ~12.5 ROZI/day for the next 48h; two tasks (+50%) → ~15 ROZI/day. This is the line that makes mining feed the offerwall — set it to 0 and mining becomes a pure cost."],
       ["taskBoostHours", "Task boost lasts (hours)"],
       ["taskBoostMaxStack", "Max task boosts stacked"],
       ["adBoostFlat", "Ad boost (flat speed added per ad)",
@@ -100,11 +100,16 @@ const GROUPS: { title: string; note?: string; keys: [string, string, string?][] 
   },
   {
     title: "Referral hashrate",
+    note: "An invite adds a slice of that friend's OWN mining speed to yours — not a slice of what they earn, so nobody loses anything. The friend must have passed the ID check AND mined recently to count.",
     keys: [
-      ["referralL1Pct", "Level 1 — % of invitee hashrate"],
-      ["referralL2Pct", "Level 2 — % of indirect hashrate"],
-      ["referralCapPct", "Referral cap (% of own hashrate)"],
-      ["referralActiveHours", "Invitee counts only if mined within (hours)"],
+      ["referralL1Pct", "Level 1 — % of invitee mining speed",
+        "For each direct invite: this % of their own mining speed is added to yours. Default 10 — invite someone mining at speed 30 and you gain 3."],
+      ["referralL2Pct", "Level 2 — % of indirect mining speed",
+        "Same, for friends of friends (the people your invites invited). Default 3."],
+      ["referralCapPct", "Referral cap (% of your own mining speed)",
+        "The whole referral bonus can never be more than this % of the speed you built yourself. 100 = a pure referral parasite can at most double their own speed, no matter how many people they invite."],
+      ["referralActiveHours", "Invitee counts only if mined within (hours)",
+        "An invite that hasn't started a mining session in this many hours contributes 0 — the bonus follows real activity, not signups."],
     ],
   },
   {
@@ -118,18 +123,17 @@ const GROUPS: { title: string; note?: string; keys: [string, string, string?][] 
     ],
   },
   {
-    title: "Conversion & admin",
-    note: "The Conversion Window is the only path from ROZI to Points. When you OPEN one, you commit a fixed pot of Points; users burn ROZI into the window; at close each user gets pot × (their burn ÷ everyone's burn). There is deliberately NO fixed ROZI→Points rate — the split floats with how much everyone burned. Ships OFF.",
+    title: "Cash-out window & admin limits",
+    note: "The \"cash-out window\" (a.k.a. the Conversion Window) is the one way a user can turn mined ROZI into withdrawable balance. You commit a fixed pot of money up front; users spend (burn) ROZI into the window; when it closes, each person's share of the pot = their burn ÷ everyone's burn. There is deliberately NO fixed price — the more people burn, the smaller each share. Ships OFF until the lock period ends.",
     keys: [
-      ["conversionEnabled", "Conversion on (1) / off (0)",
-        "Master switch for the ROZI→Points conversion window. Off until the founder decides to open one."],
+      ["conversionEnabled", "Cash-out window on (1) / off (0)",
+        "Master switch. Off until the founder opens the first window."],
       ["conversionSharePct", "Suggested pot = this % of margin",
-        "When you open a window, the panel suggests a pot this big as a share of the period's real margin. A suggestion, not a rule."],
-      // The per-user ceiling. The pot caps what the BUSINESS pays out in total;
-      // this caps what any ONE account can ever extract, measured against what
-      // that account mined over its whole life. 100 = no ceiling.
-      ["conversionMaxPctOfMined", "Max % of mined ROZI one user can convert"],
-      ["adminAdjustMaxRozi", "Max ROZI per manual adjustment"],
+        "When you open a window, the panel proposes a pot this big, as a share of the period's real margin — so you never commit money the business didn't earn. It's only a suggestion; you can override it."],
+      ["conversionMaxPctOfMined", "Max % of mined ROZI one account can ever cash out",
+        "The pot caps what the BUSINESS pays out per window; this caps what any ONE account can extract over its whole life. Default 30 = an account can cash out at most 30% of all the ROZI it has ever MINED (not received by transfer, not its current balance). 100 = no per-account limit."],
+      ["adminAdjustMaxRozi", "Max ROZI per manual staff adjustment",
+        "The biggest single hand-credit or hand-debit of ROZI a staff member can post to one account in one go. A guard against a fat-fingered adjustment, not a policy."],
     ],
   },
   {
@@ -139,18 +143,23 @@ const GROUPS: { title: string; note?: string; keys: [string, string, string?][] 
       ["roziUsdtDisplayRate", "Estimated USDT per 1 ROZI"],
     ],
   },
-  {
-    title: "USDT top-up (deposits)",
-    note: "Ships OFF, and stays off until BOTH usdtTopupEnabled=1 AND usdtTreasuryAddress are set — a top-up screen with no address to send to would take people's money nowhere. This is the setting the Receive/top-up screen checks; without it, no address (personal or shared) is ever shown to any user, regardless of whether the per-user deposit-address system (CUSTODY_XPUB_BEP20) is configured. usdtTreasuryChain must stay \"bep20\" — the API refuses anything else. usdtTreasuryAddress must be the TREASURY wallet's address (the one you funded), never a private key.",
-    keys: [
-      ["usdtTopupEnabled", "Top-ups on (1) / off (0)"],
-      ["usdtTreasuryChain", "Chain (must be \"bep20\")"],
-      ["usdtTreasuryAddress", "Treasury wallet address (0x...)"],
-      ["usdtMinTopup", "Minimum deposit (whole USDT)"],
-      ["usdtMaxTopup", "Max per claim before a human re-checks it (whole USDT)"],
-    ],
-  },
 ];
+
+// Moved out of the Economy settings tab into Money & payouts → USDT top-up
+// (founder, 2026-09-02): it is money-in config, and belongs with deposits and
+// withdrawals, not buried in mining knobs. It still writes the same
+// `mining.*` app_settings keys via PATCH /staff/mining/settings.
+const USDT_TOPUP_GROUP: { title: string; note?: string; keys: [string, string, string?][] } = {
+  title: "USDT top-up (deposits)",
+  note: "Real USDT a user sends in, to spend on mining machines. SPEND-ONLY — it can never be withdrawn, only used to buy rigs. Ships OFF, and stays off until BOTH \"Top-ups on\" = 1 AND a treasury address are set — a top-up screen with no address to send to would take people's money nowhere. Chain must stay \"bep20\" — the API refuses anything else. The address must be the TREASURY wallet's address (the one you funded), never a private key.",
+  keys: [
+    ["usdtTopupEnabled", "Top-ups on (1) / off (0)", "Master switch for the whole feature."],
+    ["usdtTreasuryChain", "Chain (must be \"bep20\")", "Only BNB Smart Chain is supported; anything else is refused."],
+    ["usdtTreasuryAddress", "Treasury wallet address (0x...)", "The funded treasury wallet users send USDT to. Never a private key."],
+    ["usdtMinTopup", "Minimum deposit (whole USDT)", "Smaller deposits are rejected — a tiny transfer costs more in gas than it's worth."],
+    ["usdtMaxTopup", "Max per claim before a human re-checks it (whole USDT)", "Claims above this always go to a staff member to confirm on-chain by hand."],
+  ],
+};
 
 // ---- The Mining section, split into tabs (admin rebuild, Phase E) ----------
 //
@@ -166,6 +175,7 @@ const GROUPS: { title: string; note?: string; keys: [string, string, string?][] 
 const MINING_TABS = [
   { id: "overview", label: "Overview" },
   { id: "settings", label: "Economy settings" },
+  { id: "guide", label: "How it works" },
   { id: "allocation", label: "Allocation" },
   { id: "conversion", label: "Conversion" },
   { id: "store", label: "Store" },
@@ -190,6 +200,7 @@ export function MiningAdminSection() {
       </div>
       {tab === "overview" && <MiningOverviewPanel />}
       {tab === "settings" && <EconomySettingsPanel />}
+      {tab === "guide" && <MiningGuidePanel />}
       {tab === "allocation" && <AllocationPanel />}
       {tab === "conversion" && <ConversionPanel />}
       {tab === "store" && <StorePanel />}
@@ -226,10 +237,46 @@ export function MiningOverviewPanel() {
   );
 }
 
+// Editor for a comma-separated list of ascending milestone numbers
+// (`piHalvingUsers`). Founder, 2026-09-02: one CSV box is "one mistake away from
+// re-pricing everyone" — so it edits as rows, one number each, and only ever
+// serialises back to the CSV string the API already expects.
+function MilestoneEditor({ value, onChange }: { value: string; onChange: (csv: string) => void }) {
+  const nums = value.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  const setAt = (i: number, v: string) => {
+    const next = [...nums];
+    next[i] = v.replace(/[^0-9]/g, "");
+    onChange(next.join(","));
+  };
+  return (
+    <div className="mt-1.5 space-y-1">
+      {nums.map((v, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="w-20 shrink-0 text-[11px] text-muted">Halving #{i + 1}</span>
+          <input value={v} inputMode="numeric" onChange={(e) => setAt(i, e.target.value)}
+            className="w-32 rounded-md border-2 border-line-strong bg-card px-2 py-1 text-right font-mono text-sm" />
+          <span className="text-[11px] text-muted">users</span>
+          <button type="button" onClick={() => onChange(nums.filter((_, j) => j !== i).join(","))}
+            className="rounded bg-danger-tint px-1.5 py-0.5 text-[10px] font-semibold text-danger">remove</button>
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange([...nums, ""].join(","))}
+        className="rounded bg-brand-tint px-2 py-0.5 text-[10px] font-semibold text-brand">+ add a milestone</button>
+      <p className="text-[10px] text-muted">
+        Saved sorted, lowest first. Each time the ID-verified user count crosses one of these, the base
+        rate is cut in half. Current list: <span className="font-mono">{nums.join(", ") || "(none)"}</span>
+      </p>
+    </div>
+  );
+}
+
 // The tunable-number wall, grouped as the spec reads. Every write is
 // audit-logged server-side. String settings pass through as typed; numbers are
 // coerced by the CURRENT value's type, never a hand-kept key list.
-export function EconomySettingsPanel() {
+// `groups` defaults to GROUPS; UsdtTopupConfigPanel reuses this with its own.
+export function EconomySettingsPanel({
+  groups = GROUPS, heading = "Economy settings",
+}: { groups?: typeof GROUPS; heading?: string } = {}) {
   const settings = useApi(fetchMiningSettings, []);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -260,7 +307,7 @@ export function EconomySettingsPanel() {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="font-bold text-brand-ink">Economy settings</h3>
+        <h3 className="font-bold text-brand-ink">{heading}</h3>
         {dirty && (
           <button
             onClick={save}
@@ -272,7 +319,7 @@ export function EconomySettingsPanel() {
         )}
       </div>
 
-      {msg && <p className="mb-2 rounded-md border border-line bg-card p-2 text-xs text-brand-ink">{msg}</p>}
+      {msg && <p className="mb-2 rounded-md border-2 border-line-strong bg-card p-2 text-xs text-brand-ink">{msg}</p>}
 
       {settings.loading ? (
         <p className="p-4 text-sm text-muted">Loading…</p>
@@ -280,8 +327,8 @@ export function EconomySettingsPanel() {
         <p className="p-4 text-sm text-danger">{settings.error}</p>
       ) : (
         <div className="space-y-4">
-          {GROUPS.map((g) => (
-            <div key={g.title} className="rounded-lg border border-line bg-bg/40 p-3">
+          {groups.map((g) => (
+            <div key={g.title} className="rounded-lg border-2 border-line-strong bg-bg/40 p-3">
               <h4 className="text-sm font-bold text-brand-ink">{g.title}</h4>
               {g.note && <p className="mt-1 text-xs text-muted">{g.note}</p>}
               {/* Each setting is its own bordered box — label, one-line
@@ -289,18 +336,25 @@ export function EconomySettingsPanel() {
                   controls rather than a wall of rows (founder, 2026-09-01). */}
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {g.keys.map(([key, label, help]) => (
-                  <label key={key} className={`block rounded-md border bg-card p-2.5 ${
-                    draft[key] !== undefined ? "border-brand" : "border-line"
-                  }`}>
+                  <label key={key} className={`block rounded-md border-2 bg-card p-2.5 ${
+                    draft[key] !== undefined ? "border-brand" : "border-line-strong"
+                  } ${key === "piHalvingUsers" ? "sm:col-span-2" : ""}`}>
                     <span className="block text-xs font-semibold text-brand-ink">{label}</span>
                     {help && <span className="mt-0.5 block text-[11px] leading-snug text-muted">{help}</span>}
-                    <input
-                      value={draft[key] ?? String(cur[key] ?? "")}
-                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                      className={`mt-1.5 w-full rounded-md border px-2 py-1 text-right font-mono text-sm ${
-                        draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line bg-bg/50"
-                      }`}
-                    />
+                    {key === "piHalvingUsers" ? (
+                      <MilestoneEditor
+                        value={draft[key] ?? String(cur[key] ?? "")}
+                        onChange={(csv) => setDraft((d) => ({ ...d, [key]: csv }))}
+                      />
+                    ) : (
+                      <input
+                        value={draft[key] ?? String(cur[key] ?? "")}
+                        onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                        className={`mt-1.5 w-full rounded-md border-2 px-2 py-1 text-right font-mono text-sm ${
+                          draft[key] !== undefined ? "border-brand bg-brand-tint" : "border-line-strong bg-bg/50"
+                        }`}
+                      />
+                    )}
                   </label>
                 ))}
               </div>
@@ -308,6 +362,159 @@ export function EconomySettingsPanel() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Money & payouts → USDT top-up (founder, 2026-09-02). Same settings machinery,
+// just the money-in group, surfaced where deposits/withdrawals live.
+export function UsdtTopupConfigPanel() {
+  return (
+    <div className="space-y-3">
+      <p className="rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+        These are mining-settings keys (they gate the &ldquo;buy a rig with real USDT&rdquo; feature), shown
+        here because it is money coming in. Saving writes the same place the Mining tab did.
+      </p>
+      <EconomySettingsPanel groups={[USDT_TOPUP_GROUP]} heading="USDT top-up (deposits)" />
+    </div>
+  );
+}
+
+// ---- "How it works" + a live simulator (founder, 2026-09-02) --------------
+// A plain-English explainer of the mining economy plus a calculator that uses
+// the CURRENT tunable values, so you can see whether a change keeps the economy
+// sane as the user base grows (does a halving actually halve? does a referral
+// parasite get capped?). The maths mirrors api/src/mining/core.ts computeHashrate
+// + piBaseRateFor — if that changes, change this.
+function parseMilestonesCsv(csv: string): number[] {
+  return String(csv ?? "").split(",").map((s) => Number(s.trim()))
+    .filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+}
+
+function simulate(s: Record<string, number | string>, i: {
+  rigPower: number; streakDays: number; taskBoosts: number; adsWatched: number;
+  refL1Speed: number; refL2Speed: number; userCount: number; hoursMined: number;
+}) {
+  const num = (k: string, d: number) => { const v = Number(s[k]); return Number.isFinite(v) ? v : d; };
+  const base = num("baseHashrate", 10);
+  const streakStep = num("streakStepPct", 5);
+  const streakCap = num("streakCapDays", 20);
+  const taskPct = num("taskBoostPct", 25);
+  const taskCap = num("taskBoostMaxStack", 8);
+  const adFlat = num("adBoostFlat", 1);
+  const adCap = num("adBoostMaxStack", 4);
+  const capPct = num("referralCapPct", 100);
+  const l1Pct = num("referralL1Pct", 10);
+  const l2Pct = num("referralL2Pct", 3);
+  const maxHash = num("maxHashrate", 100000);
+  const piBase = num("piBaseRate", 2.5);
+  const refHours = num("piReferenceHours", 24);
+  const milestones = parseMilestonesCsv(String(s.piHalvingUsers ?? "2000,10000,50000,250000,900000"));
+
+  const flat = base + Math.max(0, i.rigPower);
+  const streakMult = 1 + (streakStep / 100) * Math.min(Math.max(0, i.streakDays), streakCap);
+  const boostMult = 1 + (Math.min(Math.max(0, i.taskBoosts), taskCap) * taskPct) / 100;
+  const adBonus = Math.min(Math.max(0, i.adsWatched), adCap) * adFlat;
+  const own = flat * streakMult * boostMult + adBonus;
+  const referralRaw = (i.refL1Speed * l1Pct) / 100 + (i.refL2Speed * l2Pct) / 100;
+  const referral = Math.min(referralRaw, own * (capPct / 100));
+  const hashrate = Math.floor(Math.min(own + referral, maxHash));
+
+  const halvings = milestones.filter((m) => m <= i.userCount).length;
+  const effRate = piBase / 2 ** halvings;
+  const roziPerDay = effRate * (hashrate / base) * (i.hoursMined / refHours);
+  const roziPerFullDay = effRate * (hashrate / base) * (24 / refHours);
+
+  return { flat, streakMult, boostMult, adBonus, own, referral, hashrate, halvings, effRate, roziPerDay, roziPerFullDay };
+}
+
+function MiningSimulator({ s }: { s: Record<string, number | string> }) {
+  const [i, setI] = useState({
+    rigPower: 7, streakDays: 10, taskBoosts: 2, adsWatched: 0,
+    refL1Speed: 0, refL2Speed: 0, userCount: 1000, hoursMined: 8,
+  });
+  const set = (k: keyof typeof i, v: string) => setI((p) => ({ ...p, [k]: Number(v.replace(/[^0-9.]/g, "")) || 0 }));
+  const r = simulate(s, i);
+  const F = (label: string, k: keyof typeof i, hint?: string) => (
+    <label className="block rounded-md border-2 border-line-strong bg-card p-2">
+      <span className="block text-[11px] font-semibold text-brand-ink">{label}</span>
+      {hint && <span className="block text-[10px] text-muted">{hint}</span>}
+      <input value={String(i[k])} inputMode="decimal" onChange={(e) => set(k, e.target.value)}
+        className="mt-1 w-full rounded border-2 border-line-strong bg-bg/50 px-2 py-1 text-right font-mono text-sm" />
+    </label>
+  );
+  return (
+    <div className="rounded-lg border-2 border-line-strong bg-bg/40 p-3">
+      <h4 className="text-sm font-bold text-brand-ink">Try a miner</h4>
+      <p className="mt-0.5 text-xs text-muted">
+        Uses your current saved settings. Change the user count and watch the halvings bite.
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        {F("Rig power", "rigPower", "extra speed from rigs")}
+        {F("Streak days", "streakDays")}
+        {F("Task boosts active", "taskBoosts")}
+        {F("Ads watched", "adsWatched")}
+        {F("Invitees' total speed (L1)", "refL1Speed", "sum of direct invites")}
+        {F("Invitees' total speed (L2)", "refL2Speed", "friends of friends")}
+        {F("ID-verified users", "userCount", "drives halving")}
+        {F("Hours mined that day", "hoursMined")}
+      </div>
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+        <div className="rounded-md border-2 border-line-strong bg-card p-2">
+          <p className="font-semibold text-brand-ink">Mining speed</p>
+          <p className="num text-lg font-bold text-brand">{r.hashrate}</p>
+          <p className="text-[11px] text-muted">
+            ({r.flat} base+rigs × {r.streakMult.toFixed(2)} streak × {r.boostMult.toFixed(2)} task
+            {r.adBonus ? ` + ${r.adBonus} ads` : ""}
+            {r.referral ? ` + ${Math.round(r.referral)} referral (capped)` : ""})
+          </p>
+        </div>
+        <div className="rounded-md border-2 border-line-strong bg-card p-2">
+          <p className="font-semibold text-brand-ink">ROZI this day</p>
+          <p className="num text-lg font-bold text-success">{r.roziPerDay.toFixed(3)}</p>
+          <p className="text-[11px] text-muted">
+            base rate {r.effRate.toFixed(4)}/day after {r.halvings} halving{r.halvings === 1 ? "" : "s"}
+            {" · "}a full 24h would be {r.roziPerFullDay.toFixed(3)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiningGuidePanel() {
+  const settings = useApi(fetchMiningSettings, []);
+  const s = settings.data?.settings ?? {};
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+        <h3 className="font-bold text-brand-ink">How mining pays out</h3>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs text-muted">
+          <li><strong>Mining speed</strong> (&ldquo;hashrate&rdquo;) is personal. Everyone starts at the
+            base speed while a session runs; <strong>rigs</strong> add a permanent amount; a
+            <strong> streak</strong> multiplies it (+{String(s.streakStepPct ?? 5)}%/day, up to ×2 at
+            {" "}{String(s.streakCapDays ?? 20)} days); each <strong>credited task</strong> multiplies it
+            {" "}(+{String(s.taskBoostPct ?? 25)}% for {String(s.taskBoostHours ?? 48)}h, up to
+            {" "}{String(s.taskBoostMaxStack ?? 8)} stacked); each <strong>watched ad</strong> adds a flat
+            {" "}+{String(s.adBoostFlat ?? 1)} (up to {String(s.adBoostMaxStack ?? 4)}).</li>
+          <li><strong>Referral speed</strong>: {String(s.referralL1Pct ?? 10)}% of each direct invite&apos;s
+            own speed and {String(s.referralL2Pct ?? 3)}% of each indirect one&apos;s — but the whole
+            referral part can never exceed {String(s.referralCapPct ?? 100)}% of the speed you built
+            yourself, so it can&apos;t be farmed.</li>
+          <li><strong>ROZI per day</strong> = base rate × (your speed ÷ base speed) × (hours you mined ÷
+            {" "}{String(s.piReferenceHours ?? 24)}). No dilution — other people mining does not shrink
+            your payout.</li>
+          <li><strong>Halving</strong>: the base rate is cut in half each time the ID-verified user count
+            crosses a milestone ({String(s.piHalvingUsers ?? "2000,10000,50000,250000,900000")}). That is
+            the throttle that stops growth draining the 21M cap. A ×2 multiplier exactly cancels one
+            halving.</li>
+          <li>Mined ROZI sits unclaimed until the user taps <strong>Claim</strong>. It still counts
+            against the supply cap the moment it&apos;s settled.</li>
+        </ol>
+      </div>
+      {settings.loading ? <p className="p-2 text-xs text-muted">Loading current settings…</p>
+        : settings.error ? <p className="p-2 text-xs text-danger">{settings.error}</p>
+        : <MiningSimulator s={s} />}
     </div>
   );
 }
@@ -333,7 +540,7 @@ function AllocationPanel() {
 
   const d = a.data;
   const AL = "block text-[11px] font-semibold uppercase text-muted";
-  const AI = "mt-1 w-full rounded-md border border-line bg-card px-2 py-1 text-sm outline-none";
+  const AI = "mt-1 w-full rounded-md border-2 border-line-strong bg-card px-2 py-1 text-sm outline-none";
   const editRow = (b: AllocationBucket) => setForm({
     bucket: b.bucket, label: b.label, amountRozi: b.amountRozi,
     cliffMonths: b.cliffMonths, vestMonths: b.vestMonths,
@@ -400,8 +607,8 @@ function AllocationPanel() {
                       <input className={AI} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></label>
                     <label><span className={AL}>Amount (whole ROZI)</span>
                       <input type="number" className={AI} value={form.amountRozi} onChange={(e) => setForm({ ...form, amountRozi: Number(e.target.value) })} /></label>
-                    <label><span className={AL}>Start date (YYYY-MM-DD)</span>
-                      <input className={AI} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} placeholder="not started" /></label>
+                    <label><span className={AL}>Start date</span>
+                      <input type="date" className={AI} value={form.startDate.slice(0, 10)} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></label>
                     <label><span className={AL}>Cliff (months)</span>
                       <input type="number" className={AI} value={form.cliffMonths} onChange={(e) => setForm({ ...form, cliffMonths: Number(e.target.value) })} /></label>
                     <label><span className={AL}>Vest (months, linear)</span>
@@ -432,7 +639,7 @@ function AllocationPanel() {
                 <label><span className={AL}>Vest (months)</span>
                   <input type="number" className={AI} value={form.vestMonths} onChange={(e) => setForm({ ...form, vestMonths: Number(e.target.value) })} /></label>
                 <label><span className={AL}>Start date</span>
-                  <input className={AI} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} placeholder="YYYY-MM-DD" /></label>
+                  <input type="date" className={AI} value={form.startDate.slice(0, 10)} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></label>
               </div>
               <div className="mt-2 flex gap-2">
                 <button onClick={() => run(() => createAllocation(payload()))}
@@ -456,7 +663,7 @@ export function StatsHeader({ s, onSettle }: { s: MiningStats; onSettle: () => v
   const isPi = s.emissionModel === "pi";
 
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-bold text-brand-ink">ROZI economy · day {s.epoch}</h3>
         <button onClick={onSettle} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
@@ -616,7 +823,7 @@ function EpochHistory({ recent }: { recent: MiningStats["epochs"] }) {
 export function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
   const { openUser } = useStaffNav();
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">Top miners</h3>
       <p className="mt-1 text-xs text-muted">By lifetime mined ROZI — not current balance, so a rig purchase or a burn doesn&apos;t move a rank.</p>
       {rows.length === 0 ? (
@@ -629,7 +836,7 @@ export function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="py-1.5 font-mono text-muted">{r.rank}</td>
-                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{r.email}</button></td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r)}</button></td>
                   <td className="font-mono">{r.mined.toLocaleString(undefined, { maximumFractionDigits: 3 })} ROZI</td>
                 </tr>
               ))}
@@ -692,9 +899,9 @@ export function ConversionPanel() {
   if (conv.loading || !d) return null;
 
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">
-        ROZI → Points conversion{" "}
+        Cash out mined ROZI (conversion window){" "}
         <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
           d.enabled ? "bg-success-tint text-success" : "bg-brand-tint text-muted"
         }`}>
@@ -703,12 +910,13 @@ export function ConversionPanel() {
       </h3>
 
       <p className="mt-1 text-xs text-muted">
-        The only bridge between the two ledgers. Users burn ROZI into a fixed pot of points and split it
-        pro-rata — the rate floats, and there is no fixed ROZI→points rate anywhere by design.
-        Turn it on in the settings below when the lock period ends.
+        The one way a user turns mined ROZI into withdrawable balance. You commit a fixed pot of money;
+        users spend (burn) ROZI into the window; when it closes, each person&apos;s share of the pot =
+        their burn ÷ everyone&apos;s burn. There is no fixed price — the more people burn, the smaller
+        each share. Leave it OFF until the lock period ends.
       </p>
 
-      {msg && <p className="mt-2 rounded-md border border-line p-2 text-xs text-brand-ink">{msg}</p>}
+      {msg && <p className="mt-2 rounded-md border-2 border-line-strong p-2 text-xs text-brand-ink">{msg}</p>}
 
       {/* Computed from the margin we ACTUALLY earned, so a pot cannot be committed
           out of money the business never made. */}
@@ -841,7 +1049,7 @@ export function StorePanel() {
   const ready = draft.title.trim() !== "" && Number(draft.costRozi) > 0 && draft.stock !== "";
 
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">ROZI store</h3>
       <p className="mt-1 text-xs text-muted">
         A ROZI sink: users spend mined ROZI on real goods at a price you set and can raise. This is
@@ -987,7 +1195,7 @@ export function RigPanel() {
   if (rigs.loading || !rigs.data) return null;
 
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <h3 className="font-bold text-brand-ink">Rigs (the ROZI sink)</h3>
       <p className="mt-1 text-xs text-muted">
         Cost growth must always exceed power growth, or each level gets cheaper per H/s and hashrate runs
@@ -1121,19 +1329,21 @@ export function BoosterPanel() {
   const rows = boosters.data.boosters;
 
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-bold text-brand-ink">Boosters (the POINTS sink)</h3>
+        <h3 className="font-bold text-brand-ink">Speed boosters</h3>
         <button onClick={() => setAdding((v) => !v)}
           className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white">
           {adding ? "Cancel" : "Add booster"}
         </button>
       </div>
       <p className="mt-1 text-xs text-muted">
-        Bought with <strong>points</strong>, not ROZI — so every sale is money that will not be
-        withdrawn from the treasury. A booster multiplies mining speed for a fixed number of hours.
+        A booster multiplies mining speed for a fixed number of hours. Users pay for it with their
+        <strong> task earnings</strong> (they see the price as ROZI on screen; internally it&apos;s the
+        cash-backed balance). So every sale is money that will <strong>not</strong> be withdrawn from
+        the treasury — that&apos;s the whole point of it. Ships disabled; new boosters start disabled too.
       </p>
-      {msg && <p className="mt-2 rounded-md border border-line p-2 text-xs text-brand-ink">{msg}</p>}
+      {msg && <p className="mt-2 rounded-md border-2 border-line-strong p-2 text-xs text-brand-ink">{msg}</p>}
 
       {adding && (
         <div className="mt-3 grid gap-2 rounded-lg border border-brand bg-brand-tint/30 p-2.5 sm:grid-cols-4">

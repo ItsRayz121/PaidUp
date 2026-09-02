@@ -28,7 +28,8 @@
   /* Neutrals */
   --color-ink: #0e1b1e;          /* body text */
   --color-muted: #566467;        /* secondary text (AA on card) */
-  --color-line: #d9e2e3;         /* borders */
+  --color-line: #d9e2e3;         /* hairline borders (earner app) */
+  --color-line-strong: #5b6b6e;  /* heavy visible border — staff panel tiles (founder, 2026-09-02) */
   --color-bg: #f4f7f7;           /* app background */
   --color-card: #ffffff;
 

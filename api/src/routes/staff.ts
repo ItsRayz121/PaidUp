@@ -850,9 +850,15 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // Open fraud flags — managers/admins only.
   app.get("/staff/fraud", staffGuard("fraud.view", async () => {
+    // Only genuinely-open flags on active accounts. A suspended user's flags are
+    // auto-closed on suspend (setUserStatusOne), but this belt-and-braces check
+    // also hides flags for accounts suspended before that behaviour existed.
+    // System flags with no user (reconciliation_mismatch) always pass.
     const flags = await sql.all(
       `SELECT f.*, u.email AS user_email FROM fraud_flags f
-       LEFT JOIN users u ON u.id = f.user_id WHERE f.resolved_by IS NULL ORDER BY f.created_at DESC`,
+       LEFT JOIN users u ON u.id = f.user_id
+       WHERE f.resolved_by IS NULL AND (f.user_id IS NULL OR u.status <> 'suspended')
+       ORDER BY f.created_at DESC`,
     );
     return { flags };
   }));
@@ -2280,7 +2286,10 @@ export async function staffRoutes(app: FastifyInstance) {
       one("SELECT COUNT(*)::int AS v FROM bnb_withdrawal_requests WHERE status = 'failed' AND handled_at IS NOT NULL AND handled_at > ?", clearWindow),
       one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed' AND handled_at IS NULL"),
       one("SELECT COUNT(*)::int AS v FROM payout_relay_jobs WHERE status = 'failed' AND handled_at IS NOT NULL AND handled_at > ?", clearWindow),
-      one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NULL"),
+      // Matches GET /staff/fraud — a suspended user's flags are auto-closed, so
+      // they must not keep the tile red with nothing behind it to clear.
+      one(`SELECT COUNT(*)::int AS v FROM fraud_flags f LEFT JOIN users u ON u.id = f.user_id
+            WHERE f.resolved_by IS NULL AND (f.user_id IS NULL OR u.status <> 'suspended')`),
       one("SELECT COUNT(*)::int AS v FROM fraud_flags WHERE resolved_by IS NOT NULL AND resolved_at IS NOT NULL AND resolved_at > ?", clearWindow),
       one("SELECT COUNT(*)::int AS v FROM users WHERE kyc_status = 'pending'"),
       one("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status = 'open'"),
@@ -2408,6 +2417,19 @@ async function setUserStatusOne(
 
   await sql.tx(async (t) => {
     await t.run("UPDATE users SET status = ? WHERE id = ?", status, targetId);
+    // Suspending an account closes out its open fraud flags automatically
+    // (founder, 2026-09-02: "if I suspend the account you don't need to keep
+    // showing its flags"). The trail is kept — resolved_by records it was the
+    // suspension, not a manual dismissal — so nothing is lost.
+    if (status === "suspended") {
+      await t.run(
+        `UPDATE fraud_flags
+           SET resolved_by = 'system:suspended', resolved_at = ?,
+               resolution_note = COALESCE(resolution_note, ?)
+         WHERE user_id = ? AND resolved_by IS NULL`,
+        now(), `Auto-closed: account suspended — ${reason}`, targetId,
+      );
+    }
     await logAudit({
       actorUserId: ctx.actorId, actorRole: ctx.role,
       action: status === "suspended" ? "user_suspended" : "user_restored",

@@ -5,15 +5,15 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useStaffSession, useApi } from "@/lib/hooks";
 import { can, canAny, type UiPermission } from "@/lib/permissions";
 import { LogoutButton } from "@/components/state";
-import { fetchFraud } from "@/lib/api";
+import { fetchFraud, setUserStatus, resolveFraud } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import {
-  KpiDashboard, NetworkPanel, ResolveFlagButton,
+  KpiDashboard, NetworkPanel,
   TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
 import { SupportQueuePanel } from "@/components/staff/SupportQueue";
 import { UsersPanel, StaffRolesPanel } from "@/components/admin";
-import { MiningAdminSection } from "@/components/mining-admin";
+import { MiningAdminSection, UsdtTopupConfigPanel } from "@/components/mining-admin";
 import {
   WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
   RelayJobsPanel, ReconciliationPanel,
@@ -26,7 +26,7 @@ import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
-import { ReferralPanel, LeaderboardPanel } from "@/components/growth-admin";
+import { ReferralPanel, LeaderboardPanel, PerNetworkPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
 import { StaffSearch } from "@/components/staff-search";
@@ -66,7 +66,10 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // numbers moved into Money → Overview (gated on withdrawals.view), so the
   // permission no longer maps to a panel and is dropped from this list — a
   // money.view-only role would otherwise land on an empty section.
-  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "disbursements.manage", "deposits.view", "refunds.view", "treasury.view", "settings.manage"] },
+  // `mining.manage` is here for the "USDT top-up" sub-tab only (founder,
+  // 2026-09-02: money-in config belongs with Money, not buried in mining). A
+  // mining-only admin sees the section with just that one tab.
+  { id: "money", label: "Money & payouts", needs: ["withdrawals.view", "disbursements.manage", "deposits.view", "refunds.view", "treasury.view", "settings.manage", "mining.manage"] },
   { id: "users", label: "Users & IDs", needs: ["users.view", "users.list", "kyc.view", "fraud.view"] },
   { id: "tasks", label: "Tasks & networks", needs: ["tasks.view", "tasks.review", "networks.manage"] },
   // ⚠️ `mining.view` is deliberately NOT here. The Mining section's tabs
@@ -93,8 +96,9 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   // three sub-tabs under one "Features & settings" section.
   { id: "flags", label: "Feature flags", needs: ["flags.manage"] },
   { id: "settings", label: "Global settings", needs: ["settings.manage"] },
-  { id: "alerts", label: "Staff alerts", needs: ["infra.view"] },
-  { id: "team", label: "Staff & roles", needs: ["staff.manage"] },
+  // Staff alerts is a sub-tab of "Staff & roles" now (founder, 2026-09-02) —
+  // it is a staffing/ops concern, not its own top-level page.
+  { id: "team", label: "Staff & roles", needs: ["staff.manage", "infra.view"] },
 ];
 
 // ---- Sub-panels within a section ------------------------------------------
@@ -230,11 +234,14 @@ export default function StaffPage() {
   const SECTION_PANELS: Partial<Record<SectionId, PanelDef[]>> = {
     money: [
       { id: "p-overview", label: "Overview", need: "withdrawals.view", node: <MoneyOverview /> },
-      { id: "p-withdrawals", label: "Withdrawals", need: "withdrawals.view", node: <WithdrawalsPanel canOpenLedger={may("users.view")} /> },
-      { id: "p-usdt-deposits", label: "Deposits", need: "deposits.view", node: <DepositsPanel canDecide={may("deposits.decide")} /> },
-      { id: "p-usdt-refunds", label: "Refunds", need: "refunds.view", node: <RefundsPanel canDecide={may("refunds.decide")} /> },
+      // USDT and BNB payouts sit next to each other (founder, 2026-09-02: "BNB
+      // out as its own section makes no sense — group it with the USDT ones").
+      { id: "p-withdrawals", label: "USDT withdrawals", need: "withdrawals.view", node: <WithdrawalsPanel canOpenLedger={may("users.view")} /> },
+      { id: "p-bnb-withdrawals", label: "BNB withdrawals", need: "withdrawals.view", node: <BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /> },
+      { id: "p-usdt-deposits", label: "USDT deposits", need: "deposits.view", node: <DepositsPanel canDecide={may("deposits.decide")} /> },
+      { id: "p-usdt-refunds", label: "USDT refunds", need: "refunds.view", node: <RefundsPanel canDecide={may("refunds.decide")} /> },
+      { id: "p-usdt-topup", label: "USDT top-up", need: "mining.manage", node: <UsdtTopupConfigPanel /> },
       { id: "p-disbursements", label: "Disbursements", need: "disbursements.manage", node: <DisbursementsPanel canManage={may("disbursements.manage")} /> },
-      { id: "p-bnb-withdrawals", label: "BNB out", need: "withdrawals.view", node: <BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /> },
       { id: "p-relay-jobs", label: "Relay jobs", need: "withdrawals.view", node: <RelayJobsPanel canHandle={may("withdrawals.decide")} /> },
       { id: "p-treasury", label: "Treasury", need: "treasury.view", node: <TreasuryPanel /> },
       { id: "p-reconciliation", label: "Reconciliation", need: "analytics.view", node: <ReconciliationPanel canRecheck={may("analytics.view")} /> },
@@ -256,11 +263,18 @@ export default function StaffPage() {
     ],
     growth: [
       { id: "p-referrals", label: "Referrals", need: "referrals.manage", node: <ReferralPanel /> },
+      // Founder, 2026-09-02: the per-network rate breakdown is its own job, not
+      // part of the advertised-rate summary.
+      { id: "p-referral-networks", label: "Per network", need: "referrals.manage", node: <PerNetworkPanel /> },
       { id: "p-leaderboard", label: "Leaderboard", need: "leaderboard.manage", node: <LeaderboardPanel /> },
     ],
     messages: [
       { id: "p-broadcast", label: "Send a message", need: "notifications.send", node: <BroadcastPanel /> },
       { id: "p-content", label: "Home screen cards", need: "content.manage", node: <ContentPanel /> },
+    ],
+    team: [
+      { id: "p-staff-roles", label: "Staff & roles", need: "staff.manage", node: <StaffRolesPanel /> },
+      { id: "p-alerts", label: "Alerts", need: "infra.view", node: <StaffAlertsPanel /> },
     ],
   };
 
@@ -349,13 +363,6 @@ export default function StaffPage() {
             <Panel id="p-settings" title="Global settings"><GlobalSettingsPanel /></Panel>
           )}
 
-          {section === "alerts" && may("infra.view") && (
-            <Panel id="p-alerts" title="Staff alerts"><StaffAlertsPanel /></Panel>
-          )}
-
-          {section === "team" && may("staff.manage") && (
-            <Panel title="Staff & roles"><StaffRolesPanel /></Panel>
-          )}
 
           {/* Multi-panel sections: one sub-tab bar, one mounted panel. */}
           {section && SECTION_PANELS[section] && (() => {
@@ -384,6 +391,44 @@ export default function StaffPage() {
 
 const FRAUD_PREVIEW = 6;
 
+// Founder, 2026-09-02: the fraud row needs a real judgement, not just
+// "Resolve". Suspending the account auto-closes its flags server-side, so this
+// is one action, not two.
+function FlagActions({ id, userId, label, onDone }: {
+  id: string; userId: string | null; label: string; onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<"" | "resolve" | "suspend">("");
+  async function resolve() {
+    const note = window.prompt("Resolve this flag — why? (recorded)");
+    if (note === null) return;
+    setBusy("resolve");
+    try { await resolveFraud(id, note.trim() || undefined); onDone(); }
+    catch (e) { window.alert((e as Error).message); } finally { setBusy(""); }
+  }
+  async function suspend() {
+    if (!userId) return;
+    const reason = window.prompt(`Suspend ${label}? This stops them mining, earning and withdrawing, and closes their open flags.\n\nReason (recorded):`);
+    if (reason === null || reason.trim() === "") return;
+    setBusy("suspend");
+    try { await setUserStatus(userId, "suspended", reason.trim()); onDone(); }
+    catch (e) { window.alert((e as Error).message); } finally { setBusy(""); }
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <button onClick={resolve} disabled={busy !== ""}
+        className="rounded bg-brand-tint px-2 py-0.5 text-[11px] font-semibold text-brand disabled:opacity-50">
+        {busy === "resolve" ? "…" : "Resolve"}
+      </button>
+      {userId && (
+        <button onClick={suspend} disabled={busy !== ""}
+          className="rounded bg-danger-tint px-2 py-0.5 text-[11px] font-semibold text-danger disabled:opacity-50">
+          {busy === "suspend" ? "…" : "Suspend user"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function FraudPanel({ canResolve }: { canResolve: boolean }) {
   const [auto, setAuto] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -402,10 +447,10 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
       {fraud.loading ? <p className="text-sm text-muted">Loading…</p>
         : fraud.error ? <p className="text-sm text-danger">{fraud.error}</p>
         : all.length === 0 ? (
-          <p className="rounded-lg border border-line bg-card p-4 text-sm text-muted">No open flags. Good.</p>
+          <p className="rounded-lg border-2 border-line-strong bg-card p-4 text-sm text-muted">No open flags. Good.</p>
         ) : (
           <>
-          <div className="overflow-x-auto rounded-lg border border-line">
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
             <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr><th className="p-2.5">User</th><th className="p-2.5">Type</th><th className="p-2.5">Severity</th><th className="p-2.5">Detail</th><th className="p-2.5">When</th><th className="p-2.5">Action</th></tr>
@@ -428,7 +473,8 @@ function FraudPanel({ canResolve }: { canResolve: boolean }) {
                     <td className="p-2.5 text-muted">{timeAgo(String(f.created_at))}</td>
                     <td className="p-2.5">
                       {canResolve
-                        ? <ResolveFlagButton id={String(f.id)} onResolved={fraud.reload} />
+                        ? <FlagActions id={String(f.id)} userId={f.user_id ? String(f.user_id) : null}
+                            label={String(f.user_email ?? f.user_id ?? "")} onDone={fraud.reload} />
                         : <span className="text-xs text-muted">view only</span>}
                     </td>
                   </tr>

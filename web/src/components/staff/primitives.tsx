@@ -177,4 +177,28 @@ export function Spinner({ label = "Loading…" }: { label?: string }) {
   return <p className="p-4 text-sm text-muted">{label}</p>;
 }
 
+// ---- date field ------------------------------------------------------
+// The first real date picker in the app (founder, 2026-09-02: "a pre-built
+// date setup — select and tap"). Native <input type="date"> gives the phone's
+// own picker and emits YYYY-MM-DD, which is exactly what every staff date
+// endpoint already stores.
+export function DateField({
+  label, value, onChange, hint,
+}: {
+  label: string; value: string; onChange: (v: string) => void; hint?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <input
+        type="date"
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border-2 border-line-strong bg-card px-2 py-1.5 text-sm"
+      />
+      {hint && <span className="mt-0.5 block text-[11px] text-muted">{hint}</span>}
+    </label>
+  );
+}
+
 export type { Tone, ReactNode };

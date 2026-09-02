@@ -1265,6 +1265,85 @@ These override convenience or speed at every step:
     formula has exactly one place a future ROZI-valuation term would slot
     in.
 
+- **STAFF-PANEL CLEANUP + THE "ONE CURRENCY" ANSWER (founder phone review,
+  2026-09-02).** A long voice-memo list of ~24 asks about `/staff`. Plan +
+  full checklist: `~/.claude/plans/immutable-sleeping-pixel.md` and the memory
+  file `founder-review-2026-09-02.md`. Verified: api + web typecheck, eslint,
+  web production build (37 routes); e2e re-run green from a fresh DB —
+  messagesadmin 14, moneyadmin 82, usersadmin 50, referrals 26, mining:e2e 65,
+  telegram 45, analytics 46, stage4 48, stage5 67, stage6 70, deposits 37,
+  usdt 85, disbursements 65, permissions 17, mining unit 42; `security-review`
+  — no findings.
+  - **Points vs ROZI — the answer is vocabulary, not a data-model change.**
+    The two ledgers (cash Points / minted ROZI, 21M cap) cannot merge —
+    guardrail #7. The earner app ALREADY shows one currency (ROZI); Points are
+    an internal unit rendered as ROZI via `formatPointsAsRozi`. So the fix was
+    to make the STAFF panel tell the same story: "Boosters (the POINTS sink)"
+    → "Speed boosters" (paid with task earnings, shown to users as ROZI);
+    "ROZI → Points conversion" → "Cash out mined ROZI (conversion window)";
+    plain-English `help:` on every referral-hashrate / cap / conversion knob,
+    a worked ROZI/day example on the task boost, and a new Mining → **"How it
+    works"** tab with an explainer + a live `MiningSimulator` (mirrors
+    `computeHashrate` / `piBaseRateFor`, uses saved settings, shows the halving
+    cliff as user count rises). New `docs`-style content lives in the tab, not
+    a separate file. See `points-vs-rozi-model.md`.
+  - ⚠️ **RECONCILIATION STOPS RE-FLAGGING A RESOLVED SHORTFALL.**
+    `deposits/reconcile.ts` `shouldRaiseReconFlag()` remembers the last-alerted
+    `|delta|` per chain in `app_settings` (`recon.lastAlert.<chain>`) and only
+    raises a NEW `reconciliation_mismatch` flag / pages staff again when the
+    shortfall gets **materially worse** (> `MISMATCH_THRESHOLD_MICRO` beyond the
+    last) or a week has passed. `flagOnce` only ever deduped against *unresolved*
+    rows, so resolve-then-re-detect paged staff every hour forever (the live
+    `bep20: −2.00` case). The marker is cleared when `delta >= 0`.
+  - **Suspending an account auto-closes its open fraud flags**
+    (`setUserStatusOne`, `resolved_by = 'system:suspended'`), and `GET
+    /staff/fraud` + the dashboard `fraudOpen` count both exclude suspended
+    users' flags — so a suspended farm account stops keeping the tile red.
+  - **The dashboard hides resolved signals instead of turning them green**
+    (`DashboardOverview.tsx`): `bnbFailed` / `relayFailed` / `fraudOpen` /
+    `reconciliationShortfall` tiles render ONLY while `open > 0`. Plus a
+    "Find the over-credited user" button on the treasury-shortfall callout →
+    new `GET /staff/mining/reconciliation/suspects` (the
+    `usdt_topups ⟕ chain_deposits ON tx_hash` join) → one-click negative
+    `usdt-adjust` + re-check.
+  - **Strong tile borders everywhere** — new `--color-line-strong` token +
+    shared `StatCard` / `Framed` / `DateField` in `staff/primitives.tsx`;
+    ~8 local card impls bumped to `border-2 border-line-strong`. Money-queue
+    filter chips are **Title Case** and every queue **defaults to "All"**
+    (`StatusTabs`, `useQueueControls(q, "all")`).
+  - **Money & payouts IA**: "BNB out" → "BNB withdrawals", moved next to
+    "USDT withdrawals"; queues relabelled "USDT deposits/refunds"; new
+    "USDT top-up" sub-tab (`UsdtTopupConfigPanel`, still PATCHes
+    `/staff/mining/settings`) moved out of the Mining tab. Money Overview's
+    empty "Latest withdrawals" replaced by "Recent money out" merging
+    withdrawals + refunds + BNB.
+  - **Messages "Send" flow**: the disabled button now names what's missing
+    ("choose who gets it · add a title · add a message") and reads "Send
+    message" instead of "Pick who gets it"; content-card + allocation dates
+    use the native `<input type="date">` `DateField`.
+  - **Growth**: "Per network" is its own sub-tab (`PerNetworkPanel`); Top
+    partners lists **every** inviter (≥1 invite, was ≥1 paid), shows active
+    %, and expands to the invitee list (`GET /staff/referrals/:id/invitees`).
+  - **Real Telegram identity**: new `users.telegram_username` /
+    `telegram_name`, captured from the signed initData in `auth.ts`
+    (`findOrCreateTelegramUser`), refreshed on every login. New
+    `displayIdentity()` in `web/src/lib/format.ts` (@handle → @tg-username →
+    name → email, never a raw `@telegram.local`) wired into top miners,
+    growth boards, top partners, invitee lists. ⚠️ Fraud / withdrawals /
+    support / audit tables still show raw email — not wired this pass.
+  - **`piHalvingUsers`** edits as add/remove rows (`MilestoneEditor`),
+    serialised back to the CSV string the API still takes.
+  - **Staff alerts** merged into "Staff & roles" as a sub-tab (the standalone
+    section is gone); the panel now carries the exact `getUpdates` steps to
+    obtain `TELEGRAM_ALERT_CHAT_ID`.
+  - ⚠️ **STILL NEEDS THE FOUNDER, IN PROD (both one clicks):** (a) the live
+    `bep20: −2.00` shortfall — open the dashboard callout → "Find the
+    over-credited user" → Adjust, then Re-check; the recurrence is already
+    fixed in code so it won't come back. (b) the one FAILED relay job (286
+    tries, money already auto-returned) — open Money → Relay jobs → the row →
+    "Mark as handled". No DELETE route was added (append-only spirit); "handled"
+    is the clear path and the tile then disappears.
+
 - **PRODUCT AUDIT PASS: THE MONEY SCREENS STOP CONTRADICTING THEMSELVES
   (founder, 2026-08-09).** A 75-part product/UX/backend brief was audited against
   the real codebase; nine defects were fixed. The two headline asks — a general

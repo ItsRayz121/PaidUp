@@ -18,8 +18,8 @@
 // where it matters, instead of buried in a shared function.
 import { sql, now } from "./db.ts";
 
-export type EarnerRow = { id: string; email: string; earned: number };
-export type ReferrerRow = { id: string; email: string; ref_points: number; invites: number };
+export type EarnerRow = { id: string; email: string; username: string | null; telegram_username: string | null; earned: number };
+export type ReferrerRow = { id: string; email: string; username: string | null; telegram_username: string | null; ref_points: number; invites: number };
 
 // These two aggregates scan the whole ledger, and the leaderboard is a page
 // every user opens. Recomputing it per request is per-user cost for a board
@@ -51,28 +51,28 @@ export async function loadLeaderboard(): Promise<{ earners: EarnerRow[]; referre
 
   const LIMIT = 20;
   const earners = await sql.all<EarnerRow>(
-    `SELECT u.id, u.email,
+    `SELECT u.id, u.email, u.username, u.telegram_username,
             COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
                                AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
      FROM users u
      JOIN ledger_entries le ON le.user_id = u.id
      ${NOT_EXCLUDED}
      WHERE u.email_verified = 1 AND x.user_id IS NULL
-     GROUP BY u.id, u.email
+     GROUP BY u.id, u.email, u.username, u.telegram_username
      HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
                       AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
      ORDER BY earned DESC, u.created_at ASC
      LIMIT ${LIMIT}`,
   );
   const referrers = await sql.all<ReferrerRow>(
-    `SELECT u.id, u.email,
+    `SELECT u.id, u.email, u.username, u.telegram_username,
             COALESCE(SUM(le.amount),0)::int AS ref_points,
             (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
      FROM users u
      JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
      ${NOT_EXCLUDED}
      WHERE x.user_id IS NULL
-     GROUP BY u.id, u.email
+     GROUP BY u.id, u.email, u.username, u.telegram_username
      HAVING SUM(le.amount) > 0
      ORDER BY ref_points DESC, u.created_at ASC
      LIMIT ${LIMIT}`,

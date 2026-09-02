@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   fetchKpis, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
-  fetchNetworks, updateNetwork, updateAllNetworkReferrals, resolveFraud, fetchSettings, updateSettings,
+  fetchNetworks, updateNetwork, updateAllNetworkReferrals, fetchSettings, updateSettings,
   type StaffTicket, type NetworkConfig,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
@@ -82,7 +82,7 @@ export function KpiDashboard() {
         <Tile label="Open tickets" value={String(k.risk.openTickets)} warn={k.risk.openTickets > 0} onClick={() => goToSection("support")} />
       </div>
 
-      <div className="rounded-lg border border-line bg-card p-4">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-4">
         <p className="mb-3 text-xs font-semibold uppercase text-muted">Credited completions · last 7 days</p>
         {k.series.length === 0 ? (
           <p className="text-sm text-muted">No completions in this window yet.</p>
@@ -107,7 +107,7 @@ function Tile(
   { label, value, sub, warn, onClick }:
   { label: string; value: string; sub?: string; warn?: boolean; onClick?: () => void },
 ) {
-  const cls = `rounded-lg border p-3 text-left ${warn ? "border-danger/30 bg-danger-tint/40" : "border-line bg-card"} ${onClick ? "transition-colors hover:border-brand" : ""}`;
+  const cls = `rounded-lg border-2 p-3 text-left ${warn ? "border-danger bg-danger-tint/40" : "border-line-strong bg-card"} ${onClick ? "transition-colors hover:border-brand" : ""}`;
   const inner = (
     <>
       <p className="num text-2xl font-bold text-brand-ink">{value}</p>
@@ -592,19 +592,5 @@ function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-// ---- Fraud resolve action (used by the fraud panel) ----------------------
-export function ResolveFlagButton({ id, onResolved }: { id: string; onResolved: () => void }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  async function resolve() {
-    const note = window.prompt("How was this resolved? (optional)") ?? undefined;
-    setBusy(true);
-    try { await resolveFraud(id, note); toast.ok("Flag resolved."); onResolved(); }
-    catch (e) { toast.err((e as Error).message); }
-    finally { setBusy(false); }
-  }
-  return (
-    <button disabled={busy} onClick={resolve}
-      className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">Resolve</button>
-  );
-}
+// ResolveFlagButton was replaced by FlagActions in staff/page.tsx (founder,
+// 2026-09-02) — the fraud row now offers Resolve AND Suspend, not just Resolve.

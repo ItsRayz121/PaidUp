@@ -15,7 +15,7 @@ import {
   fetchContentAdmin, createContentBlock, updateContentBlock, deleteContentBlock,
   type ContentBlock,
 } from "@/lib/api";
-import { StatusBadge, TimeCell } from "@/components/staff/primitives";
+import { StatusBadge, TimeCell, DateField } from "@/components/staff/primitives";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -46,12 +46,17 @@ export function BroadcastPanel() {
       "This cannot be undone.",
     );
     if (!ok) return;
+    const link = url.trim();
+    if (link && !link.startsWith("/")) {
+      setMsg("The link must start with “/” — a message can only open a screen inside the app.");
+      return;
+    }
     setSending(true);
     setMsg(null);
     try {
       const res = await sendBroadcast({
         audience, title: title.trim(), body: body.trim(),
-        url: url.trim() || null, alsoPush,
+        url: link || null, alsoPush,
       });
       setTitle(""); setBody(""); setUrl(""); setAlsoPush(false);
       data.reload();
@@ -68,7 +73,7 @@ export function BroadcastPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">Send a message</h3>
         <p className="mt-1 text-xs text-muted">
           A one-off message to a chosen group of users. It lands in the app&apos;s <strong>inbox</strong>,
@@ -142,15 +147,27 @@ export function BroadcastPanel() {
           </div>
         )}
 
-        {msg && <p className="mt-2 rounded-md border border-line p-2 text-xs text-brand-ink">{msg}</p>}
+        {msg && <p className="mt-2 rounded-md border-2 border-line-strong p-2 text-xs text-brand-ink">{msg}</p>}
+
+        {/* Say exactly what is still missing — the founder read a greyed-out
+            button as "there is no send option" (2026-09-02). */}
+        {(() => {
+          const missing: string[] = [];
+          if (!audience) missing.push("choose who gets it above");
+          if (!title.trim()) missing.push("add a title");
+          if (!body.trim()) missing.push("add a message");
+          return missing.length > 0 ? (
+            <p className="mt-3 text-xs text-pending">Still to do: {missing.join(" · ")}.</p>
+          ) : null;
+        })()}
 
         <button onClick={send} disabled={!audience || !title.trim() || !body.trim() || sending}
-          className="mt-3 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-          {sending ? "Sending…" : picked ? `Send to ${n(picked.size)} people` : "Pick who gets it"}
+          className="mt-2 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {sending ? "Sending…" : picked ? `Send to ${n(picked.size)} people` : "Send message"}
         </button>
       </div>
 
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">Already sent</h3>
         {d.history.length === 0 ? (
           <p className="mt-2 text-sm text-muted">Nothing has been sent yet.</p>
@@ -242,7 +259,7 @@ export function ContentPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">{editing ? "Edit card" : "New home card"}</h3>
         <p className="mt-1 text-xs text-muted">
           A dismissible card at the top of every user&apos;s home screen — a tone colour, an optional
@@ -295,17 +312,12 @@ export function ContentPanel() {
               className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 font-mono text-sm" />
           </label>
           {/* Optional window. Left blank, a card is live the moment it is
-              switched on and stays until it is switched off. */}
-          <label className="text-xs">
-            <span className="text-muted">Show from (optional, ISO date)</span>
-            <input value={String(form.startsAt)} onChange={(e) => set("startsAt", e.target.value)}
-              placeholder="2026-09-01" className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 font-mono text-sm" />
-          </label>
-          <label className="text-xs">
-            <span className="text-muted">Hide after (optional, ISO date)</span>
-            <input value={String(form.endsAt)} onChange={(e) => set("endsAt", e.target.value)}
-              placeholder="2026-09-30" className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 font-mono text-sm" />
-          </label>
+              switched on and stays until it is switched off. Native date
+              picker — pick a day, done (founder, 2026-09-02). */}
+          <DateField label="Show from (optional)" value={String(form.startsAt).slice(0, 10)}
+            onChange={(v) => set("startsAt", v)} hint="Blank = live as soon as it's switched on" />
+          <DateField label="Hide after (optional)" value={String(form.endsAt).slice(0, 10)}
+            onChange={(v) => set("endsAt", v)} hint="Blank = stays until you switch it off" />
         </div>
 
         {(form.title || form.body) && (
@@ -344,7 +356,7 @@ export function ContentPanel() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-line bg-card p-3">
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
         <h3 className="font-bold text-brand-ink">Cards</h3>
         {data.data.blocks.length === 0 ? (
           <p className="mt-2 text-sm text-muted">No cards yet. The home screen shows none.</p>

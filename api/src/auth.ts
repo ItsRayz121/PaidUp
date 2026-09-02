@@ -159,6 +159,7 @@ type UserRow = {
   id: string; email: string; country: string; referral_code: string;
   referred_by: string | null; status: string; created_at: string;
   telegram_id: string | null;
+  telegram_username: string | null; telegram_name: string | null;
   display_name: string | null; username: string | null;
 };
 
@@ -425,7 +426,7 @@ export async function authRoutes(app: FastifyInstance) {
     const v = verifyWidgetPayload(req.body);
     if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
-    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam);
+    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam, v.name);
     if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
     await ensureAdminRole(user.id, user.email);
@@ -457,7 +458,7 @@ export async function authRoutes(app: FastifyInstance) {
       if (bound) return bound;
     }
 
-    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam);
+    const user = await findOrCreateTelegramUser(v.telegramId, v.username, v.startParam, v.name);
     if (!user) return reply.code(500).send({ error: "Could not sign you in. Please try again." });
 
     await ensureAdminRole(user.id, user.email);
@@ -647,7 +648,7 @@ let cachedBotUsername = "";
 //   Login Widget:  HMAC key = SHA256(bot_token)
 //   Mini App:      HMAC key = HMAC-SHA256("WebAppData", bot_token)
 type TgVerified =
-  | { ok: true; telegramId: string; username: string; startParam?: string }
+  | { ok: true; telegramId: string; username: string; name?: string; startParam?: string }
   | { ok: false; code: number; error: string };
 
 const TG_FAIL = { ok: false as const, code: 401, error: "Telegram login failed. Please try again." };
@@ -679,7 +680,11 @@ function verifyWidgetPayload(body: unknown): TgVerified {
   const ageSec = Date.now() / 1000 - Number(data.auth_date);
   if (!Number.isFinite(ageSec) || ageSec > 86_400 || ageSec < -300) return TG_STALE;
 
-  return { ok: true, telegramId: data.id, username: data.username || "", startParam: ref };
+  return {
+    ok: true, telegramId: data.id, username: data.username || "",
+    name: [data.first_name, data.last_name].filter(Boolean).join(" ").trim() || undefined,
+    startParam: ref,
+  };
 }
 
 // The Mini App's initData (a signed querystring). The referral code rides in
@@ -707,7 +712,7 @@ function verifyMiniAppInitData(body: unknown): TgVerified {
   const ageSec = Date.now() / 1000 - Number(params.get("auth_date"));
   if (!Number.isFinite(ageSec) || ageSec > 3600 || ageSec < -300) return TG_STALE;
 
-  let tgUser: { id?: number | string; username?: string } = {};
+  let tgUser: { id?: number | string; username?: string; first_name?: string; last_name?: string } = {};
   try {
     tgUser = JSON.parse(params.get("user") ?? "{}");
   } catch { /* fall through to the id check below */ }
@@ -717,6 +722,7 @@ function verifyMiniAppInitData(body: unknown): TgVerified {
     ok: true,
     telegramId: String(tgUser.id),
     username: tgUser.username ?? "",
+    name: [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ").trim() || undefined,
     startParam: params.get("start_param") ?? undefined,
   };
 }
@@ -784,9 +790,23 @@ async function findOrCreateTelegramUser(
   telegramId: string,
   username: string,
   ref: string | undefined,
+  name?: string,
 ): Promise<UserRow | undefined> {
   let user = await sql.get<UserRow>("SELECT * FROM users WHERE telegram_id = ?", telegramId);
   {
+    if (user) {
+      // Keep the real Telegram identity fresh on every login — a username can be
+      // changed on Telegram's side, and staff screens read this column.
+      const tgUsername = username || null;
+      const tgName = name || null;
+      if ((tgUsername ?? null) !== (user.telegram_username ?? null) || (tgName ?? null) !== (user.telegram_name ?? null)) {
+        await sql.run(
+          "UPDATE users SET telegram_username = ?, telegram_name = ? WHERE id = ? AND telegram_id = ?",
+          tgUsername, tgName, user.id, telegramId,
+        );
+        user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", user.id);
+      }
+    }
     if (!user) {
       const id = newId();
       // No email from Telegram: store a stable synthetic address so the NOT NULL
@@ -803,8 +823,8 @@ async function findOrCreateTelegramUser(
       // User row + referral edge must commit together, or an invite is lost.
       await sql.tx(async (t) => {
         await t.run(
-          "INSERT INTO users (id, email, email_verified, telegram_id, country, referral_code, referred_by, status, created_at) VALUES (?,?,1,?,?,?,?, 'active', ?)",
-          id, email, telegramId, "Pakistan", referralCode, referredBy, now(),
+          "INSERT INTO users (id, email, email_verified, telegram_id, telegram_username, telegram_name, country, referral_code, referred_by, status, created_at) VALUES (?,?,1,?,?,?,?,?,?, 'active', ?)",
+          id, email, telegramId, username || null, name || null, "Pakistan", referralCode, referredBy, now(),
         );
         if (referredBy) {
           await t.run(

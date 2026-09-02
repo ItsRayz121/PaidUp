@@ -10,7 +10,7 @@ import { createContext, useContext } from "react";
 
 export type SectionId =
   | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "messages"
-  | "support" | "audit" | "flags" | "settings" | "alerts" | "team";
+  | "support" | "audit" | "flags" | "settings" | "team";
 
 export type StaffNav = {
   /**

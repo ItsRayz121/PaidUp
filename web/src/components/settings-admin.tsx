@@ -102,12 +102,25 @@ export function StaffAlertsPanel() {
     <section className="mb-8">
       <h2 className="mb-1 font-bold text-brand-ink">Staff alerts</h2>
       <p className="mb-3 text-xs text-muted">
-        A high-severity fraud or reconciliation flag pages a staff Telegram
-        group the instant it is first raised. Set <code>TELEGRAM_BOT_TOKEN</code>{" "}
-        and <code>TELEGRAM_ALERT_CHAT_ID</code> on the server (see{" "}
-        <code>.env.example</code>), then send a test to confirm it reaches the
-        group before relying on it.
+        A high-severity fraud or reconciliation flag pages a staff Telegram group
+        the instant it is first raised. Reuses the same bot as Telegram login —
+        no second bot to create.
       </p>
+
+      <div className="mb-3 rounded-lg border-2 border-line-strong bg-bg/40 p-3 text-xs text-muted">
+        <p className="font-semibold text-brand-ink">How to switch it on (5 minutes)</p>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+          <li>Create a Telegram group (or reuse a private staff one).</li>
+          <li>Add your existing RoziPay bot to that group.</li>
+          <li>Send any message in the group.</li>
+          <li>Open <code>https://api.telegram.org/bot&lt;YOUR_BOT_TOKEN&gt;/getUpdates</code> in a browser
+            and copy the <code>chat.id</code> — a group id is negative (e.g. <code>-1001234567890</code>).</li>
+          <li>On Railway set <code>TELEGRAM_ALERT_CHAT_ID</code> to that id
+            (<code>TELEGRAM_BOT_TOKEN</code> is already set for Telegram login), then redeploy.</li>
+          <li>Come back here and hit &ldquo;Send test alert&rdquo;.</li>
+        </ol>
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={send} disabled={state === "sending"}
           className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
@@ -115,6 +128,7 @@ export function StaffAlertsPanel() {
         </button>
         {state === "sent" && <span className="text-sm text-success">Sent — check the group.</span>}
         {state === "off" && <span className="text-sm text-danger">{note}</span>}
+        {state === "idle" && <span className="text-xs text-muted">Not tested yet this session.</span>}
       </div>
     </section>
   );
