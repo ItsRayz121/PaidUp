@@ -196,11 +196,11 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         // much mining they've actually done). This is a leaderboard for staff,
         // real emails, click-through to the same user detail screen everything
         // else here links to.
-        sql.all<{ id: string; email: string; mined: string }>(
-          `SELECT u.id, u.email, SUM(r.amount) AS mined
+        sql.all<{ id: string; email: string; username: string | null; telegram_username: string | null; mined: string }>(
+          `SELECT u.id, u.email, u.username, u.telegram_username, SUM(r.amount) AS mined
            FROM rozi_ledger r JOIN users u ON u.id = r.user_id
            WHERE r.source_type = 'mining' AND r.amount > 0
-           GROUP BY u.id, u.email
+           GROUP BY u.id, u.email, u.username, u.telegram_username
            ORDER BY mined DESC LIMIT 10`,
         ),
       ]);
@@ -270,7 +270,9 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       },
       poolCoveragePoints: poolCoverage,
       topMiners: topMinerRows.map((r, i) => ({
-        rank: i + 1, id: r.id, email: r.email, mined: fromMicro(Number(r.mined)),
+        rank: i + 1, id: r.id, email: r.email,
+        username: r.username ?? null, telegramUsername: r.telegram_username ?? null,
+        mined: fromMicro(Number(r.mined)),
       })),
       epochs: epochs.map((e: Record<string, unknown>) => ({
         ...e,
@@ -796,6 +798,46 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         ledgerTotal: usdtFromMicro(Number(r.ledger_total)),
         delta: usdtFromMicro(Number(r.delta)),
       })),
+    };
+  }));
+
+  // Find the over-credited account(s) behind a treasury shortfall (founder,
+  // 2026-09-02: "completely solve this, one click"). The classic cause is a
+  // deposit counted twice — once by a manual usdt_topups confirm and again by
+  // the on-chain scanner's chain_deposits credit — so the same tx_hash carries
+  // a real ledger credit from BOTH tables. This is the exact join
+  // deposit-double-credit-2026-08-12 documents. Read-only; the fix is a
+  // one-click usdt-adjust on the named user from the dashboard callout.
+  app.get("/staff/mining/reconciliation/suspects", staffGuard("analytics.view", async (_ctx, req) => {
+    const q = z.object({ chain: z.string().min(1).max(20).default("bep20") })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const rows = await sql.all<{
+      user_id: string; email: string; tx_hash: string;
+      topup_micro: string | number; deposit_micro: string | number;
+    }>(
+      `SELECT t.user_id, u.email, t.tx_hash,
+              t.amount AS topup_micro, d.amount AS deposit_micro
+         FROM usdt_topups t
+         JOIN chain_deposits d
+           ON LOWER(d.chain) = LOWER(t.chain) AND LOWER(d.tx_hash) = LOWER(t.tx_hash)
+         JOIN users u ON u.id = t.user_id
+        WHERE t.status = 'confirmed' AND d.status = 'credited' AND LOWER(t.chain) = LOWER(?)
+        ORDER BY t.created_at DESC`,
+      q.chain,
+    );
+    const suspects = rows.map((r) => {
+      const a = Number(r.topup_micro), b = Number(r.deposit_micro);
+      const over = Math.min(a, b); // the duplicate credit, in micro-USDT
+      return {
+        userId: r.user_id, email: r.email, txHash: r.tx_hash,
+        topupUsdt: usdtFromMicro(a), depositUsdt: usdtFromMicro(b),
+        overcreditUsdt: usdtFromMicro(over), overcreditMicro: over,
+      };
+    });
+    return {
+      chain: q.chain,
+      suspects,
+      totalOvercreditUsdt: usdtFromMicro(suspects.reduce((s, x) => s + x.overcreditMicro, 0)),
     };
   }));
 

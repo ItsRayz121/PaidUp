@@ -621,6 +621,17 @@ export const recheckReconciliation = (chain = "bep20") =>
     method: "POST", body: JSON.stringify({ chain }),
   });
 
+// Who was over-credited behind a treasury shortfall — a deposit counted twice
+// (manual topup + on-chain scanner). One-click fix from the dashboard callout:
+// post a negative usdt-adjust on the named user, then re-check.
+export type ReconSuspect = {
+  userId: string; email: string; txHash: string;
+  topupUsdt: number; depositUsdt: number; overcreditUsdt: number; overcreditMicro: number;
+};
+export const fetchReconciliationSuspects = (chain = "bep20") =>
+  apiFetch<{ chain: string; suspects: ReconSuspect[]; totalOvercreditUsdt: number }>(
+    `/staff/mining/reconciliation/suspects?chain=${encodeURIComponent(chain)}`);
+
 // Reconciliation history: treasury + unswept on-chain balance vs the ledger,
 // one row per scheduled check. A negative delta is a shortfall.
 export type ReconSnapshot = {
@@ -1807,7 +1818,7 @@ export type MiningStats = {
   // Top 10 by LIFETIME MINED ROZI (never received-by-transfer, never current
   // balance — see the query's own comment in staffMining.ts). Clicking a row
   // jumps to that user's full detail screen.
-  topMiners: { rank: number; id: string; email: string; mined: number }[];
+  topMiners: { rank: number; id: string; email: string; username: string | null; telegramUsername: string | null; mined: number }[];
   epochs: {
     epoch: number; emission: number; total_shares: number; miners: number;
     emitted: number; withheld: number; settled_at: string;
@@ -1902,6 +1913,7 @@ export type ReferralAdmin = {
   };
   topReferrers: {
     id: string; email: string; status: string; points: number;
+    username: string | null; telegramUsername: string | null;
     invites: number; activeInvites: number;
     inactiveInvites: number; inactivePct: number; openFlags: number;
   }[];
@@ -1912,10 +1924,19 @@ export const setReferralRatesForAll = (patch: Record<string, number>) =>
     method: "PATCH", body: JSON.stringify(patch),
   });
 
+// The invitees a specific partner brought in — the drill-down behind a Top
+// partners row.
+export type ReferralInvitee = {
+  id: string; email: string; username: string | null; telegramUsername: string | null;
+  status: string; joinedAt: string; creditedTasks: number; active: boolean; minedRozi: number;
+};
+export const fetchReferralInvitees = (id: string) =>
+  apiFetch<{ invitees: ReferralInvitee[] }>(`/staff/referrals/${id}/invitees`);
+
 export type LeaderboardAdmin = {
   enabled: boolean;
-  topEarners: { rank: number; id: string; email: string; points: number }[];
-  topReferrers: { rank: number; id: string; email: string; points: number; invites: number }[];
+  topEarners: { rank: number; id: string; email: string; username: string | null; telegramUsername: string | null; points: number }[];
+  topReferrers: { rank: number; id: string; email: string; username: string | null; telegramUsername: string | null; points: number; invites: number }[];
   exclusions: { userId: string; email: string; reason: string; at: string }[];
 };
 export const fetchLeaderboardAdmin = () => apiFetch<LeaderboardAdmin>("/staff/leaderboard");

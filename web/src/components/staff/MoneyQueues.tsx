@@ -57,10 +57,10 @@ function StatusTabs({ options, value, onChange }: {
     <div className="flex flex-wrap gap-1">
       {options.map((s) => (
         <button key={s} onClick={() => onChange(s)}
-          className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-            value === s ? "bg-brand text-white" : "bg-brand-tint text-brand"
+          className={`rounded-md border-2 px-2.5 py-1 text-xs font-semibold ${
+            value === s ? "border-brand bg-brand text-white" : "border-line-strong bg-brand-tint text-brand"
           }`}>
-          {s.replace(/_/g, " ")}
+          {s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
         </button>
       ))}
     </div>
@@ -108,7 +108,7 @@ const F = (label: string, value: ReactNode): Field => ({ label, value });
 
 function Fields({ rows }: { rows: Field[] }) {
   return (
-    <div className="grid grid-cols-1 gap-3 rounded-lg border border-line bg-card p-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 rounded-lg border-2 border-line-strong bg-card p-4 sm:grid-cols-2">
       {rows.map((f, i) => (
         <div key={i}>
           <p className="text-[10px] uppercase tracking-wide text-muted">{f.label}</p>
@@ -266,7 +266,7 @@ const WITHDRAWAL_TABS = ["all", "pending", "agent_approved", "manager_approved",
 
 export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) {
   const q = useTableQuery("money:withdrawals", PAGE);
-  const c = useQueueControls(q, "pending");
+  const c = useQueueControls(q, "all");
   const toast = useToast();
   const [open, setOpen] = useState<StaffWithdrawal | null>(null);
 
@@ -440,7 +440,7 @@ const TOPUP_TABS = ["all", "pending", "confirmed", "rejected"];
 
 export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:deposits", PAGE);
-  const c = useQueueControls(q, "pending");
+  const c = useQueueControls(q, "all");
   const toast = useToast();
   const [open, setOpen] = useState<AdminTopup | null>(null);
 
@@ -561,7 +561,7 @@ const REFUND_TABS = ["all", "pending", "sending", "paid", "rejected"];
 
 export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:refunds", PAGE);
-  const c = useQueueControls(q, "pending");
+  const c = useQueueControls(q, "all");
   const toast = useToast();
   const [open, setOpen] = useState<AdminRefund | null>(null);
 
@@ -693,7 +693,7 @@ const BNB_TABS = ["all", "failed", "pending", "sending", "paid"];
 
 export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:bnb", PAGE);
-  const c = useQueueControls(q, "failed");
+  const c = useQueueControls(q, "all");
   const [open, setOpen] = useState<StaffBnbWithdrawalRow | null>(null);
 
   const data = useApi(
@@ -785,7 +785,7 @@ const RELAY_TABS = ["all", "failed", "active", "pending", "gas_sent", "prefund_s
 
 export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
   const q = useTableQuery("money:relay", PAGE);
-  const c = useQueueControls(q, "failed");
+  const c = useQueueControls(q, "all");
   const [open, setOpen] = useState<RelayJobRow | null>(null);
 
   const data = useApi(

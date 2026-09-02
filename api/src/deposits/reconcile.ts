@@ -23,7 +23,7 @@
 // contributes ~0.
 import { createPublicClient, http, fallback, erc20Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sql, now, newId } from "../db.ts";
+import { sql, now, newId, getSetting, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { ONCHAIN_CHAINS } from "../payout.ts";
 import { treasurySignerKey } from "../signer.ts";
@@ -33,6 +33,44 @@ import { flagOnce } from "../fraud.ts";
 // purpose — a gas/prefund leg mid-flight in payoutRelay.ts is ordinary noise,
 // not a discrepancy.
 const MISMATCH_THRESHOLD_MICRO = 1_000_000; // $1
+
+// Once a shortfall of a given size has been raised and a human has RESOLVED
+// the flag, re-raising an identical one every hour is exactly the noise the
+// founder asked us to stop (2026-09-02): the dashboard tile already tracks the
+// live snapshot, and flagOnce only dedupes against UNRESOLVED rows, so a
+// resolve-then-re-detect loop pages staff forever. We remember the last
+// magnitude we alerted on (per chain, in app_settings) and stay silent unless
+// the shortfall gets materially WORSE (a genuinely new problem) or a long time
+// has passed (a forgotten shortfall shouldn't vanish for good).
+const RECON_REALERT_MS = 7 * 24 * 60 * 60 * 1000; // re-surface a stale, still-open shortfall weekly
+const reconAlertKey = (chain: string) => `recon.lastAlert.${chain}`;
+
+async function shouldRaiseReconFlag(chain: string, absShortfallMicro: bigint): Promise<boolean> {
+  // An unresolved flag already covers it (flagOnce would no-op anyway).
+  const open = await sql.get<{ id: string }>(
+    "SELECT id FROM fraud_flags WHERE flag_type = 'reconciliation_mismatch' AND device_id = ? AND resolved_by IS NULL LIMIT 1",
+    `chain:${chain}`,
+  );
+  if (open) return false;
+
+  const raw = await getSetting(reconAlertKey(chain), "");
+  if (!raw) return true; // never alerted for this chain — raise it
+  let prevAbs = 0n;
+  let prevAt = 0;
+  try {
+    const prev = JSON.parse(raw) as { abs?: string; at?: string };
+    prevAbs = BigInt(String(prev.abs ?? "0").replace(/[^0-9]/g, "") || "0");
+    prevAt = Date.parse(prev.at ?? "") || 0;
+  } catch {
+    return true; // marker is corrupt — treat as "never alerted" and raise
+  }
+
+  // Materially worse than the shortfall someone already resolved → new problem.
+  if (absShortfallMicro > prevAbs + BigInt(MISMATCH_THRESHOLD_MICRO)) return true;
+  // Same (or smaller) shortfall, already resolved once — re-surface only weekly.
+  if (Date.now() - prevAt > RECON_REALERT_MS) return true;
+  return false;
+}
 
 // eth_call/multicall responses have a size limit on public RPC nodes — the
 // same class of limit already breaking the deposit scanner's eth_getLogs in
@@ -115,11 +153,19 @@ export async function reconcileChain(chain: string): Promise<void> {
   // a risk. Holding LESS is the direction that means money the ledger
   // promises isn't there.
   if (delta < 0n && -delta > BigInt(MISMATCH_THRESHOLD_MICRO)) {
-    await flagOnce(
-      "reconciliation_mismatch", `chain:${chain}`, null, "high",
-      `${chain}: on-chain (treasury + every deposit address, live-checked = ${onchainMicro} micro-USDT) ` +
-      `is ${-delta} micro-USDT short of the ledger (${ledgerMicro}).`,
-    );
+    if (await shouldRaiseReconFlag(chain, -delta)) {
+      await flagOnce(
+        "reconciliation_mismatch", `chain:${chain}`, null, "high",
+        `${chain}: on-chain (treasury + every deposit address, live-checked = ${onchainMicro} micro-USDT) ` +
+        `is ${-delta} micro-USDT short of the ledger (${ledgerMicro}).`,
+      );
+      await setSetting(reconAlertKey(chain), JSON.stringify({ abs: (-delta).toString(), at: now() }));
+    }
+  } else if (delta >= 0n) {
+    // Books are square again — forget the last-alerted magnitude so a future
+    // fresh shortfall pages immediately instead of being suppressed against a
+    // stale marker.
+    await setSetting(reconAlertKey(chain), "");
   }
 }
 

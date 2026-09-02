@@ -816,6 +816,14 @@ const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS username_changed_at TEXT;
+
+  -- The account's REAL Telegram identity, captured from the signed initData at
+  -- login/link (founder, 2026-09-02: staff were seeing tg1038...@telegram.local
+  -- everywhere). Purely informational — never a send target, never unique (a
+  -- Telegram username can be changed or reused); the RoziPay username handle
+  -- above is still the only thing transfers resolve against.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_name TEXT;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
     ON users(LOWER(username)) WHERE username IS NOT NULL;
 

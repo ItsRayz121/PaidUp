@@ -44,8 +44,7 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Audit log", section: "audit", keywords: "history changes who did what" },
   { label: "Feature flags", section: "flags", keywords: "flags toggles features on off" },
   { label: "Global settings", section: "settings", keywords: "settings config app name support email maintenance" },
-  { label: "Staff alerts", section: "alerts", keywords: "alerts telegram paging notifications infra" },
-  { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers" },
+  { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers alerts telegram paging" },
 
   // --- deep links to individual panels -------------------------------------
   { label: "Money overview", short: "Overview", section: "money", anchor: "p-overview", hint: "Money & payouts",
@@ -60,6 +59,8 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "disbursement batch pay rewards send all release bulk csv payout", needs: ["disbursements.manage"] },
   { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-bnb-withdrawals", hint: "Money & payouts",
     keywords: "bnb gas withdraw native failed", needs: ["withdrawals.view"] },
+  { label: "USDT top-up config", short: "USDT top-up", section: "money", anchor: "p-usdt-topup", hint: "Money & payouts",
+    keywords: "usdt topup top up deposit treasury address enable buy rigs machines", needs: ["mining.manage"] },
   { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-relay-jobs", hint: "Money & payouts",
     keywords: "relay job payout sign broadcast gas prefund forward failed stuck", needs: ["withdrawals.view"] },
   { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury", hint: "Money & payouts",
@@ -85,7 +86,9 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "cpx offerwall postback commission split referral bonus", needs: ["networks.manage"] },
 
   { label: "Referral rates", short: "Referrals", section: "growth", anchor: "p-referrals", hint: "Growth",
-    keywords: "referral bonus l1 l2 percent invite reward first task", needs: ["referrals.manage"] },
+    keywords: "referral bonus l1 l2 percent invite reward first task advertised top partners", needs: ["referrals.manage"] },
+  { label: "Per-network referral rates", short: "Per network", section: "growth", anchor: "p-referral-networks", hint: "Growth",
+    keywords: "network cpx offerhub surveyx split margin headroom referral per network", needs: ["referrals.manage"] },
   { label: "Leaderboard", short: "Leaderboard", section: "growth", anchor: "p-leaderboard", hint: "Growth",
     keywords: "leaderboard top earners inviters exclude hide", needs: ["leaderboard.manage"] },
 
@@ -98,8 +101,10 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "flag toggle enable disable transfers ads deposits conversion kyc", needs: ["flags.manage"] },
   { label: "Global settings", short: "Settings", section: "settings", anchor: "p-settings", hint: "Global settings",
     keywords: "settings minimum withdrawal points config value", needs: ["settings.manage"] },
-  { label: "Staff alerts (Telegram)", short: "Alerts", section: "alerts", anchor: "p-alerts", hint: "Staff alerts",
-    keywords: "alert telegram paging chat test notify", needs: ["infra.view"] },
+  { label: "Staff & roles", short: "Roles", section: "team", anchor: "p-staff-roles", hint: "Staff & roles",
+    keywords: "staff role permission appoint agent manager admin finance", needs: ["staff.manage"] },
+  { label: "Staff alerts (Telegram)", short: "Alerts", section: "team", anchor: "p-alerts", hint: "Staff & roles",
+    keywords: "alert telegram paging chat test notify infra", needs: ["infra.view"] },
 ];
 
 function score(d: SearchDest, words: string[]): number {

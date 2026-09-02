@@ -28,13 +28,13 @@ function Card({ tone, label, value, children }: {
   tone: "in" | "out" | "net"; label: string; value: string; children?: ReactNode;
 }) {
   const ring = {
-    in: "border-success/40 bg-success-tint/30",
-    out: "border-danger/40 bg-danger-tint/30",
-    net: "border-brand/40 bg-brand-tint/40",
+    in: "border-success bg-success-tint/30",
+    out: "border-danger bg-danger-tint/30",
+    net: "border-brand bg-brand-tint/40",
   }[tone];
   const num = { in: "text-success", out: "text-danger", net: "text-brand-ink" }[tone];
   return (
-    <div className={`rounded-lg border p-4 ${ring}`}>
+    <div className={`rounded-lg border-2 p-4 ${ring}`}>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
       <p className={`num text-2xl font-bold ${num}`}>{value}</p>
       {children && <div className="mt-1 space-y-0.5 text-xs text-muted">{children}</div>}
@@ -44,7 +44,7 @@ function Card({ tone, label, value, children }: {
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <p className="text-xs text-muted">{label}</p>
       <p className="num text-lg font-bold text-brand-ink">{value}</p>
       {sub && <p className="text-xs text-muted">{sub}</p>}
@@ -52,12 +52,12 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
+type LatestRow = { id: string; email: string; status: string; at: string; amount: string; tag?: string };
 function LatestList({ title, rows, onOpen }: {
-  title: string; onOpen: () => void;
-  rows: { id: string; email: string; status: string; at: string; amount: string }[];
+  title: string; onOpen: () => void; rows: LatestRow[];
 }) {
   return (
-    <div className="rounded-lg border border-line bg-card p-3">
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
       <div className="mb-1.5 flex items-center justify-between">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h4>
         <button onClick={onOpen} className="text-xs font-semibold text-brand hover:underline">Open queue →</button>
@@ -68,7 +68,10 @@ function LatestList({ title, rows, onOpen }: {
         <ul className="divide-y divide-line">
           {rows.map((r) => (
             <li key={r.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
-              <span className="min-w-0 flex-1 truncate text-brand-ink">{r.email}</span>
+              <span className="min-w-0 flex-1 truncate text-brand-ink">
+                {r.tag && <span className="mr-1 rounded bg-brand-tint px-1 text-[10px] font-semibold uppercase text-brand">{r.tag}</span>}
+                {r.email}
+              </span>
               <span className="num shrink-0 text-xs">{r.amount}</span>
               <StatusBadge status={r.status} />
               <span className="shrink-0"><TimeCell iso={r.at} /></span>
@@ -103,7 +106,7 @@ export function MoneyOverview() {
       </div>
 
       {/* ---- what the platform holds right now ---- */}
-      <div className="rounded-lg border border-brand/30 bg-brand-tint/30 p-4">
+      <div className="rounded-lg border-2 border-brand bg-brand-tint/30 p-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Platform holds right now</p>
         <p className="num text-3xl font-bold text-brand-ink">{formatUsdtMicro(o.heldNow.treasuryTotalMicro)}</p>
         <p className="mt-0.5 text-xs text-muted">
@@ -134,8 +137,8 @@ export function MoneyOverview() {
         <div className="mb-2 flex flex-wrap gap-1">
           {WINDOWS.map((w) => (
             <button key={w.key} onClick={() => setWin(w.key)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                win === w.key ? "bg-brand text-white" : "bg-brand-tint text-brand"
+              className={`rounded-md border-2 px-2.5 py-1 text-xs font-semibold ${
+                win === w.key ? "border-brand bg-brand text-white" : "border-line-strong bg-brand-tint text-brand"
               }`}>
               {w.label}
             </button>
@@ -164,19 +167,30 @@ export function MoneyOverview() {
         <Tile label="Fees kept" value={formatPoints(o.owed.feePoints)} sub="from withdrawals" />
       </div>
 
-      {/* ---- latest activity per stream ---- */}
+      {/* ---- latest activity ---- */}
+      {/* Every way money leaves the platform in ONE list — a founder who made
+          BNB withdrawals and deposit refunds was seeing "Nothing yet" under a
+          points-only "Latest withdrawals" heading (founder, 2026-09-02). */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <LatestList title="Latest withdrawals" onOpen={() => goToSection("money", "p-withdrawals")}
-          rows={o.latest.withdrawals.map((r) => ({ ...r, amount: `${formatPoints(r.points)} pts` }))} />
+        <LatestList title="Recent money out" onOpen={() => goToSection("money", "p-withdrawals")}
+          rows={recentMoneyOut(o)} />
         <LatestList title="Latest deposits" onOpen={() => goToSection("money", "p-usdt-deposits")}
           rows={o.latest.deposits.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
-        <LatestList title="Latest refunds" onOpen={() => goToSection("money", "p-usdt-refunds")}
-          rows={o.latest.refunds.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
-        <LatestList title="Latest BNB withdrawals" onOpen={() => goToSection("money", "p-bnb-withdrawals")}
-          rows={o.latest.bnb.map((r) => ({ ...r, amount: formatBnbWei(r.wei) }))} />
         <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-relay-jobs")}
           rows={o.latest.relayFailed.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
       </div>
     </section>
   );
+}
+
+// Merge the three outbound streams (points withdrawals, deposit refunds, BNB
+// gas-outs) into one time-sorted list so the overview reflects real activity
+// no matter which rail the money left on.
+function recentMoneyOut(o: TOverview): LatestRow[] {
+  const rows: LatestRow[] = [
+    ...o.latest.withdrawals.map((r) => ({ ...r, tag: "Withdraw", amount: formatUsdtMicro(r.usdtMicro) })),
+    ...o.latest.refunds.map((r) => ({ ...r, tag: "Refund", amount: formatUsdtMicro(r.usdtMicro) })),
+    ...o.latest.bnb.map((r) => ({ ...r, tag: "BNB", amount: formatBnbWei(r.wei) })),
+  ];
+  return rows.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 8);
 }

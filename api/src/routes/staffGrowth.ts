@@ -108,11 +108,14 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
       one("SELECT COUNT(DISTINCT user_id)::int AS v FROM ledger_entries WHERE source_type = 'referral_bonus' AND amount > 0"),
     ]);
 
-    // Top inviters, by what we have actually paid them. Real emails: this is a
-    // staff screen for spotting a ring, and a masked handle cannot be looked up.
+    // Every account that has invited at least ONE person (founder, 2026-09-02:
+    // "if someone invited even one user, show them here" — not just the ones we
+    // have already paid). Real emails: this is a staff screen for spotting a
+    // ring, and a masked handle cannot be looked up.
     const top = await sql.all<Record<string, unknown>>(
-      `SELECT u.id, u.email, u.status,
-              COALESCE(SUM(le.amount),0)::int AS points,
+      `SELECT u.id, u.email, u.status, u.username, u.telegram_username,
+              (SELECT COALESCE(SUM(le.amount),0)::int FROM ledger_entries le
+                 WHERE le.user_id = u.id AND le.source_type = 'referral_bonus' AND le.amount > 0) AS points,
               (SELECT COUNT(*)::int FROM users i WHERE i.referred_by = u.id) AS invites,
               (SELECT COUNT(DISTINCT c.user_id)::int FROM users i
                  JOIN task_completions c ON c.user_id = i.id AND c.status = 'credited'
@@ -120,10 +123,9 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
               (SELECT COUNT(*)::int FROM fraud_flags f
                  WHERE f.user_id = u.id AND f.resolved_by IS NULL) AS open_flags
        FROM users u
-       JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus' AND le.amount > 0
-       GROUP BY u.id, u.email, u.status
-       ORDER BY points DESC, invites DESC
-       LIMIT 25`,
+       WHERE EXISTS (SELECT 1 FROM users i WHERE i.referred_by = u.id)
+       ORDER BY invites DESC, points DESC
+       LIMIT 100`,
     );
 
     return {
@@ -154,6 +156,7 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
         const active = Number(r.active_invites ?? 0);
         return {
           id: r.id, email: r.email, status: r.status,
+          username: r.username ?? null, telegramUsername: r.telegram_username ?? null,
           points: r.points, invites, activeInvites: active,
           // The other half of the story: invites that signed up and did nothing.
           // A high count here next to a high invite count is the shape of a
@@ -163,6 +166,33 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
           openFlags: r.open_flags,
         };
       }),
+    };
+  }));
+
+  // Who a specific inviter actually brought in — the drill-down behind a Top
+  // partners row (founder, 2026-09-02: "let me click and see how many are
+  // active vs not"). Derived; no stored list.
+  app.get("/staff/referrals/:id/invitees", staffGuard("referrals.manage", async (_ctx, req) => {
+    const id = (req.params as { id: string }).id;
+    const rows = await sql.all<Record<string, unknown>>(
+      `SELECT i.id, i.email, i.username, i.telegram_username, i.status, i.created_at,
+              (SELECT COUNT(*)::int FROM task_completions c
+                 WHERE c.user_id = i.id AND c.status = 'credited') AS credited_tasks,
+              COALESCE((SELECT SUM(amount) FROM rozi_ledger
+                 WHERE user_id = i.id AND source_type = 'mining' AND direction = 'credit'), 0) AS mined_micro
+       FROM users i WHERE i.referred_by = ?
+       ORDER BY i.created_at DESC LIMIT 500`,
+      id,
+    );
+    return {
+      invitees: rows.map((r) => ({
+        id: r.id, email: r.email, username: r.username ?? null,
+        telegramUsername: r.telegram_username ?? null,
+        status: r.status, joinedAt: r.created_at,
+        creditedTasks: Number(r.credited_tasks ?? 0),
+        active: Number(r.credited_tasks ?? 0) > 0,
+        minedRozi: Number(r.mined_micro ?? 0) / 1_000_000,
+      })),
     };
   }));
 
@@ -180,9 +210,15 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
       // screen cannot be read as "this is live" when it is not — the boards
       // below are still computed either way, which is the confusing part.
       enabled: await flagEnabled("leaderboard"),
-      topEarners: earners.map((r, i) => ({ rank: i + 1, id: r.id, email: r.email, points: r.earned })),
+      topEarners: earners.map((r, i) => ({
+        rank: i + 1, id: r.id, email: r.email,
+        username: r.username ?? null, telegramUsername: r.telegram_username ?? null,
+        points: r.earned,
+      })),
       topReferrers: referrers.map((r, i) => ({
-        rank: i + 1, id: r.id, email: r.email, points: r.ref_points, invites: r.invites,
+        rank: i + 1, id: r.id, email: r.email,
+        username: r.username ?? null, telegramUsername: r.telegram_username ?? null,
+        points: r.ref_points, invites: r.invites,
       })),
       exclusions: exclusions.map((x) => ({
         userId: x.user_id, email: x.email, reason: x.reason, at: x.created_at,

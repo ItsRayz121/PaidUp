@@ -250,3 +250,29 @@ export function timeAgo(iso: string): string {
   const days = Math.round(hours / 24);
   return `${days} ${days === 1 ? "day" : "days"} ago`;
 }
+
+// A readable name for a user on staff screens (founder, 2026-09-02: stop showing
+// "tg1038138873@telegram.local"). Priority: the RoziPay @handle → the real
+// Telegram @username → a display / Telegram name → a real email. A synthetic
+// @telegram.local address is never shown raw.
+export function displayIdentity(row: {
+  username?: string | null;
+  telegramUsername?: string | null;
+  telegram_username?: string | null;
+  displayName?: string | null;
+  display_name?: string | null;
+  telegramName?: string | null;
+  telegram_name?: string | null;
+  email?: string | null;
+}): string {
+  const handle = row.username?.trim();
+  if (handle) return `@${handle}`;
+  const tg = (row.telegramUsername ?? row.telegram_username)?.trim();
+  if (tg) return `@${tg}`;
+  const name = (row.displayName ?? row.display_name ?? row.telegramName ?? row.telegram_name)?.trim();
+  const email = row.email?.trim() ?? "";
+  const synthetic = email.endsWith("@telegram.local");
+  if (name) return synthetic ? `${name} (Telegram)` : name;
+  if (email && !synthetic) return email;
+  return "Telegram user";
+}
