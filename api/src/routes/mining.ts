@@ -852,7 +852,7 @@ export async function miningRoutes(app: FastifyInstance) {
       // credit (see the staff route).
       await postUsdt({
         userId, micro, direction: "debit", sourceType: "refund",
-        sourceRefId: id, note: "Money sent back",
+        sourceRefId: id, note: "Money sent back", chain,
       }, t);
 
       return { balanceMicro: balance - micro };

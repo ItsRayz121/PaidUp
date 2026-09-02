@@ -655,16 +655,16 @@ export async function staffRoutes(app: FastifyInstance) {
           note: "Withdrawal could not be sent — points returned",
         }, t);
       } else {
-        const r = await t.get<{ user_id: string; amount: string | number }>(
+        const r = await t.get<{ user_id: string; amount: string | number; chain: string }>(
           `UPDATE usdt_refund_requests SET status = 'rejected', reject_reason = ?, reviewed_by = 'system:manual', reviewed_at = ?
-           WHERE id = ? AND status = 'sending' RETURNING user_id, amount`,
+           WHERE id = ? AND status = 'sending' RETURNING user_id, amount, chain`,
           `Relay job failed — resolved by staff: ${note}`, now(), job.request_id,
         );
         if (!r) return { changed: false as const };
         await postUsdt({
           userId: r.user_id, micro: Number(r.amount), direction: "credit",
           sourceType: "refund", sourceRefId: job.request_id,
-          note: "Refund could not be sent — money returned to your balance",
+          note: "Refund could not be sent — money returned to your balance", chain: r.chain,
         }, t);
       }
       await t.run(

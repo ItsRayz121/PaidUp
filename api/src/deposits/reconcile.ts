@@ -134,8 +134,24 @@ export async function reconcileChain(chain: string): Promise<void> {
   const rawDepositAddressesBalance = await sumLiveBalances(publicClient, token, addressRows.map((r) => r.address));
   const depositAddressesMicro = rawDepositAddressesBalance / 10n ** BigInt(Math.max(0, token.decimals - 6));
 
+  // usdt_ledger has been BEP20-only since "one chain in, one chain out": every
+  // topup, refund and rig purchase touches BEP20 and nothing else. Two kinds of
+  // row carry chain = NULL anyway — rows written before the column existed, and
+  // admin_adjustment rows, which postUsdt writes with no chain by design. Those
+  // are BEP20 activity too, and skipping them means a correcting adjustment for
+  // a BEP20 discrepancy is invisible to the very check that flagged it: the
+  // 2026-09-02 "-2.00 phantom shortfall" was exactly this — a resolved
+  // double-credit whose -2.04 of admin_adjustment reversals summed outside
+  // `WHERE chain = 'bep20'`, so the flag never cleared and re-raised every hour.
+  // Fold NULL into the sole chain. If a second deposit chain is ever added
+  // ONCHAIN_CHAINS grows past one key and this guard stops, so NULL rows are
+  // never double-counted across chains.
+  const isSoleChain = Object.keys(ONCHAIN_CHAINS).length === 1;
   const ledgerRow = await sql.get<{ total: string }>(
-    "SELECT COALESCE(SUM(amount), 0) AS total FROM usdt_ledger WHERE chain = ?", chain,
+    isSoleChain
+      ? "SELECT COALESCE(SUM(amount), 0) AS total FROM usdt_ledger WHERE chain = ? OR chain IS NULL"
+      : "SELECT COALESCE(SUM(amount), 0) AS total FROM usdt_ledger WHERE chain = ?",
+    chain,
   );
   const ledgerMicro = BigInt(ledgerRow?.total ?? "0");
 
