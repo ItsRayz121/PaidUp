@@ -181,7 +181,11 @@ export async function createBatch(params: {
   createdBy: string;
   proofIds: string[];
 }): Promise<CreateBatchResult> {
-  const proofIds = [...new Set(params.proofIds)];
+  // Sorted, not just deduped: two batches sharing several proofs must lock
+  // them in the SAME order, or two concurrent creates that pick the overlap
+  // in opposite orders can deadlock on the FOR UPDATE below instead of one
+  // simply waiting for the other.
+  const proofIds = [...new Set(params.proofIds)].sort();
   if (proofIds.length === 0) throw { statusCode: 400, message: "Pick at least one reward to pay." };
   if (proofIds.length > config.disbursementMaxRecipients) {
     throw {
@@ -202,6 +206,18 @@ export async function createBatch(params: {
     );
 
     for (const proofId of proofIds) {
+      // Lock the proof row FIRST, before the dupe check below reads
+      // payout_disbursements. Without this, two createBatch calls racing over
+      // an overlapping pool can both pass "not already in a batch" and both
+      // insert the same proof into two different batches — the unique index
+      // only blocks a duplicate WITHIN one batch. Locking here makes the
+      // second call block until the first commits its insert, so its dupe
+      // check then correctly sees the row and skips.
+      const lock = await t.get<{ id: string }>(
+        "SELECT id FROM task_proofs WHERE id = ? FOR UPDATE", proofId,
+      );
+      if (!lock) { skipped.push({ proofId, reason: "not found" }); continue; }
+
       const p = await t.get<{
         id: string; user_id: string; task_id: string; status: string; reward_status: string | null;
         reward_points: number | null; reward_usdt_micro: string | number | null;

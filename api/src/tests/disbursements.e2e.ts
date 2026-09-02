@@ -176,6 +176,34 @@ console.log("\n-- a proof in a live batch is spoken for --");
     !(pool.json() as { items: { proofId: string }[] }).items.some((i) => i.proofId === pb));
 }
 
+console.log("\n-- two admins racing the same proof cannot both win --");
+{
+  // Two batches created for the SAME proof at the same instant (Promise.all,
+  // not sequential awaits) — the old unlocked dupe check could let both pass
+  // "not already in a batch" before either had inserted its row. The FOR
+  // UPDATE lock in createBatch must serialize them so exactly one wins.
+  const taskC = await mkTask("Charlie");
+  const uRace = await mkUser("urace");
+  const pc = await approvedProof(taskC, uRace);
+
+  const [r1, r2] = await Promise.all([
+    post("/staff/disbursements", admin, { mode: "balance", proofIds: [pc] }),
+    post("/staff/disbursements", admin, { mode: "balance", proofIds: [pc] }),
+  ]);
+  const b1 = r1.json() as { added: number };
+  const b2 = r2.json() as { added: number };
+  check("exactly one of the two concurrent creates took the proof",
+    b1.added + b2.added === 1, `got ${b1.added} + ${b2.added}`);
+
+  const liveRows = await sql.get<{ n: string | number }>(
+    `SELECT COUNT(*) AS n FROM payout_disbursements d
+     JOIN payout_batches b ON b.id = d.batch_id
+     WHERE d.proof_id = ? AND b.status <> 'cancelled'`,
+    pc,
+  );
+  check("the proof landed in exactly one live disbursement row", Number(liveRows?.n ?? 0) === 1);
+}
+
 console.log("\n-- per-recipient isolation: one blocked, the rest still pay --");
 {
   // A task whose campaign budget is one micro-USDT — the first release
