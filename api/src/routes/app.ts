@@ -731,15 +731,25 @@ export async function appRoutes(app: FastifyInstance) {
   // once, permanently, and the message it exists for is "your withdrawal was
   // paid". An inbox interrupts nobody.
   app.get("/notifications", guard(async (userId) => {
+    // A LEFT JOIN, not a rewrite of every `notifications` row at pause/delete
+    // time: `b.id IS NULL` covers the (majority) one-to-one messages, which
+    // have no broadcast row to pause. See db.ts's comment on
+    // notification_broadcasts.paused_at/deleted_at.
     const rows = await sql.all<Record<string, unknown>>(
-      `SELECT id, title, body, url, read_at, created_at FROM notifications
-       WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      `SELECT n.id, n.title, n.body, n.url, n.read_at, n.created_at FROM notifications n
+       LEFT JOIN notification_broadcasts b ON b.id = n.broadcast_id
+       WHERE n.user_id = ? AND (b.id IS NULL OR (b.paused_at IS NULL AND b.deleted_at IS NULL))
+       ORDER BY n.created_at DESC LIMIT 50`,
       userId,
     );
     // Counted separately from the page above rather than from its length: the
     // badge must stay right when someone has more than 50 unread.
     const unread = await sql.get<{ n: number }>(
-      "SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = ? AND read_at IS NULL", userId);
+      `SELECT COUNT(*)::int AS n FROM notifications n
+       LEFT JOIN notification_broadcasts b ON b.id = n.broadcast_id
+       WHERE n.user_id = ? AND n.read_at IS NULL
+         AND (b.id IS NULL OR (b.paused_at IS NULL AND b.deleted_at IS NULL))`,
+      userId);
     return {
       unread: unread?.n ?? 0,
       notifications: rows.map((r) => ({

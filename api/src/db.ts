@@ -482,6 +482,19 @@ const MIGRATIONS = `
     sent_by     TEXT NOT NULL,
     created_at  TEXT NOT NULL
   );
+  -- A sent broadcast can be corrected, hidden, or withdrawn (founder,
+  -- 2026-09-02: "Already sent" needed edit / pause / delete). updated_at
+  -- lets an edit correct a typo everyone's inbox already has (cascaded onto
+  -- the per-recipient notifications rows at edit time — the audience was
+  -- already materialised, but wording is not the audience rule, so fixing it
+  -- is not the "re-evaluated forever" problem this file's header warns about
+  -- elsewhere). paused_at hides it from every inbox without losing the
+  -- send record (un-pause clears it — the message is "retrieved"). deleted_at
+  -- is the same hide, permanent, and the "Already sent" list keeps the row
+  -- with a "Deleted" badge rather than losing the audit trail.
+  ALTER TABLE notification_broadcasts ADD COLUMN IF NOT EXISTS updated_at TEXT;
+  ALTER TABLE notification_broadcasts ADD COLUMN IF NOT EXISTS paused_at TEXT;
+  ALTER TABLE notification_broadcasts ADD COLUMN IF NOT EXISTS deleted_at TEXT;
 
   -- ---- HOME CONTENT (brief part 43) ----------------------------------------
   -- Announcement cards on the earner home screen, editable without a deploy.

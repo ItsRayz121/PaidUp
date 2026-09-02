@@ -73,6 +73,7 @@ export async function staffNotifyRoutes(app: FastifyInstance) {
         id: h.id, title: h.title, body: h.body, url: h.url, audience: h.audience,
         recipients: h.recipients, pushed: Number(h.pushed) === 1,
         sentBy: h.sent_by_email ?? h.sent_by, at: h.created_at,
+        updatedAt: h.updated_at, paused: h.paused_at !== null, deleted: h.deleted_at !== null,
       })),
     };
   }));
@@ -117,6 +118,89 @@ export async function staffNotifyRoutes(app: FastifyInstance) {
       actorIp: req.ip,
     });
     return { ok: true, id: res.id, recipients: res.recipients };
+  }));
+
+  // ---- Edit / pause / delete a SENT broadcast ------------------------------
+  // The "Already sent" list used to be read-only (founder, 2026-09-02: "allow
+  // here the edit option... and the delete option, otherwise the pass
+  // option"). Mirrors content_blocks' edit/delete shape rather than a new one.
+
+  // A correction, not a re-send: the audience was already materialised (see
+  // notify.ts's header) and stays exactly who it was. What changes is the
+  // WORDING, so it is cascaded onto every per-recipient `notifications` row
+  // that broadcast already wrote — read or unread — because a typo fix should
+  // read correctly for everyone, not just whoever hadn't opened it yet.
+  app.patch("/staff/notifications/:id", staffGuard("notifications.send", async ({ userId, role }, req, reply) => {
+    const parsed = messageSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Add a short title and a message." });
+    const d = parsed.data;
+    if (d.url && !isInternalPath(d.url)) {
+      return reply.code(400).send({
+        error: "A message can only link inside the app (a path starting with /).",
+      });
+    }
+    const id = (req.params as { id: string }).id;
+    const cur = await sql.get<{ id: string; deleted_at: string | null }>(
+      "SELECT id, deleted_at FROM notification_broadcasts WHERE id = ?", id);
+    if (!cur) return reply.code(404).send({ error: "No such message." });
+    if (cur.deleted_at) return reply.code(400).send({ error: "This message was deleted." });
+
+    const at = now();
+    await sql.run(
+      `UPDATE notification_broadcasts SET title = ?, body = ?, url = ?, updated_at = ? WHERE id = ?`,
+      d.title, d.body, d.url ?? null, at, id,
+    );
+    await sql.run(
+      `UPDATE notifications SET title = ?, body = ?, url = ? WHERE broadcast_id = ?`,
+      d.title, d.body, d.url ?? null, id,
+    );
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "notification_broadcast_edited",
+      detail: `${id}: ${d.title}`, actorIp: req.ip,
+    });
+    return { ok: true };
+  }));
+
+  // Pause / resume hide (and restore) the message in every inbox without
+  // touching the send record — `GET /notifications` (app.ts) filters on
+  // `paused_at`/`deleted_at` via the broadcast, so nothing here rewrites the
+  // per-recipient rows.
+  app.post("/staff/notifications/:id/pause", staffGuard("notifications.send", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const res = await sql.run(
+      "UPDATE notification_broadcasts SET paused_at = ? WHERE id = ? AND deleted_at IS NULL",
+      now(), id,
+    );
+    if (!res.rowCount) return reply.code(404).send({ error: "No such message." });
+    await logAudit({ actorUserId: userId, actorRole: role, action: "notification_broadcast_paused", detail: id, actorIp: req.ip });
+    return { ok: true };
+  }));
+  app.post("/staff/notifications/:id/resume", staffGuard("notifications.send", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const res = await sql.run(
+      "UPDATE notification_broadcasts SET paused_at = NULL WHERE id = ? AND deleted_at IS NULL",
+      id,
+    );
+    if (!res.rowCount) return reply.code(404).send({ error: "No such message." });
+    await logAudit({ actorUserId: userId, actorRole: role, action: "notification_broadcast_resumed", detail: id, actorIp: req.ip });
+    return { ok: true };
+  }));
+
+  // Delete removes it from every inbox and marks the broadcast row deleted —
+  // the "Already sent" list keeps showing it (with a "Deleted" badge) so the
+  // send is still on the record, but no user can read it any more. These are
+  // informational rows, not a money ledger, so a hard delete of the
+  // per-recipient copies carries none of guardrail #2's append-only weight.
+  app.delete("/staff/notifications/:id", staffGuard("notifications.send", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const res = await sql.run(
+      "UPDATE notification_broadcasts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+      now(), id,
+    );
+    if (!res.rowCount) return reply.code(404).send({ error: "No such message." });
+    await sql.run("DELETE FROM notifications WHERE broadcast_id = ?", id);
+    await logAudit({ actorUserId: userId, actorRole: role, action: "notification_broadcast_deleted", detail: id, actorIp: req.ip });
+    return { ok: true };
   }));
 
   // One user, one message. A separate permission (`users.notify`) because it is

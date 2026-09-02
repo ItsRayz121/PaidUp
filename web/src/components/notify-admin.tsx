@@ -11,11 +11,12 @@
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
-  fetchNotifyAdmin, sendBroadcast,
+  fetchNotifyAdmin, sendBroadcast, editBroadcast, pauseBroadcast, resumeBroadcast, deleteBroadcast,
   fetchContentAdmin, createContentBlock, updateContentBlock, deleteContentBlock,
-  type ContentBlock,
+  type ContentBlock, type Broadcast,
 } from "@/lib/api";
 import { StatusBadge, TimeCell, DateField } from "@/components/staff/primitives";
+import { useToast } from "@/components/staff/toast";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -173,23 +174,121 @@ export function BroadcastPanel() {
           <p className="mt-2 text-sm text-muted">Nothing has been sent yet.</p>
         ) : (
           <div className="mt-2 space-y-2">
-            {d.history.map((h) => (
-              <div key={h.id} className="rounded-lg border border-line p-2 text-xs">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-semibold text-brand-ink">{h.title}</span>
-                  <span className="shrink-0"><TimeCell iso={h.at} /></span>
-                </div>
-                <p className="text-muted">{h.body}</p>
-                <p className="mt-1 text-muted">
-                  {h.audience} · <span className="num">{n(h.recipients)}</span> people
-                  {h.pushed && <span className="ms-1 rounded bg-pending-tint px-1 text-pending">pushed</span>}
-                  {" · "}{h.sentBy}
-                </p>
-              </div>
-            ))}
+            {d.history.map((h) => <SentRow key={h.id} h={h} onChange={data.reload} />)}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// One "already sent" row — read-only by default, with Edit / Pause·Resume /
+// Delete (founder, 2026-09-02). Edit corrects the wording everywhere it
+// already landed; Pause hides it from every inbox without losing the send
+// record (Resume brings it back — the message is "retrieved"); Delete is the
+// same hide, permanent, and the row stays here with a Deleted badge so the
+// send is still on the record.
+function SentRow({ h, onChange }: { h: Broadcast; onChange: () => void }) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(h.title);
+  const [body, setBody] = useState(h.body);
+  const [url, setUrl] = useState(h.url ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!title.trim() || !body.trim()) return;
+    setBusy(true);
+    try {
+      await editBroadcast(h.id, { title: title.trim(), body: body.trim(), url: url.trim() || null });
+      toast.ok("Message updated.");
+      setEditing(false);
+      onChange();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function togglePause() {
+    setBusy(true);
+    try {
+      await (h.paused ? resumeBroadcast(h.id) : pauseBroadcast(h.id));
+      toast.ok(h.paused ? "Message brought back." : "Message paused — hidden from every inbox.");
+      onChange();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function remove() {
+    if (!window.confirm(`Delete "${h.title}"?\n\nIt disappears from every inbox that already has it. This cannot be undone.`)) return;
+    setBusy(true);
+    try { await deleteBroadcast(h.id); toast.ok("Message deleted."); onChange(); }
+    catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  if (editing) {
+    return (
+      <div className="rounded-lg border-2 border-brand/40 bg-brand-tint/20 p-2 text-xs">
+        <label className="block">
+          <span className="text-muted">Title</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80}
+            className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 text-sm" />
+        </label>
+        <label className="mt-1.5 block">
+          <span className="text-muted">Message</span>
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} maxLength={500}
+            className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 text-sm" />
+        </label>
+        <label className="mt-1.5 block">
+          <span className="text-muted">Where tapping it goes</span>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="/wallet"
+            className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1.5 font-mono text-sm" />
+        </label>
+        <div className="mt-2 flex gap-1.5">
+          <button onClick={save} disabled={busy || !title.trim() || !body.trim()}
+            className="rounded-md bg-brand px-2.5 py-1 font-semibold text-white disabled:opacity-50">
+            {busy ? "Saving…" : "Save"}
+          </button>
+          <button onClick={() => { setEditing(false); setTitle(h.title); setBody(h.body); setUrl(h.url ?? ""); }}
+            disabled={busy} className="rounded-md border border-line-strong px-2.5 py-1 font-semibold text-muted">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-lg border border-line p-2 text-xs ${h.deleted ? "opacity-50" : ""}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-semibold text-brand-ink">{h.title}</span>
+        <span className="shrink-0"><TimeCell iso={h.at} /></span>
+      </div>
+      <p className="text-muted">{h.body}</p>
+      <p className="mt-1 text-muted">
+        {h.audience} · <span className="num">{n(h.recipients)}</span> people
+        {h.pushed && <span className="ms-1 rounded bg-pending-tint px-1 text-pending">pushed</span>}
+        {h.paused && !h.deleted && <span className="ms-1 rounded bg-pending-tint px-1 text-pending">paused</span>}
+        {h.deleted && <span className="ms-1 rounded bg-danger-tint px-1 text-danger">deleted</span>}
+        {h.updatedAt && <span className="ms-1 rounded bg-brand-tint px-1 text-brand">edited</span>}
+        {" · "}{h.sentBy}
+      </p>
+      {!h.deleted && (
+        <div className="mt-1.5 flex gap-1.5">
+          <button onClick={() => setEditing(true)} disabled={busy}
+            className="rounded border border-line-strong px-2 py-0.5 font-semibold text-brand disabled:opacity-50">
+            Edit
+          </button>
+          <button onClick={togglePause} disabled={busy}
+            className="rounded border border-line-strong px-2 py-0.5 font-semibold text-brand disabled:opacity-50">
+            {h.paused ? "Resume" : "Pause"}
+          </button>
+          <button onClick={remove} disabled={busy}
+            className="rounded border border-line-strong px-2 py-0.5 font-semibold text-danger disabled:opacity-50">
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 }

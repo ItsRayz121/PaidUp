@@ -1057,6 +1057,7 @@ export type NotifyAudience = { id: string; label: string; note: string; size: nu
 export type Broadcast = {
   id: string; title: string; body: string; url: string | null; audience: string;
   recipients: number; pushed: boolean; sentBy: string; at: string;
+  updatedAt: string | null; paused: boolean; deleted: boolean;
 };
 export const fetchNotifyAdmin = () =>
   apiFetch<{ pushAvailable: boolean; audiences: NotifyAudience[]; history: Broadcast[] }>(
@@ -1068,6 +1069,18 @@ export const sendBroadcast = (b: {
 });
 export const notifyOneUser = (userId: string, m: { title: string; body: string; url?: string | null }) =>
   apiFetch<{ ok: true }>(`/staff/users/${userId}/notify`, { method: "POST", body: JSON.stringify(m) });
+// Edit / pause / resume / delete an already-sent broadcast (founder,
+// 2026-09-02). Edit cascades onto every inbox that already has it; pause
+// hides it everywhere until resumed; delete hides it permanently but keeps
+// the row in "Already sent" with a Deleted badge.
+export const editBroadcast = (id: string, b: { title: string; body: string; url?: string | null }) =>
+  apiFetch<{ ok: true }>(`/staff/notifications/${id}`, { method: "PATCH", body: JSON.stringify(b) });
+export const pauseBroadcast = (id: string) =>
+  apiFetch<{ ok: true }>(`/staff/notifications/${id}/pause`, { method: "POST" });
+export const resumeBroadcast = (id: string) =>
+  apiFetch<{ ok: true }>(`/staff/notifications/${id}/resume`, { method: "POST" });
+export const deleteBroadcast = (id: string) =>
+  apiFetch<{ ok: true }>(`/staff/notifications/${id}`, { method: "DELETE" });
 
 // ---- Home content (brief part 43) ----------------------------------------
 export type ContentBlock = {

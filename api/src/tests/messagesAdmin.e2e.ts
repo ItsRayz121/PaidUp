@@ -13,6 +13,7 @@ import { initDb, sql, now, newId } from "../db.ts";
 import { config } from "../config.ts";
 import { appRoutes } from "../routes/app.ts";
 import { staffRoutes } from "../routes/staff.ts";
+import { staffNotifyRoutes } from "../routes/staffNotify.ts";
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -24,6 +25,7 @@ await initDb();
 const app = Fastify();
 await app.register(appRoutes);
 await app.register(staffRoutes);
+await app.register(staffNotifyRoutes);
 
 const TAG = newId().slice(0, 8);
 const authOf = (id: string) => ({ authorization: `Bearer ${jwt.sign({ sub: id }, config.jwtSecret, { expiresIn: "1h" })}` });
@@ -115,6 +117,61 @@ console.log("\n-- permission gate unchanged --");
 {
   check("a non-staff user gets 403", (await app.inject({ method: "GET", url: "/staff/tickets", headers: authOf(outsider) })).statusCode === 403);
   check("no token -> not 200", (await app.inject({ method: "GET", url: "/staff/tickets" })).statusCode !== 200);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- edit / pause / resume / delete an already-sent broadcast --");
+{
+  const recip = await mkUser("recip");
+  const send = await app.inject({
+    method: "POST", url: "/staff/notifications", headers: authOf(admin),
+    payload: { audience: "all", title: `${TAG} original`, body: "first wording" },
+  });
+  check("broadcast sent", send.statusCode === 200, send.body);
+  const bId = (send.json() as { id: string }).id;
+
+  const inboxBefore = await app.inject({ method: "GET", url: "/notifications", headers: authOf(recip) });
+  const before = inboxBefore.json() as { notifications: { title: string; body: string }[]; unread: number };
+  check("recipient's inbox has the original wording", before.notifications.some((n) => n.title === `${TAG} original`));
+
+  // Edit cascades onto the already-written per-recipient row.
+  const edit = await app.inject({
+    method: "PATCH", url: `/staff/notifications/${bId}`, headers: authOf(admin),
+    payload: { title: `${TAG} corrected`, body: "fixed wording" },
+  });
+  check("edit accepted", edit.statusCode === 200, edit.body);
+  const afterEdit = (await app.inject({ method: "GET", url: "/notifications", headers: authOf(recip) })).json() as { notifications: { title: string; body: string }[] };
+  check("recipient sees the CORRECTED wording, not the original", afterEdit.notifications.some((n) => n.title === `${TAG} corrected` && n.body === "fixed wording"));
+  check("the old wording is gone from their inbox", !afterEdit.notifications.some((n) => n.title === `${TAG} original`));
+
+  // Pause hides it from the inbox and the unread count, without deleting it.
+  const pause = await app.inject({ method: "POST", url: `/staff/notifications/${bId}/pause`, headers: authOf(admin) });
+  check("pause accepted", pause.statusCode === 200, pause.body);
+  const paused = (await app.inject({ method: "GET", url: "/notifications", headers: authOf(recip) })).json() as { notifications: { title: string }[] };
+  check("paused message is hidden from the inbox", !paused.notifications.some((n) => n.title === `${TAG} corrected`));
+
+  // Resume brings it back.
+  const resume = await app.inject({ method: "POST", url: `/staff/notifications/${bId}/resume`, headers: authOf(admin) });
+  check("resume accepted", resume.statusCode === 200, resume.body);
+  const resumed = (await app.inject({ method: "GET", url: "/notifications", headers: authOf(recip) })).json() as { notifications: { title: string }[] };
+  check("resumed message is visible again", resumed.notifications.some((n) => n.title === `${TAG} corrected`));
+
+  // Delete hides it permanently, and the staff history keeps the row marked deleted.
+  const del = await app.inject({ method: "DELETE", url: `/staff/notifications/${bId}`, headers: authOf(admin) });
+  check("delete accepted", del.statusCode === 200, del.body);
+  const deleted = (await app.inject({ method: "GET", url: "/notifications", headers: authOf(recip) })).json() as { notifications: { title: string }[] };
+  check("deleted message is gone from the inbox", !deleted.notifications.some((n) => n.title === `${TAG} corrected`));
+  const history = (await app.inject({ method: "GET", url: "/staff/notifications", headers: authOf(admin) })).json() as { history: { id: string; deleted: boolean; title: string }[] };
+  const row = history.history.find((h) => h.id === bId);
+  check("the audit trail still shows it, marked deleted", !!row?.deleted, JSON.stringify(row));
+
+  const editDeleted = await app.inject({
+    method: "PATCH", url: `/staff/notifications/${bId}`, headers: authOf(admin),
+    payload: { title: "nope", body: "nope" },
+  });
+  check("editing a deleted message is refused", editDeleted.statusCode === 400);
+
+  check("a non-staff user gets 403 on pause", (await app.inject({ method: "POST", url: `/staff/notifications/${bId}/pause`, headers: authOf(outsider) })).statusCode === 403);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
