@@ -113,6 +113,12 @@ export function SupportQueuePanel() {
         total={data.data?.total ?? 0} loading={data.loading} error={data.error} onRetry={data.reload}
         getRowId={(t) => t.id}
         onRowClick={(t) => setOpen(t)}
+        // Open vs. closed at a glance regardless of which status tab is
+        // active (founder, 2026-09-02) — "open" needs a staff reply, so it
+        // gets a left accent; "closed" is done, so it's muted; "answered" is
+        // neutral (staff already replied, waiting on the user).
+        rowClassName={(t) => t.status === "open" ? "border-l-4 border-l-brand"
+          : t.status === "closed" ? "opacity-60" : ""}
         searchPlaceholder="Search subject or email"
         emptyTitle={`No ${status === "all" ? "" : status} tickets`}
         exportName="support-tickets"

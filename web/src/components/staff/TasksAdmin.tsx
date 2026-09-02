@@ -464,20 +464,24 @@ function TaskMetricsTab({ taskId }: { taskId: string }) {
 
 // ---- Proofs tab: this task's proofs, scoped ---------------------------
 function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () => void }) {
-  const [status, setStatus] = useState("pending");
+  const [status, setStatus] = useState("all");
   const toast = useToast();
   const data = useApi(
-    () => fetchTaskProofs({ taskId, status, limit: 50, dir: "asc" }),
+    () => fetchTaskProofs({ taskId, status, limit: 50, dir: "asc", scopeCounts: true }),
     [taskId, status], true, QUEUE_POLL_MS,
   );
   const rows = data.data?.proofs ?? [];
-  async function decide(p: TaskProof, action: "approve" | "reject") {
+  // The reward is already whatever the task was configured to pay — approving
+  // just confirms the evidence, it never needs to ask an amount that was
+  // already decided when the task was set up. `trim` is the rare exception:
+  // an Agent deliberately paying less than the ceiling for a suspect submission.
+  async function decide(p: TaskProof, action: "approve" | "reject", trim = false) {
     let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
       const n = window.prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
       opts = { note: n };
-    } else {
+    } else if (trim) {
       const a = askApproveAmounts(p);
       if (a === null) return;
       opts = a;
@@ -501,8 +505,14 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
     <div className="space-y-3">
       <StatusTabs options={PROOF_TABS} value={status} onChange={setStatus} counts={data.data?.counts} />
       {data.loading && !data.data ? <p className="text-sm text-muted">Loading…</p>
-        : rows.length === 0 ? <p className="text-sm text-muted">No {status.replace(/_/g, " ")} proofs for this task.</p>
-        : rows.map((p) => (
+        : rows.length === 0 ? <p className="text-sm text-muted">
+            {status === "all" ? "No proofs for this task yet." : `No ${status.replace(/_/g, " ")} proofs for this task.`}
+          </p>
+        : rows.map((p) => {
+          // Every row's own state, not the active tab filter — needed so the
+          // "All" tab shows the right buttons for each mixed-status row.
+          const rowState = proofState(p);
+          return (
           <div key={p.id} className="rounded-md border-2 border-line-strong bg-card p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm font-semibold text-brand-ink">
@@ -512,15 +522,17 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
               <TimeCell iso={p.created_at} />
             </div>
             <ProofBody proof={p} />
-            {status === "pending" && (
-              <div className="mt-2 flex gap-2">
+            {rowState === "pending" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button onClick={() => decide(p, "approve")}
                   className="rounded-md bg-success px-3 py-1 text-xs font-semibold text-white">Approve</button>
                 <button onClick={() => decide(p, "reject")}
                   className="rounded-md bg-danger px-3 py-1 text-xs font-semibold text-white">Reject</button>
+                <button onClick={() => decide(p, "approve", true)}
+                  className="text-xs font-medium text-muted underline decoration-dotted">Approve a different amount</button>
               </div>
             )}
-            {status === "reward_pending" && (
+            {rowState === "reward_pending" && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted">
                   Will send {rewardLabel(Number(p.task_rozi_micro ?? 0), Number(p.task_usdt_micro))}
@@ -532,7 +544,8 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
     </div>
   );
 }
@@ -543,7 +556,7 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
 // Two-step release (2026-09-01): "reward pending" = an Agent accepted the
 // evidence but the reward has not been sent; "paid" = the reward was released
 // through creditCompletion().
-const PROOF_TABS = ["pending", "reward_pending", "paid", "rejected"];
+const PROOF_TABS = ["all", "pending", "reward_pending", "paid", "rejected"];
 
 // Approve dialog — the Agent confirms (and may trim) the reward before it is
 // locked onto the proof. Cannot exceed what the user was promised.
@@ -577,7 +590,7 @@ function askApproveAmounts(p: TaskProof): { roziMicro?: number; usdtMicro?: numb
 
 export function ProofReviewPanel() {
   const q = useTableQuery("tasks:proofs", { pageSize: 25, sort: "created_at", dir: "asc" });
-  const c = useQueueControls(q, "pending");
+  const c = useQueueControls(q, "all");
   const toast = useToast();
   const [open, setOpen] = useState<TaskProof | null>(null);
 
@@ -593,13 +606,17 @@ export function ProofReviewPanel() {
   const counts = data.data?.counts;
   const taskOptions = data.data?.tasks ?? [];
 
-  async function decide(p: TaskProof, action: "approve" | "reject") {
+  // The reward is already whatever the task was configured to pay — approving
+  // just confirms the evidence, it never needs to ask an amount that was
+  // already decided when the task was set up. `trim` is the rare exception:
+  // an Agent deliberately paying less than the ceiling for a suspect submission.
+  async function decide(p: TaskProof, action: "approve" | "reject", trim = false) {
     let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
       const n = window.prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
       opts = { note: n };
-    } else {
+    } else if (trim) {
       const a = askApproveAmounts(p);
       if (a === null) return;
       opts = a;
@@ -762,11 +779,13 @@ export function ProofReviewPanel() {
         activeTab="proof"
         onTab={() => {}}
         dangerZone={p.status === "pending" ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => decide(p, "approve")}
               className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white">Approve (reward not sent yet)</button>
             <button onClick={() => decide(p, "reject")}
               className="rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-white">Reject</button>
+            <button onClick={() => decide(p, "approve", true)}
+              className="text-xs font-medium text-muted underline decoration-dotted">Approve a different amount</button>
           </div>
         ) : p.status === "approved" && p.reward_status === "pending" ? (
           <div className="flex flex-wrap items-center gap-2">

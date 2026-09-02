@@ -11,6 +11,63 @@ import {
 import { StatusBadge } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
 
+// ---- Ticket auto-close -----------------------------------------------------
+// Moved here from Global settings (founder, 2026-09-02: "shift it... as a sub
+// tab of the feature flags"). It stays a plain numeric setting under the hood
+// — same PATCH /staff/settings call, same 0-disables-it behavior — rather
+// than becoming a real FeatureFlag row: `FeatureFlag.enabled` is strictly
+// boolean (a label + on/off badge + one toggle button), and forcing a number
+// into that shape would ripple into every other flag row. This card just
+// physically lives on the Feature flags screen now, above the boolean list.
+function TicketAutoCloseCard() {
+  const settings = useApi(fetchSettings, []);
+  const toast = useToast();
+  const [hours, setHours] = useState(3);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (settings.data) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHours(settings.data.ticketAutoCloseHours);
+    }
+  }, [settings.data]);
+
+  async function save() {
+    setSaving(true); setSaved(false);
+    try {
+      await updateSettings({ ticketAutoCloseHours: hours });
+      setSaved(true);
+      settings.reload();
+    } catch (e) {
+      toast.err((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="mb-6 rounded-lg border-2 border-line-strong bg-card p-3">
+      <h3 className="font-bold text-brand-ink">Ticket auto-close</h3>
+      <p className="mt-0.5 text-xs text-muted">
+        Once staff answer a support ticket and the user does not reply, it
+        closes itself after this many hours. 0 turns auto-close off.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <input type="number" min={0} max={720} value={hours}
+          onChange={(e) => setHours(Number(e.target.value))}
+          className="w-28 rounded-md border border-line bg-card p-2 text-sm outline-none" />
+        <span className="text-xs text-muted">hours</span>
+        <button onClick={save} disabled={saving || settings.loading}
+          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && <span className="text-xs text-success">Saved.</span>}
+      </div>
+    </section>
+  );
+}
+
 // ---- Feature flags ---------------------------------------------------------
 export function FeatureFlagsPanel() {
   const flags = useApi(fetchFlags, []);
@@ -41,6 +98,8 @@ export function FeatureFlagsPanel() {
         Switch a feature off without a deploy. Turning something off never takes
         away money already earned or paid — each row says exactly what it does.
       </p>
+
+      <TicketAutoCloseCard />
 
       {flags.loading ? <p className="text-sm text-muted">Loading…</p>
         : flags.error ? <p className="text-sm text-danger">{flags.error}</p> : (
@@ -140,7 +199,7 @@ export function GlobalSettingsPanel() {
   const toast = useToast();
   const [form, setForm] = useState({
     appName: "", supportEmail: "", supportTelegram: "",
-    minWithdrawPoints: 0, ticketAutoCloseHours: 3, maintenanceMessage: "",
+    minWithdrawPoints: 0, maintenanceMessage: "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -156,7 +215,6 @@ export function GlobalSettingsPanel() {
       appName: d.appName, supportEmail: d.supportEmail,
       supportTelegram: d.supportTelegram,
       minWithdrawPoints: d.minWithdrawPoints,
-      ticketAutoCloseHours: d.ticketAutoCloseHours,
       maintenanceMessage: d.maintenanceMessage,
     });
   }, [settings.data]);
@@ -242,15 +300,6 @@ export function GlobalSettingsPanel() {
           <span className="mt-0.5 block text-xs text-muted">
             1000 points = 1 USDT. Raising this makes cashing out slower for
             everyone — check it is still reachable in a week of ordinary earning.
-          </span>
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold text-muted">Close a chat with no reply after (hours)</span>
-          <input className={field} type="number" min={0} max={720} value={form.ticketAutoCloseHours}
-            onChange={(e) => setForm({ ...form, ticketAutoCloseHours: Number(e.target.value) })} />
-          <span className="mt-0.5 block text-xs text-muted">
-            Once staff answer a ticket and the user does not reply, it closes itself
-            after this many hours. 0 turns auto-close off.
           </span>
         </label>
         <label className="block">

@@ -8,7 +8,7 @@ import { config } from "../config.ts";
 import { requirePermission, requireStaff, canApproveAmount, hasPermission, type Role, type Permission } from "../roles.ts";
 import { ROLES, ROLE_LABELS, ROLE_PERMISSIONS, isRole, permissionsOf } from "../permissions.ts";
 import { getPayoutProvider, pointsToUsdt } from "../payout.ts";
-import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
+import { relayAvailable, createRelayJob, hasEnoughGasForDisplay } from "../payoutRelay.ts";
 import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled, parseDataUrl } from "../kyc.ts";
@@ -863,6 +863,24 @@ export async function staffRoutes(app: FastifyInstance) {
       devices,
       roziLedger, usdtLedger, audit: auditRows, activity,
       referral: { earnedPoints: refEarned, joined2Count },
+    };
+  }));
+
+  // A user's own derived on-chain BNB balance (gas for their custody address —
+  // see CUSTODY_SPEC.md § 5, the same read `/wallet/bnb` already does via
+  // hasEnoughGasForDisplay). Split out of GET /staff/users/:id on purpose: a
+  // live RPC call must never make the rest of a User 360 page wait on chain
+  // reachability, and hasEnoughGasForDisplay already never throws — it
+  // returns null on any RPC failure, which the panel renders as "can't check
+  // right now" rather than a blank tab.
+  app.get("/staff/users/:id/bnb-balance", staffGuard("users.view", async (_ctx, req) => {
+    const id = (req.params as { id: string }).id;
+    const relayReady = relayAvailable("bep20");
+    const gas = relayReady ? await hasEnoughGasForDisplay(id, "bep20") : null;
+    return {
+      available: relayReady,
+      balanceWei: gas ? gas.balanceWei.toString() : null,
+      address: gas ? gas.address : null,
     };
   }));
 

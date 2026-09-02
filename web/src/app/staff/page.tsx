@@ -9,14 +9,13 @@ import { fetchFraud, setUserStatus, resolveFraud } from "@/lib/api";
 import { timeAgo, displayIdentity } from "@/lib/format";
 import {
   KpiDashboard, NetworkPanel,
-  TreasuryPanel, WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
+  WithdrawalFeePanel, RefreshBar, QUEUE_POLL_MS,
 } from "@/components/staff";
 import { SupportQueuePanel } from "@/components/staff/SupportQueue";
 import { UsersPanel, StaffRolesPanel } from "@/components/admin";
-import { MiningAdminSection, UsdtTopupConfigPanel } from "@/components/mining-admin";
+import { MiningAdminSection } from "@/components/mining-admin";
 import {
-  WithdrawalsPanel, DepositsPanel, RefundsPanel, BnbWithdrawalsPanel,
-  RelayJobsPanel, ReconciliationPanel,
+  WithdrawalsGroupPanel, DepositsGroupPanel, TreasuryGroupPanel,
 } from "@/components/staff/MoneyQueues";
 import { DisbursementsPanel } from "@/components/staff/Disbursements";
 import { Panel } from "@/components/boundary";
@@ -121,7 +120,13 @@ const SECTION_ICON: Record<SectionId, (p: { size?: number }) => ReactNode> = {
 // of every panel scrolled together. `need` gates a tab the same way a section
 // is gated; a tab the role can't use is never shown, and picking a search
 // deep-link jumps straight to the right tab (`#money/p-withdrawals`).
-type PanelDef = { id: string; label: string; need?: UiPermission; node: ReactNode };
+// `need` accepts an array for a grouped tab whose internal sub-tabs each
+// carry a different permission (e.g. Deposits: deposits.view / refunds.view /
+// mining.manage) — the outer tab shows if the role holds ANY of them, and
+// each internal panel still gates itself before rendering content.
+type PanelDef = { id: string; label: string; need?: UiPermission | UiPermission[]; node: ReactNode };
+const needMet = (need: UiPermission | UiPermission[] | undefined, may: (p: UiPermission) => boolean): boolean =>
+  need === undefined || (Array.isArray(need) ? need.some(may) : may(need));
 
 function SubTabs({ items, active, onPick }: {
   items: { id: string; label: string }[]; active: string; onPick: (id: string) => void;
@@ -251,17 +256,23 @@ export default function StaffPage() {
   const SECTION_PANELS: Partial<Record<SectionId, PanelDef[]>> = {
     money: [
       { id: "p-overview", label: "Overview", need: "withdrawals.view", node: <MoneyOverview /> },
-      // USDT and BNB payouts sit next to each other (founder, 2026-09-02: "BNB
-      // out as its own section makes no sense — group it with the USDT ones").
-      { id: "p-withdrawals", label: "USDT withdrawals", need: "withdrawals.view", node: <WithdrawalsPanel canOpenLedger={may("users.view")} /> },
-      { id: "p-bnb-withdrawals", label: "BNB withdrawals", need: "withdrawals.view", node: <BnbWithdrawalsPanel canHandle={may("withdrawals.decide")} /> },
-      { id: "p-usdt-deposits", label: "USDT deposits", need: "deposits.view", node: <DepositsPanel canDecide={may("deposits.decide")} /> },
-      { id: "p-usdt-refunds", label: "USDT refunds", need: "refunds.view", node: <RefundsPanel canDecide={may("refunds.decide")} /> },
-      { id: "p-usdt-topup", label: "USDT top-up", need: "mining.manage", node: <UsdtTopupConfigPanel /> },
+      // Grouped 2026-09-02 (founder: 11 flat tabs was too many) — each group
+      // below is one PanelDef whose node owns its own internal sub-tabs
+      // (WithdrawalsGroupPanel / DepositsGroupPanel / TreasuryGroupPanel in
+      // MoneyQueues.tsx), same pattern MiningAdminSection already uses.
+      {
+        id: "p-withdrawals-group", label: "Withdrawals", need: "withdrawals.view",
+        node: <WithdrawalsGroupPanel has={may} />,
+      },
+      {
+        id: "p-deposits-group", label: "Deposits", need: ["deposits.view", "refunds.view", "mining.manage"],
+        node: <DepositsGroupPanel has={may} canDecideDeposits={may("deposits.decide")} canDecideRefunds={may("refunds.decide")} />,
+      },
       { id: "p-disbursements", label: "Disbursements", need: "disbursements.manage", node: <DisbursementsPanel canManage={may("disbursements.manage")} /> },
-      { id: "p-relay-jobs", label: "Relay jobs", need: "withdrawals.view", node: <RelayJobsPanel canHandle={may("withdrawals.decide")} /> },
-      { id: "p-treasury", label: "Treasury", need: "treasury.view", node: <TreasuryPanel /> },
-      { id: "p-reconciliation", label: "Reconciliation", need: "analytics.view", node: <ReconciliationPanel canRecheck={may("analytics.view")} /> },
+      {
+        id: "p-treasury-group", label: "Treasury", need: ["treasury.view", "analytics.view"],
+        node: <TreasuryGroupPanel has={may} canRecheck={may("analytics.view")} />,
+      },
       { id: "p-withdrawal-fee", label: "Fees & limits", need: "settings.manage", node: <WithdrawalFeePanel /> },
     ],
     users: [
@@ -383,7 +394,7 @@ export default function StaffPage() {
 
           {/* Multi-panel sections: one sub-tab bar, one mounted panel. */}
           {section && SECTION_PANELS[section] && (() => {
-            const defs = SECTION_PANELS[section]!.filter((d) => !d.need || may(d.need));
+            const defs = SECTION_PANELS[section]!.filter((d) => needMet(d.need, may));
             if (defs.length === 0) return null;
             const active = defs.find((d) => d.id === panelId) ?? defs[0];
             return (

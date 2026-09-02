@@ -836,7 +836,7 @@ export function TopMinersTable({ rows }: { rows: MiningStats["topMiners"] }) {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="py-1.5 font-mono text-muted">{r.rank}</td>
-                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r)}</button></td>
+                  <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r, { full: true })}</button></td>
                   <td className="font-mono">{r.mined.toLocaleString(undefined, { maximumFractionDigits: 3 })} ROZI</td>
                 </tr>
               ))}

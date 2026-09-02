@@ -12,8 +12,10 @@ import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
   adjustUserPoints, adjustUserRozi, adjustUserUsdt, type StaffUserDetail,
   fetchEligibleRewards, quickSendReward, type EligibleReward,
+  fetchUserBnbBalance,
 } from "@/lib/api";
-import { formatMoney, formatPoints, formatUsdtMicro, displayIdentity } from "@/lib/format";
+import { formatPoints, formatUsdtMicro, formatBnbWei, displayIdentity } from "@/lib/format";
+import { useApi } from "@/lib/hooks";
 
 type Row = Record<string, unknown>;
 const S = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -112,10 +114,15 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
     displayName: u.display_name as string | null,
     telegramUsername: u.telegram_username as string | null,
     telegramName: u.telegram_name as string | null,
-  });
+  }, { full: true });
   const toast = useToast();
   const [tab, setTab] = useState("overview");
   const [busy, setBusy] = useState(false);
+  // On-demand, only while the Balances tab is open — a live chain read must
+  // never hold up the rest of this page, and never poll (guardrail: this
+  // app has shipped two real billing incidents from something polling a
+  // chain in the background with nobody watching).
+  const bnb = useApi(() => fetchUserBnbBalance(u.id as string), [u.id], tab === "balances");
 
   async function act(fn: () => Promise<unknown>, ok: string) {
     setBusy(true);
@@ -271,12 +278,15 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
       id: "balances", label: "Balances",
       content: (
         <div className="space-y-4">
-          {/* ⚠️ THREE LEDGERS, THREE BOXES, NEVER A TOTAL (guardrail #7). */}
-          <div className="grid grid-cols-3 gap-2">
+          {/* ⚠️ FOUR LEDGERS/BALANCES, FOUR BOXES, NEVER A TOTAL (guardrail #7).
+              BNB is not a ledger at all — it's a live read of the user's own
+              on-chain gas wallet, labeled as such so it can't be misread as
+              money owed to them (no balance backs it on our side). */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">Points</p>
               <p className="num font-bold text-brand-ink"><Points value={N(u.balancePoints)} /></p>
-              <p className="text-[10px] text-muted">withdrawable · {formatMoney(N(u.balancePoints))}</p>
+              <p className="text-[10px] text-muted">withdrawable</p>
             </div>
             <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">ROZI</p>
@@ -287,6 +297,16 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
               <p className="text-[10px] uppercase text-muted">USDT credit</p>
               <p className="num font-bold text-brand-ink"><UsdtMicro value={N(u.usdtMicro)} /></p>
               <p className="text-[10px] text-muted">deposits, spend-only</p>
+            </div>
+            <div className="rounded-lg border-2 border-line-strong p-3">
+              <p className="text-[10px] uppercase text-muted">BNB (gas)</p>
+              <p className="num font-bold text-brand-ink">
+                {bnb.loading ? "…"
+                  : !bnb.data?.available ? "—"
+                  : bnb.data.balanceWei !== null ? formatBnbWei(bnb.data.balanceWei)
+                  : "can't check right now"}
+              </p>
+              <p className="text-[10px] text-muted">for network fees only — not spendable balance</p>
             </div>
           </div>
 

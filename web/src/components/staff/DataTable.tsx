@@ -43,6 +43,10 @@ type Props<Row> = {
   onRetry?: () => void;
   getRowId: (row: Row) => string;
   onRowClick?: (row: Row) => void;
+  /** Extra classes for one row — e.g. a persistent muted/accent look that
+   *  doesn't depend on which status tab is active. Additive to the row's own
+   *  border/hover classes, never replaces them. */
+  rowClassName?: (row: Row) => string;
   filters?: FilterDef[];
   bulkActions?: BulkAction[];
   searchPlaceholder?: string;
@@ -208,7 +212,7 @@ export function DataTable<Row>(p: Props<Row>) {
                 return (
                   <tr key={id}
                     onClick={p.onRowClick ? () => p.onRowClick!(r) : undefined}
-                    className={`border-t border-line ${p.onRowClick ? "cursor-pointer hover:bg-brand-tint/30" : ""}`}>
+                    className={`border-t border-line ${p.onRowClick ? "cursor-pointer hover:bg-brand-tint/30" : ""} ${p.rowClassName ? p.rowClassName(r) : ""}`}>
                     {p.bulkActions && p.bulkActions.length > 0 && (
                       <td className="p-2.5" onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(id)} onChange={() => toggleOne(id)} aria-label="Select row" />

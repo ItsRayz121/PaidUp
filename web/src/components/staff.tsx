@@ -127,6 +127,10 @@ function Tile(
 // history / reply" panel — is unchanged and reused there inside a <DetailLayout>.
 export const TICKET_STATUSES = ["all", "open", "answered", "closed"];
 
+// A long message collapses so one wall of text doesn't push the reply box (and
+// the buttons beside it) off screen — tap it to read the whole thing in place.
+const LONG_MESSAGE_CHARS = 320;
+
 export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
   const id = t.id;
   const thread = useApi(() => fetchStaffTicket(id), [id]);
@@ -135,6 +139,7 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   async function send(close: boolean) {
     setBusy(true); setErr(null);
@@ -182,13 +187,22 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
           // not mistake one for something the user has already been told.
           const isNote = m.author_role === "internal";
           const isStaff = m.author_role === "staff";
+          const isLong = m.body.length > LONG_MESSAGE_CHARS;
+          const isOpen = expanded.has(i);
           return (
             <div key={i} className={
               isNote
                 ? "rounded-lg border border-dashed border-pending bg-pending-tint/40 p-2 text-sm"
                 : `max-w-[85%] rounded-lg p-2 text-sm ${isStaff ? "ml-auto bg-brand text-white" : "bg-brand-tint text-brand-ink"}`
             }>
-              <p className="whitespace-pre-wrap">{m.body}</p>
+              <p className={`whitespace-pre-wrap ${isLong && !isOpen ? "line-clamp-4" : ""}`}>{m.body}</p>
+              {isLong && (
+                <button type="button"
+                  onClick={() => setExpanded((s) => { const n = new Set(s); if (isOpen) n.delete(i); else n.add(i); return n; })}
+                  className={`mt-0.5 text-[11px] font-semibold underline ${isStaff && !isNote ? "text-white/90" : "text-brand"}`}>
+                  {isOpen ? "Show less" : "Show more"}
+                </button>
+              )}
               {m.image && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={m.image} alt="" className="mt-1.5 max-h-56 w-auto rounded" />
@@ -231,40 +245,49 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
         )}
       </div>
 
-      <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2}
-        placeholder={internal ? "Note for staff only — the user never sees this…" : "Reply to the user…"}
-        className={`w-full rounded-md border p-2 text-sm outline-none ${
-          internal ? "border-dashed border-pending bg-pending-tint/30" : "border-line bg-card"
-        }`} />
-      {image ? (
-        <div className="flex items-center gap-2 text-xs">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image} alt="" className="h-12 w-12 rounded object-cover" />
-          <span className="text-muted">Photo attached</span>
-          <button type="button" onClick={() => setImage(null)} disabled={busy}
-            className="rounded-full bg-brand-tint p-1 text-brand disabled:opacity-50"><XIcon size={13} /></button>
+      {/* The input and its own send buttons sit together as one bar (founder,
+          2026-09-02: "add these buttons... near it"). The photo attach and
+          internal-note controls — read less often, changed less often — are a
+          smaller row underneath rather than sitting between the box and its
+          own buttons. */}
+      <div className="flex items-end gap-2">
+        <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2}
+          placeholder={internal ? "Note for staff only — the user never sees this…" : "Reply to the user…"}
+          className={`flex-1 rounded-md border p-2 text-sm outline-none ${
+            internal ? "border-dashed border-pending bg-pending-tint/30" : "border-line bg-card"
+          }`} />
+        <div className="flex shrink-0 flex-col gap-1">
+          <button disabled={!reply.trim() || busy} onClick={() => send(false)}
+            className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+            {internal ? "Save note" : "Send reply"}
+          </button>
+          {!internal && (
+            <button disabled={!reply.trim() || busy} onClick={() => send(true)}
+              className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Send &amp; close</button>
+          )}
         </div>
-      ) : (
-        <label className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded border border-line px-2 py-1 text-xs font-semibold text-brand">
-          <ImageIcon size={14} /> Attach a photo
-          <input type="file" accept="image/*" className="hidden" disabled={busy}
-            onChange={(e) => pickImage(e.target.files?.[0])} />
-        </label>
-      )}
-      <label className="flex items-center gap-1.5 text-xs text-muted">
-        <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
-        Internal note — not sent to the user, and it leaves the ticket open
-      </label>
+      </div>
       {err && <p className="text-sm text-danger">{err}</p>}
-      <div className="flex gap-2">
-        <button disabled={!reply.trim() || busy} onClick={() => send(false)}
-          className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-          {internal ? "Save note" : "Send reply"}
-        </button>
-        {!internal && (
-          <button disabled={!reply.trim() || busy} onClick={() => send(true)}
-            className="rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Send &amp; close</button>
+      <div className="flex flex-wrap items-center gap-3">
+        {image ? (
+          <div className="flex items-center gap-2 text-xs">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={image} alt="" className="h-12 w-12 rounded object-cover" />
+            <span className="text-muted">Photo attached</span>
+            <button type="button" onClick={() => setImage(null)} disabled={busy}
+              className="rounded-full bg-brand-tint p-1 text-brand disabled:opacity-50"><XIcon size={13} /></button>
+          </div>
+        ) : (
+          <label className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded border border-line px-2 py-1 text-xs font-semibold text-brand">
+            <ImageIcon size={14} /> Attach a photo
+            <input type="file" accept="image/*" className="hidden" disabled={busy}
+              onChange={(e) => pickImage(e.target.files?.[0])} />
+          </label>
         )}
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+          Internal note — not sent to the user, and it leaves the ticket open
+        </label>
       </div>
     </div>
   );

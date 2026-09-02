@@ -77,13 +77,13 @@ export function DashboardOverview() {
 
   const a = d.data.attention;
   const allTiles: Tile[] = [
-    { kind: "count", label: "Withdrawals — new", value: a.withdrawalsPending, section: "money", anchor: "p-withdrawals" },
-    { kind: "count", label: "Withdrawals — ready to pay", value: a.withdrawalsReady, section: "money", anchor: "p-withdrawals" },
-    { kind: "count", label: "USDT deposits waiting", value: a.depositsPending, section: "money", anchor: "p-usdt-deposits" },
-    { kind: "count", label: "USDT refunds waiting", value: a.refundsPending, section: "money", anchor: "p-usdt-refunds" },
-    { kind: "signal", label: "BNB withdrawals failed", open: a.bnbFailed.open, section: "money", anchor: "p-bnb-withdrawals" },
-    { kind: "signal", label: "Payout relay jobs failed", open: a.relayFailed.open, section: "money", anchor: "p-relay-jobs" },
-    { kind: "signal", label: "Treasury shortfall (chains)", open: a.reconciliationShortfall.open, section: "money", anchor: "p-reconciliation" },
+    { kind: "count", label: "Withdrawals — new", value: a.withdrawalsPending, section: "money", anchor: "p-withdrawals-group" },
+    { kind: "count", label: "Withdrawals — ready to pay", value: a.withdrawalsReady, section: "money", anchor: "p-withdrawals-group" },
+    { kind: "count", label: "USDT deposits waiting", value: a.depositsPending, section: "money", anchor: "p-deposits-group" },
+    { kind: "count", label: "USDT refunds waiting", value: a.refundsPending, section: "money", anchor: "p-deposits-group" },
+    { kind: "signal", label: "BNB withdrawals failed", open: a.bnbFailed.open, section: "money", anchor: "p-withdrawals-group" },
+    { kind: "signal", label: "Payout relay jobs failed", open: a.relayFailed.open, section: "money", anchor: "p-withdrawals-group" },
+    { kind: "signal", label: "Treasury shortfall (chains)", open: a.reconciliationShortfall.open, section: "money", anchor: "p-treasury-group" },
     { kind: "signal", label: "Open fraud flags", open: a.fraudOpen.open, section: "users", anchor: "p-fraud" },
     { kind: "count", label: "IDs waiting for review", value: a.kycWaiting, section: "users", anchor: "p-kyc" },
     { kind: "count", label: "Open support tickets", value: a.ticketsOpen, section: "support" },

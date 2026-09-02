@@ -19,7 +19,9 @@ import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
-import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
+import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
+import { UsdtTopupConfigPanel } from "@/components/mining-admin";
+import type { UiPermission } from "@/lib/permissions";
 import {
   fetchStaffQueue, decideWithdrawal, fetchAdminTopups, confirmTopup, rejectTopup,
   fetchAdminRefunds, payRefund, rejectRefund, fetchStaffBnbWithdrawals, fetchRelayJobs,
@@ -989,4 +991,93 @@ export function ReconciliationPanel({ canRecheck = false }: { canRecheck?: boole
       )}
     </section>
   );
+}
+
+// ---- Grouped sub-tab wrappers (founder, 2026-09-02 phone review) ----------
+//
+// Money & payouts had grown to 11 flat sub-tabs. These three wrappers fold
+// related ones under one tab each, using the same pattern MiningAdminSection
+// already established (mining-admin.tsx): one PanelDef entry that owns its
+// own local tab state and its own small tab bar, rather than teaching the
+// top-level SubTabs/SECTION_PANELS mechanism to nest. Every child panel below
+// keeps the exact same props, permission checks and data-fetching it had as
+// its own flat tab — this only changes which parent mounts it.
+function GroupTabs({ items }: { items: { id: string; label: string; node: ReactNode }[] }) {
+  const [tab, setTab] = useState(items[0]?.id ?? "");
+  const active = items.find((t) => t.id === tab) ?? items[0];
+  if (!active) return <p className="text-sm text-muted">You don&apos;t have permission to view any of this.</p>;
+  return (
+    <div>
+      {items.length > 1 && (
+        <div className="mb-3 flex flex-wrap gap-1 border-b border-line pb-px">
+          {items.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                t.id === active.id ? "bg-brand text-white" : "text-brand hover:bg-brand-tint"
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {active.node}
+    </div>
+  );
+}
+
+// "Money going out" — USDT withdrawals sit next to BNB withdrawals and the
+// relay jobs that actually settle both, since all three share one permission
+// (withdrawals.view) and one job.
+export function WithdrawalsGroupPanel({ has }: { has: (p: UiPermission) => boolean }) {
+  return (
+    <GroupTabs items={[
+      { id: "usdt", label: "USDT", node: <WithdrawalsPanel canOpenLedger={has("users.view")} /> },
+      { id: "bnb", label: "BNB", node: <BnbWithdrawalsPanel canHandle={has("withdrawals.decide")} /> },
+      { id: "relay", label: "Relay jobs", node: <RelayJobsPanel canHandle={has("withdrawals.decide")} /> },
+    ]} />
+  );
+}
+
+// "Money coming in" — a review queue (real user deposits to confirm/reject)
+// next to a settings panel (whether the deposit-funded "buy a rig with USDT"
+// feature is on). Different data, different permissions, same money-in group
+// — the intro line below states the distinction once, since it's what the
+// founder asked to have explained.
+export function DepositsGroupPanel({ has, canDecideDeposits, canDecideRefunds }: {
+  has: (p: UiPermission) => boolean;
+  canDecideDeposits: boolean;
+  canDecideRefunds: boolean;
+}) {
+  const items = [
+    has("deposits.view") && { id: "deposits", label: "USDT deposits", node: <DepositsPanel canDecide={canDecideDeposits} /> },
+    has("refunds.view") && { id: "refunds", label: "USDT refunds", node: <RefundsPanel canDecide={canDecideRefunds} /> },
+    has("mining.manage") && {
+      id: "topup", label: "Top-up settings",
+      node: (
+        <div className="space-y-3">
+          <p className="rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+            <b>USDT deposits</b> reviews real deposits users have already sent — confirm or reject each one.{" "}
+            <b>Top-up settings</b> is different: it configures whether the feature that lets a user buy a mining
+            machine with that deposited USDT is turned on at all. Same money-in group, different job.
+          </p>
+          <UsdtTopupConfigPanel />
+        </div>
+      ),
+    },
+  ].filter(Boolean) as { id: string; label: string; node: ReactNode }[];
+  return <GroupTabs items={items} />;
+}
+
+// Treasury balance and the automated hourly check that compares it against
+// what the ledger says we owe — one screen for "do we actually have the
+// money, and does the chain agree with our books".
+export function TreasuryGroupPanel({ has, canRecheck }: {
+  has: (p: UiPermission) => boolean;
+  canRecheck: boolean;
+}) {
+  const items = [
+    has("treasury.view") && { id: "treasury", label: "Treasury", node: <TreasuryPanel /> },
+    has("analytics.view") && { id: "reconciliation", label: "Reconciliation", node: <ReconciliationPanel canRecheck={canRecheck} /> },
+  ].filter(Boolean) as { id: string; label: string; node: ReactNode }[];
+  return <GroupTabs items={items} />;
 }

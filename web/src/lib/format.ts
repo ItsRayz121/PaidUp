@@ -255,6 +255,13 @@ export function timeAgo(iso: string): string {
 // "tg1038138873@telegram.local"). Priority: the RoziPay @handle → the real
 // Telegram @username → a display / Telegram name → a real email. A synthetic
 // @telegram.local address is never shown raw.
+//
+// `full: true` (founder, 2026-09-02 phone review) additionally appends a real
+// name when BOTH a handle/username and a distinct name are known — "show the
+// username, and if they have a name, show that too." Default stays a single
+// short string: most callers are narrow table cells (fraud rows, withdrawal
+// rows) where a second string would break the layout, so only opt in where
+// there's room (User 360's header, the top-miners table).
 export function displayIdentity(row: {
   username?: string | null;
   telegramUsername?: string | null;
@@ -264,14 +271,18 @@ export function displayIdentity(row: {
   telegramName?: string | null;
   telegram_name?: string | null;
   email?: string | null;
-}): string {
+}, opts?: { full?: boolean }): string {
   const handle = row.username?.trim();
-  if (handle) return `@${handle}`;
   const tg = (row.telegramUsername ?? row.telegram_username)?.trim();
-  if (tg) return `@${tg}`;
   const name = (row.displayName ?? row.display_name ?? row.telegramName ?? row.telegram_name)?.trim();
   const email = row.email?.trim() ?? "";
   const synthetic = email.endsWith("@telegram.local");
+
+  const primary = handle ? `@${handle}` : tg ? `@${tg}` : null;
+  if (primary) {
+    if (opts?.full && name && name !== handle && name !== tg) return `${primary} · ${name}`;
+    return primary;
+  }
   if (name) return synthetic ? `${name} (Telegram)` : name;
   if (email && !synthetic) return email;
   return "Telegram user";

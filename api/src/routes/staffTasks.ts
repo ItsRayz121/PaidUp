@@ -867,12 +867,14 @@ export async function staffTaskRoutes(app: FastifyInstance) {
   // other task's, reviewing a single campaign meant reading past everything
   // else.
   app.get("/staff/task-proofs", staffGuard("tasks.review", async (_ctx, req) => {
-    const q = req.query as { status?: string; taskId?: string; q?: string; sort?: string; dir?: string; limit?: string; offset?: string };
+    const q = req.query as { status?: string; taskId?: string; q?: string; sort?: string; dir?: string; limit?: string; offset?: string; scopeCounts?: string };
     // Two-step release (2026-09-01) split the old "approved" bucket in two:
     //   reward_pending — an Agent accepted the evidence, reward not sent yet
     //   paid           — creditCompletion() has run, reward on the user's balance
     // `approved` is still accepted from an older client and means `paid`.
-    const rawStatus = z.enum(["pending", "reward_pending", "paid", "approved", "rejected"]).catch("pending").parse(q.status);
+    // `all` = no status filter at all (a real "see everything" tab, not a fifth
+    // bucket of its own).
+    const rawStatus = z.enum(["all", "pending", "reward_pending", "paid", "approved", "rejected"]).catch("pending").parse(q.status);
     const status = rawStatus === "approved" ? "paid" : rawStatus;
     const taskId = (q.taskId ?? "").trim();
     const search = (q.q ?? "").trim().toLowerCase();
@@ -882,13 +884,19 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
     // Oldest-waiting-first is the review default; a whitelisted toggle only.
     const dir = q.dir === "desc" ? "DESC" : "ASC";
+    // Only a task's OWN Proofs tab sends this — it always has a real `taskId`
+    // and wants counts scoped to that one task, unlike the global Proofs screen
+    // below, which deliberately keeps counts filter-independent (see the
+    // "COUNTS ARE OVER ALL PROOFS" comment further down).
+    const scopeCounts = q.scopeCounts === "1" && taskId !== "";
 
     const statusWhere =
-      status === "pending" ? "p.status = 'pending'"
+      status === "all" ? null
+      : status === "pending" ? "p.status = 'pending'"
       : status === "reward_pending" ? "p.status = 'approved' AND p.reward_status = 'pending'"
       : status === "paid" ? "p.status = 'approved' AND p.reward_status = 'sent'"
       : "p.status = 'rejected'";
-    const where: string[] = [`(${statusWhere})`];
+    const where: string[] = statusWhere ? [`(${statusWhere})`] : ["1=1"];
     const args: unknown[] = [];
     if (taskId) { where.push("p.task_id = ?"); args.push(taskId); }
     if (search) {
@@ -937,15 +945,23 @@ export async function staffTaskRoutes(app: FastifyInstance) {
     // ⚠️ THE COUNTS ARE OVER ALL PROOFS, NEVER THE CURRENT FILTER — the same
     // rule the support queue follows (stage 6). A "pending" number that shrank
     // because someone typed a search would be read as the backlog clearing.
+    // The ONE exception is `scopeCounts` (a task's own Proofs tab): that screen
+    // has nothing else to be about, so a global count next to an empty,
+    // task-scoped list read as a bug (and was one) rather than "the filter is
+    // working as designed."
     const countRow = await sql.get<Record<string, string | number>>(
       `SELECT
          SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN status='approved' AND reward_status='pending' THEN 1 ELSE 0 END) AS reward_pending,
          SUM(CASE WHEN status='approved' AND reward_status='sent' THEN 1 ELSE 0 END) AS paid,
-         SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS rejected
-       FROM task_proofs`,
+         SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS rejected,
+         COUNT(*) AS all_count
+       FROM task_proofs
+       ${scopeCounts ? "WHERE task_id = ?" : ""}`,
+      ...(scopeCounts ? [taskId] : []),
     );
     const counts = {
+      all: Number(countRow?.all_count ?? 0),
       pending: Number(countRow?.pending ?? 0),
       reward_pending: Number(countRow?.reward_pending ?? 0),
       paid: Number(countRow?.paid ?? 0),

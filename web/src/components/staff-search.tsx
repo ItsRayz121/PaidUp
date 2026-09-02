@@ -19,7 +19,7 @@ import { SearchIcon } from "@/components/icons";
 export type SearchDest = {
   label: string;
   section: SectionId;
-  /** Panel id (the sub-tab, e.g. "p-withdrawals") to open after switching section. */
+  /** Panel id (the sub-tab, e.g. "p-withdrawals-group") to open after switching section. */
   anchor?: string;
   /** Short label kept for a future compact display. Falls back to `label`. */
   short?: string;
@@ -49,23 +49,27 @@ const DESTINATIONS: SearchDest[] = [
   // --- deep links to individual panels -------------------------------------
   { label: "Money overview", short: "Overview", section: "money", anchor: "p-overview", hint: "Money & payouts",
     keywords: "money overview held treasury inflow outflow deposits withdrawals net flow balance", needs: ["withdrawals.view"] },
-  { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals", hint: "Money & payouts",
+  // 2026-09-02: the 8 flat sub-panel anchors below were folded into 3 grouped
+  // tabs (Withdrawals / Deposits / Treasury) — each search entry now points
+  // at its group's anchor. Landing on the group's first internal tab rather
+  // than the exact one is the accepted trade for fewer top-level tabs.
+  { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
     keywords: "withdraw payout cash out pay approve reject mark paid", needs: ["withdrawals.view"] },
-  { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-usdt-deposits", hint: "Money & payouts",
+  { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
     keywords: "topup top up deposit confirm tx hash credit", needs: ["deposits.view"] },
-  { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-usdt-refunds", hint: "Money & payouts",
+  { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
     keywords: "refund get money back return deposit", needs: ["refunds.view"] },
   { label: "Reward disbursements", short: "Disbursements", section: "money", anchor: "p-disbursements", hint: "Money & payouts",
     keywords: "disbursement batch pay rewards send all release bulk csv payout", needs: ["disbursements.manage"] },
-  { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-bnb-withdrawals", hint: "Money & payouts",
+  { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
     keywords: "bnb gas withdraw native failed", needs: ["withdrawals.view"] },
-  { label: "USDT top-up config", short: "USDT top-up", section: "money", anchor: "p-usdt-topup", hint: "Money & payouts",
+  { label: "USDT top-up config", short: "USDT top-up", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
     keywords: "usdt topup top up deposit treasury address enable buy rigs machines", needs: ["mining.manage"] },
-  { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-relay-jobs", hint: "Money & payouts",
+  { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
     keywords: "relay job payout sign broadcast gas prefund forward failed stuck", needs: ["withdrawals.view"] },
-  { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury", hint: "Money & payouts",
+  { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
     keywords: "hot wallet balance gas fund bnb address", needs: ["treasury.view"] },
-  { label: "Reconciliation history", short: "Reconciliation", section: "money", anchor: "p-reconciliation", hint: "Money & payouts",
+  { label: "Reconciliation history", short: "Reconciliation", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
     keywords: "reconcile treasury shortfall snapshot ledger owed delta", needs: ["analytics.view"] },
   { label: "Withdrawal fee & auto-approve limits", short: "Fees & limits", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
     keywords: "fee fees gas ceiling auto withdraw refund limit approval 100 usdt step up charge", needs: ["settings.manage"] },
@@ -273,7 +277,7 @@ export function StaffSearch({
             const idx = records.length + j;
             return (
               <button
-                key={`d:${d.section}:${d.anchor ?? ""}`}
+                key={`d:${d.section}:${d.anchor ?? ""}:${d.label}`}
                 type="button"
                 onMouseEnter={() => setActive(idx)}
                 onClick={() => pick({ kind: "dest", dest: d })}

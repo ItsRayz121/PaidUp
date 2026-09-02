@@ -176,11 +176,11 @@ export function MoneyOverview() {
           BNB withdrawals and deposit refunds was seeing "Nothing yet" under a
           points-only "Latest withdrawals" heading (founder, 2026-09-02). */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <LatestList title="Recent money out" onOpen={() => goToSection("money", "p-withdrawals")}
+        <LatestList title="Recent money out" onOpen={() => goToSection("money", "p-withdrawals-group")}
           rows={recentMoneyOut(o)} />
-        <LatestList title="Latest deposits" onOpen={() => goToSection("money", "p-usdt-deposits")}
+        <LatestList title="Latest deposits" onOpen={() => goToSection("money", "p-deposits-group")}
           rows={o.latest.deposits.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
-        <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-relay-jobs")}
+        <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-withdrawals-group")}
           rows={o.latest.relayFailed.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
       </div>
     </section>

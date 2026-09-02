@@ -196,11 +196,14 @@ export async function staffMiningRoutes(app: FastifyInstance) {
         // much mining they've actually done). This is a leaderboard for staff,
         // real emails, click-through to the same user detail screen everything
         // else here links to.
-        sql.all<{ id: string; email: string; username: string | null; telegram_username: string | null; mined: string }>(
-          `SELECT u.id, u.email, u.username, u.telegram_username, SUM(r.amount) AS mined
+        sql.all<{
+          id: string; email: string; username: string | null; telegram_username: string | null;
+          display_name: string | null; telegram_name: string | null; mined: string;
+        }>(
+          `SELECT u.id, u.email, u.username, u.telegram_username, u.display_name, u.telegram_name, SUM(r.amount) AS mined
            FROM rozi_ledger r JOIN users u ON u.id = r.user_id
            WHERE r.source_type = 'mining' AND r.amount > 0
-           GROUP BY u.id, u.email, u.username, u.telegram_username
+           GROUP BY u.id, u.email, u.username, u.telegram_username, u.display_name, u.telegram_name
            ORDER BY mined DESC LIMIT 10`,
         ),
       ]);
@@ -272,6 +275,7 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       topMiners: topMinerRows.map((r, i) => ({
         rank: i + 1, id: r.id, email: r.email,
         username: r.username ?? null, telegramUsername: r.telegram_username ?? null,
+        displayName: r.display_name ?? null, telegramName: r.telegram_name ?? null,
         mined: fromMicro(Number(r.mined)),
       })),
       epochs: epochs.map((e: Record<string, unknown>) => ({

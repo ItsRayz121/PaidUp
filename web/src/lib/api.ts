@@ -819,6 +819,12 @@ export type StaffUserDetail = {
 };
 export const fetchStaffUser = (id: string) =>
   apiFetch<StaffUserDetail>(`/staff/users/${id}`);
+// On-demand, split out of fetchStaffUser on purpose — a live RPC read must
+// never make the rest of the User 360 page wait on chain reachability.
+export const fetchUserBnbBalance = (id: string) =>
+  apiFetch<{ available: boolean; balanceWei: string | null; address: string | null }>(
+    `/staff/users/${id}/bnb-balance`,
+  );
 // Danger-zone actions for the User 360 page.
 export const setWithdrawalHold = (id: string, reason: string | null, until?: string) =>
   apiFetch<{ ok: true }>(`/staff/users/${id}/withdrawal-hold`, {
@@ -1305,9 +1311,12 @@ export type TaskProof = {
 };
 export type ProofQueue = {
   /** Over ALL proofs, never the current filter — a pending count that shrank
-   *  because someone typed a search reads as the backlog clearing.
-   *  `reward_pending` = approved, reward not released; `paid` = reward sent. */
-  counts: { pending: number; reward_pending: number; paid: number; rejected: number };
+   *  because someone typed a search reads as the backlog clearing. The ONE
+   *  exception is `scopeCounts` (see below): a task's own Proofs tab scopes
+   *  these to that task, because there is nothing else that screen could be
+   *  showing a count of. `reward_pending` = approved, reward not released;
+   *  `paid` = reward sent; `all` = every status combined. */
+  counts: { all: number; pending: number; reward_pending: number; paid: number; rejected: number };
   tasks: { id: string; title: string; pending: number }[];
   proofs: TaskProof[];
   /** For THIS filter (status + task + search) — drives the pager. */
@@ -1316,6 +1325,9 @@ export type ProofQueue = {
 export type ProofListParams = {
   status?: string; taskId?: string; q?: string;
   dir?: "asc" | "desc"; limit?: number; offset?: number;
+  /** A task's own Proofs tab only — scopes the `counts` block to that task
+   *  instead of the site-wide total. */
+  scopeCounts?: boolean;
 };
 export const fetchTaskProofs = (p: ProofListParams | string = "pending", taskId = "", q = "") => {
   const o: ProofListParams = typeof p === "string" ? { status: p, taskId, q } : p;
@@ -1324,6 +1336,7 @@ export const fetchTaskProofs = (p: ProofListParams | string = "pending", taskId 
   if (o.taskId) qs.set("taskId", o.taskId);
   if (o.q) qs.set("q", o.q);
   if (o.dir) qs.set("dir", o.dir);
+  if (o.scopeCounts) qs.set("scopeCounts", "1");
   qs.set("limit", String(o.limit ?? 25));
   qs.set("offset", String(o.offset ?? 0));
   return apiFetch<ProofQueue>(`/staff/task-proofs?${qs.toString()}`);
@@ -1855,7 +1868,10 @@ export type MiningStats = {
   // Top 10 by LIFETIME MINED ROZI (never received-by-transfer, never current
   // balance — see the query's own comment in staffMining.ts). Clicking a row
   // jumps to that user's full detail screen.
-  topMiners: { rank: number; id: string; email: string; username: string | null; telegramUsername: string | null; mined: number }[];
+  topMiners: {
+    rank: number; id: string; email: string; username: string | null; telegramUsername: string | null;
+    displayName: string | null; telegramName: string | null; mined: number;
+  }[];
   epochs: {
     epoch: number; emission: number; total_shares: number; miners: number;
     emitted: number; withheld: number; settled_at: string;
