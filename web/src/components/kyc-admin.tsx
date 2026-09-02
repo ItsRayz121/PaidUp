@@ -9,7 +9,7 @@
 // when a reviewer opens a submission, and every single view is written to the
 // audit log. "Who looked at my ID" is a question we must be able to answer.
 import { useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, useStaffSession } from "@/lib/hooks";
 import {
   fetchKycQueue, decideKyc, fetchSettings, API_BASE, getToken,
   type KycSubmission,
@@ -18,6 +18,7 @@ import { timeAgo } from "@/lib/format";
 import { useToast } from "@/components/staff/toast";
 import { StatusTabs } from "@/components/staff/primitives";
 import { useStaffNav } from "@/lib/staffNav";
+import { can } from "@/lib/permissions";
 
 // The image endpoint is authenticated, so it cannot be a plain <img src>. We fetch
 // it with the bearer token, turn it into an object URL, and revoke that URL as
@@ -88,7 +89,7 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
   }
 
   return (
-    <div className="rounded-xl border border-line bg-card p-3">
+    <div className="rounded-xl border-2 border-line-strong bg-card p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-semibold text-brand-ink">{sub.email}</p>
@@ -187,7 +188,17 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
 function KycStatusLine() {
   const s = useApi(fetchSettings, []);
   const nav = useStaffNav();
+  const { user } = useStaffSession();
   const on = s.data?.kycEnabled !== false;
+  // ⚠️ Verify IDs is gated on `kyc.view` (admin-only per this file's own
+  // header comment), but Feature flags is gated separately on `flags.manage`
+  // — a role can hold one without the other (e.g. `finance` holds `kyc.view`
+  // but not `flags.manage`). Sending that role to a section missing from
+  // their own sidebar landed on a blank screen (caught in review,
+  // 2026-09-02) — `goToSection` has no permission check of its own, it just
+  // switches state. So the button only renders for a role that can actually
+  // land on it; everyone else gets the same information as plain text.
+  const canManageFlags = can(user, "flags.manage");
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border-2 border-line-strong bg-card p-3">
@@ -200,14 +211,19 @@ function KycStatusLine() {
             ? "Users can send documents, and an approved ID is required to send ROZI, withdraw, or get a deposit back."
             : "The /kyc screen is closed and no feature asks for an ID. Nothing is blocked behind a tab users cannot open."}
         </p>
+        {!canManageFlags && (
+          <p className="mt-0.5 text-xs text-muted">Turned on or off from Feature flags, by an admin.</p>
+        )}
       </div>
-      <button
-        type="button"
-        onClick={() => nav.goToSection("flags")}
-        className="shrink-0 rounded-md border-2 border-line-strong bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
-      >
-        Manage in Feature flags →
-      </button>
+      {canManageFlags && (
+        <button
+          type="button"
+          onClick={() => nav.goToSection("flags")}
+          className="shrink-0 rounded-md border-2 border-line-strong bg-brand-tint px-3 py-1.5 text-xs font-semibold text-brand"
+        >
+          Manage in Feature flags →
+        </button>
+      )}
     </div>
   );
 }

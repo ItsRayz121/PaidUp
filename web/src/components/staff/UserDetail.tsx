@@ -273,17 +273,17 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
         <div className="space-y-4">
           {/* ⚠️ THREE LEDGERS, THREE BOXES, NEVER A TOTAL (guardrail #7). */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-lg border border-line p-3">
+            <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">Points</p>
               <p className="num font-bold text-brand-ink"><Points value={N(u.balancePoints)} /></p>
               <p className="text-[10px] text-muted">withdrawable · {formatMoney(N(u.balancePoints))}</p>
             </div>
-            <div className="rounded-lg border border-line p-3">
+            <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">ROZI</p>
               <p className="num font-bold text-brand-ink">{(N(u.roziMicro) / 1e6).toFixed(3)}</p>
               <p className="text-[10px] text-muted">mined + received</p>
             </div>
-            <div className="rounded-lg border border-line p-3">
+            <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">USDT credit</p>
               <p className="num font-bold text-brand-ink"><UsdtMicro value={N(u.usdtMicro)} /></p>
               <p className="text-[10px] text-muted">deposits, spend-only</p>

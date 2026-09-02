@@ -315,7 +315,7 @@ export function TreasuryPanel() {
       {s.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
         : s.error ? <p className="p-4 text-sm text-danger">{s.error}</p>
         : (
-          <div className="space-y-2 rounded-lg border border-line p-3">
+          <div className="space-y-2 rounded-lg border-2 border-line-strong p-3">
             {TREASURY_CHAINS.map((c) => {
               const saved = s.data?.treasury?.[c.id] ?? "";
               const value = draft[c.id] ?? saved;
@@ -419,7 +419,7 @@ export function WithdrawalFeePanel() {
       </p>
       <h3 className="mb-1 font-bold text-brand-ink">Flat withdrawal fee</h3>
       <p className="mb-2 text-xs text-muted">Flat points fee taken out of every withdrawal (covers network/gas cost). 0 = no fee. The user sees the fee and the net amount before they confirm.</p>
-      <div className="flex items-center gap-2 rounded-lg border border-line p-3">
+      <div className="flex items-center gap-2 rounded-lg border-2 border-line-strong p-3">
         <input type="number" min={0} max={1000000} value={value}
           onChange={(e) => setFee(Number(e.target.value))}
           className="num w-28 rounded border border-line bg-card p-1.5 text-sm outline-none" />
@@ -432,7 +432,7 @@ export function WithdrawalFeePanel() {
         what gets debited. Applies on top of the flat fee above on withdrawals, and is the only fee on
         deposit refunds (&quot;Get your USDT back&quot;), which had none before. 0% / $0 = off.
       </p>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border-2 border-line-strong p-3">
         <input type="number" min={0} max={100} step={0.1} value={gasPercentValue}
           onChange={(e) => setGasPercent(Number(e.target.value))}
           className="num w-20 rounded border border-line bg-card p-1.5 text-sm outline-none" />
@@ -460,7 +460,7 @@ export function WithdrawalFeePanel() {
           manual queue below regardless of what you set here.
         </p>
       )}
-      <div className="flex flex-wrap gap-4 rounded-lg border border-line p-3">
+      <div className="flex flex-wrap gap-4 rounded-lg border-2 border-line-strong p-3">
         <label className="flex items-center gap-2 text-sm">
           Withdrawals (task/referral money) ≤
           <input type="number" min={0} step={0.01} value={autoWithdrawValue}
@@ -496,7 +496,7 @@ export function NetworkPanel() {
       {nets.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
         : nets.error ? <p className="p-4 text-sm text-danger">{nets.error}</p>
         : (
-          <div className="overflow-x-auto rounded-lg border border-line">
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr>
@@ -607,7 +607,7 @@ function BulkReferralRates({ onSaved }: { onSaved: () => void }) {
 
   const inp = "num w-20 rounded border border-line bg-card p-1 text-sm outline-none";
   return (
-    <div className="mt-3 rounded-lg border border-line p-3">
+    <div className="mt-3 rounded-lg border-2 border-line-strong p-3">
       <p className="text-sm font-semibold text-brand-ink">Set referral rewards on all networks</p>
       <p className="mb-2 text-xs text-muted">
         Users are shown the LOWEST rate across active networks, so raising one network alone changes

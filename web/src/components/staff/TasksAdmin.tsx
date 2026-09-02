@@ -370,7 +370,7 @@ function TasksOverviewCard() {
     </div>
   );
   return (
-    <div className="mb-3 rounded-lg border border-line bg-brand-tint/20 p-3">
+    <div className="mb-3 rounded-lg border-2 border-line-strong bg-brand-tint/20 p-3">
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-xs font-bold uppercase text-brand-ink">All tasks · last 30 days</span>
         <span className="text-[11px] text-muted">
@@ -397,7 +397,7 @@ function pctLabel(n: number | null): string {
 }
 function MetricCell({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="rounded-md border border-line bg-card p-3">
+    <div className="rounded-md border-2 border-line-strong bg-card p-3">
       <div className="text-[11px] font-semibold uppercase text-muted">{label}</div>
       <div className="num text-lg font-bold text-brand-ink">{value}</div>
       {sub && <div className="text-[11px] text-muted">{sub}</div>}
@@ -434,7 +434,7 @@ function TaskMetricsTab({ taskId }: { taskId: string }) {
       </div>
       <div>
         <div className="mb-1 text-[11px] font-semibold uppercase text-muted">Last 30 days</div>
-        <div className="overflow-x-auto rounded-md border border-line">
+        <div className="overflow-x-auto rounded-md border-2 border-line-strong">
           <table className="w-full min-w-[420px] text-xs">
             <thead className="bg-brand-tint text-left uppercase text-brand">
               <tr><th className="p-2">Day</th><th className="p-2 text-right">Opens</th>
@@ -503,7 +503,7 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
       {data.loading && !data.data ? <p className="text-sm text-muted">Loading…</p>
         : rows.length === 0 ? <p className="text-sm text-muted">No {status.replace(/_/g, " ")} proofs for this task.</p>
         : rows.map((p) => (
-          <div key={p.id} className="rounded-md border border-line bg-card p-3">
+          <div key={p.id} className="rounded-md border-2 border-line-strong bg-card p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm font-semibold text-brand-ink">
                 {p.user_handle ? `@${p.user_handle}` : p.user_email}
@@ -711,7 +711,7 @@ export function ProofReviewPanel() {
             <div className="space-y-3">
               {/* Who this is — comprehensive, so a reviewer never leaves this
                   screen to answer "who / where does their money go". */}
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg border border-line bg-card p-3 text-xs">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg border-2 border-line-strong bg-card p-3 text-xs">
                 <dt className="text-muted">Name</dt>
                 <dd className="text-brand-ink">{p.user_display_name || "—"}</dd>
                 <dt className="text-muted">Handle</dt>

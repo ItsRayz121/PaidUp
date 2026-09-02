@@ -578,7 +578,7 @@ function AllocationPanel() {
 
           <div className="space-y-2">
             {d.buckets.map((b) => (
-              <div key={b.id} className="rounded-md border border-line bg-card p-3 text-xs">
+              <div key={b.id} className="rounded-md border-2 border-line-strong bg-card p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-bold text-brand-ink">{b.label}
                     <span className="ms-2 font-normal text-muted">{b.pctOfTotal}% · {n(b.amountRozi)} ROZI</span>

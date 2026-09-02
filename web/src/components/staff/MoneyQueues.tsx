@@ -28,6 +28,7 @@ import {
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
 import { formatPoints, formatMoney, formatUsdtMicro, formatBnbWei, displayIdentity } from "@/lib/format";
+import { ArrowUpIcon, ArrowDownIcon, BoltIcon, ChartIcon } from "@/components/icons";
 
 // ---- shared bits --------------------------------------------------------
 
@@ -55,15 +56,20 @@ const ACCENT_DOT: Record<Accent, string> = {
 // The toolbar row every money queue shares: status tabs on the left, the live
 // refresh bar on the right. `accent` draws a coloured dot by the title so each
 // queue is recognisable at a glance.
-function QueueHeader({ title, tabs, status, setStatus, refresh, accent = "neutral" }: {
+function QueueHeader({ title, tabs, status, setStatus, refresh, accent = "neutral", icon: Icon }: {
   title: string; tabs: string[]; status: string; setStatus: (s: string) => void;
   refresh: { updatedAt: number | null; loading: boolean; reload: () => void; auto: boolean; setAuto: (v: boolean) => void };
   accent?: Accent;
+  // The founder's own example was "money in / money out" icons (2026-09-02)
+  // — one per queue title, next to the accent dot that already tells them
+  // apart by colour.
+  icon?: (p: { size?: number }) => ReactNode;
 }) {
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
       <h2 className="flex items-center gap-2 font-bold text-brand-ink">
         <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT[accent]}`} aria-hidden />
+        {Icon && <Icon size={16} />}
         {title}
       </h2>
       <StatusTabs options={tabs} value={status} onChange={setStatus} />
@@ -398,7 +404,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
 
   return (
     <section className={shellCls("brand")}>
-      <QueueHeader title="Withdrawals" accent="brand" tabs={WITHDRAWAL_TABS} status={c.status} setStatus={c.setStatus}
+      <QueueHeader title="Withdrawals" accent="brand" icon={ArrowUpIcon} tabs={WITHDRAWAL_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
 
       {pendingTotal && pendingTotal.count > 0 && (
@@ -527,7 +533,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
 
   return (
     <section className={shellCls("success")}>
-      <QueueHeader title="USDT deposits" accent="success" tabs={TOPUP_TABS} status={c.status} setStatus={c.setStatus}
+      <QueueHeader title="USDT deposits" accent="success" icon={ArrowDownIcon} tabs={TOPUP_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       {treasuryAddress ? (
         <p className="mb-2 text-xs text-muted">
@@ -667,7 +673,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
 
   return (
     <section className={shellCls("accent")}>
-      <QueueHeader title="USDT refunds" accent="accent" tabs={REFUND_TABS} status={c.status} setStatus={c.setStatus}
+      <QueueHeader title="USDT refunds" accent="accent" icon={ArrowUpIcon} tabs={REFUND_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <p className="mb-2 text-xs text-muted">
         A user asking for the deposit they have not spent — their own money coming back, not their task
@@ -763,7 +769,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
 
   return (
     <section className={shellCls("pending")}>
-      <QueueHeader title="BNB withdrawals" accent="pending" tabs={BNB_TABS} status={c.status} setStatus={c.setStatus}
+      <QueueHeader title="BNB withdrawals" accent="pending" icon={ArrowUpIcon} tabs={BNB_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <DataTable<StaffBnbWithdrawalRow>
         q={q} columns={columns} rows={rows}
@@ -861,7 +867,7 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
 
   return (
     <section className={shellCls("danger")}>
-      <QueueHeader title="Payout relay jobs" accent="danger" tabs={RELAY_TABS} status={c.status} setStatus={c.setStatus}
+      <QueueHeader title="Payout relay jobs" accent="danger" icon={BoltIcon} tabs={RELAY_TABS} status={c.status} setStatus={c.setStatus}
         refresh={{ updatedAt: data.updatedAt, loading: data.loading, reload: data.reload, auto: c.auto, setAuto: c.setAuto }} />
       <DataTable<RelayJobRow>
         q={q} columns={columns} rows={rows}
@@ -916,6 +922,7 @@ export function ReconciliationPanel({ canRecheck = false }: { canRecheck?: boole
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 font-bold text-brand-ink">
           <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT.danger}`} aria-hidden />
+          <ChartIcon size={16} />
           Reconciliation history
         </h2>
         <div className="flex items-center gap-2">
@@ -948,7 +955,7 @@ export function ReconciliationPanel({ canRecheck = false }: { canRecheck?: boole
               {shortfalls} of the last {snaps.length} checks showed a shortfall.
             </p>
           )}
-          <div className="overflow-x-auto rounded-lg border border-line">
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
             <table className="w-full min-w-[560px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr>

@@ -47,7 +47,7 @@ export function FeatureFlagsPanel() {
           <div className="space-y-2">
             {(flags.data?.flags ?? []).map((f) => (
               <div key={f.id}
-                className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-line bg-card p-3">
+                className="flex flex-wrap items-start justify-between gap-3 rounded-lg border-2 border-line-strong bg-card p-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-brand-ink">
                     {f.label} <StatusBadge status={f.enabled ? "on" : "off"} />
@@ -205,8 +205,8 @@ export function GlobalSettingsPanel() {
       {/* Maintenance is first and loud: it is the only control here that turns
           the whole product off, and burying it under four text inputs would be
           exactly wrong in the moment someone needs it. */}
-      <div className={`mb-4 rounded-lg border p-3 ${
-        d.maintenanceMode ? "border-danger bg-danger-tint" : "border-line bg-card"
+      <div className={`mb-4 rounded-lg border-2 p-3 ${
+        d.maintenanceMode ? "border-danger bg-danger-tint" : "border-line-strong bg-card"
       }`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
