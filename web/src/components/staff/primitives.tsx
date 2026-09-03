@@ -62,13 +62,27 @@ const STATUS_LABEL: Record<string, string> = {
   paid: "Sent",
 };
 
-export function StatusBadge({ status, tone }: { status: string; tone?: Tone }) {
+// The one place a status VALUE becomes display TEXT. `StatusBadge` below,
+// `StatusTabs` further down, and a handful of hand-written "No {x} rows yet"
+// empty-state strings (TasksAdmin.tsx, MoneyQueues.tsx) all render the exact
+// same status values ("paid", "released", …) next to each other on the same
+// screen — a withdrawal queue's own "Paid" tab sits directly above rows whose
+// badge came from this file. Those used to agree by accident, because both
+// were the same generic underscore-replace. The first time one of them grew a
+// real override (`STATUS_LABEL` above) and the other three didn't, the tab
+// said "Paid" over a column of badges that all said "SENT" — caught in
+// review, 2026-09-03. Every status-to-text conversion in the staff panel must
+// go through this function, not its own copy of the replace/uppercase logic.
+export function statusLabel(status: string | undefined | null): string {
   const key = status?.toLowerCase?.() ?? "";
-  const t = tone ?? STATUS_TONE[key] ?? "neutral";
-  const label = STATUS_LABEL[key] ?? String(status ?? "—").replace(/_/g, " ");
+  return STATUS_LABEL[key] ?? String(status ?? "—").replace(/_/g, " ");
+}
+
+export function StatusBadge({ status, tone }: { status: string; tone?: Tone }) {
+  const t = tone ?? STATUS_TONE[status?.toLowerCase?.() ?? ""] ?? "neutral";
   return (
     <span className={`inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${TONE_CLASS[t]}`}>
-      {label}
+      {statusLabel(status)}
     </span>
   );
 }
@@ -287,7 +301,7 @@ export function StatusTabs({ options, value, onChange, counts }: {
           className={`rounded-md border-2 px-2.5 py-1 text-xs font-semibold ${
             value === s ? "border-brand bg-brand text-white" : "border-line-strong bg-brand-tint text-brand"
           }`}>
-          {s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+          {statusLabel(s).replace(/\b\w/g, (c) => c.toUpperCase())}
           {counts && counts[s] !== undefined && <span className="num ms-1 opacity-80">{counts[s]}</span>}
         </button>
       ))}

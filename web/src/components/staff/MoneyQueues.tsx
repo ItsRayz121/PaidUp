@@ -16,7 +16,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash } from "./primitives";
+import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash, statusLabel } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
@@ -445,7 +445,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
         // other tab it stopped at "nothing here" without saying that money-out
         // lives in three separate tables (founder, 2026-09-03, on an empty
         // queue that should not have looked empty).
-        emptyTitle={c.status === "all" ? "No withdrawals yet" : `No ${c.status.replace(/_/g, " ")} withdrawals`}
+        emptyTitle={c.status === "all" ? "No withdrawals yet" : `No ${statusLabel(c.status).toLowerCase()} withdrawals`}
         // ⚠️ ONLY WHEN NOTHING IS BEING SEARCHED FOR. DataTable falls back to
         // "try a different search" when this is undefined, and telling someone
         // whose search matched nothing to go look in another tab is a wrong

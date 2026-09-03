@@ -3083,4 +3083,48 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     paid, a real clickable tx hash (`TxHash`) via the block-explorer
     primitives built 2026-09-03 earlier the same day.
 
+- **CROSS-CHECK ON THE PASS ABOVE, SAME DAY: TWO REAL BUGS FOUND AND FIXED
+  BEFORE EITHER SHIPPED FURTHER (founder asked for a depth review, 2026-09-03).**
+  Verified: api + web typecheck, eslint (0 errors), web production build
+  (37 routes) clean; `test:tasksadmin` (57), `test:stage7` (96),
+  `test:disbursements` (81) all green.
+  - ⚠️ **BUG 1 — "PAID" TABS FULL OF "SENT" BADGES.** `primitives.tsx`'s new
+    `STATUS_LABEL` override (`released`→"Credited", `paid`→"Sent") only
+    patched `StatusBadge`. Three OTHER places rendered the exact same status
+    values with their own independent `.replace(/_/g," ")` copy that never
+    learned about the override: `StatusTabs` (the filter-tab buttons
+    themselves), and two hand-written empty-state strings in
+    `TasksAdmin.tsx`/`MoneyQueues.tsx`. The result, on four different queues
+    (task proofs, withdrawals, refunds, BNB withdrawals): a tab button
+    labelled **"Paid"** sitting directly above a column of rows all badged
+    **"SENT"** — the exact "nothing formatted two ways" failure
+    `primitives.tsx`'s own file header warns against, self-inflicted the same
+    day. Fixed by extracting the shared logic into one exported
+    `statusLabel()` function and routing all four call sites through it —
+    `StatusBadge`, `StatusTabs` (Title-Cased on top, for its own convention),
+    and both empty-state strings (lower-cased into their sentence). One
+    function, four callers, so a future override can never repeat this.
+  - ⚠️ **BUG 2 — TURNING ON A WELCOME-REPEAT INTERVAL WOULD HAVE RE-SHOWN THE
+    OVERLAY TO EVERY EXISTING USER AT ONCE.** Every account that had already
+    dismissed the welcome screen under the pre-2026-09-03 code has the bare
+    string `"1"` in localStorage, not a timestamp — and `Date.parse("1")`
+    does not fail, it silently resolves to 1 Jan 2001. `decideShow()`'s
+    elapsed-time math would have read every one of those accounts as "last
+    shown a quarter-century ago," so the first time an admin picked ANY
+    repeat interval (even "every year"), the whole existing user base would
+    have seen the welcome screen again on their very next visit, all in the
+    same moment — not the staggered, per-user cadence the setting is supposed
+    to produce. Fixed: the legacy `"1"` sentinel is now detected explicitly,
+    treated as "already seen, exact time unknown" (so it does not re-show
+    right now), and upgraded in place to a real timestamp so the interval
+    starts counting correctly from today for that account.
+  - Not a bug, considered and left alone: swapping the tagline/button fade-in
+    delays (the button-final change above) also means the button's own
+    fade-in and its separate shine-sweep animation now start at the same
+    moment (1900ms) instead of the sweep trailing 200ms after the fade — a
+    cosmetic timing nuance, not a glitch, and not touched because nudging the
+    sweep later would push its end past the `ENTRANCE_MS` invariant the file
+    header documents (sweep must end by ~2.8s, matching the idle-loop
+    handoff) for a purely aesthetic gain.
+
 See `docs/` for the full spec.

@@ -77,6 +77,20 @@ function decideShow(userId: string | undefined, repeatDays: number): boolean {
     const stored = window.localStorage.getItem(seenKey(userId));
     if (!stored) return true; // never dismissed
     if (repeatDays <= 0) return false; // dismissed once, admin says never again
+    // ⚠️ EVERY EXISTING USER'S STORED VALUE IS THE LEGACY BARE "1", NOT A
+    // TIMESTAMP, until they next dismiss the overlay. `Date.parse("1")`
+    // does not fail — it silently parses as 1 Jan 2001, ~25 years ago — so
+    // without this check, an admin turning ANY repeat interval on for the
+    // first time would read every account ever seeded from that legacy
+    // build as "last shown a quarter-century ago" and re-show the welcome
+    // to the entire existing user base in one shot, all at once, the
+    // instant the setting changed. Treat it as "seen, exact time unknown"
+    // instead: don't show it right now, but do upgrade the stored value to
+    // today so the interval starts counting for real from here.
+    if (stored === "1") {
+      window.localStorage.setItem(seenKey(userId), new Date().toISOString());
+      return false;
+    }
     const last = Date.parse(stored);
     if (!Number.isFinite(last)) return true; // unreadable value — treat as never seen
     return Date.now() - last >= repeatDays * DAY_MS;

@@ -18,7 +18,7 @@ import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column, type FilterDef } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
 import { DisbursementsPanel } from "./Disbursements";
-import { StatusBadge, TimeCell, StatusTabs } from "./primitives";
+import { StatusBadge, TimeCell, StatusTabs, statusLabel } from "./primitives";
 import { useToast } from "./toast";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
@@ -514,7 +514,7 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
       <StatusTabs options={PROOF_TABS} value={status} onChange={setStatus} counts={data.data?.counts} />
       {data.loading && !data.data ? <p className="text-sm text-muted">Loading…</p>
         : rows.length === 0 ? <p className="text-sm text-muted">
-            {status === "all" ? "No proofs for this task yet." : `No ${status.replace(/_/g, " ")} proofs for this task.`}
+            {status === "all" ? "No proofs for this task yet." : `No ${statusLabel(status).toLowerCase()} proofs for this task.`}
           </p>
         : rows.map((p) => {
           // Every row's own state, not the active tab filter — needed so the
@@ -827,7 +827,7 @@ export function ProofReviewPanel() {
         onRowClick={(p) => setOpen(p)}
         filters={filters}
         searchPlaceholder="Search email or @handle"
-        emptyTitle={`Nothing ${c.status.replace(/_/g, " ")}`}
+        emptyTitle={`Nothing ${statusLabel(c.status).toLowerCase()}`}
         exportName="task-proofs"
         bulkActions={c.status === "pending" ? [
           { label: "Approve picked", run: (ids) => bulk(ids, "approve") },
