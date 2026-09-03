@@ -11,7 +11,7 @@ import {
   fetchTelegramNamePending, refreshTelegramNames,
   type AdminUserRow, type StaffRole,
 } from "@/lib/api";
-import { formatMoney, timeAgo } from "@/lib/format";
+import { formatUsdtMicro, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
@@ -75,7 +75,12 @@ export function UsersPanel() {
       ),
     },
     { key: "balance", header: "Balance", align: "right", sortable: true, csv: (u) => u.balance, render: (u) => <Points value={u.balance} /> },
-    { key: "value", header: "Value", align: "right", csv: (u) => formatMoney(u.balance), render: (u) => <span className="text-muted">{formatMoney(u.balance)}</span> },
+    {
+      // Real deposited USDT (usdt_ledger), not points/ROZI converted to a
+      // USDT-equivalent — that read as money sitting somewhere when none was.
+      key: "usdt", header: "USDT deposited", align: "right", sortable: true,
+      csv: (u) => formatUsdtMicro(u.usdtMicro), render: (u) => <span className="text-muted">{formatUsdtMicro(u.usdtMicro)}</span>,
+    },
     {
       key: "status", header: "Status", sortable: true, csv: (u) => u.status,
       render: (u) => (

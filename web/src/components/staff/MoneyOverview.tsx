@@ -127,12 +127,12 @@ export function MoneyOverview() {
             ))}
           </div>
         )}
-        {/* ⚠️ Liabilities shown as separate lines, never summed with each other
-            or with ROZI (guardrail #7). */}
+        {/* Still real, instantly-movable money — just not swept to the main
+            treasury address yet. Kept in THIS card because it's a breakdown of
+            the same headline figure, not a liability. */}
         <p className="mt-2 text-xs text-muted">
-          We owe users: <span className="num font-semibold text-brand-ink">{formatPoints(o.heldNow.outstandingPoints)}</span> pts
-          (~<span className="num">{formatUsdtMicro(o.heldNow.pointsLiabilityMicro)}</span>) ·
-          held USDT deposits: <span className="num font-semibold text-brand-ink">{formatUsdtMicro(o.heldNow.usdtDepositLiabilityMicro)}</span>
+          of which held in unswept deposit addresses:{" "}
+          <span className="num font-semibold text-brand-ink">{formatUsdtMicro(o.heldNow.usdtDepositLiabilityMicro)}</span>
         </p>
       </div>
 
@@ -164,8 +164,11 @@ export function MoneyOverview() {
       </div>
 
       {/* ---- owed vs paid (folded in from the old Money panel) ---- */}
+      {/* "Owed to users" is a computed liability (points × the payout rate),
+          never money the platform is holding — kept in its own tile, apart
+          from the "Platform holds right now" card above, on purpose. */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile label="Owed to users (live)" value={formatPoints(o.owed.outstandingPoints)} sub={formatUsdtMicro(o.owed.outstandingMicro)} />
+        <Tile label="Owed to users (computed)" value={formatPoints(o.owed.outstandingPoints)} sub={`≈ ${formatUsdtMicro(o.owed.outstandingMicro)}`} />
         <Tile label="Paid out (all time)" value={formatPoints(o.owed.paidPoints)} sub={formatUsdtMicro(o.owed.paidMicro)} />
         <Tile label="Awaiting payout" value={formatPoints(o.owed.pendingPoints)} sub={formatUsdtMicro(o.owed.pendingMicro)} />
         <Tile label="Fees kept" value={formatPoints(o.owed.feePoints)} sub="from withdrawals" />

@@ -910,6 +910,11 @@ export const fetchStaffDashboard = () => apiFetch<StaffDashboard>("/staff/dashbo
 // ---- Super-admin ----------------------------------------------------------
 export type AdminUserRow = {
   id: string; email: string; country: string; status: string; created_at: string; balance: number;
+  // Real deposited USDT (usdt_ledger balance — top-ups minus rig buys minus
+  // refunds), the same figure /wallet/usdt shows the user. NOT points/ROZI
+  // converted to a USDT-equivalent — that was the old "Value" column, and it
+  // read as money sitting somewhere when none of it was.
+  usdtMicro: number;
   // Open fraud flags on this account, and whether AUTOMATIC payouts are
   // currently held (guardrail #8 territory — a hold is not a suspension, see
   // UserHeader). Both are computed server-side so the list never needs one
