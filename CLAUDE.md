@@ -3188,4 +3188,35 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     withdraw-shaped screen (e.g. a future ROZI cash-out) ever needs the same
     shape, deliberately not done here to keep this pass to what was asked.
 
+- **THE WALLET'S "TASK & REFERRAL EARNINGS" CARD IS HIDDEN, NOT REMOVED
+  (founder, 2026-09-03, later the same day).** The founder's reasoning: there
+  is no points-based referral programme actually live right now — a new
+  referral would be paid directly in ROZI into the user's mining wallet, not
+  as points — so a wallet card advertising "Task & referral earnings · Cash
+  out" points at money nobody currently earns that way, and competes for
+  attention with ROZI, which is where new money actually lands. The founder
+  was explicit: **do not destroy the function**, only hide the entry point,
+  so it can come back later with real settings (a per-referral rate, etc.)
+  once there is an actual points-based referral offer to show.
+  - New flag `wallet_earnings_card` in `flagsCore.ts` — **display-only,
+    defaults OFF**. It is the SECOND flag in the registry (after
+    `bnb_deposits`) that is legitimately `displayOnly`: there is nothing to
+    refuse server-side, because nothing about the underlying feature changed.
+    `/wallet/earnings/withdraw` and `POST /withdrawals` (`source_kind:
+    "points"`) are **completely untouched** and keep working exactly as they
+    did before this — a user who already knows the URL (or is sent there by
+    a future push/notification) can still cash out. Only the card on
+    `/wallet` that surfaces it is gated, via `GET /features` →
+    `features.wallet_earnings_card`, read in `web/src/app/wallet/page.tsx`.
+  - **Turning it back on needs no redeploy** — it is the same
+    `/staff → Feature flags` panel every other flag lives in, since the
+    registry auto-lists any row added to `FLAGS` (`flagsCore.ts`). No new
+    admin screen was built.
+  - `flags.test.ts`'s "only the flag that genuinely cannot be enforced is
+    display-only" guard was updated to allow exactly these two flags, with
+    the reasoning for each spelled out in the test itself — the rule is
+    "nothing left to refuse," not "exactly one flag may ever qualify."
+  - Verified: `npm run test:flags` (8/8), api + web typecheck, eslint (0
+    errors), web production build (38 routes) — all clean.
+
 See `docs/` for the full spec.

@@ -16,6 +16,7 @@ import { useI18n } from "@/lib/i18n";
 import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
   fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards, fetchBnbOnchainHistory,
+  fetchFeatures,
 } from "@/lib/api";
 import { usdtFromMicro, formatUsdtMicro, formatBnbWei, formatMoney } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
@@ -52,6 +53,8 @@ export default function WalletPage() {
   const bnbWithdrawals = useApi(fetchBnbWithdrawals, []);
   const bnbOnchain = useApi(fetchBnbOnchainHistory, []);
   const taskUsdt = useApi(fetchUsdtTaskRewards, []);
+  const features = useApi(fetchFeatures, []);
+  const earningsCardOn = features.data?.features?.wallet_earnings_card === true;
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
   const [showAll, setShowAll] = useState(false);
@@ -129,8 +132,16 @@ export default function WalletPage() {
       {/* Task/referral earnings — its own card, its own screen (founder,
           2026-09-03, same day): this money is real and fully withdrawable, it
           just isn't already sitting in the USDT total above, so it gets its
-          own honest number rather than being folded into someone else's. */}
-      {balKnown && (bal.data?.points ?? 0) > 0 && (
+          own honest number rather than being folded into someone else's.
+          ⚠️ HIDDEN BY DEFAULT (founder, later the same day): with no
+          points-based referral programme actually live, this card just
+          pointed at money nobody has and pulled attention away from ROZI,
+          where new money really lands. The function is untouched — the
+          screen it links to and the withdrawal queue behind it both still
+          work — this is a display-only flag (`wallet_earnings_card`,
+          /staff → Feature flags), OFF until there is a real referral offer
+          to show next to it. */}
+      {earningsCardOn && balKnown && (bal.data?.points ?? 0) > 0 && (
         <Card className="p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">

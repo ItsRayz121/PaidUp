@@ -56,13 +56,17 @@ test("every flag says what it does and where it is enforced", () => {
   }
 });
 
-test("only the flag that genuinely cannot be enforced is marked display-only", () => {
+test("only flags with genuinely nothing to enforce are marked display-only", () => {
   // A BNB deposit is someone sending to an address on a public chain. Nothing
-  // we deploy stops that; we can only stop advertising the address. Every OTHER
-  // flag has a route that refuses, and marking one display-only is how a real
-  // switch quietly becomes a decorative one.
+  // we deploy stops that; we can only stop advertising the address.
+  // `wallet_earnings_card` is the same shape for a different reason: it hides
+  // one card on one screen and nothing else — /wallet/earnings/withdraw and
+  // POST /withdrawals behind it are deliberately left working (founder,
+  // 2026-09-03: "do not destroy this function, just hide it"), so there is no
+  // route left to refuse. Every OTHER flag has a route that refuses, and
+  // marking one display-only is how a real switch quietly becomes decorative.
   const displayOnly = FLAG_IDS.filter((id) => FLAGS[id].displayOnly);
-  assert.deepEqual(displayOnly, ["bnb_deposits"]);
+  assert.deepEqual(displayOnly, ["bnb_deposits", "wallet_earnings_card"]);
 });
 
 test("the brief's fourteen features are all present", () => {

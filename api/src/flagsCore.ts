@@ -33,7 +33,7 @@ export type FlagId =
   | "bnb_deposits" | "bnb_withdrawals"
   | "mining" | "machines" | "tasks" | "surveys" | "advertisements"
   | "referrals" | "kyc" | "telegram" | "leaderboard" | "rozi_conversion"
-  | "earnings_view";
+  | "earnings_view" | "wallet_earnings_card";
 
 type Store =
   // Lives in a `mining.*` app_settings row — the existing switch for that feature.
@@ -182,6 +182,20 @@ export const FLAGS: Record<FlagId, FlagDef> = {
     store: { kind: "flag" },
     enforcedAt: "GET /me/earnings — 403; the /earnings page and the profile link are hidden",
     displayOnly: false,
+    defaultOff: true,
+  },
+  wallet_earnings_card: {
+    label: "Task & referral earnings card (Wallet)",
+    effect:
+      "Hides the 'Task & referral earnings / Cash out' card on the Wallet " +
+      "screen (founder, 2026-09-03: with no points-based referral programme " +
+      "live yet, this card just points at money nobody has, and it competes " +
+      "for attention with ROZI, which is where new money actually lands). " +
+      "Nothing is disabled: /wallet/earnings/withdraw and POST /withdrawals " +
+      "still work exactly as before — this only hides the entry point.",
+    store: { kind: "flag" },
+    enforcedAt: "web/src/app/wallet/page.tsx — display-only, GET /features drives it",
+    displayOnly: true,
     defaultOff: true,
   },
 };
