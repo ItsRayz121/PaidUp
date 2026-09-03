@@ -359,10 +359,10 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
                 </button>
               </td>
               <td className="py-2 pr-3 num">{usdt(r.usdtMicro)}</td>
-              <td className="py-2 pr-3">{r.destAddress ? <Addr value={r.destAddress} /> : <span className="text-xs text-muted">—</span>}</td>
+              <td className="py-2 pr-3">{r.destAddress ? <Addr value={r.destAddress} chain={r.destChain ?? undefined} /> : <span className="text-xs text-muted">—</span>}</td>
               <td className="py-2 pr-3"><StatusBadge status={r.status} /></td>
               <td className="py-2 pr-3 text-xs text-muted">
-                {r.txHash ? <TxHash value={r.txHash} /> : r.error ?? "—"}
+                {r.txHash ? <TxHash value={r.txHash} chain={r.destChain ?? undefined} /> : r.error ?? "—"}
               </td>
               <td className="py-2 text-right">
                 {canManage && r.status === "sending" && r.withdrawalRequestId && r.destAddress && (

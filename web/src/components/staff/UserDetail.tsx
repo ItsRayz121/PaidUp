@@ -6,7 +6,7 @@
 // exists (GET /staff/users/:id) — no per-user counter to drift.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DetailLayout, type DetailTab } from "./DetailLayout";
-import { StatusBadge, TimeCell, Points, UsdtMicro } from "./primitives";
+import { StatusBadge, TimeCell, Points, UsdtMicro, Addr, TxHash } from "./primitives";
 import { useToast } from "./toast";
 import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
@@ -348,30 +348,41 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
           </p>
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted">Withdrawals (task / referral cash-out)</p>
-            <MiniTable head={["Amount", "Fee", "Chain / to", "Status", "When"]} empty="No withdrawals."
+            {/* tx_hash has been served by this endpoint since it was written and
+                was never rendered — so a paid row here had nothing a staff
+                member could check against the chain (founder, 2026-09-03). */}
+            <MiniTable head={["Amount", "Fee", "Chain / to", "Status", "Transaction", "When"]} empty="No withdrawals."
               rows={d.withdrawals.map((r: Row) => [
                 <span key="a" className="num">{formatPoints(N(r.amount))}</span>,
                 <span key="f" className="num text-muted">{N(r.fee_points) > 0 ? `− ${formatPoints(N(r.fee_points))}` : "—"}</span>,
-                <span key="c" className="text-muted">{S(r.chain)} · {S(r.address)} {r.address_verified ? "✓ signed" : "· typed"}</span>,
-                <StatusBadge key="s" status={S(r.status)} />, <TimeCell key="w" iso={S(r.created_at)} />,
+                <span key="c" className="text-muted">
+                  {S(r.chain)} · <Addr value={S(r.address)} chain={S(r.chain)} /> {r.address_verified ? "✓ signed" : "· typed"}
+                </span>,
+                <StatusBadge key="s" status={S(r.status)} />,
+                <TxHash key="t" value={S(r.tx_hash)} chain={S(r.chain)} />,
+                <TimeCell key="w" iso={S(r.created_at)} />,
               ])} />
           </div>
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT refunds (their deposit, returned)</p>
-            <MiniTable head={["Amount", "Fee", "Chain / to", "Status", "When"]} empty="No refunds."
+            <MiniTable head={["Amount", "Fee", "Chain / to", "Status", "Transaction", "When"]} empty="No refunds."
               rows={d.usdtRefunds.map((r: Row) => [
                 <span key="a" className="num">{(N(r.amount) / 1e6).toFixed(2)} USDT</span>,
                 <span key="f" className="num text-muted">{N(r.fee_micro) > 0 ? `− ${(N(r.fee_micro) / 1e6).toFixed(2)}` : "—"}</span>,
-                <span key="c" className="text-muted">{S(r.chain)} · {S(r.address)}</span>,
-                <StatusBadge key="s" status={S(r.status)} />, <TimeCell key="w" iso={S(r.created_at)} />,
+                <span key="c" className="text-muted">{S(r.chain)} · <Addr value={S(r.address)} chain={S(r.chain)} /></span>,
+                <StatusBadge key="s" status={S(r.status)} />,
+                <TxHash key="t" value={S(r.tx_hash)} chain={S(r.chain)} />,
+                <TimeCell key="w" iso={S(r.created_at)} />,
               ])} />
           </div>
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted">USDT top-ups (deposit credit)</p>
-            <MiniTable head={["Amount", "Chain", "Status", "When"]} empty="No top-ups."
+            <MiniTable head={["Amount", "Chain", "Status", "Transaction", "When"]} empty="No top-ups."
               rows={d.usdtTopups.map((r: Row) => [
                 <span key="a" className="num">{(N(r.amount) / 1e6).toFixed(2)} USDT</span>,
-                S(r.chain), <StatusBadge key="s" status={S(r.status)} />, <TimeCell key="w" iso={S(r.created_at)} />,
+                S(r.chain), <StatusBadge key="s" status={S(r.status)} />,
+                <TxHash key="t" value={S(r.tx_hash)} chain={S(r.chain)} />,
+                <TimeCell key="w" iso={S(r.created_at)} />,
               ])} />
           </div>
         </div>

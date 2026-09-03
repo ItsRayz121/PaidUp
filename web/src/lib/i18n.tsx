@@ -395,27 +395,10 @@ const copy: Record<string, string> = {
   "inbox.markAllRead": "Mark all as read",
   "inbox.new": "New",
   "inbox.open": "Open",
-  // help
-  "help.title": "Help & support",
-  "help.subtitle": "Tell us the problem. A real person will reply.",
-  "help.askForHelp": "Ask for help",
-  "help.noQuestionsTitle": "No questions yet",
-  "help.noQuestionsBody":
-    "If your earnings did not come, or money is late, ask here and we will check.",
-  "help.pointsNote":
-    "Money is only added after the offer partner confirms your task. This can take a little time.",
-  "help.statusWaiting": "Waiting for reply",
-  "help.statusReplied": "We replied",
-  "help.statusClosed": "Closed",
-  "help.lastUpdate": "Last update {time}",
-  "help.you": "You",
-  "help.support": "Support",
-  "help.writeReply": "Write a reply…",
-  "help.sending": "Sending…",
-  "help.sendReply": "Send reply",
-  "help.whatHelp": "What do you need help with?",
-  "help.subjectPlaceholder": "Short subject (e.g. Money not added)",
-  "help.messagePlaceholder": "Tell us what happened.",
+  // help — support is ONE CHAT with RoziPay Official (founder, 2026-09-03).
+  // The ticket-form strings that used to live here (subject placeholder,
+  // "Ask for help", the three status labels) went with the form itself: the
+  // user never names a ticket or picks one out of a list any more.
   "help.send": "Send",
   "help.howWasSupport": "How was our support?",
   "help.rateBad": "Bad",
@@ -424,16 +407,14 @@ const copy: Record<string, string> = {
   "help.rateThanks": "Thanks for letting us know.",
   "help.attachPhoto": "Add a photo",
   "help.photoAttached": "Photo attached",
-  "help.removePhoto": "Remove",
-  // help — the chat screen (founder, 2026-09-03). Support is one conversation
-  // with RoziPay Official now: no subject to invent, no list of past tickets.
   "help.officialName": "RoziPay Official",
   "help.officialTagline": "Support & account help — we usually reply within a few hours",
   "help.chatEmpty": "Say hello — tell us what went wrong and a real person will reply.",
   "help.typeMessage": "Type a message…",
   "help.newChat": "New chat",
   "help.chatClosed": "Chat closed",
-  "help.notRated": "Not rated",
+  "help.closeChat": "Close this chat",
+  "help.closeChatConfirm": "Close this chat? You can always start a new one.",
   // withdraw
   "withdraw.youHave": "You have",
   "withdraw.aboutEquals": "Ready to take out",

@@ -49,6 +49,62 @@ const decisionSchema = z.object({
   txHash: z.string().max(120).optional(),
 });
 
+// ---------------------------------------------------------------------------
+// ⚠️ MODULE SCOPE, AND EXPORTED, SO A TEST CAN ACTUALLY RUN IT. Every column
+// and table name below is hand-written SQL over five tables, and TypeScript
+// cannot see inside a SQL string — this codebase has twice shipped a clean
+// typecheck over a column that does not exist (`networks.label`, then three
+// wrong names on a withdrawal-history query), each time 500-ing the screen the
+// moment it was opened. Living inside the route closure meant the only way to
+// execute it was a live BscScan key, which no test has. Do not push it back in.
+// What each hash was, according to our own records. Five small IN-lookups
+// rather than one union view: each table stores its hash in its own column,
+// and a row we do not recognise must come back unlabelled rather than
+// silently matched to the wrong thing.
+export async function labelTreasuryHashes(hashes: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  // ⚠️ THE EMPTY GUARD BELONGS HERE, NOT AT THE CALL SITE. An empty list builds
+  // `IN ()`, which is a Postgres SYNTAX ERROR, not an empty result — so the
+  // whole treasury screen 500s the first time a wallet has nothing in it. The
+  // route happened to guard this, which is exactly why it went unnoticed; the
+  // next caller would not have.
+  if (hashes.length === 0) return out;
+  const ph = hashes.map(() => "?").join(",");
+  const put = (h: unknown, label: string) => {
+    const key = String(h ?? "").toLowerCase();
+    if (key && !out.has(key)) out.set(key, label);
+  };
+
+  const [withdrawals, topups, refunds, sweeps, relays] = await Promise.all([
+    sql.all<{ tx_hash: string; email: string }>(
+      `SELECT w.tx_hash, u.email FROM withdrawal_requests w JOIN users u ON u.id = w.user_id
+       WHERE LOWER(w.tx_hash) IN (${ph})`, ...hashes),
+    sql.all<{ tx_hash: string; email: string }>(
+      `SELECT t.tx_hash, u.email FROM usdt_topups t JOIN users u ON u.id = t.user_id
+       WHERE LOWER(t.tx_hash) IN (${ph})`, ...hashes),
+    sql.all<{ tx_hash: string; email: string }>(
+      `SELECT r.tx_hash, u.email FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id
+       WHERE LOWER(r.tx_hash) IN (${ph})`, ...hashes),
+    sql.all<{ sweep_tx_hash: string }>(
+      `SELECT sweep_tx_hash FROM sweep_jobs WHERE LOWER(sweep_tx_hash) IN (${ph})`, ...hashes),
+    sql.all<{ gas_tx_hash: string | null; prefund_tx_hash: string | null; forward_tx_hash: string | null }>(
+      `SELECT gas_tx_hash, prefund_tx_hash, forward_tx_hash FROM payout_relay_jobs
+       WHERE LOWER(gas_tx_hash) IN (${ph}) OR LOWER(prefund_tx_hash) IN (${ph})
+          OR LOWER(forward_tx_hash) IN (${ph})`, ...hashes, ...hashes, ...hashes),
+  ]);
+
+  for (const r of withdrawals) put(r.tx_hash, `Withdrawal paid · ${r.email}`);
+  for (const r of topups) put(r.tx_hash, `Deposit confirmed · ${r.email}`);
+  for (const r of refunds) put(r.tx_hash, `Deposit refunded · ${r.email}`);
+  for (const r of sweeps) put(r.sweep_tx_hash, "Deposit swept to treasury");
+  for (const r of relays) {
+    put(r.gas_tx_hash, "Payout relay · gas sent");
+    put(r.prefund_tx_hash, "Payout relay · USDT prefund");
+    put(r.forward_tx_hash, "Payout relay · forwarded to the user");
+  }
+  return out;
+}
+
 export async function staffRoutes(app: FastifyInstance) {
   // Withdrawal queue. Agents only see requests within their approval limit.
   //
@@ -1860,35 +1916,65 @@ export async function staffRoutes(app: FastifyInstance) {
   // outbound request each; a full-table walk behind one click is how you turn a
   // staff button into an incident. `pending` tells the caller how many are
   // still left so the button can simply be pressed again.
-  const TELEGRAM_REFRESH_MAX = 50;
+  // ⚠️ CAPPED, CONCURRENT, AND IT MARKS WHAT IT CHECKED. Three things this got
+  // wrong on the first cut, each of which made it useless in a different way:
+  //   • one getChat per account, 8s timeout, strictly sequential = up to 400s
+  //     inside one request handler, well past any proxy timeout;
+  //   • a row Telegram has nothing for was skipped and left matching the same
+  //     WHERE, so the first batch of unfixable accounts occupied the query
+  //     forever and everything after them was unreachable;
+  //   • `pending` therefore never dropped, so the button never went away.
+  // telegram_checked_at is what fixes the last two: an attempt is recorded even
+  // when it finds nothing, and the query skips anything asked recently.
+  const TELEGRAM_REFRESH_MAX = 25;
+  const TELEGRAM_REFRESH_CONCURRENCY = 5;
+  // Long enough that a full pass is not re-asking the same dead accounts every
+  // day; short enough that someone who sets a Telegram username this month is
+  // picked up next month.
+  const TELEGRAM_RECHECK_DAYS = 30;
+  const telegramPendingSql = `
+    SELECT id, telegram_id FROM users
+    WHERE telegram_id IS NOT NULL
+      AND (telegram_username IS NULL OR telegram_username = '')
+      AND (telegram_name IS NULL OR telegram_name = '')
+      AND (telegram_checked_at IS NULL OR telegram_checked_at < ?)`;
+  const telegramRecheckCutoff = () =>
+    new Date(Date.now() - TELEGRAM_RECHECK_DAYS * 86_400_000).toISOString();
+
   app.post("/staff/users/telegram/refresh", staffGuard("users.review", async ({ userId: actorId, role }) => {
     const rows = await sql.all<{ id: string; telegram_id: string }>(
-      `SELECT id, telegram_id FROM users
-       WHERE telegram_id IS NOT NULL
-         AND (telegram_username IS NULL OR telegram_username = '')
-         AND (telegram_name IS NULL OR telegram_name = '')
-       ORDER BY created_at ASC
-       LIMIT ?`,
-      TELEGRAM_REFRESH_MAX,
+      `${telegramPendingSql} ORDER BY created_at ASC LIMIT ?`,
+      telegramRecheckCutoff(), TELEGRAM_REFRESH_MAX,
     );
 
     let updated = 0;
     let notFound = 0;
-    for (const r of rows) {
-      const id = await fetchTelegramChatIdentity(r.telegram_id);
-      if (!id || (!id.username && !id.name)) { notFound += 1; continue; }
-      await sql.run(
-        "UPDATE users SET telegram_username = ?, telegram_name = ? WHERE id = ? AND telegram_id = ?",
-        id.username, id.name, r.id, r.telegram_id,
-      );
-      updated += 1;
+    // A small pool, not one at a time: 25 sequential 8s timeouts is a request
+    // nothing downstream will wait for.
+    for (let i = 0; i < rows.length; i += TELEGRAM_REFRESH_CONCURRENCY) {
+      const batch = rows.slice(i, i + TELEGRAM_REFRESH_CONCURRENCY);
+      const found = await Promise.all(batch.map((r) => fetchTelegramChatIdentity(r.telegram_id)));
+      for (let j = 0; j < batch.length; j++) {
+        const r = batch[j];
+        const id = found[j];
+        if (id && (id.username || id.name)) {
+          await sql.run(
+            `UPDATE users SET telegram_username = ?, telegram_name = ?, telegram_checked_at = ?
+             WHERE id = ? AND telegram_id = ?`,
+            id.username, id.name, now(), r.id, r.telegram_id,
+          );
+          updated += 1;
+        } else {
+          // Record the ATTEMPT even when it found nothing — that is the whole
+          // point of the column.
+          await sql.run("UPDATE users SET telegram_checked_at = ? WHERE id = ?", now(), r.id);
+          notFound += 1;
+        }
+      }
     }
 
     const left = await sql.get<{ n: string | number }>(
-      `SELECT COUNT(*) AS n FROM users
-       WHERE telegram_id IS NOT NULL
-         AND (telegram_username IS NULL OR telegram_username = '')
-         AND (telegram_name IS NULL OR telegram_name = '')`,
+      `SELECT COUNT(*) AS n FROM (${telegramPendingSql}) q`, telegramRecheckCutoff(),
     );
     await logAudit({
       actorUserId: actorId, actorRole: role, action: "telegram_identity_refresh",
@@ -1897,6 +1983,14 @@ export async function staffRoutes(app: FastifyInstance) {
     return { checked: rows.length, updated, notFound, pending: Number(left?.n ?? 0) };
   }));
 
+  // How many accounts the button above would touch — so it can say so before
+  // it is pressed, and disappear when there is nothing left to do.
+  //
+  // ⚠️ GATED ON users.review, NOT users.list, AND THAT IS WHAT HIDES THE
+  // BUTTON. The panel shows the button only while this count is above zero, so
+  // gating the count more loosely than the action would put a button in front
+  // of `marketing` and `finance` (both hold users.list, neither holds
+  // users.review) that 403s every time they press it.
   // ---- Treasury wallet: every in and out (founder, 2026-09-03) ------------
   // "Show me all the in and out of this particular wallet ... whether it could
   // be to the platform users, whether it could be to any other place."
@@ -1962,56 +2056,9 @@ export async function staffRoutes(app: FastifyInstance) {
     };
   }));
 
-  // What each hash was, according to our own records. Five small IN-lookups
-  // rather than one union view: each table stores its hash in its own column,
-  // and a row we do not recognise must come back unlabelled rather than
-  // silently matched to the wrong thing.
-  async function labelTreasuryHashes(hashes: string[]): Promise<Map<string, string>> {
-    const out = new Map<string, string>();
-    const ph = hashes.map(() => "?").join(",");
-    const put = (h: unknown, label: string) => {
-      const key = String(h ?? "").toLowerCase();
-      if (key && !out.has(key)) out.set(key, label);
-    };
-
-    const [withdrawals, topups, refunds, sweeps, relays] = await Promise.all([
-      sql.all<{ tx_hash: string; email: string }>(
-        `SELECT w.tx_hash, u.email FROM withdrawal_requests w JOIN users u ON u.id = w.user_id
-         WHERE LOWER(w.tx_hash) IN (${ph})`, ...hashes),
-      sql.all<{ tx_hash: string; email: string }>(
-        `SELECT t.tx_hash, u.email FROM usdt_topups t JOIN users u ON u.id = t.user_id
-         WHERE LOWER(t.tx_hash) IN (${ph})`, ...hashes),
-      sql.all<{ tx_hash: string; email: string }>(
-        `SELECT r.tx_hash, u.email FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id
-         WHERE LOWER(r.tx_hash) IN (${ph})`, ...hashes),
-      sql.all<{ sweep_tx_hash: string }>(
-        `SELECT sweep_tx_hash FROM sweep_jobs WHERE LOWER(sweep_tx_hash) IN (${ph})`, ...hashes),
-      sql.all<{ gas_tx_hash: string | null; prefund_tx_hash: string | null; forward_tx_hash: string | null }>(
-        `SELECT gas_tx_hash, prefund_tx_hash, forward_tx_hash FROM payout_relay_jobs
-         WHERE LOWER(gas_tx_hash) IN (${ph}) OR LOWER(prefund_tx_hash) IN (${ph})
-            OR LOWER(forward_tx_hash) IN (${ph})`, ...hashes, ...hashes, ...hashes),
-    ]);
-
-    for (const r of withdrawals) put(r.tx_hash, `Withdrawal paid · ${r.email}`);
-    for (const r of topups) put(r.tx_hash, `Deposit confirmed · ${r.email}`);
-    for (const r of refunds) put(r.tx_hash, `Deposit refunded · ${r.email}`);
-    for (const r of sweeps) put(r.sweep_tx_hash, "Deposit swept to treasury");
-    for (const r of relays) {
-      put(r.gas_tx_hash, "Payout relay · gas sent");
-      put(r.prefund_tx_hash, "Payout relay · USDT prefund");
-      put(r.forward_tx_hash, "Payout relay · forwarded to the user");
-    }
-    return out;
-  }
-
-  // How many accounts the button above would touch — so it can say so before
-  // it is pressed, and disappear when there is nothing left to do.
-  app.get("/staff/users/telegram/pending", staffGuard("users.list", async () => {
+  app.get("/staff/users/telegram/pending", staffGuard("users.review", async () => {
     const left = await sql.get<{ n: string | number }>(
-      `SELECT COUNT(*) AS n FROM users
-       WHERE telegram_id IS NOT NULL
-         AND (telegram_username IS NULL OR telegram_username = '')
-         AND (telegram_name IS NULL OR telegram_name = '')`,
+      `SELECT COUNT(*) AS n FROM (${telegramPendingSql}) q`, telegramRecheckCutoff(),
     );
     return { pending: Number(left?.n ?? 0), batchSize: TELEGRAM_REFRESH_MAX };
   }));

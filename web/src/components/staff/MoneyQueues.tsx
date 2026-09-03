@@ -144,16 +144,19 @@ function MoneyDetail({ backLabel, onBack, title, idChips, badges, userId, fields
 
 // Renders a relay job's phase + the three tx hashes, when a queue row carries
 // one. Same information the old inline panels tucked under the row.
-function RelaySummary({ r }: { r: NonNullable<StaffWithdrawal["relay"]> }) {
+function RelaySummary({ r, chain = "bep20" }: {
+  r: NonNullable<StaffWithdrawal["relay"]>;
+  chain?: string;
+}) {
   return (
     <div className="rounded-lg border border-line bg-card p-4">
       <p className="mb-2 text-xs font-semibold uppercase text-muted">On-chain relay job</p>
       <Fields rows={[
         F("Phase", <StatusBadge status={r.phase} />),
         F("From address", <span className="num">{r.fromAddress ?? "—"}</span>),
-        F("Gas tx", <TxHash value={r.gasTxHash} />),
-        F("Prefund tx", <TxHash value={r.prefundTxHash} />),
-        F("Forward tx", <TxHash value={r.forwardTxHash} />),
+        F("Gas tx", <TxHash value={r.gasTxHash} chain={chain} />),
+        F("Prefund tx", <TxHash value={r.prefundTxHash} chain={chain} />),
+        F("Forward tx", <TxHash value={r.forwardTxHash} chain={chain} />),
         F("Last error", <span className="text-danger">{r.lastError ?? "—"}</span>),
       ]} />
     </div>
@@ -402,7 +405,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
           F("Transaction", <TxHash value={open.txHash} chain={open.chain} />),
           F("Requested", <TimeCell iso={open.at} />),
         ]}
-        extra={open.relay ? <RelaySummary r={open.relay} /> : undefined}
+        extra={open.relay ? <RelaySummary r={open.relay} chain={open.chain} /> : undefined}
         danger={actionsFor(open)}
       />
     );
@@ -443,10 +446,13 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
         // lives in three separate tables (founder, 2026-09-03, on an empty
         // queue that should not have looked empty).
         emptyTitle={c.status === "all" ? "No withdrawals yet" : `No ${c.status.replace(/_/g, " ")} withdrawals`}
-        emptyHint={
+        // ⚠️ ONLY WHEN NOTHING IS BEING SEARCHED FOR. DataTable falls back to
+        // "try a different search" when this is undefined, and telling someone
+        // whose search matched nothing to go look in another tab is a wrong
+        // answer to a different question.
+        emptyHint={q.search ? undefined :
           "This queue is only task/referral cash-outs. Deposit refunds and BNB sends are their " +
-          "own tabs — check All money out to see every outgoing transaction in one list."
-        }
+          "own tabs — check All money out to see every outgoing transaction in one list."}
         exportName="withdrawals"
       />
     </section>
@@ -518,7 +524,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
     },
     { key: "amount", header: "Claimed", align: "right", sortable: true, csv: (r) => r.amount, render: (r) => <span className="num">{r.amount} USDT</span> },
     { key: "chain", header: "Chain", csv: (r) => r.chain, render: (r) => <span className="uppercase">{r.chain}</span> },
-    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <TxHash value={r.tx_hash} /> },
+    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <TxHash value={r.tx_hash} chain={r.chain} /> },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.created_at, render: (r) => <TimeCell iso={r.created_at} /> },
     { key: "actions", header: "", render: actionsFor },
@@ -535,7 +541,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
         fields={[
           F("Claimed amount", <span className="num">{open.amount} USDT</span>),
           F("Chain", <span className="uppercase">{open.chain}</span>),
-          F("Transaction", <TxHash value={open.tx_hash} />),
+          F("Transaction", <TxHash value={open.tx_hash} chain={open.chain} />),
           F("Status", <StatusBadge status={open.status} />),
           F("Reject reason", open.reject_reason ?? "—"),
           F("Created", <TimeCell iso={open.created_at} />),
@@ -615,7 +621,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
   const actionsFor = (r: AdminRefund) => {
     if (r.status !== "pending") {
       return r.status === "paid"
-        ? <TxHash value={r.tx_hash} />
+        ? <TxHash value={r.tx_hash} chain={r.chain} />
         : <span className="text-xs text-muted">{r.reject_reason ?? "—"}</span>;
     }
     if (!canDecide) return <span className="text-xs text-muted">view only</span>;
@@ -678,7 +684,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
           F("Chain", open.chainLabel || open.chain),
           F("Address", <CopyId value={open.address} />),
           F("Address checked", open.addressVerified ? "signed by the user's wallet" : "not checked — typed in"),
-          F("Tx hash", <TxHash value={open.tx_hash} />),
+          F("Tx hash", <TxHash value={open.tx_hash} chain={open.chain} />),
           F("Reject reason", open.reject_reason ?? "—"),
           F("Created", <TimeCell iso={open.created_at} />),
         ]}
@@ -764,7 +770,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
           F("To address", <CopyId value={open.address} />),
           F("Status", <StatusBadge status={open.status} />),
           F("Attempts", <span className="num">{open.attempts}</span>),
-          F("Tx hash", <TxHash value={open.txHash} />),
+          F("Tx hash", <TxHash value={open.txHash} chain={open.chain} />),
           F("Last error", <span className="text-danger">{open.lastError ?? "—"}</span>),
           F("Requested", <TimeCell iso={open.at} />),
           F("Completed", open.completedAt ? <TimeCell iso={open.completedAt} /> : "—"),
@@ -860,9 +866,9 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
           F("To address", <CopyId value={open.toAddress} />),
           F("Phase", <StatusBadge status={open.status} />),
           F("Attempts", <span className="num">{open.attempts}</span>),
-          F("Gas tx", <TxHash value={open.gasTxHash} />),
-          F("Prefund tx", <TxHash value={open.prefundTxHash} />),
-          F("Forward tx", <TxHash value={open.forwardTxHash} />),
+          F("Gas tx", <TxHash value={open.gasTxHash} chain={open.chain} />),
+          F("Prefund tx", <TxHash value={open.prefundTxHash} chain={open.chain} />),
+          F("Forward tx", <TxHash value={open.forwardTxHash} chain={open.chain} />),
           F("Last error", <span className="text-danger">{open.lastError ?? "—"}</span>),
           F("Created", <TimeCell iso={open.at} />),
           F("Completed", open.completedAt ? <TimeCell iso={open.completedAt} /> : "—"),
@@ -916,7 +922,8 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
 // quiet withdrawals tab said nothing about whether money had moved.
 //
 // This view merges all three, newest first, each row labelled with the rail it
-// came from and clickable through to its own queue.
+// came from. It is READ-ONLY: deciding on a row still happens in that rail's
+// own tab, which is one click away along the top.
 //
 // It calls the three EXISTING endpoints rather than adding a fourth. This
 // codebase has shipped two "clean typecheck, 500 on open" bugs from hand-written
@@ -933,38 +940,61 @@ type OutRow = {
   status: string;
   txHash: string | null;
   address: string | null;
+  // The chain the hash belongs to. Carried per row so the explorer link is
+  // never guessed — historical rows on base/aptos still exist (KNOWN_CHAINS).
+  chain: string;
 };
 
 const OUT_LIMIT = 50;
 
-export function AllMoneyOutPanel({ canOpenLedger = false }: { canOpenLedger?: boolean }) {
+export function AllMoneyOutPanel({ has, canOpenLedger = false }: {
+  has: (p: UiPermission) => boolean;
+  canOpenLedger?: boolean;
+}) {
   const [auto, setAuto] = useState(true);
   const { openUser } = useStaffNav();
+  // ⚠️ THE THREE RAILS HAVE THREE DIFFERENT PERMISSIONS, AND ONE Promise.all
+  // WOULD MAKE THAT ONE FAILURE. This tab lives under Withdrawals, which is
+  // gated on `withdrawals.view` (agent tier) — but refunds need `refunds.view`
+  // (manager tier). A legacy `agent` therefore 403s on the refunds call, and a
+  // rejected Promise.all would throw away the withdrawal and BNB rows they ARE
+  // allowed to see, on the exact screen built to answer "did anything leave?".
+  // Same defect class CLAUDE.md already records for Finance in Stage 4: a
+  // screen a role can open but cannot use.
+  const canRefunds = has("refunds.view");
   const data = useApi(
     async () => {
       const [w, r, b] = await Promise.all([
         fetchStaffQueue({ status: "all", limit: OUT_LIMIT }),
-        fetchAdminRefunds({ status: "all", limit: OUT_LIMIT }),
+        canRefunds
+          ? fetchAdminRefunds({ status: "all", limit: OUT_LIMIT })
+          : Promise.resolve({ refunds: [], total: 0, offset: 0, limit: 0 }),
         fetchStaffBnbWithdrawals({ status: "all", limit: OUT_LIMIT }),
       ]);
       const rows: OutRow[] = [
         ...w.requests.map((x) => ({
           key: `w:${x.id}`, rail: "Withdrawal" as const, at: x.at,
           who: identityOf(x), userId: x.userId,
+          // ⚠️ NO " USDT" SUFFIX ON netUsdt EITHER — it is a bare number string
+          // from pointsToUsdt, so the unit is added once, here, and the two
+          // formatters below add their own.
           amount: `${x.netUsdt ?? formatMoney(x.amount)} USDT`,
           status: x.status, txHash: x.txHash ?? null, address: x.address ?? null,
+          chain: x.chain,
         })),
         ...r.refunds.map((x) => ({
           key: `r:${x.id}`, rail: "Refund" as const, at: x.created_at,
           who: displayIdentity(x), userId: x.user_id,
           amount: `${x.netAmount} USDT`,
           status: x.status, txHash: x.tx_hash, address: x.address,
+          chain: x.chain,
         })),
         ...b.rows.map((x) => ({
           key: `b:${x.id}`, rail: "BNB" as const, at: x.at,
           who: identityOf(x), userId: x.userId,
-          amount: `${formatBnbWei(x.amountWei)} BNB`,
+          amount: formatBnbWei(x.amountWei),
           status: x.status, txHash: x.txHash, address: x.address,
+          chain: x.chain,
         })),
       ];
       // Newest first across all three rails — the only ordering that answers
@@ -972,7 +1002,7 @@ export function AllMoneyOutPanel({ canOpenLedger = false }: { canOpenLedger?: bo
       rows.sort((a, z) => (a.at < z.at ? 1 : a.at > z.at ? -1 : 0));
       return { rows, counts: { w: w.total, r: r.total, b: b.total } };
     },
-    [], true, auto ? QUEUE_POLL_MS : undefined,
+    [canRefunds], true, auto ? QUEUE_POLL_MS : undefined,
   );
   const rows = data.data?.rows ?? [];
   const counts = data.data?.counts;
@@ -1003,6 +1033,7 @@ export function AllMoneyOutPanel({ canOpenLedger = false }: { canOpenLedger?: bo
           </>
         )}{" "}
         Each rail keeps its own tab for deciding; this one is only for seeing.
+        {!canRefunds && " Refunds are not shown — your role cannot view them."}
       </p>
 
       {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
@@ -1034,8 +1065,8 @@ export function AllMoneyOutPanel({ canOpenLedger = false }: { canOpenLedger?: bo
                 </td>
                 <td className="p-2 text-right num">{r.amount}</td>
                 <td className="p-2"><StatusBadge status={r.status} /></td>
-                <td className="p-2"><Addr value={r.address} /></td>
-                <td className="p-2"><TxHash value={r.txHash} /></td>
+                <td className="p-2"><Addr value={r.address} chain={r.chain} /></td>
+                <td className="p-2"><TxHash value={r.txHash} chain={r.chain} /></td>
               </tr>
             ))}
             {rows.length === 0 && !data.loading && (
@@ -1065,10 +1096,12 @@ export function TreasuryWalletPanel() {
   const data = useApi(() => fetchTreasuryLedger(50), []);
   const d = data.data;
 
+  // ⚠️ NO UNIT SUFFIX HERE. formatUsdtMicro returns "12.00 USDT" and
+  // formatBnbWei returns "0.0500 BNB" — both already carry it, and appending
+  // a second one renders "12.00 USDT USDT". MoneyOverview.tsx carries the same
+  // warning for the same reason.
   const amount = (r: TreasuryLedgerRow) =>
-    r.asset === "USDT"
-      ? `${formatUsdtMicro(r.micro ?? 0)} USDT`
-      : `${formatBnbWei(r.value)} BNB`;
+    r.asset === "USDT" ? formatUsdtMicro(r.micro ?? 0) : formatBnbWei(r.value);
 
   return (
     <section className={shellCls("accent")}>
@@ -1110,10 +1143,10 @@ export function TreasuryWalletPanel() {
             {d.totals && (
               <>
                 <span className="text-success">
-                  in <span className="num font-semibold">{formatUsdtMicro(d.totals.inMicro)} USDT</span>
+                  in <span className="num font-semibold">{formatUsdtMicro(d.totals.inMicro)}</span>
                 </span>
                 <span className="text-danger">
-                  out <span className="num font-semibold">{formatUsdtMicro(d.totals.outMicro)} USDT</span>
+                  out <span className="num font-semibold">{formatUsdtMicro(d.totals.outMicro)}</span>
                 </span>
                 <span className="text-muted">over the last {d.totals.rows} transaction(s) shown</span>
               </>
@@ -1132,8 +1165,11 @@ export function TreasuryWalletPanel() {
                 </tr>
               </thead>
               <tbody>
-                {d.rows.map((r) => (
-                  <tr key={`${r.hash}:${r.asset}:${r.direction}`} className="border-b border-line/60">
+                {/* The index is part of the key on purpose: one transaction can
+                    carry two USDT transfers in the same direction (a batch
+                    send, a router hop), so hash+asset+direction is not unique. */}
+                {d.rows.map((r, i) => (
+                  <tr key={`${r.hash}:${r.asset}:${r.direction}:${i}`} className="border-b border-line/60">
                     <td className="p-2"><TimeCell iso={r.at} /></td>
                     <td className="p-2">
                       <span className={`inline-flex items-center gap-1 text-xs font-semibold ${
@@ -1314,7 +1350,7 @@ export function WithdrawalsGroupPanel({ has }: { has: (p: UiPermission) => boole
       { id: "relay", label: "Relay jobs", node: <RelayJobsPanel canHandle={has("withdrawals.decide")} /> },
       // Read-only, and last on purpose: the first three tabs are where a
       // decision gets made, this one only answers "did anything leave".
-      { id: "all", label: "All money out", node: <AllMoneyOutPanel canOpenLedger={has("users.view")} /> },
+      { id: "all", label: "All money out", node: <AllMoneyOutPanel has={has} canOpenLedger={has("users.view")} /> },
     ]} />
   );
 }

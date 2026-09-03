@@ -71,6 +71,10 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "hot wallet balance gas fund bnb address", needs: ["treasury.view"] },
   { label: "Reconciliation history", short: "Reconciliation", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
     keywords: "reconcile treasury shortfall snapshot ledger owed delta", needs: ["analytics.view"] },
+  { label: "Treasury wallet — money in and out", short: "Wallet", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
+    keywords: "wallet in out transactions hash bscscan explorer chain treasury history movement", needs: ["treasury.view"] },
+  { label: "All money out", short: "All money out", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
+    keywords: "all money out every transaction outgoing withdraw refund bnb combined list", needs: ["withdrawals.view"] },
   { label: "Withdrawal fee & auto-approve limits", short: "Fees & limits", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
     keywords: "fee fees gas ceiling auto withdraw refund limit approval 100 usdt step up charge", needs: ["settings.manage"] },
   { label: "Users list", short: "Users", section: "users", anchor: "p-users", hint: "Users & IDs",
@@ -86,6 +90,10 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "custom task social whatsapp telegram reward rozi budget campaign", needs: ["tasks.view"] },
   { label: "Task proofs", short: "Proofs", section: "tasks", anchor: "p-proofs", hint: "Tasks & networks",
     keywords: "proof review approve reject screenshot answers", needs: ["tasks.review"] },
+  // The same Disbursements screen as Money & payouts, mounted under Tasks too
+  // (founder, 2026-09-03) — findable from either word.
+  { label: "Task reward disbursements", short: "Disbursements", section: "tasks", anchor: "p-task-rewards", hint: "Tasks & networks",
+    keywords: "disbursement batch pay reward release task campaign send bulk csv", needs: ["disbursements.manage"] },
   { label: "Ad networks", short: "Networks", section: "tasks", anchor: "p-networks", hint: "Tasks & networks",
     keywords: "cpx offerwall postback commission split referral bonus", needs: ["networks.manage"] },
 

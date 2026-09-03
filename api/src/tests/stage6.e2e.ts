@@ -515,6 +515,96 @@ console.log("\n-- support is one chat, not a ticket form --");
 
   check("signing out means no chat at all",
     (await app.inject({ method: "GET", url: "/support/chat" })).statusCode === 401);
+
+  // "...get the reply, be happy, and then close the chat." Closing was
+  // staff-only, which left a satisfied user unable to end the conversation OR
+  // to rate it — the rating prompt only exists on a CLOSED segment.
+  const mine = await app.inject({ method: "POST", url: "/support/chat/close", headers: authOf(chatter) });
+  check("a user can close their own chat", mine.statusCode === 200, mine.body);
+  const seg3 = mine.json().ticketId as string;
+  const closedRow = await sql.get<{ status: string }>("SELECT status FROM support_tickets WHERE id = ?", seg3);
+  check("and it really closes", closedRow?.status === "closed", JSON.stringify(closedRow));
+
+  check("closing again when nothing is open is refused, not a silent no-op",
+    (await app.inject({ method: "POST", url: "/support/chat/close", headers: authOf(chatter) })).statusCode === 400);
+
+  // ⚠️ Closing must not be a dead end. This is what makes it "I'm done" rather
+  // than "I cannot ask again".
+  const reopened = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(chatter), payload: { message: "One more thing." },
+  });
+  check("typing again after closing it yourself opens a fresh conversation",
+    reopened.json().opened === true && reopened.json().ticketId !== seg3, reopened.body);
+
+  // A closed segment can be rated — the whole reason a user-side close matters.
+  check("and the segment you closed can be rated", (await app.inject({
+    method: "POST", url: `/support/tickets/${seg3}/rating`, headers: authOf(chatter), payload: { rating: "great" },
+  })).statusCode === 200);
+
+  check("a user cannot close someone else's chat by having no open one of their own",
+    (await app.inject({ method: "POST", url: "/support/chat/close", headers: authOf(stranger) })).statusCode === 400);
+}
+
+// ---------------------------------------------------------------------------
+// Two things the chat screen depends on that are easy to get wrong and
+// invisible until they cost something.
+console.log("\n-- the chat is cheap to poll, and a photo is a message --");
+{
+  const poller = await mkUser("poller");
+  await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(poller), payload: { message: "first" },
+  });
+  const full = (await app.inject({ method: "GET", url: "/support/chat", headers: authOf(poller) })).json();
+  check("a full load says it is NOT a delta", full.delta === false, JSON.stringify(full.delta));
+  const newest = (full.messages as { created_at: string }[])[0].created_at;
+
+  // ⚠️ THIS IS WHY `since` EXISTS. A message can carry a whole photo as a
+  // base64 data URL, and the chat screen polls every 15 seconds. Without a
+  // delta a user who has sent three screenshots re-downloads a megabyte a
+  // tick, on mobile data, in the markets this app is built for.
+  const nothingNew = (await app.inject({
+    method: "GET", url: `/support/chat?since=${encodeURIComponent(newest)}`, headers: authOf(poller),
+  })).json();
+  check("a poll with nothing new returns NO messages at all",
+    (nothingNew.messages as unknown[]).length === 0, JSON.stringify(nothingNew.messages));
+  check("and says it is a delta, so the client appends instead of replacing",
+    nothingNew.delta === true);
+  check("segments still come back in full — the client needs them to draw the dividers",
+    (nothingNew.segments as unknown[]).length === 1);
+
+  await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(poller), payload: { message: "second" },
+  });
+  const delta = (await app.inject({
+    method: "GET", url: `/support/chat?since=${encodeURIComponent(newest)}`, headers: authOf(poller),
+  })).json();
+  check("a poll after a new message returns ONLY the new one",
+    (delta.messages as { body: string }[]).length === 1
+    && (delta.messages as { body: string }[])[0].body === "second",
+    JSON.stringify((delta.messages as { body: string }[]).map((m) => m.body)));
+
+  // A screenshot of the error IS the message for most people here. Refusing to
+  // send one without also typing something makes the attach button a trap.
+  const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const photoOnly = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(poller), payload: { image: tinyPng },
+  });
+  check("a photo with no words is a valid message", photoOnly.statusCode === 200, photoOnly.body);
+
+  const photoUser = await mkUser("photo-first");
+  const opened = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(photoUser), payload: { image: tinyPng },
+  });
+  check("and it can OPEN a conversation on its own", opened.statusCode === 200, opened.body);
+  const subj = await sql.get<{ subject: string }>(
+    "SELECT subject FROM support_tickets WHERE id = ?", opened.json().ticketId,
+  );
+  check("which staff see titled 'New chat', since there were no words to take one from",
+    subj?.subject === "New chat", JSON.stringify(subj));
+
+  check("but nothing at all is still refused", (await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(poller), payload: {},
+  })).statusCode === 400);
 }
 
 // ---------------------------------------------------------------------------

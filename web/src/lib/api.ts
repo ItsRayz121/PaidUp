@@ -1043,19 +1043,13 @@ export const resolveFraud = (id: string, note?: string) =>
 // from being quietly merged later. The staff view has its own wider type below.
 export type TicketMessage = { author_role: "user" | "staff"; body: string; image?: string | null; created_at: string };
 export type TicketRating = "bad" | "okay" | "great";
-export type MyTicket = {
-  id: string; subject: string; status: "open" | "answered" | "closed";
-  at: string; updatedAt: string; rating: TicketRating | null; messages: TicketMessage[];
-};
-export const fetchMyTickets = () => apiFetch<{ tickets: MyTicket[] }>("/support/tickets");
-export const createTicket = (subject: string, message: string, image?: string | null) =>
-  apiFetch<{ ticket: { id: string } }>("/support/tickets", {
-    method: "POST", body: JSON.stringify({ subject, message, image: image || undefined }),
-  });
-export const replyToMyTicket = (id: string, message: string, image?: string | null) =>
-  apiFetch<{ ok: true }>(`/support/tickets/${id}/messages`, {
-    method: "POST", body: JSON.stringify({ message, image: image || undefined }),
-  });
+// ⚠️ NO CLIENT FOR /support/tickets ANY MORE, ON PURPOSE. The earner app talks
+// to /support/chat; the three ticket-form calls that used to live here
+// (fetchMyTickets / createTicket / replyToMyTicket) had zero call sites after
+// the chat rewrite, and an exported API function nobody calls is how this
+// codebase has previously ended up with half-connected features (see the
+// frontend/backend drift audit). The SERVER routes stay — the staff panel and
+// the e2e suite still exercise them — they just are not reachable from here.
 // ---- Support as ONE CHAT (founder, 2026-09-03) ---------------------------
 // The screen the user actually sees. A "segment" is one ticket underneath —
 // staff still assign / close / get rated per segment — but the user only ever
@@ -1065,12 +1059,22 @@ export type ChatSegment = {
   rating: TicketRating | null; at: string; closedAt: string | null;
 };
 export type ChatMessage = TicketMessage & { id: string; ticketId: string };
-export const fetchSupportChat = () =>
-  apiFetch<{ segments: ChatSegment[]; messages: ChatMessage[] }>("/support/chat");
+// `since` asks for messages AFTER a timestamp. It is what makes the chat
+// screen's poll affordable: a message can carry a whole photo as a base64 data
+// URL, so re-fetching the thread every 15 seconds would cost real mobile data.
+// `delta` in the response says whether to append or replace — decided by the
+// server, never guessed from whether `since` was sent.
+export const fetchSupportChat = (since?: string) =>
+  apiFetch<{ segments: ChatSegment[]; messages: ChatMessage[]; delta: boolean }>(
+    since ? `/support/chat?since=${encodeURIComponent(since)}` : "/support/chat");
 export const sendSupportChat = (message: string, image?: string | null) =>
   apiFetch<{ ok: true; ticketId: string; opened: boolean }>("/support/chat", {
     method: "POST", body: JSON.stringify({ message, image: image || undefined }),
   });
+// "I'm done" — never "I can't ask again". Typing another message opens a new
+// conversation, so this only ends the current one (and unlocks the rating).
+export const closeSupportChat = () =>
+  apiFetch<{ ok: true; ticketId: string }>("/support/chat/close", { method: "POST" });
 
 // "How was our support?" — only accepted once, on a closed ticket.
 export const rateTicket = (id: string, rating: TicketRating) =>

@@ -383,6 +383,12 @@ const SCHEMA = `
 // (the live DB predates password auth). Safe to run on every boot.
 const MIGRATIONS = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+  -- When we last ASKED Telegram who this account is (founder, 2026-09-03).
+  -- Without it the backfill can never finish: an account with no username and
+  -- no name on Telegram's side comes back empty every time, so the first 50
+  -- unfixable rows would occupy the batch forever and nothing past them would
+  -- ever be reached. Stamping the attempt is what lets the query move on.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_checked_at TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'verify';
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;

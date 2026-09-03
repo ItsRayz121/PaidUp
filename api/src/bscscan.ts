@@ -169,8 +169,12 @@ export async function fetchTreasuryLedger(address: string, limit = 50): Promise<
         asset: "BNB" as const, decimals: 18, at: r.at, direction: r.direction,
       })),
     ]
-      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
-      .slice(0, limit);
+      // ⚠️ NO .slice(0, limit) ON THE MERGED LIST. Each rail is already capped
+      // by its own query; slicing the MERGE would silently drop a whole asset
+      // — a wallet with 50 USDT transfers newer than any BNB movement would
+      // show zero BNB rows on a panel that promises both, and whose entire job
+      // is spotting movement we did not start. Two capped rails, both kept.
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
     tokenCache.set(cacheKey, { at: Date.now(), rows });
     return rows;
   } catch {

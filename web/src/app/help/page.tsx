@@ -12,16 +12,16 @@
 // SEGMENT of one continuous thread: staff still assign / close / get rated per
 // segment, and the internal-note filter still lives on the API. What changed is
 // only what the user is asked to do. See the header comment on GET /support/chat.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loading, ErrorState } from "@/components/state";
 // The push-notification toggle lives in /profile/settings. It used to sit on
 // this screen; a settings card inside a chat is the kind of furniture the
 // founder asked to get rid of here.
 import { CheckIcon, HelpIcon, ImageIcon, SendIcon, StarIcon, XIcon } from "@/components/icons";
-import { useRequireAuth, useApi } from "@/lib/hooks";
+import { useRequireAuth } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchSupportChat, sendSupportChat, rateTicket,
+  fetchSupportChat, sendSupportChat, closeSupportChat, rateTicket,
   type ChatMessage, type ChatSegment, type TicketRating,
 } from "@/lib/api";
 import { toTicketImageDataUrl } from "@/lib/imageUpload";
@@ -50,40 +50,154 @@ function timeLabel(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// ⚠️ WALK THE MESSAGES IN TIME ORDER, NEVER SEGMENT BY SEGMENT. Grouping by
+// segment looks equivalent and is not: staff can REOPEN a closed ticket
+// (PATCH /staff/tickets/:id accepts status "open"), so a reply can land on an
+// older conversation after the user has already started a newer one. Iterating
+// segments would then render that reply above messages the user sent days
+// later, and the running date separator would emit an older date pill below a
+// newer one. Time is the only ordering a reader can follow.
 function buildRows(segments: ChatSegment[], messages: ChatMessage[]): Row[] {
+  const byId = new Map(segments.map((s) => [s.id, s]));
+  const ordered = [...messages].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1);
+
   const rows: Row[] = [];
   let day = "";
-  segments.forEach((seg, i) => {
-    const mine = messages.filter((m) => m.ticketId === seg.id);
-    // A "New chat" marker only makes sense between conversations — the very
-    // first one is just the start of the thread.
-    if (i > 0) rows.push({ kind: "newChat", key: `n:${seg.id}`, at: seg.at });
-    for (const m of mine) {
-      const d = dayLabel(m.created_at);
-      if (d !== day) { day = d; rows.push({ kind: "date", key: `d:${m.id}`, label: d }); }
-      rows.push({ kind: "msg", key: `m:${m.id}`, m });
+  let prevSeg: string | null = null;
+  const closedShown = new Set<string>();
+
+  // Close off the conversation we were in, if it is finished, before moving on.
+  const closeOff = (id: string | null) => {
+    if (!id || closedShown.has(id)) return;
+    const seg = byId.get(id);
+    if (seg?.status === "closed") {
+      closedShown.add(id);
+      rows.push({ kind: "closed", key: `c:${id}`, segment: seg });
     }
-    if (seg.status === "closed") rows.push({ kind: "closed", key: `c:${seg.id}`, segment: seg });
-  });
+  };
+
+  for (const m of ordered) {
+    if (m.ticketId !== prevSeg) {
+      closeOff(prevSeg);
+      // A "New chat" marker only makes sense BETWEEN conversations — the very
+      // first one is just the start of the thread.
+      if (prevSeg !== null) {
+        const seg = byId.get(m.ticketId);
+        rows.push({ kind: "newChat", key: `n:${m.ticketId}:${m.id}`, at: seg?.at ?? m.created_at });
+      }
+      prevSeg = m.ticketId;
+    }
+    const d = dayLabel(m.created_at);
+    if (d !== day) { day = d; rows.push({ kind: "date", key: `d:${m.id}`, label: d }); }
+    rows.push({ kind: "msg", key: `m:${m.id}`, m });
+  }
+  closeOff(prevSeg);
   return rows;
 }
 
 // ---------------------------------------------------------------------------
+// The thread, loaded once and then kept up to date with a DELTA.
+//
+// ⚠️ THIS DELIBERATELY DOES NOT USE useApi. That hook replaces its data
+// wholesale on every tick, which for this screen means re-downloading every
+// message — including every attached photo, as a base64 data URL — once every
+// 15 seconds. A user who has sent three screenshots would pull about a megabyte
+// a tick, on mobile data, in the markets this app is built for. So: one full
+// load, then `?since=<newest message>` for everything after it, merged by id.
+function useSupportChat(ready: boolean) {
+  const [segments, setSegments] = useState<ChatSegment[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Read inside the interval, so the timer never has to be torn down and
+  // rebuilt every time a message arrives.
+  const sinceRef = useRef<string | null>(null);
+
+  const apply = useCallback((d: Awaited<ReturnType<typeof fetchSupportChat>>) => {
+    setSegments(d.segments);
+    setMessages((prev) => {
+      // `delta` comes from the server, never inferred here — the client must
+      // not decide to append a response that was actually a full reload.
+      const merged = d.delta ? [...prev, ...d.messages] : d.messages;
+      const seen = new Set<string>();
+      const out = merged.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+      const newest = out[out.length - 1];
+      sinceRef.current = newest ? newest.created_at : sinceRef.current;
+      return out;
+    });
+  }, []);
+
+  // Nothing here sets state before the first await, and `loading` already
+  // starts true — so the first paint is the loading state, with no extra render
+  // to get there.
+  const load = useCallback(async () => {
+    try {
+      const d = await fetchSupportChat();
+      sinceRef.current = null;
+      apply(d);
+      setLoaded(true);
+      setError(null);
+    } catch (e) { setError((e as Error).message); }
+    finally { setLoading(false); }
+  }, [apply]);
+
+  // The retry button — a click, not an effect, so putting the screen back into
+  // its loading state here is fine and is what a person expects to see.
+  const reload = useCallback(() => {
+    setLoading(true); setError(null);
+    void load();
+  }, [load]);
+
+  // Fetch whatever is new. Also used right after sending, so the message you
+  // just sent appears without pulling the whole thread back down.
+  const refresh = useCallback(async () => {
+    try { apply(await fetchSupportChat(sinceRef.current ?? undefined)); }
+    catch (e) { setError((e as Error).message); }
+  }, [apply]);
+
+  // The initial fetch. Same shape (and same disable) as useApi's own load
+  // effect in lib/hooks.ts: an effect that starts a fetch and settles state
+  // when it returns is exactly what the rule's "subscribe to an external
+  // system" case describes, but the compiler traces the call and cannot see
+  // that every setState is behind an await.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { if (ready) void load(); }, [ready, load]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const id = setInterval(() => {
+      // Only while the tab is actually being looked at — the same rule the
+      // staff queues follow, and the reason two real billing incidents in this
+      // codebase are not three.
+      if (document.visibilityState === "visible") void refresh();
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [ready, refresh]);
+
+  return { segments, messages, loading, loaded, error, reload, refresh };
+}
 
 export default function HelpPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
-  const chat = useApi(fetchSupportChat, [], true, POLL_MS);
+  const chat = useSupportChat(ready);
 
   const [text, setText] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const endRef = useRef<HTMLDivElement | null>(null);
-  const segments = useMemo(() => chat.data?.segments ?? [], [chat.data]);
-  const messages = useMemo(() => chat.data?.messages ?? [], [chat.data]);
+  const { segments, messages } = chat;
   const rows = useMemo(() => buildRows(segments, messages), [segments, messages]);
+  // Something to close: an open conversation that has at least one message in
+  // it. `segments` is ordered oldest-first, so the live one is the last.
+  const hasLiveChat = segments.length > 0
+    && segments[segments.length - 1].status !== "closed"
+    && messages.some((m) => m.ticketId === segments[segments.length - 1].id);
 
   // Jump to the newest message whenever the thread grows — on first load and
   // after every send. A chat that opens at the top is a chat you have to scroll
@@ -93,12 +207,14 @@ export default function HelpPage() {
 
   async function send() {
     const body = text.trim();
-    if (!body || busy) return;
+    // A photo on its own is a valid message — for most people here a screenshot
+    // of the error IS the report. The API agrees (see chatSchema).
+    if ((!body && !image) || busy) return;
     setBusy(true); setErr(null);
     try {
       await sendSupportChat(body, image);
       setText(""); setImage(null);
-      chat.reload();
+      await chat.refresh();
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -110,8 +226,16 @@ export default function HelpPage() {
     catch (e) { setErr((e as Error).message); }
   }
 
-  if (!ready || (chat.loading && !chat.data)) return <div className="p-4 pt-6"><Loading /></div>;
-  if (chat.error && !chat.data) {
+  async function closeChat() {
+    if (!window.confirm(t("help.closeChatConfirm"))) return;
+    setClosing(true); setErr(null);
+    try { await closeSupportChat(); await chat.refresh(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setClosing(false); }
+  }
+
+  if (!ready || chat.loading) return <div className="p-4 pt-6"><Loading /></div>;
+  if (chat.error && !chat.loaded) {
     return <div className="p-4 pt-6"><ErrorState message={chat.error} onRetry={chat.reload} /></div>;
   }
 
@@ -119,8 +243,11 @@ export default function HelpPage() {
     // Exactly the space between the two sticky bars, so the composer holds
     // still and only the messages scroll — a real chat screen, on a phone and
     // on a desktop where the frame is a 480px column.
-    <div className="flex h-[calc(100dvh-var(--topbar-h)-var(--bottomnav-h))] flex-col">
-      <ChatHeader />
+    <div className="flex h-[calc(100dvh-var(--topbar-h)-var(--bottomnav-h)-env(safe-area-inset-bottom))] flex-col">
+      {/* Closing is offered only while there is something to close AND the
+          user has actually said something — an empty chat has no conversation
+          to end, and offering to close one reads as "go away". */}
+      <ChatHeader onClose={hasLiveChat ? closeChat : undefined} closing={closing} />
 
       <div className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
         {rows.length === 0 && (
@@ -131,7 +258,7 @@ export default function HelpPage() {
         {rows.map((r) => {
           if (r.kind === "date") return <Pill key={r.key}>{r.label}</Pill>;
           if (r.kind === "newChat") return <Pill key={r.key}>{t("help.newChat")} · {timeLabel(r.at)}</Pill>;
-          if (r.kind === "closed") return <ClosedRow key={r.key} segment={r.segment} onRated={chat.reload} />;
+          if (r.kind === "closed") return <ClosedRow key={r.key} segment={r.segment} onRated={chat.refresh} />;
           return <Bubble key={r.key} m={r.m} />;
         })}
         <div ref={endRef} />
@@ -150,7 +277,7 @@ export default function HelpPage() {
 
 // ---- pieces ---------------------------------------------------------------
 
-function ChatHeader() {
+function ChatHeader({ onClose, closing }: { onClose?: () => void; closing?: boolean }) {
   const { t } = useI18n();
   return (
     <header className="flex items-center gap-3 border-b border-line bg-card px-3 py-2.5">
@@ -168,6 +295,12 @@ function ChatHeader() {
         </p>
         <p className="truncate text-xs text-muted">{t("help.officialTagline")}</p>
       </div>
+      {onClose && (
+        <button type="button" onClick={onClose} disabled={closing}
+          className="ms-auto shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold text-muted disabled:opacity-50">
+          {t("help.closeChat")}
+        </button>
+      )}
     </header>
   );
 }
@@ -287,7 +420,7 @@ function Composer({ text, setText, image, setImage, onPick, busy, onSend }: {
           className="max-h-28 min-h-[40px] flex-1 resize-none rounded-2xl border border-line bg-bg px-3 py-2.5 text-sm text-brand-ink outline-none placeholder:text-muted/60"
         />
         <button
-          type="button" onClick={onSend} disabled={!text.trim() || busy}
+          type="button" onClick={onSend} disabled={(!text.trim() && !image) || busy}
           aria-label={t("help.send")}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand text-white disabled:opacity-40">
           <SendIcon size={18} />

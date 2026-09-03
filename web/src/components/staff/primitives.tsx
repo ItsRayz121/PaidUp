@@ -112,23 +112,37 @@ export function CopyId({ value, label }: { value: string; label?: string }) {
 // column it wraps one character per line and the row becomes a wall (caught on
 // the failed-relay queue, 2026-08-30). The full value stays one tap away in the
 // row's detail view, and on hover via the title.
-export function Addr({ value, lead = 8, tail = 6 }: { value?: string | null; lead?: number; tail?: number }) {
+export function Addr({ value, lead = 8, tail = 6, chain }: {
+  value?: string | null; lead?: number; tail?: number;
+  // Pass the row's real chain to get an explorer link. Omitted = copy only,
+  // never a guessed link — see explorerAddressUrl's note above.
+  chain?: string;
+}) {
   const [done, setDone] = useState(false);
+  const url = chain ? explorerAddressUrl(value, chain) : null;
   if (!value) return <span className="text-muted">—</span>;
   const short = value.length > lead + tail + 1 ? `${value.slice(0, lead)}…${value.slice(-tail)}` : value;
   return (
-    <button
-      type="button"
-      onClick={async (e) => {
-        e.stopPropagation();
-        try { await navigator.clipboard?.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* no clipboard */ }
-      }}
-      title={value}
-      className="num inline-flex items-center gap-1 whitespace-nowrap rounded bg-brand-tint/40 px-1.5 py-0.5 text-xs text-brand hover:bg-brand-tint"
-    >
-      <span>{short}</span>
-      <span className="text-[10px] text-muted">{done ? "✓" : "copy"}</span>
-    </button>
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={async (e) => {
+          e.stopPropagation();
+          try { await navigator.clipboard?.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* no clipboard */ }
+        }}
+        title={value}
+        className="num inline-flex items-center gap-1 whitespace-nowrap rounded bg-brand-tint/40 px-1.5 py-0.5 text-xs text-brand hover:bg-brand-tint"
+      >
+        <span>{short}</span>
+        <span className="text-[10px] text-muted">{done ? "✓" : "copy"}</span>
+      </button>
+      {url && (
+        <a href={url} target="_blank" rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Open this address on BscScan"
+          className="text-[10px] font-semibold text-brand hover:underline">↗</a>
+      )}
+    </span>
   );
 }
 

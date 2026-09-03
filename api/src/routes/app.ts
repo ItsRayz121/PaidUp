@@ -923,6 +923,7 @@ export async function appRoutes(app: FastifyInstance) {
   // the most useful thing available.
   function subjectFromMessage(message: string): string {
     const line = message.split("\n").map((s) => s.trim()).find(Boolean) ?? "";
+    // Reachable: a photo with no words is a valid message (see chatSchema).
     if (!line) return "New chat";
     return line.length > 80 ? `${line.slice(0, 79)}…` : line;
   }
@@ -930,28 +931,55 @@ export async function appRoutes(app: FastifyInstance) {
   // The whole thread, oldest first, plus one `segments` row per ticket so the
   // client can draw a "Chat closed" divider and a rating prompt exactly where
   // the conversation was actually closed.
-  app.get("/support/chat", guard(async (userId) => {
+  // ⚠️ `since` IS NOT AN OPTIMISATION, IT IS WHAT MAKES POLLING AFFORDABLE.
+  // ticket_messages.image holds a whole data: URL — up to 2MB, typically a few
+  // hundred KB for a phone screenshot. The chat screen polls every 15 seconds,
+  // so without a delta a user who has sent three photos re-downloads a megabyte
+  // every tick, on mobile data, in the markets this app is built for. The
+  // client loads the thread once and then asks only for what is new.
+  //
+  // MESSAGE_CAP is the other half: a years-old thread must not be one response.
+  const MESSAGE_CAP = 300;
+  app.get("/support/chat", guard(async (userId, req) => {
+    const since = typeof (req.query as { since?: unknown })?.since === "string"
+      ? (req.query as { since: string }).since
+      : null;
+
     const segments = await sql.all<Record<string, unknown>>(
       `SELECT id, subject, status, rating, created_at, updated_at
        FROM support_tickets WHERE user_id = ? ORDER BY created_at ASC`,
       userId,
     );
-    const messages = segments.length === 0 ? [] : await sql.all<Record<string, unknown>>(
-      // Same internal-note filter as GET /support/tickets, and for the same
-      // reason. See that endpoint's comment — do not "simplify" it away here
-      // just because this query looks new.
+
+    // Same internal-note filter as GET /support/tickets, and for the same
+    // reason. See that endpoint's comment — do not "simplify" it away here
+    // just because this query looks new.
+    //
+    // Newest-first + LIMIT, then reversed, so the cap keeps the RECENT end of
+    // a long thread. Ordering it oldest-first with a LIMIT would show someone
+    // the start of a conversation from last year and hide today's reply.
+    const rows = segments.length === 0 ? [] : await sql.all<Record<string, unknown>>(
       `SELECT m.id, m.ticket_id, m.author_role, m.body, m.image, m.created_at
        FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
        WHERE s.user_id = ? AND m.author_role <> 'internal'
-       ORDER BY m.created_at ASC, m.id ASC`,
-      userId,
+         ${since ? "AND m.created_at > ?" : ""}
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT ?`,
+      ...(since ? [userId, since] : [userId]), MESSAGE_CAP,
     );
+    rows.reverse();
+
     return {
+      // Always the full list — a segment row is a handful of short fields, and
+      // the client needs every one of them to draw the dividers.
       segments: segments.map((s) => ({
         id: s.id, subject: s.subject, status: s.status, rating: s.rating,
         at: s.created_at, closedAt: s.status === "closed" ? s.updated_at : null,
       })),
-      messages: messages.map((m) => ({
+      // Says whether this response is a delta, so the client knows to append
+      // rather than replace. Never inferred from the request on the client.
+      delta: Boolean(since),
+      messages: rows.map((m) => ({
         id: m.id, ticketId: m.ticket_id, author_role: m.author_role,
         body: m.body, image: m.image, created_at: m.created_at,
       })),
@@ -961,20 +989,31 @@ export async function appRoutes(app: FastifyInstance) {
   // Send a message. No subject, ever. Appends to the newest still-open segment;
   // opens a new one when the last was closed (which is what makes a closed chat
   // re-openable by simply typing again).
+  // `message` is OPTIONAL when a photo is attached. A screenshot of the error
+  // IS the message for most of the people using this — refusing to send one
+  // without also typing something would make the attach button a trap.
   const chatSchema = z.object({
-    message: z.string().min(1).max(2000),
+    message: z.string().max(2000).optional(),
     image: z.string().max(3_000_000).optional().nullable(),
   });
   app.post("/support/chat", guard(async (userId, req, reply) => {
     const parsed = chatSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Type your message first." });
-    const body = parsed.data.message.trim();
-    if (!body) return reply.code(400).send({ error: "Type your message first." });
+    const body = (parsed.data.message ?? "").trim();
     const image = parseTicketImage(parsed.data.image);
+    if (!body && !image) return reply.code(400).send({ error: "Type your message, or add a photo." });
 
     let ticketId: string;
     let opened = false;
     await sql.tx(async (t) => {
+      // ⚠️ ONE LIVE CONVERSATION PER USER, ENFORCED HERE. The read below is a
+      // plain SELECT, so two sends racing (a double-tap; Enter and the button
+      // together; a retry) would both see "nothing open" and both INSERT,
+      // splitting one question across two tickets and showing the user a
+      // "New chat" divider mid-sentence. Serialising on the user is the same
+      // tool guardrail #8 uses for balances, for the same reason: a read
+      // followed by a conditional write is not atomic without it.
+      await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
       const live = await t.get<{ id: string }>(
         `SELECT id FROM support_tickets WHERE user_id = ? AND status <> 'closed'
          ORDER BY updated_at DESC LIMIT 1`,
@@ -999,6 +1038,31 @@ export async function appRoutes(app: FastifyInstance) {
       await t.run("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", now(), ticketId);
     });
     return { ok: true, ticketId: ticketId!, opened };
+  }));
+
+  // "...get the reply, be happy, and then close the chat" (founder,
+  // 2026-09-03). Closing was staff-only, which left a satisfied user with no
+  // way to end the conversation — and, because the rating prompt only appears
+  // on a CLOSED segment, no way to say the answer was good either.
+  //
+  // Closing is not destructive here: typing again opens a new segment (see
+  // POST /support/chat), so this is "I'm done", never "I can't ask again".
+  app.post("/support/chat/close", guard(async (userId, _req, reply) => {
+    // One statement does the find AND the close, so two taps racing each other
+    // cannot close two segments — the same reason the rating route is written
+    // as a conditional UPDATE rather than a read followed by a write.
+    const closed = await sql.get<{ id: string }>(
+      `UPDATE support_tickets SET status = 'closed', updated_at = ?
+       WHERE id = (
+         SELECT id FROM support_tickets
+         WHERE user_id = ? AND status <> 'closed'
+         ORDER BY updated_at DESC LIMIT 1
+       )
+       RETURNING id`,
+      now(), userId,
+    );
+    if (!closed) return reply.code(400).send({ error: "There is no open chat to close." });
+    return { ok: true, ticketId: closed.id };
   }));
 
   // "How was our support?" — one rating, ever, per ticket (founder, 2026-09-02).

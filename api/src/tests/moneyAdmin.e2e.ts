@@ -8,7 +8,7 @@ import Fastify from "fastify";
 import jwt from "jsonwebtoken";
 import { initDb, sql, now, newId } from "../db.ts";
 import { config } from "../config.ts";
-import { staffRoutes } from "../routes/staff.ts";
+import { staffRoutes, labelTreasuryHashes } from "../routes/staff.ts";
 import { staffMiningRoutes } from "../routes/staffMining.ts";
 
 let pass = 0, fail = 0;
@@ -540,6 +540,86 @@ console.log("\n-- treasury wallet: every in and out --");
   const earner = await mkUser("tw-earner");
   check("nor can an earner",
     (await app.inject({ method: "GET", url: "/staff/treasury/wallet", headers: authOf(earner) })).statusCode === 403);
+}
+
+// ---------------------------------------------------------------------------
+// ⚠️ THIS IS THE TEST THAT EXECUTES labelTreasuryHashes' SQL.
+//
+// The endpoint above only ever reaches it with a live BscScan key, which no
+// test has — so without this, five hand-written queries over five tables would
+// ship having never run. That is exactly how `networks.label` and the
+// withdrawal-history column names got to production: a clean typecheck over a
+// column that does not exist, and a 500 the first time a human opened the
+// screen. TypeScript cannot see inside a SQL string; only a real query can.
+console.log("\n-- the treasury ledger's labels really resolve against our tables --");
+{
+  const u = await mkUser("label-user");
+  const h = (n: string) => `0x${n.repeat(64).slice(0, 64)}`;
+  const hWithdrawal = h("1");
+  const hTopup = h("2");
+  const hRefund = h("3");
+  const hSweep = h("4");
+  const hGas = h("5");
+  const hPrefund = h("6");
+  const hForward = h("7");
+  const hUnknown = h("9");
+
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, tx_hash, created_at)
+     VALUES (?,?,?,?,?,'paid',?,?)`,
+    newId(), u, 1000, "bep20", "0xlbl1", hWithdrawal, tick(),
+  );
+  await sql.run(
+    `INSERT INTO usdt_topups (id, user_id, chain, tx_hash, amount, status, created_at)
+     VALUES (?,?, 'bep20', ?, ?, 'confirmed', ?)`,
+    newId(), u, hTopup, 1_000_000, tick(),
+  );
+  await sql.run(
+    `INSERT INTO usdt_refund_requests (id, user_id, chain, address, amount, status, tx_hash, created_at)
+     VALUES (?,?, 'bep20', ?, ?, 'paid', ?, ?)`,
+    newId(), u, "0xlbl2", 1_000_000, hRefund, tick(),
+  );
+  await sql.run(
+    `INSERT INTO sweep_jobs (id, chain, deposit_wallet_ref, token, amount_at_sweep_start, status, sweep_tx_hash, created_at)
+     VALUES (?, 'bep20', ?, 'usdt', ?, 'swept', ?, ?)`,
+    newId(), `0xlbl3${TAG}`, 1_000_000, hSweep, tick(),
+  );
+  await sql.run(
+    `INSERT INTO payout_relay_jobs (id, purpose, request_id, chain, user_id, from_address, addr_index,
+                                    to_address, amount_micro, needs_prefund, status,
+                                    gas_tx_hash, prefund_tx_hash, forward_tx_hash, created_at)
+     VALUES (?, 'refund', ?, 'bep20', ?, ?, 1, ?, ?, 0, 'forward_confirmed', ?, ?, ?, ?)`,
+    newId(), newId(), u, "0xlblfrom", "0xlbl4", 1_000_000, hGas, hPrefund, hForward, tick(),
+  );
+
+  // Lowercased, exactly as the endpoint passes them.
+  const labels = await labelTreasuryHashes(
+    [hWithdrawal, hTopup, hRefund, hSweep, hGas, hPrefund, hForward, hUnknown].map((x) => x.toLowerCase()),
+  );
+
+  check("the five queries run at all — every column and table name is real",
+    labels instanceof Map, String(labels));
+  check("a paid withdrawal is labelled, with who it went to",
+    (labels.get(hWithdrawal) ?? "").startsWith("Withdrawal paid")
+    && (labels.get(hWithdrawal) ?? "").includes("label-user"), labels.get(hWithdrawal));
+  check("a confirmed deposit is labelled",
+    (labels.get(hTopup) ?? "").startsWith("Deposit confirmed"), labels.get(hTopup));
+  check("a refund is labelled",
+    (labels.get(hRefund) ?? "").startsWith("Deposit refunded"), labels.get(hRefund));
+  check("a sweep is labelled", labels.get(hSweep) === "Deposit swept to treasury", labels.get(hSweep));
+  check("all three relay legs are labelled separately",
+    labels.get(hGas) === "Payout relay · gas sent"
+    && labels.get(hPrefund) === "Payout relay · USDT prefund"
+    && labels.get(hForward) === "Payout relay · forwarded to the user",
+    `${labels.get(hGas)} | ${labels.get(hPrefund)} | ${labels.get(hForward)}`);
+
+  // ⚠️ THE UNLABELLED ROW IS THE POINT OF THE WHOLE SCREEN. Money that moved
+  // through the treasury without us starting it must come back with NO label,
+  // never quietly matched to the nearest thing we recognise.
+  check("a hash we do not recognise gets no label at all",
+    !labels.has(hUnknown), labels.get(hUnknown));
+
+  check("an empty hash list is not a crash", (await labelTreasuryHashes([])).size === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

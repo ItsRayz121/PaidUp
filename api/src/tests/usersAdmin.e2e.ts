@@ -359,6 +359,27 @@ console.log("\n-- filling in missing Telegram names --");
 
   check("an agent cannot run it — it writes to user rows",
     (await app.inject({ method: "POST", url: "/staff/users/telegram/refresh", headers: authOf(agent) })).statusCode === 403);
+
+  // ⚠️ THE MARKER IS WHAT LETS THE BACKFILL FINISH. Telegram genuinely has
+  // nothing on file for some accounts (no username, no last name). Without
+  // recording the ATTEMPT, those rows keep matching the same query, so the
+  // first batch of unfixable accounts occupies it forever, nothing past them
+  // is ever reached, and the count never drops — a button that can never be
+  // pressed to completion and never goes away.
+  check("an account we already asked about is not asked again",
+    out.pending < after2.pending || out.pending === 0,
+    `checked ${out.checked}, pending now ${out.pending} (was ${after2.pending})`);
+  const stamped = await sql.get<{ n: string | number }>(
+    "SELECT COUNT(*) AS n FROM users WHERE telegram_checked_at IS NOT NULL",
+  );
+  check("because the attempt itself is recorded, not just a success",
+    Number(stamped?.n ?? 0) >= out.checked, JSON.stringify(stamped));
+
+  // The button's visibility gate is this count, so it has to need the same
+  // permission the action does — or marketing/finance (users.list, no
+  // users.review) see a button that 403s every time.
+  check("the count needs the same permission as the refresh, so the button hides for roles that cannot press it",
+    (await app.inject({ method: "GET", url: "/staff/users/telegram/pending", headers: authOf(agent) })).statusCode === 403);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

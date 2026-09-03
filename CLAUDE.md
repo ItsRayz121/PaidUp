@@ -2868,6 +2868,115 @@ These override convenience or speed at every step:
     admin panel already states this in plain terms, confirmed by reading
     it; no code change needed.
 
+- **SUPPORT BECOMES ONE CHAT; THE TREASURY GETS A REAL LEDGER; EVERY TX HASH
+  IS CLICKABLE (founder, 2026-09-03).** Seven asks from a phone review, plus a
+  review pass over the first commit that found ten real defects. Plan and full
+  checklist: `docs/SUPPORT_AND_MONEY_PLAN.md`. Verified: 36 suites from a fresh
+  database — 91 unit + ~1340 e2e, 0 failures (stage6 99, moneyAdmin 100,
+  disbursements 81, usersAdmin 59); api + web typecheck, eslint 0 errors, web
+  production build; `security-review` — no findings.
+  - **`/help` is a conversation with "RoziPay Official", not a ticket form.**
+    New `GET`/`POST /support/chat`. The user types and sends — no subject to
+    invent, no list of past tickets to pick from. Staff get a two-pane **Inbox**
+    beside the existing table view.
+    ⚠️ **A TICKET IS NOW AN INVISIBLE *SEGMENT* OF ONE THREAD, AND THE TABLES
+    ARE UNTOUCHED.** Assignment, close, rating, the auto-close timer and the
+    internal-note filter all still work exactly as they did. Replacing
+    `support_tickets` would have thrown all of that away to change what a screen
+    looks like.
+    ⚠️ **`author_role <> 'internal'` HAD TO BE RE-APPLIED HERE.** `/support/chat`
+    is a **second** read path over `ticket_messages`; the filter guarding the
+    first one does nothing for it. A regression test writes a real staff note
+    and reads the chat back as the user.
+    ⚠️ **`?since=` IS NOT AN OPTIMISATION.** `ticket_messages.image` holds a
+    base64 data URL up to 2MB, and the screen polls every 15s — without a delta
+    a user who has sent three screenshots re-downloads a megabyte a tick, on
+    mobile data, in the markets this app is built for. The screen loads once and
+    appends; `delta` is decided by the SERVER, never inferred from the request.
+    ⚠️ **A PHOTO WITH NO WORDS IS A VALID MESSAGE.** A screenshot of the error
+    *is* the report for most people here; requiring text made the attach button
+    a trap.
+    ⚠️ **The thread is walked in TIME order, never segment by segment.** Staff
+    can reopen a closed ticket, so a reply can land on an older conversation
+    after a newer one started — grouping by segment rendered it above messages
+    sent days later, with the date separators walking backwards.
+    **A user can close their own chat** (founder: "get the reply, be happy, and
+    then close the chat") — which is also what unlocks the rating, since the
+    prompt only exists on a closed segment. Typing again opens a new segment, so
+    it is "I'm done", never "I can't ask again".
+    ⚠️ Two concurrent sends could open two conversations — the live-segment read
+    was a plain SELECT. Serialised on the user with `pg_advisory_xact_lock`, the
+    same tool guardrail #8 uses for balances, for the same reason.
+  - **A Telegram user is never labelled "Telegram user" again.** The username
+    was always captured at *login* — but `bindTelegramToUser` (the website
+    "Connect Telegram" path) wrote `telegram_id` and **nothing else**, so any
+    account that connected that way had no identity on file, ever. It stores
+    username and name now. `POST /staff/users/telegram/refresh` backfills older
+    accounts via the Bot API, behind a button in Users.
+    ⚠️ **`users.telegram_checked_at` IS WHAT LETS THE BACKFILL FINISH.**
+    Telegram genuinely has nothing for some accounts (no username, no last
+    name). Without recording the *attempt*, those rows keep matching the same
+    query — the first batch of unfixable accounts occupies it forever, nothing
+    past them is ever reached, and the count never drops.
+    ⚠️ **The COUNT endpoint is gated on `users.review`, not the looser
+    `users.list`** — the button's visibility *is* that count, so a looser gate
+    put a button in front of `marketing` and `finance` that 403s every time.
+    Last-resort label is `Telegram #<id>`: an identifier a staff member can
+    search for, not a category name.
+  - **Disbursements live next to the task that owes the money.** `listEligible`
+    and `listBatches` take a `taskId`, and so does `DisbursementsPanel` — **one
+    component, three mount points** (Money & payouts, Tasks & networks, and a
+    task's own Rewards tab). ⚠️ **The scope is server-side on all three reads
+    including "batch everything eligible"**, or one click on a task page sweeps
+    in every other campaign's rewards. A batch now has a **name**, auto-filled
+    from the campaign it pays and editable; the uuid stays on the row as a
+    copyable chip, it just is not the thing you read first.
+  - **The treasury screen is BEP20 only, with a QR**, and coin and network are
+    two labelled facts rather than one sentence — BNB is a real token in the
+    same wallet and sending it instead of USDT is unrecoverable. ⚠️
+    `KNOWN_CHAINS` is untouched: this is a display narrowing on one panel, and
+    historical rows on Base/Aptos must keep labelling.
+  - **New Treasury → "Wallet" tab.** `GET /staff/treasury/wallet` reads the
+    treasury address's real USDT and BNB movement from the chain and annotates
+    each row from our own tables. ⚠️ **THE CHAIN IS THE SOURCE; OUR ROWS ARE
+    ONLY THE LABELS** — a ledger built from our own tables could only ever show
+    movement we started, and the whole point of the screen is the movement we
+    did not. A row with no label is the interesting one. ⚠️ **On demand only,
+    never polled** (the two Alchemy billing incidents above). ⚠️ Each rail is
+    capped separately and the merge is NOT re-sliced — 50 newer USDT transfers
+    would otherwise hide every BNB row on a panel that promises both.
+  - ⚠️ **`labelTreasuryHashes` HAD NEVER EXECUTED, AND THAT IS WHY IT MOVED TO
+    MODULE SCOPE.** Tests short-circuited on the missing explorer key, so five
+    hand-written queries over five tables would have shipped unrun — the
+    `networks.label` bug class, twice-burned in this repo. Exported and driven
+    against real Postgres, the new test immediately caught `IN ()` on an empty
+    list: a Postgres **syntax error**, guarded only at the call site. Do not
+    push it back inside the route.
+  - **Every transaction hash is one tap from BscScan** — new `TxHash` primitive
+    plus an explorer link on `Addr`, across withdrawals, deposits, refunds, BNB,
+    relay jobs, disbursements, the treasury wallet and User 360's three money
+    tables. ⚠️ **The chain is passed per row, never defaulted at the call
+    site**: an unknown chain gets no link rather than a wrong one, and sending
+    someone to BscScan for a Base hash shows "not found" — which reads as money
+    that never moved. `withdrawal_requests.tx_hash` had been written by every
+    mark-paid since payouts existed and was simply never SERVED; it is now.
+  - **"No all withdrawals" on a queue that should not be empty.** That endpoint
+    really does drop every filter — but it only reads `withdrawal_requests`, and
+    money leaves on **three** rails. New read-only **All money out** view merges
+    withdrawals, deposit refunds and BNB sends into one time-ordered list.
+    ⚠️ **The three rails have three different permissions, and one `Promise.all`
+    made that one failure.** The tab sits under `withdrawals.view` (agent tier)
+    but refunds need `refunds.view` (manager tier), so a legacy `agent` 403'd
+    and lost the rows they *were* allowed to see. Refunds are skipped with a
+    line saying so — the same defect class as Finance in Stage 4.
+  - ⚠️ **`formatUsdtMicro` AND `formatBnbWei` ALREADY CARRY THEIR UNIT.** Both
+    new panels appended a second one — "12.00 USDT USDT" on every row.
+    `MoneyOverview.tsx` already carried a comment warning about exactly this.
+  - **Not built, and the screen does not pretend otherwise:** a live treasury
+    balance. The Wallet tab shows in/out totals **over the transactions it
+    fetched**, in those words — a partial sum labelled "balance" would be a
+    number that disagrees with the wallet.
+
 **Founder collection list → `docs/LAUNCH_CHECKLIST.md`.** The real launch blockers
 are things only the founder can obtain: (1) a **real ad-network account** + its
 postback secret (offerhub/tapvid/surveyx are spec adapters, not live), (2) a
