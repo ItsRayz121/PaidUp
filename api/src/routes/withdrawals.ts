@@ -2,7 +2,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { parseEther } from "viem";
-import { sql, now, newId, balanceOf, postLedger, getSetting, earnedUsdtBalanceMicroOf, postEarnedUsdt, getOrCreateDepositAddress } from "../db.ts";
+import {
+  sql, now, newId, balanceOf, postLedger, getSetting, earnedUsdtBalanceMicroOf, postEarnedUsdt,
+  getOrCreateDepositAddress, usdtBalanceMicroOf, postUsdt, usdtToMicro,
+} from "../db.ts";
 import { config } from "../config.ts";
 import { custodyEnabled } from "../custody.ts";
 import { fetchBnbAddressHistory } from "../bscscan.ts";
@@ -13,11 +16,13 @@ import { checkWithdrawalVelocity, requestedLast24hPoints } from "../velocity.ts"
 import { kycSatisfied } from "../kyc.ts";
 import { buildWalletMessage, recoverSigner, toChecksumAddress } from "../wallet.ts";
 import { tryAutoSettle } from "../autoWithdraw.ts";
-import { getGasFeeRate, gasFeePoints } from "../fees.ts";
+import { tryAutoSettleRefund } from "../autoRefund.ts";
+import { getGasFeeRate, gasFeePoints, gasFeeMicro } from "../fees.ts";
 import { relayAvailable, hasEnoughGas, requiredGasWei } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
 import { requireFeature } from "../flags.ts";
 import { minWithdrawPointsNow } from "../settingsRuntime.ts";
+import { pointsToUsdt } from "../payout.ts";
 
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
@@ -507,6 +512,289 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         addressVerified: Boolean(r.address_verified),
       })),
     };
+  }));
+
+  // ---- ONE WALLET, ONE WITHDRAWAL (founder, 2026-09-03) ---------------------
+  //
+  // The founder's ask: show ONE USDT number on /wallet and /wallet/withdraw —
+  // no "Task earnings / Task USDT / Money you added" breakdown, no "Locked".
+  // The only rule left is the platform minimum ($1), and it now applies to the
+  // user's COMBINED balance across all three sources, not to any one of them
+  // alone. A user with $0.20 of task earnings (under the $1 floor by itself)
+  // can add $0.80 of real deposit and withdraw the full $1.00 in one request —
+  // exactly the example the founder gave.
+  //
+  // Under the hood the three ledgers are UNCHANGED (usdt_ledger / earned_usdt_ledger
+  // / points), and so are their separate staff queues, auto-settle ceilings and
+  // reject/refund-back logic (staff.ts, autoWithdraw.ts, autoRefund.ts,
+  // payoutRelay.ts all still key off source_kind exactly as before). This route
+  // only ADDS an orchestrator: one lock, one combined minimum check, then a
+  // waterfall that draws deposit -> task USDT -> task points, creating exactly
+  // as many rows as sources are actually needed (usually one; more than one
+  // only when no single source alone covers the amount). The old single-source
+  // endpoints above (/withdrawals, /usdt/refunds) are untouched — staff
+  // tooling, disbursements and the task-marketplace flow still use them
+  // directly.
+  const walletWithdrawSchema = z.object({
+    amountUsdtMicro: z.number().int().positive(),
+    chain: z.enum(["bep20", "base", "aptos"]),
+    address: z.string().min(1).max(120),
+    stepUpCode: z.string().trim().optional(),
+  });
+
+  app.post("/wallet/withdraw", guard(async (userId, req, reply) => {
+    const parsed = walletWithdrawSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid amount, network, and wallet address." });
+    const { amountUsdtMicro, chain, address: addressRaw, stepUpCode } = parsed.data;
+
+    if (!chainIsOffered(chain)) {
+      return reply.code(400).send({
+        error: "We pay out in USDT on BNB Smart Chain (BEP20). Please use a BEP20 address.",
+      });
+    }
+    const addrCheck = validateAddress(chain as ChainId, addressRaw);
+    if (!addrCheck.ok) return reply.code(400).send({ error: addrCheck.error });
+    const address = addressRaw.trim();
+
+    // KYC applies uniformly here, even to a request that turns out to draw
+    // purely from deposit — the split below isn't known until the balances
+    // are locked, and /usdt/refunds already requires the same check on its
+    // own money.
+    if (config.kycRequiredForWithdrawal) {
+      const u = await sql.get<{ kyc_status: string }>("SELECT kyc_status FROM users WHERE id = ?", userId);
+      if (!(await kycSatisfied(u?.kyc_status))) {
+        return reply.code(403).send({
+          error: u?.kyc_status === "pending"
+            ? "We are still checking your ID. You can withdraw as soon as that is done."
+            : "Verify your ID first, then you can withdraw.",
+          kycRequired: true,
+          kycStatus: u?.kyc_status ?? "none",
+        });
+      }
+    }
+
+    // Gas is the user's own responsibility (founder, 2026-08-08) — every leg
+    // below signs from this same derived address, so one check up front
+    // covers all of them.
+    if (relayAvailable(chain)) {
+      const gas = await hasEnoughGas(userId, chain as "bep20");
+      if (!gas.ok) {
+        return reply.code(400).send({
+          error: "You need BNB in your wallet to pay the network fee. Please deposit BNB to your RoziPay wallet before withdrawing USDT.",
+          gasRequired: true,
+          walletAddress: gas.address,
+        });
+      }
+    }
+
+    const minWithdraw = await minWithdrawPointsNow();
+    const minMicro = usdtToMicro(Number(pointsToUsdt(minWithdraw)));
+    if (amountUsdtMicro < minMicro) {
+      return reply.code(400).send({
+        error: `You need at least ${(minMicro / 1_000_000).toFixed(2)} USDT in total to get money. Add more first.`,
+      });
+    }
+
+    // STEP-UP AUTH — same rule as /withdrawals, checked on the FULL amount
+    // rather than whichever source ends up paying it: a large combined
+    // withdrawal deserves the same proof of account control regardless of
+    // which ledger it is drawn from.
+    const equivPoints = Math.ceil((amountUsdtMicro * config.pointsPerUsdt) / 1_000_000);
+    const priorRequested = await requestedLast24hPoints(userId);
+    if (priorRequested + equivPoints >= config.stepUpMinPoints) {
+      const user = await sql.get<{ email: string }>("SELECT email FROM users WHERE id = ?", userId);
+      if (!user || user.email.endsWith("@telegram.local")) {
+        return reply.code(400).send({ error: "Add an email to your account before a withdrawal this large." });
+      }
+      if (!stepUpCode) {
+        return reply.code(400).send({
+          error: "For a withdrawal this large, confirm with the code we email you.",
+          stepUpRequired: true,
+        });
+      }
+      const result = await consumeCode(user.email, stepUpCode, "withdraw");
+      if (!result.ok) return reply.code(result.statusCode).send({ error: result.error, stepUpRequired: true });
+    }
+
+    const flatFeePoints = Math.max(0, Number(await getSetting("withdrawal_fee_points", "0")) || 0);
+    const gasRate = await getGasFeeRate();
+    const relayReady = relayAvailable(chain);
+
+    let depositId: string | null = null;
+    let earnedId: string | null = null;
+    let pointsId: string | null = null;
+
+    try {
+      await sql.tx(async (t) => {
+        // Serialize every ledger this request might touch (guardrail #8) —
+        // one lock covers all three.
+        await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
+
+        const depositAvail = await usdtBalanceMicroOf(userId, t);
+        const earnedAvail = await earnedUsdtBalanceMicroOf(userId, t);
+        const points = await balanceOf(userId, t);
+        const pointsAvailMicro = usdtToMicro(Number(pointsToUsdt(points)));
+        const totalAvail = depositAvail + earnedAvail + pointsAvailMicro;
+
+        if (amountUsdtMicro > totalAvail) {
+          throw { statusCode: 400, message: "You do not have that much yet." };
+        }
+
+        // Draw from whichever single source covers it first (money you added,
+        // then task USDT, then task points/referrals) — the common case ends
+        // up identical to today's single-source withdrawal, one row, one
+        // on-chain send. Only when NO single source is enough does this fall
+        // back to drawing a little from more than one — the "top up to reach
+        // $1" case.
+        let depositTake = 0, earnedTake = 0, pointsTakeMicro = 0;
+        if (amountUsdtMicro <= depositAvail) {
+          depositTake = amountUsdtMicro;
+        } else if (amountUsdtMicro <= earnedAvail) {
+          earnedTake = amountUsdtMicro;
+        } else if (amountUsdtMicro <= pointsAvailMicro) {
+          pointsTakeMicro = amountUsdtMicro;
+        } else {
+          let remaining = amountUsdtMicro;
+          depositTake = Math.min(remaining, depositAvail); remaining -= depositTake;
+          earnedTake = Math.min(remaining, earnedAvail); remaining -= earnedTake;
+          pointsTakeMicro = remaining;
+        }
+
+        // The admin kill switch for cash-out (requireFeature("usdt_withdrawals"))
+        // only ever gated /withdrawals — a request this route routes ENTIRELY
+        // through the deposit leg must not trip it (deposit refunds have never
+        // been gated on it, /usdt/refunds says so explicitly), but the moment
+        // any points or task-USDT leg is drawn, the same rule has to apply here
+        // too, or the switch stops doing anything the instant this endpoint
+        // exists.
+        if (earnedTake > 0 || pointsTakeMicro > 0) {
+          await requireFeature("usdt_withdrawals");
+        }
+
+        const earnedPoints = earnedTake > 0 ? Math.ceil((earnedTake * config.pointsPerUsdt) / 1_000_000) : 0;
+        let pointsAmount = pointsTakeMicro > 0 ? Math.ceil((pointsTakeMicro * config.pointsPerUsdt) / 1_000_000) : 0;
+        // pointsAvailMicro is FLOORED down from the real points balance
+        // (payout.ts's pointsToUsdt), so converting a full-balance draw back
+        // UP with ceil() could round a hair past what is actually there.
+        // Clamp rather than fail a withdrawal over a sub-point rounding
+        // artifact.
+        if (pointsAmount > points) pointsAmount = points;
+
+        const proved = await t.get<{ n: number }>(
+          `SELECT 1 AS n FROM payout_addresses
+           WHERE user_id = ? AND chain = ? AND verified_at IS NOT NULL AND LOWER(address) = LOWER(?)`,
+          userId, chain, address,
+        );
+        const addressVerified = proved ? 1 : 0;
+
+        // The flat platform fee is charged once per submission, not once per
+        // leg — it lands on the LAST leg drawn (points, else earned, else
+        // deposit isn't fee-holding at all: the deposit leg only ever carries
+        // its own gas-cost fee, same as /usdt/refunds).
+        const flatFeeHolder: "points" | "earned" | "none" =
+          pointsAmount > 0 ? "points" : earnedTake > 0 ? "earned" : "none";
+
+        // ---- Leg 1: money the user added (deposit) --------------------------
+        if (depositTake > 0) {
+          const feeMicro = relayReady ? 0 : gasFeeMicro(depositTake, gasRate);
+          if (feeMicro >= depositTake) {
+            throw { statusCode: 400, message: "The withdrawal fee is too large for this amount. Ask for more." };
+          }
+          depositId = newId();
+          await t.run(
+            `INSERT INTO usdt_refund_requests (id, user_id, chain, address, amount, fee_micro, address_verified, status, created_at)
+             VALUES (?,?,?,?,?,?,?, 'pending', ?)`,
+            depositId, userId, chain, address, depositTake, feeMicro, addressVerified, now(),
+          );
+          await postUsdt({
+            userId, micro: depositTake, direction: "debit", sourceType: "refund",
+            sourceRefId: depositId, note: "Money sent back", chain,
+          }, t);
+        }
+
+        // ---- Leg 2: task USDT already earned ---------------------------------
+        if (earnedTake > 0) {
+          const gasInPoints = relayReady ? 0 : gasFeePoints(earnedPoints, gasRate);
+          const feePoints = gasInPoints + (flatFeeHolder === "earned" ? flatFeePoints : 0);
+          if (feePoints >= earnedPoints) {
+            throw { statusCode: 400, message: "The withdrawal fee is too large for this amount. Ask for more." };
+          }
+          earnedId = newId();
+          await t.run(
+            `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
+               source_kind, earned_usdt_micro, status, created_at)
+             VALUES (?,?,?,?,?,?,?, 'earned_usdt', ?, 'pending', ?)`,
+            earnedId, userId, earnedPoints, chain, address, feePoints, addressVerified, earnedTake, now(),
+          );
+          await postEarnedUsdt({
+            userId, micro: earnedTake, direction: "debit",
+            sourceType: "withdrawal", sourceRefId: earnedId, note: `Task USDT withdrawal (${chain})`,
+          }, t);
+        }
+
+        // ---- Leg 3: task/referral earnings (points) --------------------------
+        if (pointsAmount > 0) {
+          const gasInPoints = relayReady ? 0 : gasFeePoints(pointsAmount, gasRate);
+          const feePoints = gasInPoints + (flatFeeHolder === "points" ? flatFeePoints : 0);
+          if (feePoints >= pointsAmount) {
+            throw { statusCode: 400, message: "The withdrawal fee is too large for this amount. Ask for more." };
+          }
+          pointsId = newId();
+          await t.run(
+            `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
+               source_kind, earned_usdt_micro, status, created_at)
+             VALUES (?,?,?,?,?,?,?, 'points', 0, 'pending', ?)`,
+            pointsId, userId, pointsAmount, chain, address, feePoints, addressVerified, now(),
+          );
+          await postLedger({
+            userId, points: pointsAmount, direction: "debit",
+            sourceType: "withdrawal", sourceRefId: pointsId, note: `Withdrawal (USDT ${chain})`,
+          }, t);
+        }
+      });
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      if (err.statusCode === 400) return reply.code(400).send({ error: err.message });
+      throw e;
+    }
+
+    if (earnedId || pointsId) {
+      await saveAddress(userId, chain, address);
+      await checkPayoutAddressReuse(userId, address);
+      await checkWithdrawalVelocity(userId);
+    }
+
+    // Try to settle every leg that was created. Never throws (see the
+    // guarantee on tryAutoSettle / tryAutoSettleRefund) — a leg that can't
+    // auto-settle just falls into its own existing manual queue.
+    const legStatuses: ("paid" | "sending" | "pending")[] = [];
+    if (depositId) {
+      const r = await tryAutoSettleRefund(depositId);
+      legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
+    }
+    if (earnedId) {
+      const r = await tryAutoSettle(earnedId);
+      legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
+    }
+    if (pointsId) {
+      const r = await tryAutoSettle(pointsId);
+      legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
+    }
+
+    // Worst-case status wins: "pending" if anything is still waiting on
+    // staff, else "sending" if anything is mid-relay, else "paid".
+    const status = legStatuses.includes("pending") ? "pending" : legStatuses.includes("sending") ? "sending" : "paid";
+
+    // Each auto-settled leg already sent its own push (autoWithdraw.ts /
+    // autoRefund.ts). Only send one more, combined, when something is still
+    // sitting in the manual queue waiting on staff.
+    if (status === "pending") {
+      void sendPushToUser(userId, {
+        title: "Withdrawal submitted", body: "We got your request and will send it soon.", url: "/wallet",
+      });
+    }
+
+    return { ok: true, amountUsdtMicro, status };
   }));
 
   // ---- BNB withdraw (wallet overhaul) ---------------------------------------

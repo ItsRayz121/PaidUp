@@ -34,8 +34,6 @@ export default function UsdtWalletPage() {
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
-  const available = bal.data?.usdtAvailableMicro ?? 0;
-  const locked = bal.data?.usdtLockedMicro ?? 0;
   const total = bal.data?.usdtTotalMicro ?? 0;
 
   const address = usdt.data?.personalAddress ?? usdt.data?.treasuryAddress ?? null;
@@ -71,9 +69,7 @@ export default function UsdtWalletPage() {
         <ErrorState message={bal.error} onRetry={bal.reload} />
       ) : (
         <Card className="p-4 space-y-1.5">
-          <Row2 label={t("wallet.available")} value={formatUsdtMicro(available)} strong />
-          {locked > 0 && <Row2 label={t("wallet.locked")} value={formatUsdtMicro(locked)} />}
-          <Row2 label={t("wallet.total")} value={formatUsdtMicro(total)} />
+          <Row2 label={t("wallet.available")} value={formatUsdtMicro(total)} strong />
         </Card>
       )}
 

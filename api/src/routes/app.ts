@@ -390,26 +390,26 @@ export async function appRoutes(app: FastifyInstance) {
     const relayReady = relayAvailable("bep20");
     const gas = relayReady ? await hasEnoughGasForDisplay(userId, "bep20") : null;
     const points = await balanceOf(userId);
-    // ---- Wallet Total Balance (founder, wallet overhaul) --------------------
-    // Reverses the 2026-07-30/08-03 "ROZI-only" display decisions: the wallet's
-    // headline number is USDT again, and now folds in withdrawable task/referral
-    // points at the real, existing rate (pointsToUsdt — the SAME conversion used
-    // at actual payout time, payout.ts) alongside the real deposited USDT
-    // (usdt_ledger). This is NOT the ROZI case guardrail #7 forbids: ROZI has no
-    // fixed rate and is never part of this number.
+    // ---- Wallet Total Balance (founder, wallet overhaul; simplified 2026-09-03) --
+    // The wallet's headline number is USDT: real deposited USDT (usdt_ledger),
+    // task USDT already earned (earned_usdt_ledger), and task/referral points
+    // converted at the real, existing rate (pointsToUsdt — the SAME conversion
+    // used at actual payout time, payout.ts), all folded into ONE figure. This
+    // is NOT the ROZI case guardrail #7 forbids: ROZI has no fixed rate and is
+    // never part of this number.
     //
-    // Nothing new is written here — both halves are the existing SUM(ledger)
-    // reads. "Locked" is the entire points-derived half while the account is
-    // below the withdrawal minimum, and "Available" the moment it clears — a
-    // pure re-read on every request, so crossing the threshold "unlocks" it
-    // with zero extra bookkeeping and no unlock event to miss.
+    // ⚠️ THERE IS NO "LOCKED" HALF ANY MORE (founder, 2026-09-03). The whole
+    // total is always shown as available for display — the platform's one
+    // remaining rule, a $1 minimum, applies to the COMBINED total at
+    // withdrawal-request time (POST /wallet/withdraw), not to any one source
+    // held below that floor by itself. usdtAvailableMicro/usdtLockedMicro are
+    // kept, unconditional, for callers that still read them.
     const pointsAsUsdtMicro = usdtToMicro(Number(pointsToUsdt(points)));
-    const minWithdraw = await minWithdrawPointsNow();
-    const canWithdrawNow = points >= minWithdraw;
     const depositUsdtMicro = await usdtBalanceMicroOf(userId);
     const earnedUsdtMicro = await earnedUsdtBalanceMicroOf(userId);
-    const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro + (canWithdrawNow ? pointsAsUsdtMicro : 0);
-    const usdtLockedMicro = canWithdrawNow ? 0 : pointsAsUsdtMicro;
+    const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro + pointsAsUsdtMicro;
+    const usdtLockedMicro = 0;
+    const minWithdraw = await minWithdrawPointsNow();
     return {
       points,
       earnedUsdtMicro,
@@ -417,6 +417,9 @@ export async function appRoutes(app: FastifyInstance) {
       usdtLockedMicro,
       usdtTotalMicro: usdtAvailableMicro + usdtLockedMicro,
       minWithdrawPoints: minWithdraw,
+      // The same floor, in USDT — the unit /wallet/withdraw actually thinks
+      // in now that a withdrawal can be a blend of all three sources.
+      minWithdrawUsdtMicro: usdtToMicro(Number(pointsToUsdt(minWithdraw))),
       withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
       // The gas fee (founder, 2026-08-08; DROPPED same day, second pass, when
       // the relay can sign from the user's own address — see personalGasWei

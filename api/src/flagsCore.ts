@@ -105,7 +105,8 @@ export const FLAGS: Record<FlagId, FlagDef> = {
     label: "USDT withdrawals",
     effect: "Nobody can request a cash-out. Requests already in the queue still pay.",
     store: { kind: "flag" },
-    enforcedAt: "POST /withdrawals",
+    enforcedAt: "POST /withdrawals; POST /wallet/withdraw whenever it draws on points or task USDT " +
+      "(a request covered entirely by a deposit refund is unaffected, same as /usdt/refunds always has been)",
   },
   bnb_deposits: {
     label: "BNB deposits",

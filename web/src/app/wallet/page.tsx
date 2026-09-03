@@ -21,15 +21,19 @@ import { usdtFromMicro, formatUsdtMicro, formatBnbWei } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
 
 // The money screen. Wallet overhaul (founder): the headline is USDT again —
-// Total Balance folds real deposited USDT (usdt_ledger) together with
-// withdrawable task/referral points (at the real 1000pts=$1 rate) — and the
-// history is now every ledger this account has, not just points+ROZI.
+// Total Balance folds real deposited USDT (usdt_ledger), task USDT and
+// withdrawable task/referral points (at the real 1000pts=$1 rate) into ONE
+// number — and the history is now every ledger this account has, not just
+// points+ROZI.
 //
 // ⚠️ THIS IS STILL A DISPLAY MERGE. The underlying ledgers are untouched
-// (guardrail #7) — see lib/walletHistory.ts's header. "Locked" is the
-// points-derived half while the account sits below the withdrawal minimum;
-// it becomes "Available" the instant a fresh read clears that bar, with no
-// unlock event to miss.
+// (guardrail #7) — see lib/walletHistory.ts's header.
+//
+// ⚠️ THERE IS NO "LOCKED" HALF ANY MORE (founder, 2026-09-03). The platform's
+// one remaining rule — a $1 minimum — now applies to the combined total at
+// withdrawal-request time (POST /wallet/withdraw), not to any one source held
+// below that floor by itself, so there is nothing left to show as separately
+// unavailable.
 export default function WalletPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
@@ -53,8 +57,6 @@ export default function WalletPage() {
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
-  const usdtAvailableMicro = bal.data?.usdtAvailableMicro ?? 0;
-  const usdtLockedMicro = bal.data?.usdtLockedMicro ?? 0;
   const usdtTotalMicro = bal.data?.usdtTotalMicro ?? 0;
   // ⚠️ NO NUMBER ON THIS SCREEN MAY BE A FALLBACK ZERO. Every figure above is
   // `?? 0`, which is correct arithmetic and a terrible thing to render: while
@@ -95,10 +97,8 @@ export default function WalletPage() {
       </header>
 
       {/* ---- Total Balance (wallet overhaul) --------------------------------
-          Real deposited USDT + withdrawable task/referral points, in one
-          number — see the file header. Available/Locked only appears once
-          there is anything actually locked, so a user already above the
-          withdrawal minimum sees exactly what they saw before this shipped. */}
+          Real deposited USDT + task USDT + withdrawable task/referral points,
+          in ONE number — see the file header. No Available/Locked split. */}
       {bal.loading ? (
         <Loading lines={1} />
       ) : bal.error ? (
@@ -107,12 +107,6 @@ export default function WalletPage() {
         <Card className="p-4">
           <p className="text-sm text-muted">{t("wallet.totalBalance")}</p>
           <p className="num text-3xl font-bold text-brand-ink">{formatUsdtMicro(usdtTotalMicro)}</p>
-          {usdtLockedMicro > 0 && (
-            <div className="mt-2 flex gap-4 text-sm">
-              <span className="text-success font-semibold">{t("wallet.available")}: {formatUsdtMicro(usdtAvailableMicro)}</span>
-              <span className="text-pending font-semibold">{t("wallet.locked")}: {formatUsdtMicro(usdtLockedMicro)}</span>
-            </div>
-          )}
         </Card>
       )}
 
@@ -129,29 +123,11 @@ export default function WalletPage() {
         <SectionTitle>{t("wallet.tokens.title")}</SectionTitle>
         <Card className="divide-y divide-line">
           <Link href="/wallet/usdt" className="block active:bg-brand-tint/40">
-            {usdtLockedMicro > 0 ? (
-              <div className="flex items-center gap-3 p-3.5">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-tint text-brand">
-                  <UsdtLogo size={20} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-bold text-brand-ink leading-snug">{t("wallet.token.usdt.name")}</p>
-                  <p className="text-xs text-muted">
-                    {t("wallet.available")} {formatUsdtMicro(usdtAvailableMicro)} · {t("wallet.locked")} {formatUsdtMicro(usdtLockedMicro)}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="num font-bold text-brand-ink">{usdtFromMicro(usdtTotalMicro).toFixed(2)}</p>
-                  <p className="text-[11px] font-semibold text-muted">USDT</p>
-                </div>
-              </div>
-            ) : (
-              <TokenRow
-                Icon={UsdtLogo} name={t("wallet.token.usdt.name")} sub={t("wallet.token.usdt.sub")}
-                symbol="USDT" muted={!balKnown}
-                amount={balKnown ? usdtFromMicro(usdtTotalMicro).toFixed(2) : "—"}
-              />
-            )}
+            <TokenRow
+              Icon={UsdtLogo} name={t("wallet.token.usdt.name")} sub={t("wallet.token.usdt.sub")}
+              symbol="USDT" muted={!balKnown}
+              amount={balKnown ? usdtFromMicro(usdtTotalMicro).toFixed(2) : "—"}
+            />
           </Link>
           <Link href="/wallet/bnb" className="block active:bg-brand-tint/40">
             {usdtOn && usdt.data?.personalGasWei !== null && usdt.data?.personalGasWei !== undefined ? (

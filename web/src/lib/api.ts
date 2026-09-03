@@ -371,16 +371,19 @@ export const fetchBalance = () =>
     personalGasRequiredWei: string | null;
     personalGasReady: boolean | null;
     // ---- Wallet overhaul (Total Balance) -----------------------------------
-    // The wallet's headline USDT figure: real deposited USDT (usdt_ledger)
-    // PLUS withdrawable task/referral points, at the real 1000pts=$1 rate —
-    // see the comment above this computation in api/src/routes/app.ts.
-    // "Locked" is the points-derived half while the account sits below
-    // minWithdrawPoints; it becomes "Available" automatically the moment it
-    // clears, with no separate unlock call. Micro-USDT, same scale as every
-    // other USDT figure in this app (USDT_SCALE in format.ts).
+    // The wallet's headline USDT figure: real deposited USDT (usdt_ledger),
+    // task USDT already earned, PLUS withdrawable task/referral points, at
+    // the real 1000pts=$1 rate — see the comment above this computation in
+    // api/src/routes/app.ts. There is no "locked" half any more (founder,
+    // 2026-09-03): usdtAvailableMicro === usdtTotalMicro always, and
+    // usdtLockedMicro is always 0 — kept only for callers that still read it.
+    // Micro-USDT, same scale as every other USDT figure in this app
+    // (USDT_SCALE in format.ts).
     usdtAvailableMicro: number;
     usdtLockedMicro: number;
     usdtTotalMicro: number;
+    // The $1 platform minimum, in the same unit /wallet/withdraw takes.
+    minWithdrawUsdtMicro: number;
   }>("/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export type UsdtTaskReward = { id: string; amountMicro: number; completionId: string | null; label: string; at: string };
@@ -442,6 +445,15 @@ export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/wit
 export const createWithdrawal = (amountPoints: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
     method: "POST", body: JSON.stringify({ amountPoints, chain, address, stepUpCode }),
+  });
+
+// ONE WALLET, ONE WITHDRAWAL (founder, 2026-09-03). The user types one USDT
+// amount; the server draws it from money added, task USDT and task/referral
+// points — in whatever combination is needed — behind this single call. See
+// the header on POST /wallet/withdraw in api/src/routes/withdrawals.ts.
+export const createWalletWithdrawal = (amountUsdtMicro: number, chain: string, address: string, stepUpCode?: string) =>
+  apiFetch<{ ok: true; amountUsdtMicro: number; status: "paid" | "sending" | "pending" }>("/wallet/withdraw", {
+    method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address, stepUpCode }),
   });
 // Large withdrawals (see stepUpMinPoints, api/src/routes/withdrawals.ts) refuse
 // with `{ stepUpRequired: true }` until a fresh 6-digit code is supplied. This
