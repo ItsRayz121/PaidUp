@@ -3219,4 +3219,38 @@ Everything else on the old checklist is done, deferred by decision, or declined.
   - Verified: `npm run test:flags` (8/8), api + web typecheck, eslint (0
     errors), web production build (38 routes) — all clean.
 
+- **A FULL BUG/DISCONNECTION AUDIT PASS FOUND NOTHING BROKEN (self-directed,
+  2026-09-03, same day, per the founder's "go find any bugs" ask).** api +
+  web typecheck clean, eslint 0 errors, web production build (38 routes)
+  clean, and 14 e2e/unit suites re-run from a fresh database each time —
+  mining, mining e2e, wallet, flags, usdt, deposits, withdrawControls,
+  autoWithdraw, autoRefund, payoutRelay, fees, permissions, moneyAdmin,
+  stage4 — **~640 checks, 0 failures.** The documented frontend/backend
+  drift method (grep every `api.ts` export for its call-site count, and the
+  reverse: every backend route for a caller) was re-run in both directions;
+  guardrail #8 (`pg_advisory_xact_lock`) was spot-checked on the newest money
+  path, admin disbursements. No crash, no wrong-column query, no missing
+  lock, no broken build. **No code was changed** — inventing a fix to look
+  productive was deliberately avoided.
+  - ⚠️ **ONE REAL GAP FOUND, LEFT AS-IS BY EXPLICIT FOUNDER DECISION.** The
+    Connect-Wallet signature-proof flow (2026-08-01 — a user signs a message
+    with their own wallet so the SERVER, not the user's typed claim, decides
+    the payout address; see that entry above for why it was built) has had
+    **zero render call sites anywhere in the app** since the 2026-08-12
+    "Profile got simpler" pass removed it from `/profile/settings` and never
+    re-added it to `/wallet/withdraw`. `web/src/components/ConnectWallet.tsx`
+    and the backend routes (`/withdrawals/addresses/challenge`, `/verify`)
+    are still live and tested — a user just has no button that reaches them,
+    so every withdrawal today goes through the plain typed-address box only.
+    **Told plainly and asked; the founder chose to leave it as is** — the
+    typed-address path stays the only one, same as it's been since
+    2026-08-12. Recorded here as a decision with a date, not a bug that
+    slipped through — do not re-flag this as a defect in a future audit
+    unless the founder changes their mind.
+  - Minor, left alone as harmless: three unused-but-not-wrong `api.ts`
+    exports (`savePayoutAddress`, `notifyOneUser`,
+    `createEarnedUsdtWithdrawal`), one diagnostic-only staff endpoint with no
+    panel (`GET /staff/mining/rpc`), and `/staff/{bnb-withdrawals,relay-jobs}/:id/handled`
+    superseded by `/resolve` but left in place.
+
 See `docs/` for the full spec.
