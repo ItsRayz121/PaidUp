@@ -370,10 +370,10 @@ export const fetchBalance = () =>
     personalGasWei: string | null;
     personalGasRequiredWei: string | null;
     personalGasReady: boolean | null;
-    // ---- Wallet overhaul (Total Balance) -----------------------------------
-    // The wallet's headline USDT figure: real deposited USDT (usdt_ledger),
-    // task USDT already earned, PLUS withdrawable task/referral points, at
-    // the real 1000pts=$1 rate — see the comment above this computation in
+    // ---- Wallet overhaul (Total Balance), un-blended 2026-09-03, same day --
+    // The wallet's headline USDT figure is ONLY real money: real deposited
+    // USDT (usdt_ledger) + task USDT earned directly in USDT. Task/referral
+    // points are NOT folded in — see the comment above this computation in
     // api/src/routes/app.ts. There is no "locked" half any more (founder,
     // 2026-09-03): usdtAvailableMicro === usdtTotalMicro always, and
     // usdtLockedMicro is always 0 — kept only for callers that still read it.
@@ -382,6 +382,10 @@ export const fetchBalance = () =>
     usdtAvailableMicro: number;
     usdtLockedMicro: number;
     usdtTotalMicro: number;
+    // Task/referral points converted at the real, existing rate — informational
+    // only. NEVER summed into usdtAvailableMicro/usdtTotalMicro (see above).
+    // Cash out via createWithdrawal() / POST /withdrawals, a separate flow.
+    pointsAsUsdtMicro: number;
     // The $1 platform minimum, in the same unit /wallet/withdraw takes.
     minWithdrawUsdtMicro: number;
   }>("/wallet/balance");

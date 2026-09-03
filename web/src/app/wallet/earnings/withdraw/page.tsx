@@ -6,31 +6,27 @@ import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { WalletIcon, CheckIcon, ClockIcon, ArrowRightIcon } from "@/components/icons";
-import { UsdtLogo } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchBalance, fetchPayoutAddresses, createWalletWithdrawal, requestWithdrawalStepUp, ApiError,
+  fetchBalance, fetchPayoutAddresses, createWithdrawal, requestWithdrawalStepUp, ApiError,
 } from "@/lib/api";
-import { formatMoney, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
+import { formatMoney, usdtToPoints, formatBnbWei } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 import { shortAddress } from "@/lib/wallet";
 
-// ONE WALLET, TWO REAL SOURCES (founder, 2026-09-03, un-blended same day).
+// CASH OUT TASK/REFERRAL EARNINGS — its own screen (founder, 2026-09-03, same
+// day). Points used to be one of three sources POST /wallet/withdraw could
+// blend into a single USDT figure; the founder reviewed that live and asked
+// points out of it, because points settle from the treasury, not from
+// anything actually deposited — showing them pre-blended into "you have X
+// USDT" implied money was sitting somewhere it wasn't.
 //
-// The user reads ONE "you have" figure (the same total /wallet shows) and one
-// address box — no "Take from" chips, no Available/Locked split. They type an
-// amount and it just works, up to the whole total, for one platform minimum
-// ($1). Behind POST /wallet/withdraw the server draws it from money added and
-// task USDT already earned — see that route's header in
-// api/src/routes/withdrawals.ts. Task/referral points are NOT part of this
-// total any more (founder reviewed the blended figure live and asked it
-// removed — points settle from the treasury, not from anything actually
-// deposited); they cash out on their own screen, /wallet/earnings/withdraw.
-//
-// A Max button + quick-percent chips (founder, same day: "most exchanges have
-// this on withdraw") fill the amount field from the real available total.
-export default function WithdrawPage() {
+// This screen is the old single-source points path, unchanged underneath:
+// POST /withdrawals (source_kind "points"), its own queue, its own KYC/
+// step-up/fee rules — see api/src/routes/withdrawals.ts. Money added and task
+// USDT paid directly in USDT stay on /wallet/withdraw.
+export default function EarningsWithdrawPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
   const bal = useApi(fetchBalance, []);
@@ -38,17 +34,14 @@ export default function WithdrawPage() {
 
   const [chain] = useState<ChainId>("bep20");
   const [address, setAddress] = useState("");
-  // THE USER TYPES USDT; the raw string is held so "2." and "0.05" are typeable.
   const [usdtInput, setUsdtInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [resultStatus, setResultStatus] = useState<"paid" | "sending" | "pending">("pending");
-  // Points value of what was sent, for the confirmation card's formatMoney().
   const [confirmPoints, setConfirmPoints] = useState(0);
   const [needsKyc, setNeedsKyc] = useState(false);
   const [kycStatus, setKycStatus] = useState("none");
-  // Large withdrawals need a fresh emailed code (stepUpMinPoints).
   const [needsStepUp, setNeedsStepUp] = useState(false);
   const [stepUpCode, setStepUpCode] = useState("");
   const [resendBusy, setResendBusy] = useState(false);
@@ -59,49 +52,39 @@ export default function WithdrawPage() {
   if (!ready || bal.loading) return <div className="p-4 pt-6"><Loading /></div>;
   if (bal.error) return <div className="p-4 pt-6"><ErrorState message={bal.error} onRetry={bal.reload} /></div>;
 
-  // ONE combined total — no per-source breakdown, nothing "locked".
-  const usdtAvailableMicro = bal.data?.usdtTotalMicro ?? 0;
+  const balance = bal.data?.points ?? 0;
+  const min = bal.data?.minWithdrawPoints ?? 1000;
   const flatFee = bal.data?.withdrawalFeePoints ?? 0;
   const gasFeePercent = bal.data?.gasFeePercent ?? 0;
   const gasFeeFixedMicro = bal.data?.gasFeeFixedMicro ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
 
-  const minMicro = bal.data?.minWithdrawUsdtMicro ?? 1_000_000;
-  const minUsdt = minMicro / 1_000_000;
-
+  const minUsdt = min / 1000; // 1000 points = $1, matches format.ts's POINTS_PER_USDT
   const typedUsdt = Number(usdtInput);
   const hasTyped = usdtInput.trim() !== "" && Number.isFinite(typedUsdt);
-  const enteredUsdt = hasTyped ? typedUsdt : minUsdt;
-  const enteredMicro = Math.round(enteredUsdt * 1_000_000);
-  const amtPoints = usdtToPoints(enteredUsdt); // fee-preview only — the server re-computes for real
+  const amtPoints = hasTyped ? usdtToPoints(typedUsdt) : min;
 
-  const belowMin = enteredMicro < minMicro;
-  const overBalance = enteredMicro > usdtAvailableMicro;
+  const belowMin = amtPoints < min;
+  const overBalance = amtPoints > balance;
 
-  // Quick-fill chips (Max + 25/50/75%), like the amount field on most exchange
-  // withdraw screens. Always computed off the real available total, never a
-  // typed value — picking one always lands exactly on-balance, never over.
   function fillPct(pct: number) {
-    const micro = Math.floor((usdtAvailableMicro * pct) / 100);
-    setUsdtInput((micro / 1_000_000).toString());
+    const pts = Math.floor((balance * pct) / 100);
+    setUsdtInput((pts / 1000).toString());
   }
 
-  // Fee preview. The server re-computes and snapshots it (api/src/fees.ts) per
-  // leg; this just mirrors the formula so the number shown rarely disagrees
-  // with the request. Most deployments run both fees at 0.
+  // Fee preview. The server re-computes and snapshots it (api/src/fees.ts);
+  // this just mirrors the formula so the number shown rarely disagrees with
+  // the request.
   const gasFee = Math.round((amtPoints * gasFeePercent) / 100) + usdtToPoints(gasFeeFixedMicro / 1_000_000);
   const fee = flatFee + gasFee;
   const net = Math.max(0, amtPoints - fee);
 
   const addressOk = addressLooksValid(chain, address);
   const trimmed = address.trim();
-  // Gas is the user's own responsibility (founder, 2026-08-08). null = can't
-  // check (relay not wired for this chain) — nothing changes. false = the
-  // server would refuse this anyway, so keep the button dead.
   const gasReady = bal.data?.personalGasReady ?? null;
   const gasBlocked = gasReady === false;
   const stepUpCodeOk = /^\d{6}$/.test(stepUpCode);
-  const invalid = usdtAvailableMicro <= 0 || belowMin || overBalance || !addressOk || gasBlocked || (needsStepUp && !stepUpCodeOk);
+  const invalid = balance <= 0 || belowMin || overBalance || !addressOk || gasBlocked || (needsStepUp && !stepUpCodeOk);
 
   if (done) return <SentConfirmation amount={confirmPoints} chainLabel={chainMeta.label} address={trimmed} status={resultStatus} />;
 
@@ -109,9 +92,9 @@ export default function WithdrawPage() {
     setBusy(true); setError(null); setNeedsKyc(false);
     const code = stepUpCode.trim() || undefined;
     try {
-      const r = await createWalletWithdrawal(enteredMicro, chain, trimmed, code);
-      setConfirmPoints(usdtToPoints(enteredUsdt));
-      setResultStatus(r.status === "paid" ? "paid" : r.status === "sending" ? "sending" : "pending");
+      const r = await createWithdrawal(amtPoints, chain, trimmed, code);
+      setConfirmPoints(net);
+      setResultStatus(r.request.status === "paid" ? "paid" : r.request.status === "sending" ? "sending" : "pending");
       setDone(true);
     } catch (e) {
       if (e instanceof ApiError && e.body.kycRequired) {
@@ -139,17 +122,12 @@ export default function WithdrawPage() {
 
   return (
     <div className="px-4 pt-5 pb-8 space-y-5">
-      {/* Absolutely the same shape as the BNB withdraw screen (founder,
-          2026-08-29): header, one balance card, then ONE card holding the
-          address, the amount and the button. The KYC / step-up / gas blocks
-          only appear when they actually apply. */}
       <header className="flex items-center gap-2">
         <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
           <ArrowRightIcon size={22} className="rotate-180" />
         </Link>
-        <UsdtLogo size={30} />
         <div>
-          <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
+          <h1 className="text-xl font-bold text-brand-ink">{t("wallet.earnings.title")}</h1>
           {CHAINS.length === 1 && <p className="text-xs text-muted">{chainMeta.label} · {chainMeta.note}</p>}
         </div>
       </header>
@@ -186,8 +164,9 @@ export default function WithdrawPage() {
       ) : null}
 
       <Card className="p-4">
-        <p className="text-sm text-muted">{t("withdraw.youHave")}</p>
-        <p className="num mt-1 text-2xl font-bold text-brand-ink">{formatUsdtMicro(usdtAvailableMicro)}</p>
+        <p className="text-sm text-muted">{t("wallet.earnings.title")}</p>
+        <p className="num mt-1 text-2xl font-bold text-brand-ink">{formatMoney(balance)}</p>
+        <p className="mt-1 text-xs text-muted">{t("wallet.earnings.sub")}</p>
       </Card>
 
       <Card className="p-4 space-y-4">
@@ -224,13 +203,13 @@ export default function WithdrawPage() {
           <label htmlFor="amt" className="mb-1.5 block text-sm font-semibold text-brand-ink">{t("withdraw.howManyPoints")}</label>
           <div className="flex items-center gap-2 rounded-xl border border-line bg-card p-3">
             <input id="amt" type="number" inputMode="decimal" value={usdtInput}
-              min={minUsdt} max={usdtAvailableMicro / 1_000_000} step={0.5}
+              min={minUsdt} max={balance / 1000} step={0.5}
               placeholder={String(minUsdt)}
               onChange={(e) => setUsdtInput(e.target.value)}
               className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
             <span className="shrink-0 font-semibold text-muted">USDT</span>
           </div>
-          {usdtAvailableMicro > 0 && (
+          {balance > 0 && (
             <div className="mt-2 flex gap-1.5">
               {[25, 50, 75].map((pct) => (
                 <button key={pct} type="button" onClick={() => fillPct(pct)}
@@ -245,7 +224,7 @@ export default function WithdrawPage() {
             </div>
           )}
           <p className="mt-1.5 text-xs text-muted">
-            {t("withdraw.lowestPayout", { points: formatUsdtMicro(minMicro) })}
+            {t("withdraw.lowestPayout", { points: formatMoney(min) })}
           </p>
         </div>
 
@@ -264,7 +243,7 @@ export default function WithdrawPage() {
 
         {belowMin && (
           <p className="rounded-lg bg-pending-tint p-2.5 text-sm text-pending">
-            {t("withdraw.needAtLeast", { points: formatUsdtMicro(minMicro) })}
+            {t("withdraw.needAtLeast", { points: formatMoney(min) })}
           </p>
         )}
         {overBalance && <p className="rounded-lg bg-danger-tint p-2.5 text-sm text-danger">{t("withdraw.notEnough")}</p>}
@@ -285,8 +264,6 @@ export default function WithdrawPage() {
   );
 }
 
-// Compact confirmation card — same shape as the BNB withdraw screen's `done`
-// state, not a full-screen celebration.
 function SentConfirmation({ amount, chainLabel, address, status }: { amount: number; chainLabel: string; address: string; status: "paid" | "sending" | "pending" }) {
   const { t } = useI18n();
   const shortAddr = address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
@@ -296,8 +273,7 @@ function SentConfirmation({ amount, chainLabel, address, status }: { amount: num
         <Link href="/wallet" aria-label="Back to wallet" className="text-brand">
           <ArrowRightIcon size={22} className="rotate-180" />
         </Link>
-        <UsdtLogo size={30} />
-        <h1 className="text-xl font-bold text-brand-ink">{t("common.getMyMoney")}</h1>
+        <h1 className="text-xl font-bold text-brand-ink">{t("wallet.earnings.title")}</h1>
       </header>
 
       <Card className="p-5 text-center">

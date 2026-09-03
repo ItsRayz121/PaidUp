@@ -17,23 +17,30 @@ import {
   fetchBalance, fetchLedger, fetchMiningState, fetchRoziHistory, fetchUsdt,
   fetchWithdrawals, fetchBnbWithdrawals, fetchUsdtTaskRewards, fetchBnbOnchainHistory,
 } from "@/lib/api";
-import { usdtFromMicro, formatUsdtMicro, formatBnbWei } from "@/lib/format";
+import { usdtFromMicro, formatUsdtMicro, formatBnbWei, formatMoney } from "@/lib/format";
 import { unifyHistory, preview, type Row, type TokenFilter, type KindFilter } from "@/lib/walletHistory";
 
 // The money screen. Wallet overhaul (founder): the headline is USDT again —
-// Total Balance folds real deposited USDT (usdt_ledger), task USDT and
-// withdrawable task/referral points (at the real 1000pts=$1 rate) into ONE
-// number — and the history is now every ledger this account has, not just
-// points+ROZI.
+// Total Balance folds real deposited USDT (usdt_ledger) and task USDT paid
+// directly in USDT into ONE number — and the history is now every ledger this
+// account has, not just points+ROZI.
 //
 // ⚠️ THIS IS STILL A DISPLAY MERGE. The underlying ledgers are untouched
 // (guardrail #7) — see lib/walletHistory.ts's header.
 //
 // ⚠️ THERE IS NO "LOCKED" HALF ANY MORE (founder, 2026-09-03). The platform's
-// one remaining rule — a $1 minimum — now applies to the combined total at
-// withdrawal-request time (POST /wallet/withdraw), not to any one source held
-// below that floor by itself, so there is nothing left to show as separately
-// unavailable.
+// one remaining rule — a $1 minimum — now applies to the combined
+// deposit+earned-USDT total at withdrawal-request time (POST /wallet/withdraw),
+// not to any one source held below that floor by itself, so there is nothing
+// left to show as separately unavailable.
+//
+// ⚠️ TASK/REFERRAL POINTS ARE NOT PART OF THE USDT TOTAL (founder, same day,
+// reviewed live). They briefly were, at the real 1000pts=$1 rate — technically
+// a real rate, not the guardrail #7 problem, but points settle from the
+// TREASURY, not from anything actually deposited, so folding them into "you
+// have X USDT" misrepresented where the money was. They still show, and are
+// still fully withdrawable, in their own card below with their own screen
+// (/wallet/earnings/withdraw) and their own queue (POST /withdrawals).
 export default function WalletPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
@@ -118,6 +125,26 @@ export default function WalletPage() {
           <SendIcon size={20} /> {t("wallet.withdraw")}
         </Button>
       </div>
+
+      {/* Task/referral earnings — its own card, its own screen (founder,
+          2026-09-03, same day): this money is real and fully withdrawable, it
+          just isn't already sitting in the USDT total above, so it gets its
+          own honest number rather than being folded into someone else's. */}
+      {balKnown && (bal.data?.points ?? 0) > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-muted">{t("wallet.earnings.title")}</p>
+              <p className="num mt-0.5 text-lg font-bold text-brand-ink">{formatMoney(bal.data!.points)}</p>
+              <p className="mt-0.5 text-xs text-muted">{t("wallet.earnings.sub")}</p>
+            </div>
+            <Link href="/wallet/earnings/withdraw"
+              className="shrink-0 rounded-full bg-brand-tint px-3.5 py-2 text-xs font-bold text-brand active:bg-brand-tint/70">
+              {t("wallet.earnings.cashOut")}
+            </Link>
+          </div>
+        </Card>
+      )}
 
       <section>
         <SectionTitle>{t("wallet.tokens.title")}</SectionTitle>

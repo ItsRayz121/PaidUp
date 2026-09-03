@@ -514,26 +514,32 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     };
   }));
 
-  // ---- ONE WALLET, ONE WITHDRAWAL (founder, 2026-09-03) ---------------------
+  // ---- ONE WALLET, TWO REAL SOURCES (founder, 2026-09-03, un-blended same day) --
   //
-  // The founder's ask: show ONE USDT number on /wallet and /wallet/withdraw —
-  // no "Task earnings / Task USDT / Money you added" breakdown, no "Locked".
-  // The only rule left is the platform minimum ($1), and it now applies to the
-  // user's COMBINED balance across all three sources, not to any one of them
-  // alone. A user with $0.20 of task earnings (under the $1 floor by itself)
-  // can add $0.80 of real deposit and withdraw the full $1.00 in one request —
-  // exactly the example the founder gave.
+  // Originally shipped as "ONE WALLET, ONE WITHDRAWAL" — deposit, task USDT
+  // AND task/referral points all drawn from one combined total. The founder
+  // reviewed it live the same day and cut points back out: this route now
+  // only ever draws on money that actually exists somewhere real — a deposit
+  // the user made, or task USDT paid directly in USDT. Points settle from the
+  // TREASURY, not from anything deposited, so blending them into "how much
+  // USDT do you have" misrepresented where the money actually was. Points cash
+  // out through the separate, untouched POST /withdrawals flow instead (its
+  // own queue, its own screen — /wallet/earnings/withdraw on the web).
   //
-  // Under the hood the three ledgers are UNCHANGED (usdt_ledger / earned_usdt_ledger
-  // / points), and so are their separate staff queues, auto-settle ceilings and
+  // The platform minimum ($1) now applies to the combined deposit+earned-USDT
+  // total, not to either alone — a user with $0.20 of task USDT can still add
+  // $0.80 of real deposit and withdraw the full $1.00 in one request.
+  //
+  // Under the hood both ledgers are UNCHANGED (usdt_ledger / earned_usdt_ledger),
+  // and so are their separate staff queues, auto-settle ceilings and
   // reject/refund-back logic (staff.ts, autoWithdraw.ts, autoRefund.ts,
   // payoutRelay.ts all still key off source_kind exactly as before). This route
   // only ADDS an orchestrator: one lock, one combined minimum check, then a
-  // waterfall that draws deposit -> task USDT -> task points, creating exactly
-  // as many rows as sources are actually needed (usually one; more than one
-  // only when no single source alone covers the amount). The old single-source
-  // endpoints above (/withdrawals, /usdt/refunds) are untouched — staff
-  // tooling, disbursements and the task-marketplace flow still use them
+  // waterfall that draws deposit -> task USDT, creating exactly as many rows
+  // as sources are actually needed (usually one; both only when neither alone
+  // covers the amount). The old single-source endpoints above (/withdrawals,
+  // /usdt/refunds) are untouched — staff tooling, disbursements, the
+  // task-marketplace flow, and now the points cash-out screen all use them
   // directly.
   const walletWithdrawSchema = z.object({
     amountUsdtMicro: z.number().int().positive(),
@@ -622,63 +628,47 @@ export async function withdrawalRoutes(app: FastifyInstance) {
 
     let depositId: string | null = null;
     let earnedId: string | null = null;
-    let pointsId: string | null = null;
 
     try {
       await sql.tx(async (t) => {
         // Serialize every ledger this request might touch (guardrail #8) —
-        // one lock covers all three.
+        // one lock covers both.
         await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", userId);
 
         const depositAvail = await usdtBalanceMicroOf(userId, t);
         const earnedAvail = await earnedUsdtBalanceMicroOf(userId, t);
-        const points = await balanceOf(userId, t);
-        const pointsAvailMicro = usdtToMicro(Number(pointsToUsdt(points)));
-        const totalAvail = depositAvail + earnedAvail + pointsAvailMicro;
+        const totalAvail = depositAvail + earnedAvail;
 
         if (amountUsdtMicro > totalAvail) {
           throw { statusCode: 400, message: "You do not have that much yet." };
         }
 
         // Draw from whichever single source covers it first (money you added,
-        // then task USDT, then task points/referrals) — the common case ends
-        // up identical to today's single-source withdrawal, one row, one
-        // on-chain send. Only when NO single source is enough does this fall
-        // back to drawing a little from more than one — the "top up to reach
-        // $1" case.
-        let depositTake = 0, earnedTake = 0, pointsTakeMicro = 0;
+        // then task USDT) — the common case ends up identical to today's
+        // single-source withdrawal, one row, one on-chain send. Only when
+        // neither alone is enough does this fall back to drawing from both —
+        // the "top up to reach $1" case.
+        let depositTake = 0, earnedTake = 0;
         if (amountUsdtMicro <= depositAvail) {
           depositTake = amountUsdtMicro;
         } else if (amountUsdtMicro <= earnedAvail) {
           earnedTake = amountUsdtMicro;
-        } else if (amountUsdtMicro <= pointsAvailMicro) {
-          pointsTakeMicro = amountUsdtMicro;
         } else {
-          let remaining = amountUsdtMicro;
-          depositTake = Math.min(remaining, depositAvail); remaining -= depositTake;
-          earnedTake = Math.min(remaining, earnedAvail); remaining -= earnedTake;
-          pointsTakeMicro = remaining;
+          depositTake = depositAvail;
+          earnedTake = amountUsdtMicro - depositTake;
         }
 
         // The admin kill switch for cash-out (requireFeature("usdt_withdrawals"))
         // only ever gated /withdrawals — a request this route routes ENTIRELY
         // through the deposit leg must not trip it (deposit refunds have never
         // been gated on it, /usdt/refunds says so explicitly), but the moment
-        // any points or task-USDT leg is drawn, the same rule has to apply here
-        // too, or the switch stops doing anything the instant this endpoint
-        // exists.
-        if (earnedTake > 0 || pointsTakeMicro > 0) {
+        // the task-USDT leg is drawn, the same rule has to apply here too, or
+        // the switch stops doing anything the instant this endpoint exists.
+        if (earnedTake > 0) {
           await requireFeature("usdt_withdrawals");
         }
 
         const earnedPoints = earnedTake > 0 ? Math.ceil((earnedTake * config.pointsPerUsdt) / 1_000_000) : 0;
-        let pointsAmount = pointsTakeMicro > 0 ? Math.ceil((pointsTakeMicro * config.pointsPerUsdt) / 1_000_000) : 0;
-        // pointsAvailMicro is FLOORED down from the real points balance
-        // (payout.ts's pointsToUsdt), so converting a full-balance draw back
-        // UP with ceil() could round a hair past what is actually there.
-        // Clamp rather than fail a withdrawal over a sub-point rounding
-        // artifact.
-        if (pointsAmount > points) pointsAmount = points;
 
         const proved = await t.get<{ n: number }>(
           `SELECT 1 AS n FROM payout_addresses
@@ -688,11 +678,10 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         const addressVerified = proved ? 1 : 0;
 
         // The flat platform fee is charged once per submission, not once per
-        // leg — it lands on the LAST leg drawn (points, else earned, else
-        // deposit isn't fee-holding at all: the deposit leg only ever carries
-        // its own gas-cost fee, same as /usdt/refunds).
-        const flatFeeHolder: "points" | "earned" | "none" =
-          pointsAmount > 0 ? "points" : earnedTake > 0 ? "earned" : "none";
+        // leg — it lands on the earned-USDT leg when one is drawn; the
+        // deposit leg only ever carries its own gas-cost fee, same as
+        // /usdt/refunds.
+        const flatFeeHolder: "earned" | "none" = earnedTake > 0 ? "earned" : "none";
 
         // ---- Leg 1: money the user added (deposit) --------------------------
         if (depositTake > 0) {
@@ -731,26 +720,6 @@ export async function withdrawalRoutes(app: FastifyInstance) {
             sourceType: "withdrawal", sourceRefId: earnedId, note: `Task USDT withdrawal (${chain})`,
           }, t);
         }
-
-        // ---- Leg 3: task/referral earnings (points) --------------------------
-        if (pointsAmount > 0) {
-          const gasInPoints = relayReady ? 0 : gasFeePoints(pointsAmount, gasRate);
-          const feePoints = gasInPoints + (flatFeeHolder === "points" ? flatFeePoints : 0);
-          if (feePoints >= pointsAmount) {
-            throw { statusCode: 400, message: "The withdrawal fee is too large for this amount. Ask for more." };
-          }
-          pointsId = newId();
-          await t.run(
-            `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
-               source_kind, earned_usdt_micro, status, created_at)
-             VALUES (?,?,?,?,?,?,?, 'points', 0, 'pending', ?)`,
-            pointsId, userId, pointsAmount, chain, address, feePoints, addressVerified, now(),
-          );
-          await postLedger({
-            userId, points: pointsAmount, direction: "debit",
-            sourceType: "withdrawal", sourceRefId: pointsId, note: `Withdrawal (USDT ${chain})`,
-          }, t);
-        }
       });
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
@@ -758,7 +727,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       throw e;
     }
 
-    if (earnedId || pointsId) {
+    if (earnedId) {
       await saveAddress(userId, chain, address);
       await checkPayoutAddressReuse(userId, address);
       await checkWithdrawalVelocity(userId);
@@ -774,10 +743,6 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     }
     if (earnedId) {
       const r = await tryAutoSettle(earnedId);
-      legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
-    }
-    if (pointsId) {
-      const r = await tryAutoSettle(pointsId);
       legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
     }
 

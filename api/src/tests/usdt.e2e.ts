@@ -537,41 +537,43 @@ check("turning the xpub back off falls back to the shared address, address alrea
 
 console.log("\n-- wallet balance: ONE combined total, no Locked (founder, 2026-09-03) --");
 {
-  // The headline USDT figure folds real deposited USDT together with
-  // withdrawable task/referral points at the real 1000pts=$1 rate — see the
-  // comment above this computation in routes/app.ts. This is NOT the ROZI
-  // case guardrail #7 forbids: points already have a fixed, real rate.
+  // The headline USDT figure is ONLY real deposited USDT + task USDT earned
+  // directly in USDT — task/referral POINTS are deliberately excluded (founder,
+  // un-blended 2026-09-03, same day): points settle from the treasury, not
+  // from anything actually deposited, so the wallet total must never imply
+  // they're already USDT sitting in the wallet. `pointsAsUsdtMicro` is still
+  // served, but as its own field, never summed into the total.
   //
   // There is no "Locked" half any more: the whole total is shown as
-  // available even when the points-derived slice alone sits under the old
-  // per-source floor — the $1 minimum now applies to the COMBINED total,
-  // enforced at POST /wallet/withdraw request time, not to display.
+  // available — the $1 minimum now applies to the COMBINED deposit+earned
+  // total, enforced at POST /wallet/withdraw request time, not to display.
   const u = await mkUser("balmath");
 
   await postUsdt({
     userId: u, micro: 2_000_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e",
   });
-  // 500 points = $0.50 — well under the old $1 per-source floor.
+  // 500 points = $0.50 — must NOT appear in the USDT total any more.
   await postLedger({
     userId: u, points: 500, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e",
   });
   const r = await app.inject({ method: "GET", url: "/wallet/balance", headers: tok(u) });
   const b = r.json();
   check("nothing is ever Locked any more", b.usdtLockedMicro === 0, JSON.stringify(b));
-  check("Available is the FULL combined total, even with points under the old per-source floor",
-    b.usdtAvailableMicro === 2_000_000 + 500_000, JSON.stringify(b));
+  check("Available is deposit + earned-USDT ONLY — points are NOT folded in",
+    b.usdtAvailableMicro === 2_000_000, JSON.stringify(b));
   check("total always equals available (locked is always 0)",
     b.usdtTotalMicro === b.usdtAvailableMicro, JSON.stringify(b));
+  check("points-as-USDT is still served, informationally, but separately",
+    b.pointsAsUsdtMicro === 500_000, JSON.stringify(b));
   check("the response also states the combined minimum in USDT terms",
     b.minWithdrawUsdtMicro === 1_000_000, JSON.stringify(b));
 }
 
-console.log("\n-- POST /wallet/withdraw: one amount, drawn from whatever it takes (founder, 2026-09-03) --");
+console.log("\n-- POST /wallet/withdraw: real USDT only — deposit + task USDT, NEVER points (founder, un-blended 2026-09-03) --");
 {
-  // The founder's own example: a user with $0.20 of task earnings (points) —
-  // under the $1 floor alone — adds $0.80 of real deposit and withdraws the
-  // full $1.00 in ONE request. Nothing about /withdrawals or /usdt/refunds
-  // changed; this is the new orchestrator in front of both.
+  // Points/referral earnings are structurally invisible to this route now —
+  // it only ever draws on money that actually exists somewhere real. Points
+  // cash out through the separate, untouched POST /withdrawals flow.
 
   // ---- single-source shortcuts: identical shape to the old endpoints -------
   {
@@ -589,19 +591,19 @@ console.log("\n-- POST /wallet/withdraw: one amount, drawn from whatever it take
     check("the deposit ledger was actually debited", await usdtBalanceMicroOf(u) === 1_500_000, "");
   }
   {
+    // A user with ONLY points has NOTHING this route can see — it must refuse
+    // exactly as if the balance were zero, never silently reach for points.
     const u = await mkUser("wwd-points-only");
-    await postLedger({ userId: u, points: 5000, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" }); // $5
+    await postLedger({ userId: u, points: 5000, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" }); // $5 of points
     const r = await app.inject({
       method: "POST", url: "/wallet/withdraw", headers: tok(u),
-      payload: { amountUsdtMicro: 2_000_000, chain: "bep20", address: ADDR }, // $2 = 2000 points
+      payload: { amountUsdtMicro: 2_000_000, chain: "bep20", address: ADDR },
     });
-    check("points alone cover it => accepted", r.statusCode === 200, r.body);
-    const wd = await sql.get<{ amount: number; source_kind: string }>(
-      "SELECT amount, source_kind FROM withdrawal_requests WHERE user_id = ?", u);
-    const refund = await sql.get<{ id: string }>("SELECT id FROM usdt_refund_requests WHERE user_id = ?", u);
-    check("...creates exactly one points-sourced withdrawal_requests row, no refund row",
-      wd?.source_kind === "points" && wd?.amount === 2000 && !refund, JSON.stringify({ wd, refund }));
-    check("the points ledger was actually debited", await balanceOf(u) === 3000, "");
+    check("points-only balance => refused, even though $5 of points exists",
+      r.statusCode === 400, r.body);
+    check("the points ledger is untouched", await balanceOf(u) === 5000, "");
+    const wd = await sql.get<{ id: string }>("SELECT id FROM withdrawal_requests WHERE user_id = ?", u);
+    check("nothing was created", !wd, JSON.stringify(wd));
   }
   {
     const u = await mkUser("wwd-earned-only");
@@ -618,40 +620,44 @@ console.log("\n-- POST /wallet/withdraw: one amount, drawn from whatever it take
     check("the earned-USDT ledger was actually debited", await earnedUsdtBalanceMicroOf(u) === 3_000_000, "");
   }
 
-  // ---- the founder's exact example: nobody alone reaches $1, combined they do --
+  // ---- neither leg alone reaches $1, deposit + earned USDT combined do -----
   {
     const u = await mkUser("wwd-topup-to-floor");
-    // $0.20 of task earnings — below the $1 floor entirely on its own.
+    // $0.60 of task USDT — below the $1 floor entirely on its own. Also holds
+    // 200 points, which must play NO part in any of this.
+    await postEarnedUsdt({ userId: u, micro: 600_000, direction: "credit", sourceType: "task_reward", sourceRefId: newId(), note: "e2e" });
     await postLedger({ userId: u, points: 200, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" });
     const before = await app.inject({ method: "GET", url: "/wallet/balance", headers: tok(u) });
-    check("before topping up: total is $0.20, under the $1 floor",
-      before.json().usdtTotalMicro === 200_000, before.body);
+    check("before topping up: total is $0.60 (points do not count), under the $1 floor",
+      before.json().usdtTotalMicro === 600_000, before.body);
 
     const attempt = await app.inject({
       method: "POST", url: "/wallet/withdraw", headers: tok(u),
-      payload: { amountUsdtMicro: 200_000, chain: "bep20", address: ADDR },
+      payload: { amountUsdtMicro: 600_000, chain: "bep20", address: ADDR },
     });
     check("...and asking for all of it is refused: below the $1 minimum",
       attempt.statusCode === 400, attempt.body);
 
-    // The user adds $0.80 of real deposit — exactly the founder's example.
-    await postUsdt({ userId: u, micro: 800_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e" });
+    // The user adds $0.40 of real deposit — now deposit + task USDT clear $1.
+    await postUsdt({ userId: u, micro: 400_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e" });
     const r = await app.inject({
       method: "POST", url: "/wallet/withdraw", headers: tok(u),
       payload: { amountUsdtMicro: 1_000_000, chain: "bep20", address: ADDR },
     });
-    check("now the combined total clears $1 => the FULL $1.00 is accepted in one request",
+    check("now deposit + earned USDT clear $1 => the FULL $1.00 is accepted in one request",
       r.statusCode === 200, r.body);
 
     const refund = await sql.get<{ amount: string }>("SELECT amount FROM usdt_refund_requests WHERE user_id = ?", u);
-    const wd = await sql.get<{ amount: number; source_kind: string }>(
-      "SELECT amount, source_kind FROM withdrawal_requests WHERE user_id = ?", u);
+    const wd = await sql.get<{ amount: number; source_kind: string; earned_usdt_micro: number }>(
+      "SELECT amount, source_kind, earned_usdt_micro FROM withdrawal_requests WHERE user_id = ?", u);
     check("...drawing the deposit leg in full",
-      Number(refund?.amount) === 800_000, JSON.stringify(refund));
-    check("...and the remaining $0.20 from the points leg — the task earnings that were unreachable alone",
-      wd?.source_kind === "points" && wd?.amount === 200, JSON.stringify(wd));
-    check("both ledgers now read zero — nothing left over, nothing double-spent",
-      await usdtBalanceMicroOf(u) === 0 && await balanceOf(u) === 0, "");
+      Number(refund?.amount) === 400_000, JSON.stringify(refund));
+    check("...and the remaining $0.60 from the earned-USDT leg",
+      wd?.source_kind === "earned_usdt" && Number(wd?.earned_usdt_micro) === 600_000, JSON.stringify(wd));
+    check("both real-USDT ledgers now read zero — nothing left over, nothing double-spent",
+      await usdtBalanceMicroOf(u) === 0 && await earnedUsdtBalanceMicroOf(u) === 0, "");
+    check("...and the 200 points sitting on the account were never touched",
+      await balanceOf(u) === 200, "");
   }
 
   // ---- guardrails: total-not-enough, and a request under $1 with plenty available --
@@ -676,6 +682,28 @@ console.log("\n-- POST /wallet/withdraw: one amount, drawn from whatever it take
     check("a request under the $1 minimum is refused even with a much bigger balance sitting there",
       r.statusCode === 400, r.body);
   }
+  {
+    // The exact scenario the founder flagged live: a large points balance must
+    // never let this route pay out more than the real deposit+earned total.
+    const u = await mkUser("wwd-big-points-tiny-real");
+    await postLedger({ userId: u, points: 50_000, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" }); // $50 of points
+    await postUsdt({ userId: u, micro: 2_000_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e" }); // $2 real
+    const r = await app.inject({
+      method: "POST", url: "/wallet/withdraw", headers: tok(u),
+      payload: { amountUsdtMicro: 5_000_000, chain: "bep20", address: ADDR }, // $5 — covered by points, NOT by real money
+    });
+    check("a request the points balance could cover but the real balance cannot is still refused",
+      r.statusCode === 400, r.body);
+    check("the $2 real deposit was never touched by the refused attempt", await usdtBalanceMicroOf(u) === 2_000_000, "");
+    // The real $2 alone still works, proving the refusal above was about the
+    // amount exceeding real money, not the route being broken.
+    const ok = await app.inject({
+      method: "POST", url: "/wallet/withdraw", headers: tok(u),
+      payload: { amountUsdtMicro: 2_000_000, chain: "bep20", address: ADDR },
+    });
+    check("...but the real $2 alone is accepted", ok.statusCode === 200, ok.body);
+    check("the 50,000 points are still sitting there, completely unaffected", await balanceOf(u) === 50_000, "");
+  }
 
   // ---- the admin kill switch still works through this route -----------------
   {
@@ -690,27 +718,15 @@ console.log("\n-- POST /wallet/withdraw: one amount, drawn from whatever it take
     check("with cash-out switched off, a request covered ENTIRELY by deposit still works — same as /usdt/refunds always has",
       depositOnly.statusCode === 200, depositOnly.body);
 
-    const uPoints = await mkUser("wwd-flag-points");
-    await postLedger({ userId: uPoints, points: 2000, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" });
-    const pointsOnly = await app.inject({
-      method: "POST", url: "/wallet/withdraw", headers: tok(uPoints),
+    const uEarned = await mkUser("wwd-flag-earned");
+    await postEarnedUsdt({ userId: uEarned, micro: 1_000_000, direction: "credit", sourceType: "task_reward", sourceRefId: newId(), note: "e2e" });
+    const earnedOnly = await app.inject({
+      method: "POST", url: "/wallet/withdraw", headers: tok(uEarned),
       payload: { amountUsdtMicro: 1_000_000, chain: "bep20", address: ADDR },
     });
-    check("...but a request drawing on task/referral points is refused while the switch is off",
-      pointsOnly.statusCode === 403, pointsOnly.body);
-    check("...and nothing was held", await balanceOf(uPoints) === 2000, "");
-
-    const uBoth = await mkUser("wwd-flag-blend");
-    await postLedger({ userId: uBoth, points: 200, direction: "credit", sourceType: "admin_adjustment", sourceRefId: newId(), note: "e2e" }); // $0.20
-    await postUsdt({ userId: uBoth, micro: 800_000, direction: "credit", sourceType: "topup", sourceRefId: newId(), note: "e2e" }); // $0.80
-    const blended = await app.inject({
-      method: "POST", url: "/wallet/withdraw", headers: tok(uBoth),
-      payload: { amountUsdtMicro: 1_000_000, chain: "bep20", address: ADDR },
-    });
-    check("...and a blended request that would need the points leg is refused too, whole transaction rolled back",
-      blended.statusCode === 403, blended.body);
-    check("...the deposit leg was NOT quietly taken either — nothing was held on either ledger",
-      await usdtBalanceMicroOf(uBoth) === 800_000 && await balanceOf(uBoth) === 200, "");
+    check("...but a request drawing on task USDT is refused while the switch is off",
+      earnedOnly.statusCode === 403, earnedOnly.body);
+    check("...and nothing was held", await earnedUsdtBalanceMicroOf(uEarned) === 1_000_000, "");
 
     await setFlag("usdt_withdrawals", true);
   }

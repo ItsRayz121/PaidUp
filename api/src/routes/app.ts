@@ -390,28 +390,35 @@ export async function appRoutes(app: FastifyInstance) {
     const relayReady = relayAvailable("bep20");
     const gas = relayReady ? await hasEnoughGasForDisplay(userId, "bep20") : null;
     const points = await balanceOf(userId);
-    // ---- Wallet Total Balance (founder, wallet overhaul; simplified 2026-09-03) --
-    // The wallet's headline number is USDT: real deposited USDT (usdt_ledger),
-    // task USDT already earned (earned_usdt_ledger), and task/referral points
-    // converted at the real, existing rate (pointsToUsdt — the SAME conversion
-    // used at actual payout time, payout.ts), all folded into ONE figure. This
-    // is NOT the ROZI case guardrail #7 forbids: ROZI has no fixed rate and is
-    // never part of this number.
+    // ---- Wallet Total Balance (founder, un-blended 2026-09-03, same day) -----
+    // The wallet's headline USDT number is ONLY money that actually exists
+    // somewhere real: real deposited USDT (usdt_ledger) and task USDT paid
+    // directly in USDT (earned_usdt_ledger, e.g. a USDT-denominated task
+    // credit). Both of those trace to an actual on-chain send or a network
+    // postback that specified USDT — they can be paid from a real balance
+    // without the platform ever being on the hook for more than it took in.
     //
-    // ⚠️ THERE IS NO "LOCKED" HALF ANY MORE (founder, 2026-09-03). The whole
-    // total is always shown as available for display — the platform's one
-    // remaining rule, a $1 minimum, applies to the COMBINED total at
-    // withdrawal-request time (POST /wallet/withdraw), not to any one source
-    // held below that floor by itself. usdtAvailableMicro/usdtLockedMicro are
-    // kept, unconditional, for callers that still read them.
+    // ⚠️ TASK/REFERRAL POINTS ARE DELIBERATELY NOT FOLDED IN HERE ANY MORE.
+    // A brief 2026-09-03 change (this same file, same day) blended points into
+    // this figure at the real 1000pts=$1 rate — technically correct (points
+    // already have a fixed, real payout rate, so it wasn't the guardrail #7
+    // problem), but the founder reviewed it live and reversed it: points settle
+    // from the TREASURY, not from anything the user (or a network) actually
+    // deposited, and the wallet's headline "you have X USDT" must never imply
+    // money is sitting somewhere it isn't. Points are still fully withdrawable
+    // — see POST /withdrawals (source_kind "points"), a separate flow with its
+    // own queue — this endpoint just stops describing them as USDT already in
+    // the wallet. `pointsAsUsdtMicro` is still returned, but as its own
+    // informational field, never summed into usdtAvailableMicro/usdtTotalMicro.
     const pointsAsUsdtMicro = usdtToMicro(Number(pointsToUsdt(points)));
     const depositUsdtMicro = await usdtBalanceMicroOf(userId);
     const earnedUsdtMicro = await earnedUsdtBalanceMicroOf(userId);
-    const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro + pointsAsUsdtMicro;
+    const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro;
     const usdtLockedMicro = 0;
     const minWithdraw = await minWithdrawPointsNow();
     return {
       points,
+      pointsAsUsdtMicro,
       earnedUsdtMicro,
       usdtAvailableMicro,
       usdtLockedMicro,

@@ -447,6 +447,7 @@ const copy: Record<string, string> = {
   "withdraw.notEnough": "You do not have that much yet.",
   "withdraw.sending": "Sending…",
   "withdraw.askForUsdt": "Ask for my USDT",
+  "withdraw.max": "Max",
   "withdraw.safetyNote": "We check every payment to keep your account safe.",
   "withdraw.gotRequest": "We got your request",
   "withdraw.onTheWay": "{points} is on the way.",
@@ -511,6 +512,15 @@ const copy: Record<string, string> = {
   "wallet.send": "Send",
   "wallet.receive": "Receive",
   "wallet.sendOff": "Sending is not switched on yet.",
+  // ---- Task/referral earnings card (founder, 2026-09-03, same day) ---------
+  // This money is real and fully withdrawable — it just isn't already part of
+  // the USDT total above, because that total is only money that actually
+  // exists somewhere real (a deposit, or task USDT paid directly in USDT).
+  // Earnings settle from the treasury on request instead, through their own
+  // screen — see /wallet/earnings/withdraw.
+  "wallet.earnings.title": "Task & referral earnings",
+  "wallet.earnings.sub": "Not counted in your USDT total above. Cash it out any time.",
+  "wallet.earnings.cashOut": "Cash out",
   "wallet.tokens.title": "Your tokens",
   // The TOKEN, not the company. This row said "RoziPay", so the list read
   // RoziPay / USDT / BNB — two rows naming a token and one naming the app.
