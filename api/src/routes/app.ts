@@ -383,13 +383,22 @@ export async function appRoutes(app: FastifyInstance) {
   // Balance = SUM(ledger). Never a stored field. Also returns the current
   // withdrawal fee (points) so the withdraw screen can show fee + net.
   app.get("/wallet/balance", guard(async (userId) => {
-    const gasFeeRate = await getGasFeeRate();
     // "ONE CHAIN IN, ONE CHAIN OUT" — bep20 is the only chain ever offered
     // (chains.ts), so this preview endpoint can check it directly without
     // waiting for the user to pick one.
     const relayReady = relayAvailable("bep20");
-    const gas = relayReady ? await hasEnoughGasForDisplay(userId, "bep20") : null;
-    const points = await balanceOf(userId);
+    // This screen is polled from the TopBar on every page (CLAUDE.md, the
+    // wallet-becomes-a-real-wallet entry), so the several independent reads
+    // below run concurrently rather than one round-trip at a time.
+    const [gasFeeRate, gas, points, depositUsdtMicro, earnedUsdtMicro, minWithdraw, withdrawalFeeSetting] = await Promise.all([
+      getGasFeeRate(),
+      relayReady ? hasEnoughGasForDisplay(userId, "bep20") : Promise.resolve(null),
+      balanceOf(userId),
+      usdtBalanceMicroOf(userId),
+      earnedUsdtBalanceMicroOf(userId),
+      minWithdrawPointsNow(),
+      getSetting("withdrawal_fee_points", "0"),
+    ]);
     // ---- Wallet Total Balance (founder, un-blended 2026-09-03, same day) -----
     // The wallet's headline USDT number is ONLY money that actually exists
     // somewhere real: real deposited USDT (usdt_ledger) and task USDT paid
@@ -411,11 +420,8 @@ export async function appRoutes(app: FastifyInstance) {
     // the wallet. `pointsAsUsdtMicro` is still returned, but as its own
     // informational field, never summed into usdtAvailableMicro/usdtTotalMicro.
     const pointsAsUsdtMicro = usdtToMicro(Number(pointsToUsdt(points)));
-    const depositUsdtMicro = await usdtBalanceMicroOf(userId);
-    const earnedUsdtMicro = await earnedUsdtBalanceMicroOf(userId);
     const usdtAvailableMicro = depositUsdtMicro + earnedUsdtMicro;
     const usdtLockedMicro = 0;
-    const minWithdraw = await minWithdrawPointsNow();
     return {
       points,
       pointsAsUsdtMicro,
@@ -425,9 +431,12 @@ export async function appRoutes(app: FastifyInstance) {
       usdtTotalMicro: usdtAvailableMicro + usdtLockedMicro,
       minWithdrawPoints: minWithdraw,
       // The same floor, in USDT — the unit /wallet/withdraw actually thinks
-      // in now that a withdrawal can be a blend of all three sources.
+      // in now that a withdrawal can be a blend of deposit + earned USDT
+      // (points were removed from this route, 2026-09-03 same day — see
+      // withdrawals.ts). Also reused by /wallet/earnings/withdraw for its
+      // own, separate points-only minimum.
       minWithdrawUsdtMicro: usdtToMicro(Number(pointsToUsdt(minWithdraw))),
-      withdrawalFeePoints: Number(await getSetting("withdrawal_fee_points", "0")) || 0,
+      withdrawalFeePoints: Number(withdrawalFeeSetting) || 0,
       // The gas fee (founder, 2026-08-08; DROPPED same day, second pass, when
       // the relay can sign from the user's own address — see personalGasWei
       // below). Percent + a fixed floor, sent as RATES rather than a

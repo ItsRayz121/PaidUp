@@ -1147,6 +1147,10 @@ These override convenience or speed at every step:
   unchanged and green (182 re-run: usdt+withdrawcontrols+autowithdraw+
   autorefund+payoutrelay+deposits, all pass); api+web typecheck, eslint, web
   production build all clean.
+  ⚠️ **SUPERSEDED 2026-09-03 — points are OUT of Total Balance again, see the
+  "THE WALLET USDT TOTAL DROPS POINTS AGAIN" entry near the end of this
+  file.** The "+ withdrawable task/referral points" half of the formula
+  right below no longer holds; deposit + earned USDT only.
   - ⚠️ **THIS REVERSES THE 2026-07-30/08-03 "ROZI-ONLY" WALLET DISPLAY
     DECISIONS, ON THIS ONE SCREEN, DELIBERATELY.** `/wallet`'s headline is
     USDT again: **Total Balance = real deposited USDT (`usdt_ledger`) +
@@ -3126,5 +3130,62 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     sweep later would push its end past the `ENTRANCE_MS` invariant the file
     header documents (sweep must end by ~2.8s, matching the idle-loop
     handoff) for a purely aesthetic gain.
+
+- **THE WALLET USDT TOTAL DROPS POINTS AGAIN — REVERSES THE 2026-08-08 BLEND
+  (founder, 2026-09-03, later the same day).** The founder reviewed the live
+  `/wallet` screen (a real test account reading "2.94 USDT") and objected:
+  part of that figure was task/referral points converted at the fixed rate,
+  which is real, owed money, but settles from the TREASURY, not from
+  anything the user or a network actually deposited — showing it pre-blended
+  into "you have X USDT" implied money was sitting somewhere it wasn't.
+  ⚠️ **SUPERSEDES the "THE WALLET SCREEN BECOMES A REAL WALLET" entry above
+  (2026-08-08, third pass) and the earlier-today commit that orchestrated
+  `POST /wallet/withdraw` as a deposit→earned-USDT→points waterfall (commit
+  `38be4e0`, "Wallet withdraw becomes one USDT balance" — no CLAUDE.md entry
+  of its own was written for it, which is itself the gap this entry closes)
+  — both described Total Balance as deposit + earned USDT + points. It is
+  now deposit + earned USDT ONLY.**
+  - `GET /wallet/balance` (`api/src/routes/app.ts`): `usdtAvailableMicro` /
+    `usdtTotalMicro` sum only `usdt_ledger` (real deposits) and
+    `earned_usdt_ledger` (task USDT paid directly in USDT). Points are still
+    returned as `pointsAsUsdtMicro`, informationally, never summed in.
+  - `POST /wallet/withdraw` (`api/src/routes/withdrawals.ts`): the waterfall
+    dropped its third leg — it now only ever draws deposit → earned USDT.
+    Points are structurally invisible to this route: a points-only balance
+    is refused exactly as if it were zero, even when the points alone would
+    cover the request (regression test: `wwd-big-points-tiny-real`, a $50
+    points / $2 real account can withdraw the $2 but never the $50).
+  - Points cash out exactly as before this pass started, through the
+    separate, **untouched** `POST /withdrawals` (`source_kind: "points"`) —
+    same queue, same KYC/step-up/fee rules — now reachable from its own
+    screen, **`/wallet/earnings/withdraw`**, linked from a new "Task &
+    referral earnings" card on `/wallet`.
+  - **Max + 25/50/75% quick-fill chips** added to both withdraw amount
+    inputs (founder: "most exchanges have this on withdraw"), extracted into
+    one shared `web/src/components/QuickFillChips.tsx` — the two screens
+    draw on different balances and call different endpoints, but the chip
+    row itself is identical, so it is not two copies that can drift apart.
+  - `GET /wallet/balance`'s independent reads (gas rate, gas check, points,
+    deposit micro, earned micro, min-withdraw, the fee setting) now run
+    under one `Promise.all` instead of six sequential round-trips — this
+    endpoint is polled from the TopBar on every screen.
+  - Verified: `test:usdt` (112, the waterfall test block rewritten for two
+    sources instead of three) + `test:wallet` (52) + `test:withdrawcontrols`
+    (21) + `test:autowithdraw` (16) + `test:autorefund` (8) +
+    `test:payoutrelay` (48) + `test:fees` (24) + `test:stage4` (48) +
+    `test:moneyadmin` (100) all green; api + web typecheck, eslint, web
+    production build (38 routes) clean; `security-review` — no findings; a
+    follow-up correctness/efficiency/duplication pass across three angles
+    found no functional bugs (the waterfall math and the removed
+    floor→ceil clamp were both proven safe by brute-force and by algebra)
+    and two real but non-functional issues, both fixed in the same pass:
+    stale comments in three other files still describing the blended model
+    (this entry), and the duplicated quick-fill chip markup (the shared
+    component above). ⚠️ **Not extracted, flagged as a follow-up**: the fee-
+    preview formula and the KYC/step-up card JSX are ALSO duplicated between
+    `/wallet/withdraw` and `/wallet/earnings/withdraw` — worth a shared
+    `useWithdrawForm` hook or `<WithdrawForm>` component if a third
+    withdraw-shaped screen (e.g. a future ROZI cash-out) ever needs the same
+    shape, deliberately not done here to keep this pass to what was asked.
 
 See `docs/` for the full spec.

@@ -446,15 +446,20 @@ export const fetchReferrals = () => apiFetch<Referrals>("/referrals/me");
 export const bindReferral = (code: string) =>
   apiFetch<{ ok: true }>("/referrals/bind", { method: "POST", body: JSON.stringify({ code }) });
 export const fetchWithdrawals = () => apiFetch<{ requests: Withdrawal[] }>("/withdrawals");
+// Also the points cash-out path used by /wallet/earnings/withdraw — the
+// separate screen for task/referral earnings, since 2026-09-03 (un-blended,
+// same day) these no longer route through createWalletWithdrawal below.
 export const createWithdrawal = (amountPoints: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ request: Withdrawal }>("/withdrawals", {
     method: "POST", body: JSON.stringify({ amountPoints, chain, address, stepUpCode }),
   });
 
-// ONE WALLET, ONE WITHDRAWAL (founder, 2026-09-03). The user types one USDT
-// amount; the server draws it from money added, task USDT and task/referral
-// points — in whatever combination is needed — behind this single call. See
-// the header on POST /wallet/withdraw in api/src/routes/withdrawals.ts.
+// ONE WALLET, TWO REAL SOURCES (founder, 2026-09-03, un-blended same day).
+// The user types one USDT amount; the server draws it from money added and
+// task USDT already earned — in whatever combination is needed — behind this
+// single call. Task/referral points are NOT part of this any more (see
+// createWithdrawal above); see the header on POST /wallet/withdraw in
+// api/src/routes/withdrawals.ts.
 export const createWalletWithdrawal = (amountUsdtMicro: number, chain: string, address: string, stepUpCode?: string) =>
   apiFetch<{ ok: true; amountUsdtMicro: number; status: "paid" | "sending" | "pending" }>("/wallet/withdraw", {
     method: "POST", body: JSON.stringify({ amountUsdtMicro, chain, address, stepUpCode }),

@@ -5,13 +5,14 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { QuickFillChips } from "@/components/QuickFillChips";
 import { WalletIcon, CheckIcon, ClockIcon, ArrowRightIcon } from "@/components/icons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
   fetchBalance, fetchPayoutAddresses, createWithdrawal, requestWithdrawalStepUp, ApiError,
 } from "@/lib/api";
-import { formatMoney, usdtToPoints, formatBnbWei } from "@/lib/format";
+import { formatMoney, usdtToPoints, pointsToUsdt, formatBnbWei } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
 import { shortAddress } from "@/lib/wallet";
 
@@ -59,7 +60,11 @@ export default function EarningsWithdrawPage() {
   const gasFeeFixedMicro = bal.data?.gasFeeFixedMicro ?? 0;
   const chainMeta = CHAINS.find((c) => c.id === chain)!;
 
-  const minUsdt = min / 1000; // 1000 points = $1, matches format.ts's POINTS_PER_USDT
+  // Reuses the server-computed minimum (same value /wallet/withdraw reads),
+  // rather than re-deriving it from `min` with a local conversion — one
+  // fewer place that could drift from api/src/config.ts pointsPerUsdt.
+  const minMicro = bal.data?.minWithdrawUsdtMicro ?? 1_000_000;
+  const minUsdt = minMicro / 1_000_000;
   const typedUsdt = Number(usdtInput);
   const hasTyped = usdtInput.trim() !== "" && Number.isFinite(typedUsdt);
   const amtPoints = hasTyped ? usdtToPoints(typedUsdt) : min;
@@ -69,7 +74,7 @@ export default function EarningsWithdrawPage() {
 
   function fillPct(pct: number) {
     const pts = Math.floor((balance * pct) / 100);
-    setUsdtInput((pts / 1000).toString());
+    setUsdtInput(pointsToUsdt(pts).toString());
   }
 
   // Fee preview. The server re-computes and snapshots it (api/src/fees.ts);
@@ -209,20 +214,7 @@ export default function EarningsWithdrawPage() {
               className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
             <span className="shrink-0 font-semibold text-muted">USDT</span>
           </div>
-          {balance > 0 && (
-            <div className="mt-2 flex gap-1.5">
-              {[25, 50, 75].map((pct) => (
-                <button key={pct} type="button" onClick={() => fillPct(pct)}
-                  className="flex-1 rounded-lg border border-line bg-card py-1.5 text-xs font-semibold text-muted active:bg-brand-tint/40">
-                  {pct}%
-                </button>
-              ))}
-              <button type="button" onClick={() => fillPct(100)}
-                className="flex-1 rounded-lg border border-brand/30 bg-brand-tint py-1.5 text-xs font-bold text-brand active:bg-brand-tint/70">
-                {t("withdraw.max")}
-              </button>
-            </div>
-          )}
+          {balance > 0 && <QuickFillChips onPick={fillPct} />}
           <p className="mt-1.5 text-xs text-muted">
             {t("withdraw.lowestPayout", { points: formatMoney(min) })}
           </p>

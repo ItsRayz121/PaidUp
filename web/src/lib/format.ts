@@ -209,15 +209,20 @@ export function totalRoziMicro(roziMicro: number, points: number): number {
 //
 // THE PLACES USDT LEGITIMATELY SURVIVES, because the number there IS
 // USDT and calling it anything else would be the lie:
-//   • /wallet/withdraw — what we will actually send, on a real chain.
+//   • /wallet/withdraw — what we will actually send, on a real chain. Since
+//     2026-09-03 (un-blended, same day) this total is ONLY real deposited
+//     USDT + task USDT paid directly in USDT — task/referral points are
+//     deliberately excluded (they settle from the treasury, not from
+//     anything actually deposited; see api/src/routes/withdrawals.ts).
+//   • /wallet/earnings/withdraw — the separate points cash-out screen. The
+//     number there is real too: what points convert to at the real,
+//     existing payout rate, the same rate actually used when the request
+//     settles (payout.ts) — it just isn't folded into the /wallet total.
 //   • /mine/topup and /mine/rigs — top-up credit the user paid real USDT for.
 //   • /mine/convert — the conversion window's whole job is stating a cash rate.
 //   • /wallet, /wallet/usdt, /wallet/bnb — the wallet overhaul's Total Balance
-//     and USDT/BNB token pages. This is the founder's own reversal of the
-//     "hide USDT everywhere" rule above, done deliberately (see CLAUDE.md,
-//     the wallet overhaul entry): the headline figure folds in withdrawable
-//     points at the real 1000pts=$1 rate, which is a different case from
-//     ROZI — ROZI still has no fixed rate and is never part of this number.
+//     and USDT/BNB token pages. ROZI still has no fixed rate and is never
+//     part of this number (guardrail #7, unchanged).
 // The staff panel is exempt too, and still shows raw points: it is where the
 // ledger gets reconciled.
 export function formatPointsAsRozi(points: number): string {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Card, Button } from "@/components/ui";
 import { Loading, ErrorState } from "@/components/state";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { QuickFillChips } from "@/components/QuickFillChips";
 import { WalletIcon, CheckIcon, ClockIcon, ArrowRightIcon } from "@/components/icons";
 import { UsdtLogo } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
@@ -230,20 +231,7 @@ export default function WithdrawPage() {
               className="num w-full bg-transparent text-2xl font-bold text-brand-ink outline-none" />
             <span className="shrink-0 font-semibold text-muted">USDT</span>
           </div>
-          {usdtAvailableMicro > 0 && (
-            <div className="mt-2 flex gap-1.5">
-              {[25, 50, 75].map((pct) => (
-                <button key={pct} type="button" onClick={() => fillPct(pct)}
-                  className="flex-1 rounded-lg border border-line bg-card py-1.5 text-xs font-semibold text-muted active:bg-brand-tint/40">
-                  {pct}%
-                </button>
-              ))}
-              <button type="button" onClick={() => fillPct(100)}
-                className="flex-1 rounded-lg border border-brand/30 bg-brand-tint py-1.5 text-xs font-bold text-brand active:bg-brand-tint/70">
-                {t("withdraw.max")}
-              </button>
-            </div>
-          )}
+          {usdtAvailableMicro > 0 && <QuickFillChips onPick={fillPct} />}
           <p className="mt-1.5 text-xs text-muted">
             {t("withdraw.lowestPayout", { points: formatUsdtMicro(minMicro) })}
           </p>
