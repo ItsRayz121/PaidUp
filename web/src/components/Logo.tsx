@@ -22,7 +22,7 @@ export function LogoMark({ size = 32, className = "" }: { size?: number; classNa
   return (
     <span
       style={{ width: size, height: size }}
-      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-[28%] border border-brand/10 bg-white shadow-[0_2px_8px_rgba(7,67,164,0.14)] ${loaded ? "" : "bg-brand"} ${className}`}
+      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-[28%] border border-brand/10 shadow-[0_2px_8px_rgba(7,67,164,0.14)] ${loaded ? "bg-white" : "bg-brand"} ${className}`}
     >
       {!loaded && (
         <span style={{ fontSize: size * 0.55 }} className="font-bold leading-none text-white" aria-hidden>R</span>

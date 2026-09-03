@@ -26,7 +26,11 @@ type ButtonProps = {
 const variants: Record<string, string> = {
   primary: "bg-brand text-white hover:brightness-110 active:brightness-95",
   accent: "bg-accent text-brand-ink hover:brightness-105 active:brightness-95",
-  ghost: "bg-transparent text-brand border border-line hover:bg-brand-tint",
+  // A visible fill, not just a border — `border-line` is too close to the
+  // card/page background in the dark (vault) skin to read as a button edge
+  // on its own (founder screenshot, 2026-09-03: the Deposit button showed
+  // only its text, no visible shape, in both themes).
+  ghost: "bg-brand-tint text-brand border border-brand/15 hover:brightness-95 active:brightness-90",
 };
 
 export function Button({

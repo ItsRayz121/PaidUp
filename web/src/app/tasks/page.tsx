@@ -69,10 +69,10 @@ export default function TasksPage() {
         </div>
       </header>
 
-      <nav aria-label="Task views" className="grid grid-cols-3 rounded-xl bg-brand-tint p-1">
+      <nav aria-label="Task views" className="grid grid-cols-3 rounded-xl border border-brand/10 bg-brand-tint p-1">
         {(["available", "mine", "history"] as TaskView[]).map((item) => (
           <button key={item} onClick={() => switchView(item)} aria-current={view === item ? "page" : undefined}
-            className={`min-h-11 rounded-lg px-2 text-sm font-semibold ${view === item ? "bg-card text-brand shadow-sm" : "text-muted"}`}>
+            className={`min-h-11 rounded-lg px-2 text-sm font-semibold transition ${view === item ? "border border-brand/15 bg-card text-brand shadow-sm" : "border border-transparent text-muted"}`}>
             {item === "available" ? "Available" : item === "mine" ? "My activity" : "History"}
           </button>
         ))}

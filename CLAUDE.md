@@ -3253,4 +3253,47 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     panel (`GET /staff/mining/rpc`), and `/staff/{bnb-withdrawals,relay-jobs}/:id/handled`
     superseded by `/resolve` but left in place.
 
+- **THREE LOW-CONTRAST UI BUGS FOUND ON A PHONE PASS, ALL TOKEN/CLASS-LEVEL,
+  NOT DESIGN CHANGES (founder, 2026-09-03).** Verified: `npx tsc --noEmit`,
+  `eslint`, `next build` (38 routes) all clean; the compiled Tailwind CSS was
+  read back to confirm every class used resolves to one real, non-conflicting
+  rule. ⚠️ **NOT reviewed in a live authenticated browser session** — these
+  pages read balances off the live API/DB, and standing this up just to
+  screenshot a CSS fix was out of scope; verified instead by reading the
+  compiled CSS output and the token values behind each affected element.
+  - **`LogoMark` (`components/Logo.tsx`) applied `bg-white` UNCONDITIONALLY
+    and then ALSO applied `bg-brand` conditionally while the real logo file
+    hasn't loaded** — two `bg-*` utilities on one element. Tailwind resolves
+    same-specificity utility conflicts by their order in the COMPILED
+    stylesheet, not by their order in the className string, so `bg-white`
+    could silently win, leaving the white "R" fallback glyph on a white box —
+    invisible in light mode (visible in dark only because the page behind it
+    is dark). Fixed to a single ternary — `bg-white` only once the real image
+    has loaded, `bg-brand` only while it hasn't — so the two can never apply
+    together regardless of build order.
+  - **The `ghost` Button variant (`components/ui.tsx`) relied on
+    `border-line` alone for its shape** (`bg-transparent … border border-line`)
+    — used for every secondary action next to a primary one, wallet's Deposit
+    button (next to Withdraw) included. In the dark "vault" skin,
+    `--color-line` (#1e3a3f) sits almost on top of `--color-card`/page
+    background, so the border was nearly invisible — only the text read.
+    Same button also looked washed out in light mode next to the solid
+    primary button. Fixed to a visible fill instead of a border-only outline:
+    `bg-brand-tint text-brand border border-brand/15` — reusing the exact
+    `bg-brand-tint` pattern already used (and already legible in both themes)
+    for icon chips throughout the app, rather than tuning the global
+    `--color-line` token, which is used in 340+ places across the staff panel
+    too and wasn't touched to avoid an unreviewed, wide-blast-radius change.
+  - **`/tasks`'s Available/My activity/History segmented control** had the
+    same shape of problem — an active white/`bg-card` pill inside a
+    `bg-brand-tint` track with no border on either, reading as flat/washed
+    out in light mode. Gave both the track and the active pill a
+    `border-brand/10` / `border-brand/15` edge (inactive tabs get a
+    `border-transparent` of the same width so they don't shift size on
+    switch) — same fix shape as the Button change, deliberately not a
+    `--color-line` token edit for the same reason.
+  - Grepped for the same "static `bg-*` + conditionally-applied second
+    `bg-*` on one element" anti-pattern that caused the logo bug elsewhere in
+    `web/src` — no other instance found; the Logo component was the only one.
+
 See `docs/` for the full spec.
