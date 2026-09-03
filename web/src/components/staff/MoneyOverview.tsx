@@ -117,23 +117,50 @@ export function MoneyOverview() {
           on-chain treasury + unswept deposit addresses
           {o.heldNow.checkedAt ? <> · checked <TimeCell iso={o.heldNow.checkedAt} /></> : " · no reconciliation snapshot yet"}
         </p>
+        {/* One row per chain, each broken into its own lines instead of one
+            run-on sentence — the founder found "BEP20 6.09 · of which held in
+            unswept deposit addresses: 4.09" unreadable at a glance
+            (2026-09-03). The "in the treasury wallet" split is only safe to
+            compute per chain while there is exactly one chain live — the
+            unswept liability figure is a GLOBAL sum (see staff.ts), not
+            per-chain, so on a future multi-chain deploy this quietly falls
+            back to just the per-chain total + the one global unswept line. */}
         {chains.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {chains.map((c) => (
-              <span key={c} className="text-muted">
-                <span className="font-semibold uppercase text-brand-ink">{c}</span>{" "}
-                <span className="num">{formatUsdtMicro(o.heldNow.treasuryMicro[c])}</span>
-              </span>
-            ))}
+          <div className="mt-3 space-y-2.5 border-t border-line pt-2.5">
+            {chains.map((c) => {
+              const totalMicro = o.heldNow.treasuryMicro[c];
+              const sweptMicro = chains.length === 1
+                ? Math.max(0, totalMicro - o.heldNow.usdtDepositLiabilityMicro)
+                : null;
+              return (
+                <div key={c} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold uppercase text-brand-ink">{c}</span>
+                    <span className="num font-semibold text-brand-ink">{formatUsdtMicro(totalMicro)}</span>
+                  </div>
+                  {sweptMicro !== null && (
+                    <>
+                      <div className="flex items-center justify-between pl-3 text-xs text-muted">
+                        <span>In the treasury wallet</span>
+                        <span className="num">{formatUsdtMicro(sweptMicro)}</span>
+                      </div>
+                      <div className="flex items-center justify-between pl-3 text-xs text-muted">
+                        <span>In users&rsquo; wallets, not yet swept</span>
+                        <span className="num">{formatUsdtMicro(o.heldNow.usdtDepositLiabilityMicro)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-        {/* Still real, instantly-movable money — just not swept to the main
-            treasury address yet. Kept in THIS card because it's a breakdown of
-            the same headline figure, not a liability. */}
-        <p className="mt-2 text-xs text-muted">
-          of which held in unswept deposit addresses:{" "}
-          <span className="num font-semibold text-brand-ink">{formatUsdtMicro(o.heldNow.usdtDepositLiabilityMicro)}</span>
-        </p>
+        {chains.length !== 1 && (
+          <p className="mt-2 text-xs text-muted">
+            of which held in unswept deposit addresses:{" "}
+            <span className="num font-semibold text-brand-ink">{formatUsdtMicro(o.heldNow.usdtDepositLiabilityMicro)}</span>
+          </p>
+        )}
       </div>
 
       {/* ---- inflow / outflow for the chosen window ---- */}
