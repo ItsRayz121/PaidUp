@@ -1,28 +1,42 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { LogoMark } from "./Logo";
 import { TasksIcon, MineIcon, ReferIcon } from "./icons";
 import "./WelcomeExperience.css";
 
-// A short, premium welcome shown ONCE, right after sign-in, before the user
-// first reaches the home screen. It sits on top of the real home page (which is
+// A short, premium welcome shown right after sign-in, before the user first
+// reaches the home screen. It sits on top of the real home page (which is
 // already mounted and loading its data underneath), so tapping "Let's start"
 // just dissolves this overlay away — no reload, no second copy of home.
 //
-// FIRST-TIME GATING. There is no account-level onboarding flag on the session
-// (see SessionUser in lib/api.ts), so completion is stored per user in
-// localStorage under `rozipay.welcome.<userId>`. It is written ONLY when the
-// button is tapped — never just because the animation loaded — and the key is
-// scoped to the signed-in user so a second account on the same phone gets its
-// own welcome.
+// RENDERED VIA A PORTAL, straight onto `document.body`. `position: fixed;
+// inset: 0` (WelcomeExperience.css) is supposed to cover the exact viewport
+// no matter where a component sits in the tree, but a screenshot review
+// (founder, 2026-09-03) showed the real home screen's own bottom nav bar
+// peeking through beneath it — a gap that read as two screens stitched
+// together instead of one. A portal sidesteps whatever in the ancestor chain
+// caused that (a future transform/filter/contain on `.app-frame` or a
+// sibling would silently re-narrow a fixed element's containing block) by
+// mounting outside it entirely, at the very end of <body>.
+//
+// REPEAT GATING, ADMIN-TUNABLE. There is no account-level onboarding flag on
+// the session (see SessionUser in lib/api.ts), so the last-dismissed time is
+// stored per user in localStorage under `rozipay.welcome.<userId>`, written
+// ONLY when the button is tapped. `repeatDays` (from GET /features, set in
+// /staff → Feature flags → Global settings) decides whether — and how long
+// after that — it is allowed to show again: 0 means once, ever, which was the
+// only behaviour before this setting existed and stays the default.
 //
 // DEV REPLAY. In a non-production build, `/?welcome=1` (or `?welcome=replay`)
-// forces the welcome to show again regardless of the stored flag. The check is
-// compiled out of production, so a normal user has no way to re-trigger it.
+// forces the welcome to show again regardless of the stored timestamp. The
+// check is compiled out of production, so a normal user has no way to
+// re-trigger it.
 
 const seenKey = (userId: string) => `rozipay.welcome.${userId}`;
+const DAY_MS = 86_400_000;
 
 // Entrance length before the overlay settles into its calm idle loop. Kept in
 // sync with the timing map in WelcomeExperience.css — it must be >= the last
@@ -43,7 +57,11 @@ function prefersReducedMotion(): boolean {
 // Decide once, at mount, whether this user should see the welcome. Reads
 // localStorage (an external system), so it lives here rather than in an effect —
 // same pattern as the lazy `useState` initializers in InstallPrompt.tsx.
-function decideShow(userId: string | undefined): boolean {
+//
+// `repeatDays` is the admin's setting (0 = once, ever): the caller only mounts
+// this component once it knows that value, so there is no "unknown interval"
+// case to handle here.
+function decideShow(userId: string | undefined, repeatDays: number): boolean {
   if (typeof window === "undefined" || !userId) return false;
 
   if (process.env.NODE_ENV !== "production") {
@@ -51,12 +69,17 @@ function decideShow(userId: string | undefined): boolean {
       const q = new URLSearchParams(window.location.search).get("welcome");
       if (q !== null && q !== "0" && q !== "false") return true;
     } catch {
-      /* malformed URL — fall through to the stored flag */
+      /* malformed URL — fall through to the stored value */
     }
   }
 
   try {
-    return window.localStorage.getItem(seenKey(userId)) !== "1";
+    const stored = window.localStorage.getItem(seenKey(userId));
+    if (!stored) return true; // never dismissed
+    if (repeatDays <= 0) return false; // dismissed once, admin says never again
+    const last = Date.parse(stored);
+    if (!Number.isFinite(last)) return true; // unreadable value — treat as never seen
+    return Date.now() - last >= repeatDays * DAY_MS;
   } catch {
     // Storage blocked (private mode): show it; nothing will persist, so it may
     // reappear next visit — acceptable, and rare in this market.
@@ -66,9 +89,11 @@ function decideShow(userId: string | undefined): boolean {
 
 type Phase = "enter" | "idle" | "exiting";
 
-export function WelcomeExperience({ userId }: { userId: string | undefined }) {
+export function WelcomeExperience({
+  userId, repeatDays,
+}: { userId: string | undefined; repeatDays: number }) {
   const [reduced] = useState(prefersReducedMotion);
-  const [show, setShow] = useState(() => decideShow(userId));
+  const [show, setShow] = useState(() => decideShow(userId, repeatDays));
   const [phase, setPhase] = useState<Phase>(reduced ? "idle" : "enter");
   const ctaRef = useRef<HTMLButtonElement>(null);
 
@@ -99,10 +124,13 @@ export function WelcomeExperience({ userId }: { userId: string | undefined }) {
   }, [show]);
 
   const dismiss = useCallback(() => {
-    // Completion is recorded HERE — on the tap — and only here.
+    // The dismissal TIME is recorded HERE — on the tap — and only here. It
+    // used to be a bare "1"; now it doubles as the anchor `decideShow` counts
+    // `repeatDays` forward from, so an admin can turn the once-only default
+    // into a recurring nudge with no other client-side change.
     if (userId) {
       try {
-        window.localStorage.setItem(seenKey(userId), "1");
+        window.localStorage.setItem(seenKey(userId), new Date().toISOString());
       } catch {
         /* storage blocked — the welcome may show again next visit; acceptable */
       }
@@ -134,7 +162,7 @@ export function WelcomeExperience({ userId }: { userId: string | undefined }) {
     .filter(Boolean)
     .join(" ");
 
-  return (
+  const node = (
     <div
       className={rootClass}
       role="dialog"
@@ -143,6 +171,9 @@ export function WelcomeExperience({ userId }: { userId: string | undefined }) {
       aria-describedby="we-sub"
       onKeyDown={onKeyDown}
     >
+      {/* This is the mark's expanding-disc EXIT EFFECT (a decorative CSS
+          shape, "we-portal" in WelcomeExperience.css) — unrelated to the
+          React portal this component itself renders through, below. */}
       <div className="we-portal" aria-hidden="true" />
 
       <div className="we-stage">
@@ -246,6 +277,12 @@ export function WelcomeExperience({ userId }: { userId: string | undefined }) {
           <p id="we-sub" className="we-sub">
             Earn from simple tasks. Mine ROZI. Grow with friends.
           </p>
+          {/* Above the button, not below it (founder, 2026-09-03): the button
+              is the last thing on screen and the one thing that should feel
+              final, not a caption trailing after it looking like a second,
+              separate row. See WelcomeExperience.css for the matching swap
+              in fade-in timing — the button still settles in last. */}
+          <p className="we-tagline">Your RoziPay journey starts here</p>
           <button
             ref={ctaRef}
             type="button"
@@ -254,9 +291,13 @@ export function WelcomeExperience({ userId }: { userId: string | undefined }) {
           >
             <span className="we-cta-label">Let&apos;s start</span>
           </button>
-          <p className="we-tagline">Your RoziPay journey starts here</p>
         </div>
       </div>
     </div>
   );
+
+  // Portal, not inline — see the file header for why. Nothing above this
+  // return depends on the actual DOM position, so mounting straight onto
+  // <body> is a drop-in swap.
+  return createPortal(node, document.body);
 }

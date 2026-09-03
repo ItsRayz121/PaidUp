@@ -38,11 +38,37 @@ const TONE_CLASS: Record<Tone, string> = {
   bad: "bg-danger-tint text-danger",
 };
 
+// Wording overrides for a handful of status VALUES whose raw name reads as
+// something it isn't (founder, 2026-09-03 — a disbursement queue showing
+// "RELEASED" for a reward that only ever touched the in-app balance, next to
+// a `-` where a transaction hash would go, read as "we already sent this on
+// the blockchain"). Only override where the plain snake_case would MISLEAD —
+// everything else still falls through to the generic underscore-to-space
+// rendering below, so a status added anywhere in the app still shows SOME
+// readable label with no changes here.
+//
+// ⚠️ "paid" -> "Sent" is safe precisely because "paid" already means the same
+// thing everywhere it's used in this codebase (withdrawals, BNB withdrawals,
+// USDT refunds, disbursements): a real payment left the platform, usually
+// with a tx hash attached. "released" -> "Credited" is the other half of that
+// same distinction: it means the money reached the user's IN-APP BALANCE,
+// nothing more — the disbursement "balance" mode's terminal state, and the
+// intermediate state a non-balance disbursement passes through before a
+// payout is even created. Relabelling either word without keeping this
+// distinction would put a false "it was sent" claim in front of a reviewer
+// deciding whether to trust a screen full of other people's money.
+const STATUS_LABEL: Record<string, string> = {
+  released: "Credited",
+  paid: "Sent",
+};
+
 export function StatusBadge({ status, tone }: { status: string; tone?: Tone }) {
-  const t = tone ?? STATUS_TONE[status?.toLowerCase?.() ?? ""] ?? "neutral";
+  const key = status?.toLowerCase?.() ?? "";
+  const t = tone ?? STATUS_TONE[key] ?? "neutral";
+  const label = STATUS_LABEL[key] ?? String(status ?? "—").replace(/_/g, " ");
   return (
     <span className={`inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${TONE_CLASS[t]}`}>
-      {String(status ?? "—").replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

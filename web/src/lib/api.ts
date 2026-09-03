@@ -387,7 +387,8 @@ export type UsdtTaskReward = { id: string; amountMicro: number; completionId: st
 export const fetchUsdtTaskRewards = () => apiFetch<{ rewards: UsdtTaskReward[] }>("/wallet/usdt-task-rewards");
 
 // Public feature-flag snapshot. Used to hide screens for features not launched.
-export const fetchFeatures = () => apiFetch<{ features: Record<string, boolean> }>("/features");
+export const fetchFeatures = () =>
+  apiFetch<{ features: Record<string, boolean>; welcomeRepeatDays: number }>("/features");
 
 // Lifetime "what you've earned from the platform" (earner app). 403s while the
 // earnings_view flag is off — screens treat that as "not available yet".
@@ -1534,6 +1535,7 @@ export const fetchSettings = () =>
     minWithdrawPoints: number;
     ticketAutoCloseHours: number;
     maintenanceMode: boolean; maintenanceMessage: string;
+    welcomeRepeatDays: number;
   }>("/staff/settings");
 export const updateSettings = (patch: {
   withdrawalFeePoints?: number;
@@ -1550,6 +1552,7 @@ export const updateSettings = (patch: {
   ticketAutoCloseHours?: number;
   maintenanceMode?: boolean;
   maintenanceMessage?: string;
+  welcomeRepeatDays?: 0 | 1 | 7 | 30 | 365;
 }) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, Button, SectionTitle } from "@/components/ui";
 import { StatusLegend } from "@/components/TaskFlow";
 import { Loading, ErrorState, EmptyState } from "@/components/state";
-import { WalletIcon, SendIcon, ReceiveIcon, ArrowRightIcon } from "@/components/icons";
+import { SendIcon, ReceiveIcon, ArrowRightIcon } from "@/components/icons";
 import { UsdtLogo, BnbLogo, RoziMark } from "@/components/tokenIcons";
 import { TxDetailSheet, FilterChip } from "@/components/TxDetailSheet";
 import { BottomSheet } from "@/components/BottomSheet";
@@ -54,11 +54,6 @@ export default function WalletPage() {
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
 
   const usdtAvailableMicro = bal.data?.usdtAvailableMicro ?? 0;
-  // The withdraw screen now cashes out task earnings, task USDT AND deposit
-  // credit (founder, 2026-08-29), so the shortcut shows whenever there is
-  // anything actually ready to take out — not only when points cross the
-  // minimum.
-  const canWithdraw = usdtAvailableMicro > 0;
   const usdtLockedMicro = bal.data?.usdtLockedMicro ?? 0;
   const usdtTotalMicro = bal.data?.usdtTotalMicro ?? 0;
   // ⚠️ NO NUMBER ON THIS SCREEN MAY BE A FALLBACK ZERO. Every figure above is
@@ -186,14 +181,10 @@ export default function WalletPage() {
         </Card>
       </section>
 
-      {/* The balance's own failure state now lives with the balance card above,
-          where the wrong number would otherwise be. This is only the cash-out
-          shortcut, which simply does not appear until we know it applies. */}
-      {canWithdraw && (
-        <Button href="/wallet/withdraw" variant="primary">
-          <WalletIcon size={20} /> {t("common.getMyMoney")}
-        </Button>
-      )}
+      {/* The "Get my money" shortcut button that used to sit here is gone
+          (founder, 2026-09-03) — Withdraw, right above in the Deposit/Withdraw
+          row, already opens the exact same screen. A second button pointing
+          at the same place just repeated it lower down the page. */}
 
       <section>
         <SectionTitle>{t("wallet.history")}</SectionTitle>

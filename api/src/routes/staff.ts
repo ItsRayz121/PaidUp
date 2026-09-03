@@ -13,7 +13,7 @@ import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled, parseDataUrl } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
-import { ticketAutoCloseHoursNow } from "../settingsRuntime.ts";
+import { ticketAutoCloseHoursNow, welcomeRepeatDaysNow } from "../settingsRuntime.ts";
 import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
 import { loadAnalytics } from "../analytics.ts";
 import { fetchTelegramChatIdentity } from "../telegram.ts";
@@ -1153,6 +1153,9 @@ export async function staffRoutes(app: FastifyInstance) {
     // reason you turn this on is usually so staff can go and fix something.
     maintenanceMode: (await getSetting("maintenance_mode", "0")) === "1",
     maintenanceMessage: await getSetting("maintenance_message", ""),
+    // How often the first-run welcome overlay (WelcomeExperience.tsx) is
+    // allowed to show an earner again after they dismiss it. 0 = once, ever.
+    welcomeRepeatDays: await welcomeRepeatDaysNow(),
   })));
 
   const settingsSchema = z.object({
@@ -1183,6 +1186,11 @@ export async function staffRoutes(app: FastifyInstance) {
     ticketAutoCloseHours: z.number().int().min(0).max(720).optional(),
     maintenanceMode: z.boolean().optional(),
     maintenanceMessage: z.string().trim().max(300).optional(),
+    // How often the welcome overlay may show an earner again after they
+    // dismiss it. A CLOSED set of presets, not a free-form number — a
+    // picker, same as the founder asked for, not a text box someone can
+    // typo into showing it every 3 minutes.
+    welcomeRepeatDays: z.union([z.literal(0), z.literal(1), z.literal(7), z.literal(30), z.literal(365)]).optional(),
     // Treasury (hot wallet) address per chain. Empty string clears it.
     treasury: z.object({
       bep20: z.string().trim().max(120).optional(),
@@ -1237,6 +1245,9 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     if (parsed.data.maintenanceMessage !== undefined) {
       await setSetting("maintenance_message", parsed.data.maintenanceMessage);
+    }
+    if (parsed.data.welcomeRepeatDays !== undefined) {
+      await setSetting("welcome_repeat_days", String(parsed.data.welcomeRepeatDays));
     }
     if (parsed.data.maintenanceMode !== undefined) {
       const wasMaint = (await getSetting("maintenance_mode", "0")) === "1";

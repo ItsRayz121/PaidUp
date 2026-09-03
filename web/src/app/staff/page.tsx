@@ -35,7 +35,7 @@ import { DashboardOverview } from "@/components/staff/DashboardOverview";
 import { MoneyOverview } from "@/components/staff/MoneyOverview";
 import {
   ChartIcon, WalletIcon, ShieldIcon, TasksIcon, MineIcon, ReferIcon,
-  InboxIcon, HelpIcon, ClockIcon, SlidersIcon, GearIcon, ProfileIcon,
+  InboxIcon, HelpIcon, ClockIcon, SlidersIcon, ProfileIcon,
 } from "@/components/icons";
 
 // Internal tool: information density + speed over friendliness (DESIGN_BRIEF).
@@ -94,11 +94,13 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
   { id: "messages", label: "Messages & content", needs: ["notifications.send", "content.manage"] },
   { id: "support", label: "Support tickets", needs: ["support.view"] },
   { id: "audit", label: "Audit log", needs: ["audit.view"] },
-  // Founder, 2026-09-01: "a different page for each — flags, settings, alerts".
-  // Each is its own sidebar entry now, gated on its own permission, instead of
-  // three sub-tabs under one "Features & settings" section.
-  { id: "flags", label: "Feature flags", needs: ["flags.manage"] },
-  { id: "settings", label: "Global settings", needs: ["settings.manage"] },
+  // ⚠️ REMERGED (founder, 2026-09-03) — "Feature flags" and "Global settings"
+  // were split into two top-level pages on 2026-09-01 ("a different page for
+  // each") and are now one section again, Global settings as its sub-tab
+  // (SECTION_PANELS.flags below). Visible to a role holding EITHER
+  // permission, same as any other multi-tab section — a Finance role with
+  // only settings.manage still sees the section, just with one tab in it.
+  { id: "flags", label: "Feature flags", needs: ["flags.manage", "settings.manage"] },
   // Staff alerts is a sub-tab of "Staff & roles" now (founder, 2026-09-02) —
   // it is a staffing/ops concern, not its own top-level page.
   { id: "team", label: "Staff & roles", needs: ["staff.manage", "infra.view"] },
@@ -110,7 +112,7 @@ const SECTIONS: { id: SectionId; label: string; needs: UiPermission[] }[] = [
 const SECTION_ICON: Record<SectionId, (p: { size?: number }) => ReactNode> = {
   dashboard: ChartIcon, money: WalletIcon, users: ShieldIcon, tasks: TasksIcon,
   mining: MineIcon, growth: ReferIcon, messages: InboxIcon, support: HelpIcon,
-  audit: ClockIcon, flags: SlidersIcon, settings: GearIcon, team: ProfileIcon,
+  audit: ClockIcon, flags: SlidersIcon, team: ProfileIcon,
 };
 
 // ---- Sub-panels within a section ------------------------------------------
@@ -309,6 +311,11 @@ export default function StaffPage() {
       { id: "p-staff-roles", label: "Staff & roles", need: "staff.manage", node: <StaffRolesPanel /> },
       { id: "p-alerts", label: "Alerts", need: "infra.view", node: <StaffAlertsPanel /> },
     ],
+    // Remerged (founder, 2026-09-03) — see the SECTIONS comment above.
+    flags: [
+      { id: "p-flags", label: "Feature flags", need: "flags.manage", node: <FeatureFlagsPanel /> },
+      { id: "p-settings", label: "Global settings", need: "settings.manage", node: <GlobalSettingsPanel /> },
+    ],
   };
 
   return (
@@ -387,15 +394,6 @@ export default function StaffPage() {
           {section === "audit" && may("audit.view") && (
             <Panel title="Audit log"><AuditPanel /></Panel>
           )}
-
-          {section === "flags" && may("flags.manage") && (
-            <Panel id="p-flags" title="Feature flags"><FeatureFlagsPanel /></Panel>
-          )}
-
-          {section === "settings" && may("settings.manage") && (
-            <Panel id="p-settings" title="Global settings"><GlobalSettingsPanel /></Panel>
-          )}
-
 
           {/* Multi-panel sections: one sub-tab bar, one mounted panel. */}
           {section && SECTION_PANELS[section] && (() => {

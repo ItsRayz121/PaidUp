@@ -9,7 +9,7 @@ import { getGasFeeRate } from "../fees.ts";
 import { relayAvailable, hasEnoughGasForDisplay } from "../payoutRelay.ts";
 import { pointsToUsdt } from "../payout.ts";
 import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
-import { minWithdrawPointsNow } from "../settingsRuntime.ts";
+import { minWithdrawPointsNow, welcomeRepeatDaysNow } from "../settingsRuntime.ts";
 import { loadLeaderboard, maskName } from "../leaderboard.ts";
 import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
@@ -43,7 +43,16 @@ export async function appRoutes(app: FastifyInstance) {
   // its own flag server-side, and this endpoint only saves the user a wasted
   // tap. Deliberately unauthenticated-shaped (still behind `guard`, but the
   // answer is the same for everyone): there is nothing per-user here.
-  app.get("/features", guard(async () => ({ features: await allFlags() })));
+  //
+  // `welcomeRepeatDays` rides along on this same call for the same reason —
+  // one more piece of "what should the app show right now" config with a
+  // single global answer, and the home screen (its only reader) already
+  // needs a request like this before deciding whether to mount the
+  // first-run welcome overlay (WelcomeExperience.tsx).
+  app.get("/features", guard(async () => ({
+    features: await allFlags(),
+    welcomeRepeatDays: await welcomeRepeatDaysNow(),
+  })));
 
   // Offer feed for the user's country
   app.get("/tasks", guard(async (userId, req) => {

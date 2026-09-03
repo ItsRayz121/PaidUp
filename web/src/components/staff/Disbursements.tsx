@@ -359,10 +359,18 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
                 </button>
               </td>
               <td className="py-2 pr-3 num">{usdt(r.usdtMicro)}</td>
-              <td className="py-2 pr-3">{r.destAddress ? <Addr value={r.destAddress} chain={r.destChain ?? undefined} /> : <span className="text-xs text-muted">—</span>}</td>
+              <td className="py-2 pr-3">
+                {r.destAddress ? <Addr value={r.destAddress} chain={r.destChain ?? undefined} />
+                  : batch?.mode === "balance"
+                    ? <span className="text-xs text-muted">In-app balance</span>
+                    : <span className="text-xs text-muted">—</span>}
+              </td>
               <td className="py-2 pr-3"><StatusBadge status={r.status} /></td>
               <td className="py-2 pr-3 text-xs text-muted">
-                {r.txHash ? <TxHash value={r.txHash} chain={r.destChain ?? undefined} /> : r.error ?? "—"}
+                {r.txHash ? <TxHash value={r.txHash} chain={r.destChain ?? undefined} />
+                  : r.error ?? (batch?.mode === "balance" && r.status === "released"
+                    ? "No transfer — credited to balance only"
+                    : "—")}
               </td>
               <td className="py-2 text-right">
                 {canManage && r.status === "sending" && r.withdrawalRequestId && r.destAddress && (
@@ -394,6 +402,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
             {batchLabel(batch)}
             <span className="mt-0.5 block text-sm font-normal text-muted">
               {MODE_LABEL[batch.mode]}
+              {batch.mode === "balance" && " — added to the user's balance, no address or transaction"}
               {canManage && (
                 <button onClick={rename} className="ms-2 text-xs font-semibold text-brand underline">
                   Rename

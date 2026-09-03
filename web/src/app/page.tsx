@@ -12,7 +12,7 @@ import {
 } from "@/components/icons";
 import { useRequireAuth, useApi, useCountdown } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchTasks, fetchMiningState } from "@/lib/api";
+import { fetchBalance, fetchTasks, fetchMiningState, fetchFeatures } from "@/lib/api";
 import { formatRozi, pointsToRoziMicro, totalRoziMicro, HERO_DECIMALS } from "@/lib/format";
 
 // ONE CURRENCY (founder, 2026-07-30). This screen shows a SINGLE balance, in
@@ -41,6 +41,10 @@ export default function HomePage() {
   const bal = useApi(fetchBalance, []);
   const tasks = useApi(fetchTasks, []);
   const mining = useApi(fetchMiningState, []);
+  // Only for the admin-tunable welcome-repeat interval (see WelcomeExperience.tsx)
+  // — decideShow() needs a real number, not "still loading", so the overlay
+  // itself is not mounted until this call resolves.
+  const features = useApi(fetchFeatures, []);
 
   const countdown = useCountdown(mining.data?.session.expiresAt);
 
@@ -73,10 +77,15 @@ export default function HomePage() {
     <div className="relative px-4 pt-5 pb-8 space-y-5">
       <AmbientBg />
 
-      {/* First signed-in visit only: a ~2.5s welcome shown over this page while
-          it loads underneath. Earner accounts only; gated per user (see the
-          component). The button works immediately. */}
-      {user && !user.role && <WelcomeExperience userId={user.id} />}
+      {/* First signed-in visit (or a later one, if an admin turned the repeat
+          interval on): a ~2.5s welcome shown over this page while it loads
+          underneath. Earner accounts only; gated per user (see the
+          component). Waits on `features` because the repeat interval itself
+          comes from there — a moment's delay beats flashing the overlay open
+          and then deciding it should have stayed shut. */}
+      {user && !user.role && !features.loading && (
+        <WelcomeExperience userId={user.id} repeatDays={features.data?.welcomeRepeatDays ?? 0} />
+      )}
 
       {/* `break-all` used to sit on the name, which splits an ordinary word
           wherever the line happens to end — "Muhamm / ad". `break-words` only

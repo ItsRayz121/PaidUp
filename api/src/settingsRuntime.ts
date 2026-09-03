@@ -44,3 +44,18 @@ export async function ticketAutoCloseHoursNow(): Promise<number> {
   const stored = Number(raw);
   return Number.isFinite(stored) && stored >= 0 ? stored : config.ticketAutoCloseHours;
 }
+
+/**
+ * How long after an earner dismisses the first-run welcome overlay
+ * (WelcomeExperience.tsx) before it is allowed to show them again.
+ *
+ * 0 = show once, ever (the original behaviour, and the default). Any other
+ * value is one of a closed set of presets (1/7/30/365 days) the admin picks
+ * from `/staff` — not a free-form number — so this only ever validates
+ * against that same list rather than trusting whatever is in the row.
+ */
+const WELCOME_REPEAT_PRESETS = [0, 1, 7, 30, 365];
+export async function welcomeRepeatDaysNow(): Promise<number> {
+  const stored = Number(await getSetting("welcome_repeat_days", "0"));
+  return WELCOME_REPEAT_PRESETS.includes(stored) ? stored : 0;
+}

@@ -20,6 +20,16 @@
 .we-root {
   position: fixed;
   inset: 0;
+  /* Belt-and-braces alongside the React portal in WelcomeExperience.tsx: an
+     explicit width/height guarantees the box is the full viewport even if
+     `inset: 0` alone ever resolves against something narrower than the real
+     viewport again. `dvh`/`dvw` track the browser chrome (address bar, safe
+     areas) on mobile; `vh`/`vw` are the fallback for a browser too old to
+     know `dvh` at all. */
+  width: 100vw;
+  width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
   z-index: 120;
   display: flex;
   isolation: isolate;
@@ -303,8 +313,13 @@
   0%, 84%, 100% { transform: scale(1);     box-shadow: 0 10px 30px -12px rgba(23, 195, 187, 0.7) }
   90%           { transform: scale(1.025); box-shadow: 0 14px 40px -10px rgba(23, 195, 187, 0.95) }
 }
+/* Sits ABOVE the button now (founder, 2026-09-03) — a small caption before
+   the CTA, not a trailing row after it. Tight top margin: `.we-sub` above it
+   already carries its own spacing, and `.we-cta` below supplies the bigger
+   gap before the button (clamp(22px,5vh,34px)), so the button reads as the
+   one confidently-spaced, final element on screen. */
 .we-tagline {
-  margin: 16px 0 0;
+  margin: 10px 0 0;
   font-size: 0.8rem;
   letter-spacing: 0.02em;
   color: #8fbdb8;
@@ -313,8 +328,12 @@
 /* ---------- entrance: copy fades (only before `.we-idle`) ---------- */
 .we-root:not(.we-idle):not(.we-exiting) .we-headline { animation: we-fade-up 460ms ease 220ms both; }
 .we-root:not(.we-idle):not(.we-exiting) .we-sub      { animation: we-fade-up 460ms ease 360ms both; }
-.we-root:not(.we-idle):not(.we-exiting) .we-cta      { animation: we-fade-up 460ms ease 1700ms both; }
-.we-root:not(.we-idle):not(.we-exiting) .we-tagline  { animation: we-fade-up 460ms ease 1900ms both; }
+/* Delays swapped from the tagline's (founder, 2026-09-03): the tagline moved
+   ABOVE the button in the markup, but the button should still be the last
+   thing to visually settle in — it is the one action on this screen, and the
+   last-to-arrive element is the one that reads as "the point of the screen". */
+.we-root:not(.we-idle):not(.we-exiting) .we-tagline  { animation: we-fade-up 460ms ease 1700ms both; }
+.we-root:not(.we-idle):not(.we-exiting) .we-cta      { animation: we-fade-up 460ms ease 1900ms both; }
 @keyframes we-fade-up {
   from { opacity: 0; transform: translateY(10px) }
   to   { opacity: 1; transform: translateY(0) }

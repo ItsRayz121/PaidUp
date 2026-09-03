@@ -3016,4 +3016,71 @@ UNCHANGED and still $0/0 BNB — confirmed the same way, via a direct
 `eth_getBalance`/`balanceOf` call against the treasury address.)
 Everything else on the old checklist is done, deferred by decision, or declined.
 
+- **A PHONE-REVIEW PASS: THE WELCOME SCREEN STOPS LEAKING THE PAGE BEHIND IT,
+  FEATURE FLAGS AND GLOBAL SETTINGS ARE ONE SCREEN AGAIN, "GET MY MONEY" IS
+  GONE FROM /wallet, AND A DISBURSEMENT QUEUE STOPS IMPLYING A BLOCKCHAIN SEND
+  THAT NEVER HAPPENED (founder, 2026-09-03).** Four asks off screenshots.
+  Verified: api + web typecheck, eslint (0 errors, pre-existing `<img>`
+  warnings only), web production build (37 routes) all clean;
+  `test:disbursements` (81), `test:admin` (15), `test:usersadmin` (59),
+  `test:moneyadmin` (100), `test:wallet` (52), `test:flags` (8),
+  `test:permissions` (17) — all green.
+  - **The welcome overlay now renders through a React portal straight onto
+    `document.body`**, not inline in the component tree
+    (`WelcomeExperience.tsx`). The screenshot showed the real home screen's
+    own bottom nav bar peeking through under the "Let's start" button — the
+    overlay is `position: fixed; inset: 0`, which is *supposed* to be
+    containing-block-proof, but a portal removes the question entirely by
+    mounting outside `.app-frame` altogether. `.we-root` also gained explicit
+    `100dvh`/`100dvw` sizing alongside `inset: 0` as a second, independent
+    guard.
+  - **The tagline moved above the button, not below it.** "Your RoziPay
+    journey starts here" used to trail the CTA, which read as a second,
+    separate row bolted under the screen rather than part of one full-bleed
+    screen. The fade-in delays were swapped in the CSS so the button — the
+    one action on the screen — is still the last thing to visually settle in,
+    even though it's no longer last in the markup.
+  - **The welcome screen's repeat interval is now admin-tunable**
+    (`/staff → Feature flags → Global settings`): once only (unchanged
+    default), every 24 hours, every 7 days, every 30 days, or every year. A
+    closed set of presets, not a free-form number — picked, not typed.
+    `WelcomeExperience.tsx`'s localStorage value changed from a bare `"1"` to
+    an ISO timestamp, which `decideShow()` now counts `repeatDays` forward
+    from; the earner client reads the setting off `GET /features`
+    (`welcomeRepeatDays`, alongside the existing feature-flag map — one more
+    "what should the app show right now" global answer on the same call), and
+    home does not mount the overlay until that call resolves, so it can never
+    flash open and then decide it should have stayed shut. Backend:
+    `settingsRuntime.ts`'s `welcomeRepeatDaysNow()`, `GET`/`PATCH
+    /staff/settings`.
+  - **"Feature flags" and "Global settings" are one sidebar section again**
+    (`flags`), Global settings as its second sub-tab — reversing the
+    2026-09-01 split into two top-level pages. `SectionId` dropped `"settings"`
+    as its own value; every deep link (`staff-search.tsx`, the dashboard's
+    jump links) that used to point at it now points at `flags` /
+    `p-settings`.
+  - **"Get my money" is gone from `/wallet`.** It sat below the token list,
+    pointing at the exact same `/wallet/withdraw` screen the Withdraw button
+    right at the top of the page already opens — a second button for the same
+    destination, further down the page a user has to scroll to see.
+  - ⚠️ **A DISBURSEMENT'S STATUS NOW SAYS WHAT ACTUALLY HAPPENED TO THE
+    MONEY, AND THE FIX IS A DISTINCTION, NOT A RENAME.** The screenshot was a
+    `balance`-mode batch — Address and Detail both blank, status "RELEASED" —
+    read by the founder as "we already sent the USDT". For that mode, nothing
+    ever touches a chain: `balance` mode credits the user's in-app balance
+    only, on purpose (`disbursements.ts`'s own header: "No address, no gas,
+    no treasury"). Relabelling "released" to "Sent" would have put a false
+    on-chain claim in front of whoever reads that queue next. Instead:
+    `released` now reads **"Credited"** (money reached the balance, nothing
+    more) and `paid` — the state that only exists once a real payout has a tx
+    hash, across withdrawals, BNB withdrawals, refunds and disbursements
+    alike — now reads **"Sent"** (`primitives.tsx`'s `STATUS_LABEL`). A
+    balance-mode row's Address cell now says "In-app balance" instead of a
+    bare dash, and its Detail cell says "No transfer — credited to balance
+    only" instead of one, so the blank cells read as intentional rather than
+    broken. Rows from `onchain`/`manual`/`csv` batches are unchanged — they
+    already carry a real address (`Addr`, with its BscScan link) and, once
+    paid, a real clickable tx hash (`TxHash`) via the block-explorer
+    primitives built 2026-09-03 earlier the same day.
+
 See `docs/` for the full spec.

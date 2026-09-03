@@ -8,9 +8,11 @@
 // panel between page.tsx and, say, a table row in growth-admin.tsx.
 import { createContext, useContext } from "react";
 
+// "settings" was its own section id until 2026-09-03 — Global settings is
+// now a sub-tab of "flags" (Feature flags), not a separate top-level section.
 export type SectionId =
   | "dashboard" | "money" | "users" | "tasks" | "mining" | "growth" | "messages"
-  | "support" | "audit" | "flags" | "settings" | "team";
+  | "support" | "audit" | "flags" | "team";
 
 export type StaffNav = {
   /**

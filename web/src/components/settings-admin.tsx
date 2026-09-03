@@ -200,6 +200,7 @@ export function GlobalSettingsPanel() {
   const [form, setForm] = useState({
     appName: "", supportEmail: "", supportTelegram: "",
     minWithdrawPoints: 0, maintenanceMessage: "",
+    welcomeRepeatDays: 0 as 0 | 1 | 7 | 30 | 365,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -216,6 +217,7 @@ export function GlobalSettingsPanel() {
       supportTelegram: d.supportTelegram,
       minWithdrawPoints: d.minWithdrawPoints,
       maintenanceMessage: d.maintenanceMessage,
+      welcomeRepeatDays: (d.welcomeRepeatDays as 0 | 1 | 7 | 30 | 365) ?? 0,
     });
   }, [settings.data]);
 
@@ -319,6 +321,24 @@ export function GlobalSettingsPanel() {
           <input className={field} value={form.maintenanceMessage}
             placeholder="We are doing some work on the app. Please check back soon."
             onChange={(e) => setForm({ ...form, maintenanceMessage: e.target.value })} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-xs font-semibold text-muted">
+            Welcome screen — show it again after
+          </span>
+          <select className={field} value={form.welcomeRepeatDays}
+            onChange={(e) => setForm({ ...form, welcomeRepeatDays: Number(e.target.value) as 0 | 1 | 7 | 30 | 365 })}>
+            <option value={0}>Never — once per account (default)</option>
+            <option value={1}>Every 24 hours</option>
+            <option value={7}>Every 7 days</option>
+            <option value={30}>Every 30 days</option>
+            <option value={365}>Every year</option>
+          </select>
+          <span className="mt-0.5 block text-xs text-muted">
+            The animated welcome a new user sees once, right after signing in.
+            This controls whether it comes back — and how often — after they
+            have already dismissed it once.
+          </span>
         </label>
       </div>
 

@@ -42,8 +42,9 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Messages & content", section: "messages", keywords: "broadcast announcement notification home cards" },
   { label: "Support tickets", section: "support", keywords: "help complaints replies" },
   { label: "Audit log", section: "audit", keywords: "history changes who did what" },
-  { label: "Feature flags", section: "flags", keywords: "flags toggles features on off" },
-  { label: "Global settings", section: "settings", keywords: "settings config app name support email maintenance" },
+  // Merged 2026-09-03 — Global settings is a sub-tab of this section now, not
+  // its own; its keywords fold in here so the section itself still matches.
+  { label: "Feature flags", section: "flags", keywords: "flags toggles features on off settings config app name support email maintenance" },
   { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers alerts telegram paging" },
 
   // --- deep links to individual panels -------------------------------------
@@ -111,8 +112,8 @@ const DESTINATIONS: SearchDest[] = [
 
   { label: "Feature flags", short: "Flags", section: "flags", anchor: "p-flags", hint: "Feature flags",
     keywords: "flag toggle enable disable transfers ads deposits conversion kyc", needs: ["flags.manage"] },
-  { label: "Global settings", short: "Settings", section: "settings", anchor: "p-settings", hint: "Global settings",
-    keywords: "settings minimum withdrawal points config value", needs: ["settings.manage"] },
+  { label: "Global settings", short: "Settings", section: "flags", anchor: "p-settings", hint: "Feature flags",
+    keywords: "settings minimum withdrawal points config value welcome repeat", needs: ["settings.manage"] },
   { label: "Staff & roles", short: "Roles", section: "team", anchor: "p-staff-roles", hint: "Staff & roles",
     keywords: "staff role permission appoint agent manager admin finance", needs: ["staff.manage"] },
   { label: "Staff alerts (Telegram)", short: "Alerts", section: "team", anchor: "p-alerts", hint: "Staff & roles",
