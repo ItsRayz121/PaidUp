@@ -904,6 +904,103 @@ export async function appRoutes(app: FastifyInstance) {
     return { ok: true };
   }));
 
+  // ---- Support as ONE CHAT (founder, 2026-09-03) --------------------------
+  // The two endpoints above are a ticket system: pick a subject, open a
+  // ticket, then find it again in a list. The founder's ask was the opposite —
+  // "user just come, type the message, get the reply, be happy" — so the app
+  // now shows a single continuous conversation with RoziPay Official and these
+  // two endpoints serve it.
+  //
+  // ⚠️ THIS IS A CONVERSATION LAYER OVER THE EXISTING TICKETS, NOT A NEW TABLE.
+  // A ticket becomes an invisible SEGMENT of the thread: staff still assign,
+  // close, and get rated per segment, the auto-close timer still runs, and the
+  // `author_role <> 'internal'` filter below is still the only thing standing
+  // between a staff note and the person it is about. Replacing the tables
+  // would have thrown all of that away to change what the screen looks like.
+
+  // A subject the user never typed. Staff screens and the ticket list are keyed
+  // on it, so it cannot be blank — the first line of what they actually wrote is
+  // the most useful thing available.
+  function subjectFromMessage(message: string): string {
+    const line = message.split("\n").map((s) => s.trim()).find(Boolean) ?? "";
+    if (!line) return "New chat";
+    return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+  }
+
+  // The whole thread, oldest first, plus one `segments` row per ticket so the
+  // client can draw a "Chat closed" divider and a rating prompt exactly where
+  // the conversation was actually closed.
+  app.get("/support/chat", guard(async (userId) => {
+    const segments = await sql.all<Record<string, unknown>>(
+      `SELECT id, subject, status, rating, created_at, updated_at
+       FROM support_tickets WHERE user_id = ? ORDER BY created_at ASC`,
+      userId,
+    );
+    const messages = segments.length === 0 ? [] : await sql.all<Record<string, unknown>>(
+      // Same internal-note filter as GET /support/tickets, and for the same
+      // reason. See that endpoint's comment — do not "simplify" it away here
+      // just because this query looks new.
+      `SELECT m.id, m.ticket_id, m.author_role, m.body, m.image, m.created_at
+       FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
+       WHERE s.user_id = ? AND m.author_role <> 'internal'
+       ORDER BY m.created_at ASC, m.id ASC`,
+      userId,
+    );
+    return {
+      segments: segments.map((s) => ({
+        id: s.id, subject: s.subject, status: s.status, rating: s.rating,
+        at: s.created_at, closedAt: s.status === "closed" ? s.updated_at : null,
+      })),
+      messages: messages.map((m) => ({
+        id: m.id, ticketId: m.ticket_id, author_role: m.author_role,
+        body: m.body, image: m.image, created_at: m.created_at,
+      })),
+    };
+  }));
+
+  // Send a message. No subject, ever. Appends to the newest still-open segment;
+  // opens a new one when the last was closed (which is what makes a closed chat
+  // re-openable by simply typing again).
+  const chatSchema = z.object({
+    message: z.string().min(1).max(2000),
+    image: z.string().max(3_000_000).optional().nullable(),
+  });
+  app.post("/support/chat", guard(async (userId, req, reply) => {
+    const parsed = chatSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Type your message first." });
+    const body = parsed.data.message.trim();
+    if (!body) return reply.code(400).send({ error: "Type your message first." });
+    const image = parseTicketImage(parsed.data.image);
+
+    let ticketId: string;
+    let opened = false;
+    await sql.tx(async (t) => {
+      const live = await t.get<{ id: string }>(
+        `SELECT id FROM support_tickets WHERE user_id = ? AND status <> 'closed'
+         ORDER BY updated_at DESC LIMIT 1`,
+        userId,
+      );
+      if (live) {
+        ticketId = live.id;
+      } else {
+        ticketId = newId();
+        opened = true;
+        await t.run(
+          "INSERT INTO support_tickets (id, user_id, subject, status, created_at, updated_at) VALUES (?,?,?, 'open', ?, ?)",
+          ticketId, userId, subjectFromMessage(body), now(), now(),
+        );
+      }
+      await t.run(
+        "INSERT INTO ticket_messages (id, ticket_id, author_role, author_id, body, image, created_at) VALUES (?,?, 'user', ?,?,?,?)",
+        newId(), ticketId, userId, body, image, now(),
+      );
+      // 'answered' back to 'open' — the user has said something new, so it is
+      // waiting on staff again. Identical to what the reply endpoint does.
+      await t.run("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", now(), ticketId);
+    });
+    return { ok: true, ticketId: ticketId!, opened };
+  }));
+
   // "How was our support?" — one rating, ever, per ticket (founder, 2026-09-02).
   // Only accepted once the ticket is CLOSED and has never been rated: the WHERE
   // clause does the enforcement (not a pre-read + separate write), so two

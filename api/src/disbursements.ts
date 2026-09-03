@@ -53,6 +53,8 @@ export type BatchRow = {
   id: string;
   mode: BatchMode;
   status: BatchStatus;
+  /** Human name. Auto-filled at creation from what is in the batch; editable. */
+  name: string | null;
   note: string | null;
   createdBy: string;
   createdByEmail: string | null;
@@ -92,7 +94,15 @@ const EMPTY_TALLY: Record<DisbursementStatus, number> = {
 
 // ---- The eligible pool ----------------------------------------------------
 
-type EligibleOpts = { q?: string; userId?: string; limit?: number; offset?: number; includeInBatch?: boolean };
+type EligibleOpts = {
+  q?: string; userId?: string; limit?: number; offset?: number; includeInBatch?: boolean;
+  /**
+   * Scope the pool to ONE campaign (founder, 2026-09-03). The reward is owed
+   * because of a task, so paying it is reachable from that task's own screen —
+   * same endpoint, same rules, one extra bound predicate.
+   */
+  taskId?: string;
+};
 
 export async function listEligible(
   opts: EligibleOpts = {},
@@ -108,6 +118,7 @@ export async function listEligible(
   ];
   const wp: unknown[] = [];
   if (opts.userId) { where.push("p.user_id = ?"); wp.push(opts.userId); }
+  if (opts.taskId) { where.push("p.task_id = ?"); wp.push(opts.taskId); }
   if (q) {
     where.push("(LOWER(u.email) LIKE ? OR LOWER(t.title) LIKE ? OR LOWER(p.id) = ?)");
     wp.push(`%${q}%`, `%${q}%`, q);
@@ -178,6 +189,8 @@ export type CreateBatchResult = {
 export async function createBatch(params: {
   mode: BatchMode;
   note?: string | null;
+  /** Optional explicit name; otherwise auto-named from the tasks it pays. */
+  name?: string | null;
   createdBy: string;
   proofIds: string[];
 }): Promise<CreateBatchResult> {
@@ -196,6 +209,7 @@ export async function createBatch(params: {
 
   const batchId = newId();
   const skipped: { proofId: string; reason: string }[] = [];
+  const taskTitles = new Set<string>();
   let added = 0;
 
   await sql.tx(async (t) => {
@@ -223,12 +237,13 @@ export async function createBatch(params: {
         reward_points: number | null; reward_usdt_micro: string | number | null;
         reward_rozi_micro: string | number | null;
         task_points: number | null; task_usdt: string | number | null; task_rozi: string | number | null;
-        task_source: string | null;
+        task_source: string | null; task_title: string | null;
       }>(
         `SELECT p.id, p.user_id, p.task_id, p.status, p.reward_status,
                 p.reward_points, p.reward_usdt_micro, p.reward_rozi_micro,
                 t.points AS task_points, t.reward_usdt_micro AS task_usdt,
-                t.reward_rozi_micro AS task_rozi, t.source AS task_source
+                t.reward_rozi_micro AS task_rozi, t.source AS task_source,
+                t.title AS task_title
          FROM task_proofs p JOIN tasks t ON t.id = p.task_id
          WHERE p.id = ?`,
         proofId,
@@ -245,6 +260,8 @@ export async function createBatch(params: {
         proofId,
       );
       if (dupe) { skipped.push({ proofId, reason: "already in a batch" }); continue; }
+
+      if (p.task_title) taskTitles.add(String(p.task_title));
 
       const points = Number(p.reward_points ?? p.task_points ?? 0);
       const usdtMicro = Number(p.reward_usdt_micro ?? p.task_usdt ?? 0);
@@ -282,11 +299,47 @@ export async function createBatch(params: {
       // Nothing landed — cancel the empty shell rather than leave a draft with
       // no rows that a screen would render as "0 recipients, run it".
       await t.run("UPDATE payout_batches SET status = 'cancelled', completed_at = ? WHERE id = ?", now(), batchId);
+    } else {
+      // Name it after what is actually in it. An explicit name from the caller
+      // always wins; otherwise the campaign title when the batch is one
+      // campaign (the usual case, and the only one a name can be specific
+      // about), else a plain count and date.
+      await t.run(
+        "UPDATE payout_batches SET name = ? WHERE id = ?",
+        params.name?.trim() || autoBatchName([...taskTitles], added), batchId,
+      );
     }
   });
 
   await recomputeBatchTotals(batchId);
   return { batchId, added, skipped };
+}
+
+// A name a person can read, derived from what the batch pays (founder,
+// 2026-09-03: a uuid prefix "is not looking good ... extract the main word").
+// One campaign is the common case and the only one a name can be specific
+// about; anything wider gets a count and a date, which is at least true.
+export function autoBatchName(titles: string[], recipients: number): string {
+  const who = `${recipients} reward${recipients === 1 ? "" : "s"}`;
+  if (titles.length === 1) {
+    const t = titles[0].trim();
+    // Long campaign titles ("Download Bitget Wallet and Get Cash and Rozi
+    // Rewards") make a list column unreadable — take the front of it, which is
+    // the part that names the thing.
+    const short = t.length > 40 ? `${t.slice(0, 39).trimEnd()}…` : t;
+    return `${short} — ${who}`;
+  }
+  const day = now().slice(0, 10);
+  return titles.length > 1 ? `${titles.length} campaigns · ${who} · ${day}` : `${who} · ${day}`;
+}
+
+// Rename a batch. The id never changes — it stays on screen as a copyable chip
+// — so this is purely how the batch reads in a list.
+export async function renameBatch(batchId: string, name: string): Promise<boolean> {
+  const clean = name.trim().slice(0, 120);
+  if (!clean) return false;
+  const r = await sql.run("UPDATE payout_batches SET name = ? WHERE id = ?", clean, batchId);
+  return Boolean(r.rowCount);
 }
 
 // ---- Roll-up ------------------------------------------------------------
@@ -376,6 +429,7 @@ function mapBatch(r: Record<string, unknown>, tally: Record<DisbursementStatus, 
     id: String(r.id),
     mode: r.mode as BatchMode,
     status: r.status as BatchStatus,
+    name: (r.name as string) ?? null,
     note: (r.note as string) ?? null,
     createdBy: String(r.created_by),
     createdByEmail: (r.created_by_email as string) ?? null,
@@ -389,7 +443,7 @@ function mapBatch(r: Record<string, unknown>, tally: Record<DisbursementStatus, 
 }
 
 export async function listBatches(
-  opts: { status?: string; q?: string; limit?: number; offset?: number } = {},
+  opts: { status?: string; q?: string; limit?: number; offset?: number; taskId?: string } = {},
 ): Promise<{ batches: BatchRow[]; total: number }> {
   const q = (opts.q ?? "").trim().toLowerCase();
   const limit = Math.min(Math.max(Number(opts.limit ?? 25) || 25, 1), 200);
@@ -397,7 +451,21 @@ export async function listBatches(
   const where: string[] = [];
   const wp: unknown[] = [];
   if (opts.status && opts.status !== "all") { where.push("b.status = ?"); wp.push(opts.status); }
-  if (q) { where.push("(LOWER(b.id) = ? OR LOWER(b.note) LIKE ? OR LOWER(u.email) LIKE ?)"); wp.push(q, `%${q}%`, `%${q}%`); }
+  if (q) {
+    where.push("(LOWER(b.id) = ? OR LOWER(b.name) LIKE ? OR LOWER(b.note) LIKE ? OR LOWER(u.email) LIKE ?)");
+    wp.push(q, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  // A task's OWN batches: any batch holding at least one row that pays a proof
+  // of this task. A batch can legitimately span several campaigns, so this is
+  // EXISTS, not a join that would multiply rows.
+  if (opts.taskId) {
+    where.push(
+      `EXISTS (SELECT 1 FROM payout_disbursements d
+               JOIN task_proofs pr ON pr.id = d.proof_id
+               WHERE d.batch_id = b.id AND pr.task_id = ?)`,
+    );
+    wp.push(opts.taskId);
+  }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const [rows, totalRow] = await Promise.all([

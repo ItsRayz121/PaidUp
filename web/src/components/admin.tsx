@@ -8,6 +8,7 @@ import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, bulkSetUserStatus, setUserReview, adjustUserPoints,
   fetchStaffMembers, setStaffRole, downloadExport,
+  fetchTelegramNamePending, refreshTelegramNames,
   type AdminUserRow, type StaffRole,
 } from "@/lib/api";
 import { formatMoney, timeAgo } from "@/lib/format";
@@ -127,9 +128,12 @@ export function UsersPanel() {
             options: COUNTRY_OPTIONS.map((c) => ({ value: c, label: c })) },
         ]}
         toolbarRight={
-          <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">
-            Export {q.search ? "matching" : "all"} (CSV)
-          </button>
+          <div className="flex items-center gap-1.5">
+            <TelegramNamesButton onDone={users.reload} />
+            <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">
+              Export {q.search ? "matching" : "all"} (CSV)
+            </button>
+          </div>
         }
         bulkActions={[
           { label: "Suspend selected", tone: "danger", run: (ids) => bulkStatus(ids, "suspended") },
@@ -137,6 +141,44 @@ export function UsersPanel() {
         ]}
       />
     </section>
+  );
+}
+
+// Fill in missing Telegram usernames (founder, 2026-09-03: "instead of
+// Telegram user, show his username"). Two populations never had one written —
+// accounts that connected Telegram from the website, and accounts older than
+// the columns — and no login will fix an account that is not logging in now.
+// This asks the Bot API, in capped batches, only when a human presses it.
+//
+// It disappears when there is nothing left to do: a button that always reads
+// "0 to fix" is furniture.
+function TelegramNamesButton({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
+  const p = useApi(fetchTelegramNamePending, []);
+  const [busy, setBusy] = useState(false);
+  const pending = p.data?.pending ?? 0;
+  if (pending === 0) return null;
+
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await refreshTelegramNames();
+      toast.ok(
+        r.updated > 0
+          ? `Filled in ${r.updated} name(s).${r.pending > 0 ? ` ${r.pending} still to go — press again.` : ""}`
+          : "Telegram had no name on file for those accounts.",
+      );
+      p.reload(); onDone();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <button onClick={run} disabled={busy}
+      title="Ask Telegram for the usernames of accounts that show as 'Telegram #…'"
+      className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand disabled:opacity-50">
+      {busy ? "Checking…" : `Refresh Telegram names (${pending})`}
+    </button>
   );
 }
 

@@ -430,6 +430,94 @@ console.log("\n-- part 43: what a card is allowed to be --");
 }
 
 // ---------------------------------------------------------------------------
+// Support as ONE CHAT (founder, 2026-09-03). The user no longer picks a
+// subject or opens a ticket — they type. A ticket becomes an invisible SEGMENT
+// of one continuous thread, which is exactly where a "conversation view" can go
+// wrong in the two ways that matter:
+//
+//   ⚠️ A SECOND MESSAGE MUST NOT OPEN A SECOND TICKET. If it did, one
+//      conversation would fan out into a queue of one-line tickets and the
+//      staff inbox would become unusable within a day.
+//   ⚠️ AN INTERNAL NOTE MUST NOT REACH THE USER HERE EITHER. GET /support/chat
+//      is a SECOND read path over ticket_messages — the filter that protects
+//      GET /support/tickets does nothing for it. Same defence, re-proven.
+console.log("\n-- support is one chat, not a ticket form --");
+{
+  const chatter = await mkUser("chatter");
+
+  const first = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(chatter),
+    payload: { message: "My money did not come\nI did the task yesterday" },
+  });
+  check("a message with NO subject is accepted", first.statusCode === 200, first.body);
+  check("and it opened a conversation", first.json().opened === true);
+  const seg1 = first.json().ticketId as string;
+
+  const second = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(chatter),
+    payload: { message: "Any update?" },
+  });
+  check("a second message joins the SAME conversation, it does not open a new one",
+    second.json().ticketId === seg1 && second.json().opened === false, second.body);
+
+  const t = await sql.get<{ subject: string }>("SELECT subject FROM support_tickets WHERE id = ?", seg1);
+  check("the subject staff see is the first line of what the user actually wrote",
+    t?.subject === "My money did not come", JSON.stringify(t));
+
+  // A staff note, then a staff reply, then a close.
+  await app.inject({
+    method: "POST", url: `/staff/tickets/${seg1}/reply`, headers: authOf(agent),
+    payload: { message: "SECRET-NOTE-CHAT check the device list first", internal: true },
+  });
+  await app.inject({
+    method: "POST", url: `/staff/tickets/${seg1}/reply`, headers: authOf(agent),
+    payload: { message: "Checked — it is on its way.", close: true },
+  });
+
+  const chat = (await app.inject({ method: "GET", url: "/support/chat", headers: authOf(chatter) })).json();
+  const bodies = (chat.messages as { body: string }[]).map((m) => m.body);
+  check("the whole thread comes back in one list", bodies.length === 3, JSON.stringify(bodies));
+  check("an internal note is NOT in it", !bodies.some((b) => b.includes("SECRET-NOTE-CHAT")));
+  check("the staff reply IS in it", bodies.some((b) => b.includes("on its way")));
+  check("every message says which segment it belongs to",
+    (chat.messages as { ticketId: string }[]).every((m) => m.ticketId === seg1));
+  check("the segment is reported closed, with the time it closed",
+    (chat.segments as { id: string; status: string; closedAt: string | null }[])
+      .find((x) => x.id === seg1)?.status === "closed"
+    && Boolean((chat.segments as { id: string; closedAt: string | null }[]).find((x) => x.id === seg1)?.closedAt),
+    JSON.stringify(chat.segments));
+
+  // Typing again after a close is how a user reopens support. It must start a
+  // NEW segment rather than reopen a rated, finished conversation.
+  const third = await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(chatter),
+    payload: { message: "It still has not come." },
+  });
+  check("a message after a close opens a NEW conversation",
+    third.json().opened === true && third.json().ticketId !== seg1, third.body);
+
+  const chat2 = (await app.inject({ method: "GET", url: "/support/chat", headers: authOf(chatter) })).json();
+  check("and both conversations are in the one thread, oldest first",
+    (chat2.segments as unknown[]).length === 2
+    && (chat2.messages as { created_at: string }[]).length === 4);
+
+  check("an empty message is refused", (await app.inject({
+    method: "POST", url: "/support/chat", headers: authOf(chatter), payload: { message: "   " },
+  })).statusCode === 400);
+
+  // The chat is per-account. Another user's thread must be invisible, which is
+  // the property a "one conversation" endpoint makes easy to get wrong: there
+  // is no ticket id in the request to scope it, only the session.
+  const stranger = await mkUser("stranger");
+  const theirs = (await app.inject({ method: "GET", url: "/support/chat", headers: authOf(stranger) })).json();
+  check("another user sees an empty thread, never this one",
+    (theirs.messages as unknown[]).length === 0 && (theirs.segments as unknown[]).length === 0);
+
+  check("signing out means no chat at all",
+    (await app.inject({ method: "GET", url: "/support/chat" })).statusCode === 401);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- the permissions these screens are gated on --");
 {
   check("marketing can send a broadcast — that is the role's whole job",

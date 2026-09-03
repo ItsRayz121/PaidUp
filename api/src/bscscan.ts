@@ -98,3 +98,105 @@ function normalize(r: RawTx, self: string): BnbAddressTx {
     direction: out ? "out" : "in",
   };
 }
+
+// ---- Treasury wallet: every in and out (founder, 2026-09-03) ---------------
+// "Show me all the in and out of this particular wallet ... all kind of
+// transaction with a clickable transaction hash, so that we can see either
+// everything is going on smooth or not."
+//
+// ⚠️ THE SOURCE OF TRUTH IS THE CHAIN, NOT OUR OWN TABLES. Reading
+// withdrawal_requests / usdt_topups / sweep_jobs would only ever show movements
+// WE initiated — and the entire reason to look at a treasury ledger is to catch
+// the ones we did not. Our rows are used to LABEL what the chain reports, never
+// to produce it.
+//
+// ⚠️ ON DEMAND ONLY, NEVER A POLLER. This codebase has shipped two real billing
+// incidents from background chain reads (CLAUDE.md, 2026-08-13 and 2026-08-27).
+// This runs when a staff member opens the tab; the 60s cache below is what makes
+// a double-click free.
+export type TreasuryTx = {
+  hash: string;
+  from: string;
+  to: string;
+  /** Base units: wei for BNB, and USDT's own 18 decimals on BSC. */
+  value: string;
+  asset: "USDT" | "BNB";
+  decimals: number;
+  at: string;
+  direction: "in" | "out";
+};
+
+type RawTokenTx = RawTx & { tokenSymbol?: string; tokenDecimal?: string; contractAddress?: string };
+const tokenCache = new Map<string, { at: number; rows: TreasuryTx[] }>();
+
+// BSC USDT. Deliberately duplicated from payout.ts's ONCHAIN_CHAINS rather than
+// imported: that map is the SIGNING config (importing it here would drag the
+// viem chain objects into a read-only path), and this file already knows it
+// only ever speaks to chainid 56.
+const BSC_USDT = "0x55d398326f99059ff775485246999027b3197955";
+
+export async function fetchTreasuryLedger(address: string, limit = 50): Promise<TreasuryTx[]> {
+  const key = config.bscscanApiKey;
+  if (!key || !/^0x[0-9a-fA-F]{40}$/.test(address)) return [];
+  const addr = address.toLowerCase();
+  const cacheKey = `treasury:${addr}:${limit}`;
+
+  const hit = tokenCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
+
+  try {
+    const [tokens, native] = await Promise.all([
+      queryTokenList(addr, key, limit),
+      fetchBnbAddressHistory(address),
+    ]);
+    const rows: TreasuryTx[] = [
+      ...tokens
+        // Only USDT. A treasury that has been airdropped a scam token should not
+        // have it rendered next to real money as though it were a payout.
+        .filter((r) => (r.contractAddress ?? "").toLowerCase() === BSC_USDT)
+        .map((r) => ({
+          hash: r.hash,
+          from: r.from,
+          to: r.to,
+          value: r.value,
+          asset: "USDT" as const,
+          decimals: Number(r.tokenDecimal ?? 18) || 18,
+          at: new Date(Number(r.timeStamp) * 1000).toISOString(),
+          direction: (r.from ?? "").toLowerCase() === addr ? ("out" as const) : ("in" as const),
+        })),
+      ...native.map((r) => ({
+        hash: r.hash, from: r.from, to: r.to, value: r.valueWei,
+        asset: "BNB" as const, decimals: 18, at: r.at, direction: r.direction,
+      })),
+    ]
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+      .slice(0, limit);
+    tokenCache.set(cacheKey, { at: Date.now(), rows });
+    return rows;
+  } catch {
+    return hit?.rows ?? [];
+  }
+}
+
+async function queryTokenList(address: string, key: string, limit: number): Promise<RawTokenTx[]> {
+  const url =
+    `${API}?chainid=${CHAIN_ID}&module=account&action=tokentx&address=${address}` +
+    `&contractaddress=${BSC_USDT}&startblock=0&endblock=99999999&sort=desc&page=1` +
+    `&offset=${Math.min(Math.max(limit, 1), 100)}&apikey=${key}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { status?: string; result?: unknown };
+    if (body.status !== "1" || !Array.isArray(body.result)) return [];
+    return body.result as RawTokenTx[];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Is the on-demand explorer read configured at all? */
+export const bscscanReady = () => Boolean(config.bscscanApiKey);

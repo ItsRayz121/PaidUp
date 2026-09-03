@@ -18,7 +18,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId, Addr } from "./primitives";
+import { StatusBadge, TimeCell, Addr, TxHash } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
@@ -26,7 +26,7 @@ import { formatUsdtMicro } from "@/lib/format";
 import { reconcileRowsFromCsv } from "@/lib/csv";
 import {
   fetchEligibleRewards, fetchDisbursementBatches, fetchDisbursementBatch,
-  createDisbursementBatch, runDisbursementBatch, cancelDisbursementBatch,
+  createDisbursementBatch, runDisbursementBatch, cancelDisbursementBatch, renameDisbursementBatch,
   markDisbursementRowPaid, reconcileDisbursement, downloadDisbursementCsv,
   type DisbursementMode, type EligibleReward, type DisbursementBatch, type DisbursementRow,
 } from "@/lib/api";
@@ -45,10 +45,23 @@ const MODE_HELP: Record<DisbursementMode, string> = {
 };
 const usdt = (micro: number) => (micro > 0 ? formatUsdtMicro(micro) : "—");
 
+// What a batch is CALLED. Every batch made from 2026-09-03 on is auto-named at
+// creation from the campaign it pays; older ones have no name and fall back to
+// the id prefix, which is what the whole list used to show.
+const batchLabel = (b: DisbursementBatch) => b.name?.trim() || `Batch ${b.id.slice(0, 8)}`;
+
 // ---------------------------------------------------------------------------
 
-export function DisbursementsPanel({ canManage }: { canManage: boolean }) {
-  const [view, setView] = useState<"pool" | "batches">("batches");
+// ⚠️ ONE COMPONENT, THREE MOUNT POINTS (founder, 2026-09-03: "clone it ...
+// inside tasks and networks"). Money & payouts mounts it unscoped; Tasks &
+// networks mounts it unscoped as its own sub-tab; a task detail mounts it with
+// that task's id. A literal second copy would have drifted from this one within
+// a week — every rule about modes, eligibility and running a batch lives here.
+//
+// `taskId` is a SCOPE, not a filter chip: it narrows the eligible pool AND the
+// batch list AND what "Batch everything eligible" sweeps in, all server-side.
+export function DisbursementsPanel({ canManage, taskId }: { canManage: boolean; taskId?: string }) {
+  const [view, setView] = useState<"pool" | "batches">(taskId ? "pool" : "batches");
   const [openId, setOpenId] = useState<string | null>(null);
 
   if (openId) {
@@ -57,6 +70,13 @@ export function DisbursementsPanel({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
+      {taskId && (
+        <p className="rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+          Only this campaign&apos;s rewards. Everything here works exactly as it does under{" "}
+          <b>Money &amp; payouts → Disbursements</b> — this view is scoped to the task so paying
+          it out never sweeps in another campaign&apos;s rewards by accident.
+        </p>
+      )}
       <div className="flex flex-wrap gap-1">
         {(["batches", "pool"] as const).map((v) => (
           <button key={v} onClick={() => setView(v)}
@@ -68,16 +88,20 @@ export function DisbursementsPanel({ canManage }: { canManage: boolean }) {
         ))}
       </div>
       {view === "batches"
-        ? <BatchList onOpen={setOpenId} />
-        : <EligiblePool canManage={canManage} onCreated={(id) => { setOpenId(id); setView("batches"); }} />}
+        ? <BatchList onOpen={setOpenId} taskId={taskId} />
+        : <EligiblePool canManage={canManage} taskId={taskId} onCreated={(id) => { setOpenId(id); setView("batches"); }} />}
     </div>
   );
 }
 
 // ---- The eligible pool -------------------------------------------------
 
-function EligiblePool({ canManage, onCreated }: { canManage: boolean; onCreated: (batchId: string) => void }) {
-  const q = useTableQuery("disb:pool", { pageSize: 25 });
+function EligiblePool({ canManage, taskId, onCreated }: {
+  canManage: boolean; taskId?: string; onCreated: (batchId: string) => void;
+}) {
+  // Per-mount storage key: a search or page size set on a task's own screen
+  // must not silently apply to the global pool, and vice versa.
+  const q = useTableQuery(`disb:pool:${taskId ?? "all"}`, { pageSize: 25 });
   const toast = useToast();
   const [draft, setDraft] = useState<{ proofIds: string[] } | null>(null);
   const [mode, setMode] = useState<DisbursementMode>("balance");
@@ -86,8 +110,8 @@ function EligiblePool({ canManage, onCreated }: { canManage: boolean; onCreated:
   const [auto, setAuto] = useState(true);
 
   const data = useApi(
-    () => fetchEligibleRewards({ q: q.search, limit: q.pageSize, offset: q.offset }),
-    [q.search, q.pageSize, q.offset], true, auto ? QUEUE_POLL_MS : undefined,
+    () => fetchEligibleRewards({ q: q.search, taskId, limit: q.pageSize, offset: q.offset }),
+    [q.search, taskId, q.pageSize, q.offset], true, auto ? QUEUE_POLL_MS : undefined,
   );
   const items = data.data?.items ?? [];
 
@@ -96,7 +120,7 @@ function EligiblePool({ canManage, onCreated }: { canManage: boolean; onCreated:
     setBusy(true);
     try {
       const res = await createDisbursementBatch({
-        mode, note: note.trim() || undefined,
+        mode, note: note.trim() || undefined, taskId,
         ...(allEligible ? { allEligible: true, q: q.search } : { proofIds }),
       });
       const msg = res.skipped.length
@@ -190,21 +214,25 @@ function EligiblePool({ canManage, onCreated }: { canManage: boolean; onCreated:
 
 // ---- The batch list --------------------------------------------------
 
-function BatchList({ onOpen }: { onOpen: (id: string) => void }) {
-  const q = useTableQuery("disb:batches", { pageSize: 25 });
+function BatchList({ onOpen, taskId }: { onOpen: (id: string) => void; taskId?: string }) {
+  const q = useTableQuery(`disb:batches:${taskId ?? "all"}`, { pageSize: 25 });
   const [auto, setAuto] = useState(true);
   const data = useApi(
-    () => fetchDisbursementBatches({ q: q.search, limit: q.pageSize, offset: q.offset }),
-    [q.search, q.pageSize, q.offset], true, auto ? QUEUE_POLL_MS : undefined,
+    () => fetchDisbursementBatches({ q: q.search, taskId, limit: q.pageSize, offset: q.offset }),
+    [q.search, taskId, q.pageSize, q.offset], true, auto ? QUEUE_POLL_MS : undefined,
   );
   const batches = data.data?.batches ?? [];
 
   const columns: Column<DisbursementBatch>[] = [
     {
-      key: "id", header: "Batch", csv: (b) => b.id,
+      // The NAME leads, not the uuid (founder, 2026-09-03). The id is still
+      // right there as the second line — it is what support and the audit log
+      // quote — it just is not the thing you read first.
+      key: "id", header: "Batch", csv: (b) => b.name ?? b.id,
       render: (b) => (
         <div className="min-w-0">
-          <span className="block truncate font-mono text-xs text-brand-ink">{b.id.slice(0, 8)}</span>
+          <span className="block truncate font-semibold text-brand-ink">{batchLabel(b)}</span>
+          <span className="block truncate font-mono text-[11px] text-muted">{b.id.slice(0, 8)}</span>
           {b.note && <span className="block truncate text-xs text-muted">{b.note}</span>}
         </div>
       ),
@@ -234,7 +262,7 @@ function BatchList({ onOpen }: { onOpen: (id: string) => void }) {
         q={q} columns={columns} rows={batches} total={data.data?.total ?? 0}
         loading={data.loading} error={data.error} onRetry={data.reload}
         getRowId={(b) => b.id} onRowClick={(b) => onOpen(b.id)}
-        searchPlaceholder="Search batch id or note…"
+        searchPlaceholder="Search batch name, id or note…"
         emptyTitle="No batches yet"
         emptyHint="Create one from the 'Waiting to be paid' tab."
       />
@@ -265,6 +293,16 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
       data.reload();
     } catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
+  }
+  // Renaming changes nothing but the label — the id stays the join key and is
+  // still on screen as a copyable chip.
+  async function rename() {
+    if (!batch) return;
+    const next = window.prompt("What should this batch be called?", batchLabel(batch));
+    if (next === null) return;
+    if (!next.trim()) { toast.err("Give the batch a name."); return; }
+    try { await renameDisbursementBatch(id, next.trim()); toast.ok("Renamed."); data.reload(); }
+    catch (e) { toast.err((e as Error).message); }
   }
   async function cancel() {
     if (!window.confirm("Cancel this batch? Its rewards go back to the waiting list.")) return;
@@ -324,7 +362,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
               <td className="py-2 pr-3">{r.destAddress ? <Addr value={r.destAddress} /> : <span className="text-xs text-muted">—</span>}</td>
               <td className="py-2 pr-3"><StatusBadge status={r.status} /></td>
               <td className="py-2 pr-3 text-xs text-muted">
-                {r.txHash ? <CopyId value={r.txHash} label="tx" /> : r.error ?? "—"}
+                {r.txHash ? <TxHash value={r.txHash} /> : r.error ?? "—"}
               </td>
               <td className="py-2 text-right">
                 {canManage && r.status === "sending" && r.withdrawalRequestId && r.destAddress && (
@@ -350,8 +388,20 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
       <input ref={fileRef} type="file" accept=".csv,text/csv" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReconcileFile(f); }} />
       <DetailLayout
-        breadcrumb={[{ label: "Disbursements", onClick: onBack }, { label: batch ? batch.id.slice(0, 8) : "…" }]}
-        title={batch ? `${MODE_LABEL[batch.mode]} batch` : "Batch"}
+        breadcrumb={[{ label: "Disbursements", onClick: onBack }, { label: batch ? batchLabel(batch) : "…" }]}
+        title={batch ? (
+          <>
+            {batchLabel(batch)}
+            <span className="mt-0.5 block text-sm font-normal text-muted">
+              {MODE_LABEL[batch.mode]}
+              {canManage && (
+                <button onClick={rename} className="ms-2 text-xs font-semibold text-brand underline">
+                  Rename
+                </button>
+              )}
+            </span>
+          </>
+        ) : "Batch"}
         ids={batch ? [{ label: "batch", value: batch.id }] : []}
         badges={batch && <StatusBadge status={batch.status} />}
         actions={canManage && batch && (

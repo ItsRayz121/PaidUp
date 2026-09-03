@@ -17,6 +17,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column, type FilterDef } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
+import { DisbursementsPanel } from "./Disbursements";
 import { StatusBadge, TimeCell, StatusTabs } from "./primitives";
 import { useToast } from "./toast";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
@@ -99,7 +100,7 @@ const TASK_STATUS_FILTER: FilterDef = {
   ],
 };
 
-export function TasksAdminPanel() {
+export function TasksAdminPanel({ canDisburse = false }: { canDisburse?: boolean }) {
   const q = useTableQuery("tasks:list", PAGE);
   const [auto, setAuto] = useState(true);
   const toast = useToast();
@@ -255,6 +256,13 @@ export function TasksAdminPanel() {
             id: "proofs", label: "Proofs",
             content: <TaskProofsTab taskId={open.id} onDecided={() => data.reload()} />,
           },
+          // Paying the reward belongs with the task that owes it (founder,
+          // 2026-09-03). Same component, same endpoints, same rules as
+          // Money & payouts → Disbursements — scoped to this campaign.
+          ...(canDisburse ? [{
+            id: "rewards", label: "Rewards",
+            content: <DisbursementsPanel canManage taskId={open.id} />,
+          }] : []),
           {
             id: "edit", label: "Edit",
             content: (
@@ -354,7 +362,7 @@ function TaskCreator({ onClose, onCreated }: { onClose: () => void; onCreated: (
   );
 }
 
-type TaskDetailTab = "overview" | "metrics" | "proofs" | "edit";
+type TaskDetailTab = "overview" | "metrics" | "proofs" | "rewards" | "edit";
 
 // A compact "all our campaigns" funnel above the list — the overall counterpart
 // to the per-task Metrics tab.

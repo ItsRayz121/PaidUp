@@ -478,5 +478,69 @@ console.log("\n-- money overview (held now + inflow/outflow windows) --");
   check("an earner cannot read the money overview (403)", asEarner.statusCode === 403, String(asEarner.statusCode));
 }
 
+// ---------------------------------------------------------------------------
+// The proof a payout really happened (founder, 2026-09-03: "make sure you are
+// showing the transaction hash ... and make that transaction hash clickable").
+//
+// `withdrawal_requests.tx_hash` has been written by every mark-paid and every
+// auto-settle since payouts existed — it was simply never SERVED, so the queue
+// could not show it and a "paid" row had nothing to check against the chain.
+console.log("\n-- a paid withdrawal carries its transaction hash --");
+{
+  const u = await mkUser("txh-user");
+  const id = newId();
+  const hash = `0x${"ab".repeat(32)}`;
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, status, tx_hash, created_at)
+     VALUES (?,?,?,?,?,'paid',?,?)`,
+    id, u, 2000, "bep20", `0xpaid${TAG}`, hash, tick(),
+  );
+  const rows = (await app.inject({
+    method: "GET", url: "/staff/withdrawals?status=paid&limit=50", headers: authOf(admin),
+  })).json() as { requests: { id: string; txHash: string | null }[] };
+  const row = rows.requests.find((r) => r.id === id);
+  check("the queue serves the tx hash of a paid row", row?.txHash === hash, JSON.stringify(row));
+
+  const searchable = (await app.inject({
+    method: "GET", url: `/staff/withdrawals?status=all&q=${hash}`, headers: authOf(admin),
+  })).json() as { requests: { id: string }[] };
+  check("and a row can be found by that hash", searchable.requests.some((r) => r.id === id));
+}
+
+// ---------------------------------------------------------------------------
+// The treasury wallet's own in/out ledger (founder, 2026-09-03).
+//
+// ⚠️ THE TWO NOT-CONFIGURED PATHS ARE THE POINT OF THIS TEST. A staff screen
+// that throws because no address is set, or because the free explorer key is
+// missing, is worse than one that says so — and both are the normal state of a
+// fresh deployment. Neither may be an error, and neither may be an empty table
+// that reads as "no money has ever moved".
+console.log("\n-- treasury wallet: every in and out --");
+{
+  const empty = await app.inject({ method: "GET", url: "/staff/treasury/wallet", headers: authOf(admin) });
+  check("200 with no treasury address set", empty.statusCode === 200, empty.body);
+  const e = empty.json() as { address: string; rows: unknown[]; totals: unknown | null };
+  check("it says there is no address rather than failing", e.address === "" && e.rows.length === 0);
+  check("and serves no totals, which would otherwise read as a real zero", e.totals === null);
+
+  await sql.run(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ('treasury_address_bep20', ?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    `0x${"11".repeat(20)}`, now(),
+  );
+  const set = await app.inject({ method: "GET", url: "/staff/treasury/wallet", headers: authOf(admin) });
+  const d = set.json() as { address: string; explorerReady: boolean; rows: unknown[] };
+  check("with an address but no explorer key it still answers", set.statusCode === 200, set.body);
+  check("it reports the address", d.address.startsWith("0x"));
+  check("and says the explorer is not set up rather than showing an empty ledger",
+    d.explorerReady === false && d.rows.length === 0, JSON.stringify(d));
+
+  check("an agent cannot read the treasury wallet",
+    (await app.inject({ method: "GET", url: "/staff/treasury/wallet", headers: authOf(agent) })).statusCode === 403);
+  const earner = await mkUser("tw-earner");
+  check("nor can an earner",
+    (await app.inject({ method: "GET", url: "/staff/treasury/wallet", headers: authOf(earner) })).statusCode === 403);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

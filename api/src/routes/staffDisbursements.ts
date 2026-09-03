@@ -22,7 +22,7 @@ import { looksLikeTxHash, pointsToUsdt } from "../payout.ts";
 import { sendPushToUser } from "../push.ts";
 import {
   listEligible, createBatch, recomputeBatchTotals, listBatches, getBatch,
-  getDisbursements, syncBatchFromRequests, DISBURSE_CHAIN,
+  getDisbursements, syncBatchFromRequests, renameBatch, DISBURSE_CHAIN,
   type BatchMode, type DisbursementRow,
 } from "../disbursements.ts";
 
@@ -267,9 +267,13 @@ async function runBatch(
 const createSchema = z.object({
   mode: z.enum(["balance", "onchain", "manual", "csv"]),
   note: z.string().trim().max(300).optional(),
+  name: z.string().trim().max(120).optional(),
   proofIds: z.array(z.string().min(1)).optional(),
   allEligible: z.boolean().optional(),
   q: z.string().trim().max(120).optional(),
+  // Scope "batch everything eligible" to one campaign, so the same button on a
+  // task's own screen cannot sweep in every other campaign's rewards.
+  taskId: z.string().trim().max(64).optional(),
 }).refine((v) => (v.proofIds && v.proofIds.length > 0) || v.allEligible, {
   message: "Select rewards to pay, or set allEligible.",
 });
@@ -281,6 +285,7 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
     return listEligible({
       q: query.q,
       userId: query.userId,
+      taskId: query.taskId,
       limit: Number(query.limit ?? 50) || 50,
       offset: Number(query.offset ?? 0) || 0,
       includeInBatch: query.includeInBatch === "1",
@@ -293,16 +298,16 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid request." });
     }
-    const { mode, note, allEligible, q } = parsed.data;
+    const { mode, note, name, allEligible, q, taskId } = parsed.data;
 
     let proofIds = parsed.data.proofIds ?? [];
     if (allEligible) {
-      const pool = await listEligible({ q, limit: config.disbursementMaxRecipients });
+      const pool = await listEligible({ q, taskId, limit: config.disbursementMaxRecipients });
       proofIds = pool.items.map((i) => i.proofId);
       if (proofIds.length === 0) return reply.code(400).send({ error: "Nothing is waiting to be paid." });
     }
 
-    const result = await createBatch({ mode, note, createdBy: userId, proofIds });
+    const result = await createBatch({ mode, note, name, createdBy: userId, proofIds });
     await logAudit({
       actorUserId: userId, actorRole: role, action: "disbursement_batch_create",
       detail: `batch ${result.batchId} (${mode}): ${result.added} added, ${result.skipped.length} skipped`,
@@ -316,6 +321,7 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
     return listBatches({
       status: query.status,
       q: query.q,
+      taskId: query.taskId,
       limit: Number(query.limit ?? 25) || 25,
       offset: Number(query.offset ?? 0) || 0,
     });
@@ -330,6 +336,25 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
     await syncBatchFromRequests(id);
     await recomputeBatchTotals(id);
     return { batch: await getBatch(id), rows: await getDisbursements(id) };
+  }));
+
+  // Rename a batch (founder, 2026-09-03). Cosmetic by design — the id is what
+  // every other table joins on and it stays visible as a copyable chip; this
+  // only changes how the batch reads in a list.
+  app.patch("/staff/disbursements/:id", staffGuard("disbursements.manage", async ({ userId, role }, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const parsed = z.object({ name: z.string().trim().min(1).max(120) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Give the batch a name." });
+    const before = await getBatch(id);
+    if (!before) return reply.code(404).send({ error: "Batch not found." });
+    if (!(await renameBatch(id, parsed.data.name))) {
+      return reply.code(400).send({ error: "Give the batch a name." });
+    }
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "disbursement_batch_rename",
+      detail: `batch ${id}`, previousValue: before.name ?? "(unnamed)", newValue: parsed.data.name,
+    });
+    return { ok: true, batch: await getBatch(id) };
   }));
 
   // Run the batch (Phase 1: balance mode).

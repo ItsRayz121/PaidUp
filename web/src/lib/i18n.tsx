@@ -425,6 +425,15 @@ const copy: Record<string, string> = {
   "help.attachPhoto": "Add a photo",
   "help.photoAttached": "Photo attached",
   "help.removePhoto": "Remove",
+  // help — the chat screen (founder, 2026-09-03). Support is one conversation
+  // with RoziPay Official now: no subject to invent, no list of past tickets.
+  "help.officialName": "RoziPay Official",
+  "help.officialTagline": "Support & account help — we usually reply within a few hours",
+  "help.chatEmpty": "Say hello — tell us what went wrong and a real person will reply.",
+  "help.typeMessage": "Type a message…",
+  "help.newChat": "New chat",
+  "help.chatClosed": "Chat closed",
+  "help.notRated": "Not rated",
   // withdraw
   "withdraw.youHave": "You have",
   "withdraw.aboutEquals": "Ready to take out",

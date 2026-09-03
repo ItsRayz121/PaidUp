@@ -285,8 +285,13 @@ export default function StaffPage() {
       // ⚠️ One panel is mounted at a time (see the single `active.node` below) —
       // "Our tasks" never renders network / commission config, and "Ad networks"
       // never renders the task editor. The tabs just switch which is on screen.
-      { id: "p-tasks", label: "Our tasks", need: "tasks.view", node: <TasksAdminPanel /> },
+      { id: "p-tasks", label: "Our tasks", need: "tasks.view", node: <TasksAdminPanel canDisburse={may("disbursements.manage")} /> },
       { id: "p-proofs", label: "Proofs", need: "tasks.review", node: <ProofReviewPanel /> },
+      // The same Disbursements screen as Money & payouts, mounted here too
+      // (founder, 2026-09-03: "add these disbursements and its whole mechanism
+      // ... inside tasks and networks"). One component, so the two can never
+      // disagree about what is eligible or how a batch runs.
+      { id: "p-task-rewards", label: "Disbursements", need: "disbursements.manage", node: <DisbursementsPanel canManage={may("disbursements.manage")} /> },
       { id: "p-networks", label: "Ad networks", need: "networks.manage", node: <NetworkPanel /> },
     ],
     growth: [

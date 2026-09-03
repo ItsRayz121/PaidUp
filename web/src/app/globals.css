@@ -43,6 +43,10 @@
   /* Height of the bottom tab bar. Anything floating above it (the install
      sheet) offsets by this, so the tabs are never covered. */
   --bottomnav-h: 64px;
+  /* Height of the sticky TopBar. A screen that has to fill exactly the space
+     between the two bars — /help's chat column, where the composer must sit
+     still while only the messages scroll — subtracts both from 100dvh. */
+  --topbar-h: 50px;
 }
 
 html {

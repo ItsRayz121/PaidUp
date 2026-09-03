@@ -528,6 +528,9 @@ export type StaffWithdrawal = {
   netUsdt?: string;
   sourceKind?: "points" | "earned_usdt";
   earnedUsdtMicro?: number;
+  // The on-chain proof, once paid. Optional: an older API build (mid-deploy)
+  // simply omits it and the cell renders a dash.
+  txHash?: string | null;
   // The on-chain relay job behind a 'sending' row, when there is one — its
   // phase and the three tx hashes, so a relayed payout doesn't look stuck.
   relay?: {
@@ -648,6 +651,22 @@ export const fetchReconciliation = (chain = "bep20", limit = 50) =>
   apiFetch<{ chain: string; snapshots: ReconSnapshot[] }>(
     `/staff/mining/reconciliation?chain=${encodeURIComponent(chain)}&limit=${limit}`);
 
+// Treasury wallet ledger (founder, 2026-09-03): every USDT and BNB movement in
+// and out of the hot wallet, read from the block explorer ON DEMAND — the
+// source is the chain, our own rows only supply the `label`. An unlabelled row
+// is money that moved without us starting it, which is the whole point.
+export type TreasuryLedgerRow = {
+  hash: string; at: string; asset: "USDT" | "BNB"; direction: "in" | "out";
+  counterparty: string; value: string; decimals: number;
+  micro: number | null; self: string; label: string | null;
+};
+export const fetchTreasuryLedger = (limit = 50) =>
+  apiFetch<{
+    chain: string; address: string; explorerReady: boolean;
+    totals: { inMicro: number; outMicro: number; rows: number } | null;
+    rows: TreasuryLedgerRow[];
+  }>(`/staff/treasury/wallet?limit=${limit}`);
+
 // ---- Admin-driven reward disbursement (founder, 2026-09-02) --------------
 // Group approved-but-unreleased rewards into a batch and push them out.
 // 'balance' credits the in-app balance; 'onchain'/'manual'/'csv' also create a
@@ -666,6 +685,9 @@ export type EligibleReward = {
 };
 export type DisbursementBatch = {
   id: string; mode: DisbursementMode; status: BatchStatus;
+  // Auto-named at creation from the campaign it pays; editable. Null on any
+  // batch created before names existed — the UI falls back to the id prefix.
+  name: string | null;
   note: string | null; createdBy: string; createdByEmail: string | null;
   createdAt: string; completedAt: string | null;
   countTotal: number; pointsTotal: number; usdtMicroTotal: number;
@@ -681,18 +703,24 @@ export type DisbursementRow = {
   withdrawalRequestId: string | null; createdAt: string; settledAt: string | null;
 };
 
-export const fetchEligibleRewards = (p: { q?: string; userId?: string; limit?: number; offset?: number } = {}) =>
+export const fetchEligibleRewards = (
+  p: { q?: string; userId?: string; taskId?: string; limit?: number; offset?: number } = {},
+) =>
   apiFetch<{ items: EligibleReward[]; total: number }>(
     `/staff/disbursements/eligible?${new URLSearchParams(
-      Object.entries({ q: p.q ?? "", userId: p.userId ?? "", limit: String(p.limit ?? 50), offset: String(p.offset ?? 0) })
-        .filter(([, v]) => v !== ""),
+      Object.entries({
+        q: p.q ?? "", userId: p.userId ?? "", taskId: p.taskId ?? "",
+        limit: String(p.limit ?? 50), offset: String(p.offset ?? 0),
+      }).filter(([, v]) => v !== ""),
     ).toString()}`);
 
-export const fetchDisbursementBatches = (p: { status?: string; q?: string; limit?: number; offset?: number } = {}) =>
+export const fetchDisbursementBatches = (
+  p: { status?: string; q?: string; taskId?: string; limit?: number; offset?: number } = {},
+) =>
   apiFetch<{ batches: DisbursementBatch[]; total: number }>(
     `/staff/disbursements?${new URLSearchParams(
       Object.entries({
-        status: p.status ?? "all", q: p.q ?? "",
+        status: p.status ?? "all", q: p.q ?? "", taskId: p.taskId ?? "",
         limit: String(p.limit ?? 25), offset: String(p.offset ?? 0),
       }).filter(([, v]) => v !== ""),
     ).toString()}`);
@@ -701,7 +729,8 @@ export const fetchDisbursementBatch = (id: string) =>
   apiFetch<{ batch: DisbursementBatch; rows: DisbursementRow[] }>(`/staff/disbursements/${id}`);
 
 export const createDisbursementBatch = (body: {
-  mode: DisbursementMode; note?: string; proofIds?: string[]; allEligible?: boolean; q?: string;
+  mode: DisbursementMode; note?: string; name?: string;
+  proofIds?: string[]; allEligible?: boolean; q?: string; taskId?: string;
 }) =>
   apiFetch<{ batchId: string; added: number; skipped: { proofId: string; reason: string }[] }>(
     "/staff/disbursements", { method: "POST", body: JSON.stringify(body) });
@@ -709,6 +738,12 @@ export const createDisbursementBatch = (body: {
 export const runDisbursementBatch = (id: string) =>
   apiFetch<{ processed: number; released: number; failed: number; results: { disbursementId: string; userId: string; status: string; error?: string }[] }>(
     `/staff/disbursements/${id}/run`, { method: "POST" });
+
+// Cosmetic only — the id is unchanged and is still what the audit log quotes.
+export const renameDisbursementBatch = (id: string, name: string) =>
+  apiFetch<{ ok: boolean; batch: DisbursementBatch }>(`/staff/disbursements/${id}`, {
+    method: "PATCH", body: JSON.stringify({ name }),
+  });
 
 export const cancelDisbursementBatch = (id: string) =>
   apiFetch<{ ok: boolean }>(`/staff/disbursements/${id}/cancel`, { method: "POST" });
@@ -913,6 +948,16 @@ export const setUserStatus = (id: string, status: "active" | "suspended", reason
 // that state, the actor's own id in the selection) is visible, not silently
 // swallowed into a single ok/fail.
 export type BulkStatusResult = { done: number; failed: number; results: { id: string; ok: boolean; error?: string }[] };
+// Fill in missing Telegram usernames (founder, 2026-09-03). One outbound
+// getChat per account, so the API caps the batch and reports what is left —
+// press again rather than walking the whole table behind one click.
+export const fetchTelegramNamePending = () =>
+  apiFetch<{ pending: number; batchSize: number }>("/staff/users/telegram/pending");
+export const refreshTelegramNames = () =>
+  apiFetch<{ checked: number; updated: number; notFound: number; pending: number }>(
+    "/staff/users/telegram/refresh", { method: "POST" },
+  );
+
 export const bulkSetUserStatus = (ids: string[], status: "active" | "suspended", reason: string) =>
   apiFetch<BulkStatusResult>("/staff/users/bulk-status", {
     method: "POST", body: JSON.stringify({ ids, status, reason }),
@@ -1011,6 +1056,22 @@ export const replyToMyTicket = (id: string, message: string, image?: string | nu
   apiFetch<{ ok: true }>(`/support/tickets/${id}/messages`, {
     method: "POST", body: JSON.stringify({ message, image: image || undefined }),
   });
+// ---- Support as ONE CHAT (founder, 2026-09-03) ---------------------------
+// The screen the user actually sees. A "segment" is one ticket underneath —
+// staff still assign / close / get rated per segment — but the user only ever
+// sees one continuous conversation with RoziPay Official.
+export type ChatSegment = {
+  id: string; subject: string; status: "open" | "answered" | "closed";
+  rating: TicketRating | null; at: string; closedAt: string | null;
+};
+export type ChatMessage = TicketMessage & { id: string; ticketId: string };
+export const fetchSupportChat = () =>
+  apiFetch<{ segments: ChatSegment[]; messages: ChatMessage[] }>("/support/chat");
+export const sendSupportChat = (message: string, image?: string | null) =>
+  apiFetch<{ ok: true; ticketId: string; opened: boolean }>("/support/chat", {
+    method: "POST", body: JSON.stringify({ message, image: image || undefined }),
+  });
+
 // "How was our support?" — only accepted once, on a closed ticket.
 export const rateTicket = (id: string, rating: TicketRating) =>
   apiFetch<{ ok: true }>(`/support/tickets/${id}/rating`, {

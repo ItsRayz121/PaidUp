@@ -302,5 +302,64 @@ console.log("\n-- console-wide record search (admin rebuild, Phase A) --");
   check("a non-staff caller is refused (403)", refused.statusCode === 403, String(refused.statusCode));
 }
 
+// ---------------------------------------------------------------------------
+// "Instead of Telegram user, show his username" (founder, 2026-09-03).
+//
+// The username IS captured at login. Two populations never had it written: an
+// account that connected Telegram from the WEBSITE (bindTelegramToUser wrote
+// only telegram_id until this date), and accounts older than the columns. This
+// endpoint is how a human fills those in, and the count is how the button knows
+// whether to appear at all.
+console.log("\n-- filling in missing Telegram names --");
+{
+  const admin = await mkStaff("tg-admin", "admin");
+  const agent = await mkStaff("tg-agent", "agent");
+
+  const before = (await app.inject({
+    method: "GET", url: "/staff/users/telegram/pending", headers: authOf(admin),
+  })).json() as { pending: number; batchSize: number };
+
+  // An account with a Telegram id and nothing readable — exactly the row that
+  // rendered as "Telegram user".
+  const nameless = await mkUser("tg-nameless");
+  await sql.run("UPDATE users SET telegram_id = ? WHERE id = ?", `9${Date.now()}`.slice(0, 12), nameless);
+
+  const after = (await app.inject({
+    method: "GET", url: "/staff/users/telegram/pending", headers: authOf(admin),
+  })).json() as { pending: number };
+  check("an account with a Telegram id and no name is counted as needing one",
+    after.pending === before.pending + 1, `${before.pending} -> ${after.pending}`);
+
+  // An account that already has a username must NOT be re-asked — one outbound
+  // request per account is the cost, so the query has to be selective.
+  const named = await mkUser("tg-named");
+  await sql.run(
+    "UPDATE users SET telegram_id = ?, telegram_username = 'realhandle' WHERE id = ?",
+    `8${Date.now()}`.slice(0, 12), named,
+  );
+  const after2 = (await app.inject({
+    method: "GET", url: "/staff/users/telegram/pending", headers: authOf(admin),
+  })).json() as { pending: number };
+  check("an account that already has a username is not counted again",
+    after2.pending === after.pending, `${after.pending} -> ${after2.pending}`);
+
+  // With no bot token configured (the test environment), fetchTelegramChatIdentity
+  // returns null rather than throwing — a Telegram outage must never be an
+  // error on a staff screen, and "no token" is the same code path.
+  const run = await app.inject({
+    method: "POST", url: "/staff/users/telegram/refresh", headers: authOf(admin),
+  });
+  const out = run.json() as { checked: number; updated: number; notFound: number; pending: number };
+  check("the refresh answers rather than failing when Telegram cannot be reached",
+    run.statusCode === 200, run.body);
+  check("and it reports nothing updated instead of pretending", out.updated === 0 && out.notFound === out.checked,
+    JSON.stringify(out));
+  check("the refresh is audited",
+    Boolean(await sql.get("SELECT 1 AS x FROM admin_audit_log WHERE action = 'telegram_identity_refresh'")));
+
+  check("an agent cannot run it — it writes to user rows",
+    (await app.inject({ method: "POST", url: "/staff/users/telegram/refresh", headers: authOf(agent) })).statusCode === 403);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

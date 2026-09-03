@@ -1626,6 +1626,12 @@ const MIGRATIONS = `
     usdt_micro_total BIGINT NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_payout_batches_status ON payout_batches(status, created_at DESC);
+  -- A batch has a NAME (founder, 2026-09-03: "right now the batch name is not
+  -- looking good"). The list used to show a raw uuid prefix, which
+  -- identifies a row and describes nothing. Auto-filled from what is actually in
+  -- the batch at creation, and editable afterwards. Nullable, so every batch
+  -- created before this keeps working and simply falls back to its id on screen.
+  ALTER TABLE payout_batches ADD COLUMN IF NOT EXISTS name TEXT;
 
   CREATE TABLE IF NOT EXISTS payout_disbursements (
     id             TEXT PRIMARY KEY,

@@ -19,7 +19,151 @@ import { RefreshBar, QUEUE_POLL_MS, TicketThread, TICKET_STATUSES } from "@/comp
 import { fetchStaffTickets, type StaffTicket } from "@/lib/api";
 import { displayIdentity } from "@/lib/format";
 
+// Two views over the same endpoint (founder, 2026-09-03). INBOX is for
+// answering — people on the left, the open conversation on the right, the way
+// the founder's reference screenshot works. TABLE is for auditing — search,
+// counts over ALL tickets, sort, pagination, CSV. Neither replaces the other,
+// so both stay.
 export function SupportQueuePanel() {
+  const [view, setView] = useState<"inbox" | "table">("inbox");
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1">
+        {(["inbox", "table"] as const).map((v) => (
+          <button key={v} onClick={() => setView(v)}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
+              view === v ? "bg-brand text-white" : "bg-brand-tint text-brand"
+            }`}>
+            {v === "inbox" ? "Inbox" : "All tickets (table)"}
+          </button>
+        ))}
+      </div>
+      {view === "inbox" ? <SupportInbox /> : <SupportTable />}
+    </div>
+  );
+}
+
+// ---- Inbox: conversations left, thread right ---------------------------
+// One screen, two panes on a desktop; on a narrow screen picking a person
+// replaces the list and a back arrow returns to it. The thread pane is the
+// SAME <TicketThread> the table view opens — reply, internal note, take / hand
+// back, reopen and close are untouched by this.
+const INBOX_LIMIT = 40;
+
+function SupportInbox() {
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [auto, setAuto] = useState(true);
+
+  const data = useApi(
+    () => fetchStaffTickets({
+      status, q: search, sort: "updated_at", dir: "desc", limit: INBOX_LIMIT, offset: 0,
+    }),
+    [status, search],
+    true, auto ? QUEUE_POLL_MS : undefined,
+  );
+  const rows = data.data?.tickets ?? [];
+  const counts = data.data?.counts ?? {};
+  // The list can move under the open conversation on a poll; keep showing the
+  // one that is actually open by matching on id, not by holding a stale row.
+  const open = rows.find((r) => r.id === openId) ?? null;
+
+  return (
+    <section className="mb-8">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-bold text-brand-ink">Support chat</h2>
+        <StatusTabs options={TICKET_STATUSES} value={status} onChange={setStatus} counts={counts} />
+        <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload}
+          auto={auto} setAuto={setAuto} />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+        {/* On a phone the list is hidden once a conversation is open — two
+            panes at 360px wide is two unreadable panes. */}
+        <div className={`${openId ? "hidden md:block" : ""} rounded-lg border-2 border-line-strong bg-card`}>
+          <div className="border-b border-line p-2">
+            <input
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search a person or a subject"
+              className="w-full rounded-md border border-line bg-bg px-2 py-1.5 text-xs outline-none"
+            />
+          </div>
+          <div className="max-h-[70vh] overflow-y-auto">
+            {data.loading && rows.length === 0 && <p className="p-3 text-sm text-muted">Loading…</p>}
+            {data.error && <p className="p-3 text-sm text-danger">{data.error}</p>}
+            {!data.loading && rows.length === 0 && !data.error && (
+              <p className="p-3 text-sm text-muted">No conversations yet.</p>
+            )}
+            {rows.map((t) => {
+              const identity = displayIdentity({
+                email: t.userEmail, username: t.userUsername, displayName: t.userDisplayName,
+                telegramUsername: t.userTelegramUsername, telegramName: t.userTelegramName,
+              });
+              const selected = t.id === openId;
+              return (
+                <button key={t.id} onClick={() => setOpenId(t.id)}
+                  className={`flex w-full items-start gap-2 border-b border-line p-2.5 text-left last:border-b-0 ${
+                    selected ? "bg-brand-tint" : "hover:bg-brand-tint/40"
+                  } ${t.status === "closed" ? "opacity-60" : ""}`}>
+                  <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-tint text-xs font-bold text-brand">
+                    {identity.replace(/^@/, "").slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold text-brand-ink">{identity}</span>
+                      <span className="shrink-0 text-[10px] text-muted"><TimeCell iso={t.updatedAt} /></span>
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      {t.lastMessage || t.subject}
+                    </span>
+                  </span>
+                  {/* "open" means it is waiting on us — the only state that
+                      needs a mark in a list you are working down. */}
+                  {t.status === "open" && (
+                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-brand" aria-label="waiting for a reply" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className={`${openId ? "" : "hidden md:block"} rounded-lg border-2 border-line-strong bg-card`}>
+          {open ? (
+            <div>
+              <div className="flex items-center gap-2 border-b border-line p-2.5">
+                <button onClick={() => setOpenId(null)}
+                  className="rounded bg-brand-tint px-2 py-1 text-xs font-semibold text-brand md:hidden">
+                  ← Back
+                </button>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-brand-ink">
+                    {displayIdentity({
+                      email: open.userEmail, username: open.userUsername, displayName: open.userDisplayName,
+                      telegramUsername: open.userTelegramUsername, telegramName: open.userTelegramName,
+                    }, { full: true })}
+                  </p>
+                  <p className="truncate text-xs text-muted">{open.userEmail}</p>
+                </div>
+                <span className="ms-auto"><StatusBadge status={open.status} /></span>
+              </div>
+              <TicketThread t={open} onChange={data.reload} />
+            </div>
+          ) : (
+            <p className="p-6 text-center text-sm text-muted">
+              Pick someone on the left to read and answer their chat.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---- Table: the auditing view (unchanged behaviour) --------------------
+
+function SupportTable() {
   const q = useTableQuery("support:tickets", { pageSize: 25, sort: "updated_at", dir: "asc" });
   const [status, setStatusRaw] = useState("all");
   const [mineOnly, setMineOnly] = useState(false);

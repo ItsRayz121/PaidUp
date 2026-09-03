@@ -285,5 +285,12 @@ export function displayIdentity(row: {
   }
   if (name) return synthetic ? `${name} (Telegram)` : name;
   if (email && !synthetic) return email;
-  return "Telegram user";
+  // ⚠️ LAST RESORT, AND IT HAS TO BE AN IDENTIFIER, NOT A CATEGORY (founder,
+  // 2026-09-03). Telegram genuinely allows an account with no username and no
+  // last name, so this branch can never be deleted — but "Telegram user" told
+  // a staff member nothing and could not be searched for. The synthetic address
+  // is `tg<telegram_id>@telegram.local`, so the id is right there: show it.
+  // Filling the real username in is Users → "Refresh Telegram names".
+  const tgId = /^tg(\d+)@telegram\.local$/.exec(email)?.[1];
+  return tgId ? `Telegram #${tgId}` : "Telegram user";
 }

@@ -16,7 +16,7 @@ import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
 import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs } from "./primitives";
+import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
@@ -26,6 +26,7 @@ import {
   fetchStaffQueue, decideWithdrawal, fetchAdminTopups, confirmTopup, rejectTopup,
   fetchAdminRefunds, payRefund, rejectRefund, fetchStaffBnbWithdrawals, fetchRelayJobs,
   fetchReconciliation, resolveRelayJob, resolveBnbWithdrawal, recheckReconciliation,
+  fetchTreasuryLedger, type TreasuryLedgerRow,
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
@@ -150,9 +151,9 @@ function RelaySummary({ r }: { r: NonNullable<StaffWithdrawal["relay"]> }) {
       <Fields rows={[
         F("Phase", <StatusBadge status={r.phase} />),
         F("From address", <span className="num">{r.fromAddress ?? "—"}</span>),
-        F("Gas tx", r.gasTxHash ? <CopyId value={r.gasTxHash} /> : "—"),
-        F("Prefund tx", r.prefundTxHash ? <CopyId value={r.prefundTxHash} /> : "—"),
-        F("Forward tx", r.forwardTxHash ? <CopyId value={r.forwardTxHash} /> : "—"),
+        F("Gas tx", <TxHash value={r.gasTxHash} />),
+        F("Prefund tx", <TxHash value={r.prefundTxHash} />),
+        F("Forward tx", <TxHash value={r.forwardTxHash} />),
         F("Last error", <span className="text-danger">{r.lastError ?? "—"}</span>),
       ]} />
     </div>
@@ -376,6 +377,8 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       ) : <span className="text-xs text-muted">—</span>,
     },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+    // The chain's own receipt for a paid row — clickable through to BscScan.
+    { key: "tx", header: "Transaction", csv: (r) => r.txHash ?? "", render: (r) => <TxHash value={r.txHash} chain={r.chain} /> },
     { key: "created_at", header: "Requested", sortable: true, csv: (r) => r.at, render: (r) => <TimeCell iso={r.at} /> },
     { key: "actions", header: "", render: actionsFor },
   ];
@@ -396,6 +399,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
           F("Network", <span className="uppercase">{open.chain}</span>),
           F("Address", open.address ? <CopyId value={open.address} /> : "—"),
           F("Address checked", open.addressVerified ? "✓ signed by the user's wallet" : "not checked — typed in"),
+          F("Transaction", <TxHash value={open.txHash} chain={open.chain} />),
           F("Requested", <TimeCell iso={open.at} />),
         ]}
         extra={open.relay ? <RelaySummary r={open.relay} /> : undefined}
@@ -434,7 +438,15 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
         getRowId={(r) => r.id}
         onRowClick={(r) => setOpen(r)}
         searchPlaceholder="Search email, user id, address or tx hash"
-        emptyTitle={`No ${c.status.replace(/_/g, " ")} withdrawals`}
+        // "No all withdrawals" was wrong English on the All tab, and on every
+        // other tab it stopped at "nothing here" without saying that money-out
+        // lives in three separate tables (founder, 2026-09-03, on an empty
+        // queue that should not have looked empty).
+        emptyTitle={c.status === "all" ? "No withdrawals yet" : `No ${c.status.replace(/_/g, " ")} withdrawals`}
+        emptyHint={
+          "This queue is only task/referral cash-outs. Deposit refunds and BNB sends are their " +
+          "own tabs — check All money out to see every outgoing transaction in one list."
+        }
         exportName="withdrawals"
       />
     </section>
@@ -506,7 +518,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
     },
     { key: "amount", header: "Claimed", align: "right", sortable: true, csv: (r) => r.amount, render: (r) => <span className="num">{r.amount} USDT</span> },
     { key: "chain", header: "Chain", csv: (r) => r.chain, render: (r) => <span className="uppercase">{r.chain}</span> },
-    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <Addr value={r.tx_hash} /> },
+    { key: "tx", header: "Transaction", csv: (r) => r.tx_hash, render: (r) => <TxHash value={r.tx_hash} /> },
     { key: "status", header: "Status", sortable: true, csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
     { key: "created_at", header: "When", sortable: true, csv: (r) => r.created_at, render: (r) => <TimeCell iso={r.created_at} /> },
     { key: "actions", header: "", render: actionsFor },
@@ -523,7 +535,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
         fields={[
           F("Claimed amount", <span className="num">{open.amount} USDT</span>),
           F("Chain", <span className="uppercase">{open.chain}</span>),
-          F("Transaction", <CopyId value={open.tx_hash} />),
+          F("Transaction", <TxHash value={open.tx_hash} />),
           F("Status", <StatusBadge status={open.status} />),
           F("Reject reason", open.reject_reason ?? "—"),
           F("Created", <TimeCell iso={open.created_at} />),
@@ -602,7 +614,9 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
 
   const actionsFor = (r: AdminRefund) => {
     if (r.status !== "pending") {
-      return <span className="text-xs text-muted">{r.status === "paid" ? r.tx_hash ?? "—" : r.reject_reason ?? "—"}</span>;
+      return r.status === "paid"
+        ? <TxHash value={r.tx_hash} />
+        : <span className="text-xs text-muted">{r.reject_reason ?? "—"}</span>;
     }
     if (!canDecide) return <span className="text-xs text-muted">view only</span>;
     return (
@@ -664,7 +678,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
           F("Chain", open.chainLabel || open.chain),
           F("Address", <CopyId value={open.address} />),
           F("Address checked", open.addressVerified ? "signed by the user's wallet" : "not checked — typed in"),
-          F("Tx hash", open.tx_hash ? <CopyId value={open.tx_hash} /> : "—"),
+          F("Tx hash", <TxHash value={open.tx_hash} />),
           F("Reject reason", open.reject_reason ?? "—"),
           F("Created", <TimeCell iso={open.created_at} />),
         ]}
@@ -750,7 +764,7 @@ export function BnbWithdrawalsPanel({ canHandle = false }: { canHandle?: boolean
           F("To address", <CopyId value={open.address} />),
           F("Status", <StatusBadge status={open.status} />),
           F("Attempts", <span className="num">{open.attempts}</span>),
-          F("Tx hash", open.txHash ? <CopyId value={open.txHash} /> : "—"),
+          F("Tx hash", <TxHash value={open.txHash} />),
           F("Last error", <span className="text-danger">{open.lastError ?? "—"}</span>),
           F("Requested", <TimeCell iso={open.at} />),
           F("Completed", open.completedAt ? <TimeCell iso={open.completedAt} /> : "—"),
@@ -846,9 +860,9 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
           F("To address", <CopyId value={open.toAddress} />),
           F("Phase", <StatusBadge status={open.status} />),
           F("Attempts", <span className="num">{open.attempts}</span>),
-          F("Gas tx", open.gasTxHash ? <CopyId value={open.gasTxHash} /> : "—"),
-          F("Prefund tx", open.prefundTxHash ? <CopyId value={open.prefundTxHash} /> : "—"),
-          F("Forward tx", open.forwardTxHash ? <CopyId value={open.forwardTxHash} /> : "—"),
+          F("Gas tx", <TxHash value={open.gasTxHash} />),
+          F("Prefund tx", <TxHash value={open.prefundTxHash} />),
+          F("Forward tx", <TxHash value={open.forwardTxHash} />),
           F("Last error", <span className="text-danger">{open.lastError ?? "—"}</span>),
           F("Created", <TimeCell iso={open.at} />),
           F("Completed", open.completedAt ? <TimeCell iso={open.completedAt} /> : "—"),
@@ -885,6 +899,270 @@ export function RelayJobsPanel({ canHandle = false }: { canHandle?: boolean }) {
           ] },
         ]}
       />
+    </section>
+  );
+}
+
+// ======================================================================
+// 5a. All money out (founder, 2026-09-03)
+// ======================================================================
+// "There is no transaction of the withdrawals showing up there while we have
+// already made up a lot of transactions."
+//
+// Both things were true. `GET /staff/withdrawals?status=all` really does drop
+// every filter — but it only ever reads `withdrawal_requests`, and money leaves
+// this platform on THREE rails: a task/referral cash-out, a deposit refund, and
+// a BNB gas-out. Each has its own table, its own queue and its own tab, so a
+// quiet withdrawals tab said nothing about whether money had moved.
+//
+// This view merges all three, newest first, each row labelled with the rail it
+// came from and clickable through to its own queue.
+//
+// It calls the three EXISTING endpoints rather than adding a fourth. This
+// codebase has shipped two "clean typecheck, 500 on open" bugs from hand-written
+// SQL over these tables (CLAUDE.md: `networks.label`, then the withdrawal-history
+// column names) — a merge in TypeScript over three tested reads cannot repeat
+// that, and the rails are small enough that one page each is the whole picture.
+type OutRow = {
+  key: string;
+  rail: "Withdrawal" | "Refund" | "BNB";
+  at: string;
+  who: string;
+  userId: string;
+  amount: string;
+  status: string;
+  txHash: string | null;
+  address: string | null;
+};
+
+const OUT_LIMIT = 50;
+
+export function AllMoneyOutPanel({ canOpenLedger = false }: { canOpenLedger?: boolean }) {
+  const [auto, setAuto] = useState(true);
+  const { openUser } = useStaffNav();
+  const data = useApi(
+    async () => {
+      const [w, r, b] = await Promise.all([
+        fetchStaffQueue({ status: "all", limit: OUT_LIMIT }),
+        fetchAdminRefunds({ status: "all", limit: OUT_LIMIT }),
+        fetchStaffBnbWithdrawals({ status: "all", limit: OUT_LIMIT }),
+      ]);
+      const rows: OutRow[] = [
+        ...w.requests.map((x) => ({
+          key: `w:${x.id}`, rail: "Withdrawal" as const, at: x.at,
+          who: identityOf(x), userId: x.userId,
+          amount: `${x.netUsdt ?? formatMoney(x.amount)} USDT`,
+          status: x.status, txHash: x.txHash ?? null, address: x.address ?? null,
+        })),
+        ...r.refunds.map((x) => ({
+          key: `r:${x.id}`, rail: "Refund" as const, at: x.created_at,
+          who: displayIdentity(x), userId: x.user_id,
+          amount: `${x.netAmount} USDT`,
+          status: x.status, txHash: x.tx_hash, address: x.address,
+        })),
+        ...b.rows.map((x) => ({
+          key: `b:${x.id}`, rail: "BNB" as const, at: x.at,
+          who: identityOf(x), userId: x.userId,
+          amount: `${formatBnbWei(x.amountWei)} BNB`,
+          status: x.status, txHash: x.txHash, address: x.address,
+        })),
+      ];
+      // Newest first across all three rails — the only ordering that answers
+      // "did anything leave, and when".
+      rows.sort((a, z) => (a.at < z.at ? 1 : a.at > z.at ? -1 : 0));
+      return { rows, counts: { w: w.total, r: r.total, b: b.total } };
+    },
+    [], true, auto ? QUEUE_POLL_MS : undefined,
+  );
+  const rows = data.data?.rows ?? [];
+  const counts = data.data?.counts;
+
+  const railCls: Record<OutRow["rail"], string> = {
+    Withdrawal: "bg-brand-tint text-brand",
+    Refund: "bg-accent/15 text-accent",
+    BNB: "bg-pending-tint text-pending",
+  };
+
+  return (
+    <section className={shellCls("danger")}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-bold text-brand-ink">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT.danger}`} aria-hidden />
+          <ArrowUpIcon size={16} />
+          All money out
+        </h2>
+        <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload}
+          auto={auto} setAuto={setAuto} />
+      </div>
+
+      <p className="mb-2 rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+        Every outgoing transaction, on all three rails, newest first
+        {counts && (
+          <>
+            {" "}— <b>{counts.w}</b> withdrawal(s), <b>{counts.r}</b> refund(s), <b>{counts.b}</b> BNB send(s).
+          </>
+        )}{" "}
+        Each rail keeps its own tab for deciding; this one is only for seeing.
+      </p>
+
+      {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
+
+      <div className="overflow-x-auto rounded-lg border-2 border-line-strong bg-card">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="border-b border-line text-left text-xs text-muted">
+              <th className="p-2">When</th>
+              <th className="p-2">Rail</th>
+              <th className="p-2">User</th>
+              <th className="p-2 text-right">Amount</th>
+              <th className="p-2">Status</th>
+              <th className="p-2">To</th>
+              <th className="p-2">Transaction</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-b border-line/60">
+                <td className="p-2"><TimeCell iso={r.at} /></td>
+                <td className="p-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${railCls[r.rail]}`}>{r.rail}</span>
+                </td>
+                <td className="p-2">
+                  {canOpenLedger
+                    ? <button onClick={() => openUser(r.userId)} className="text-brand hover:underline">{r.who}</button>
+                    : <span>{r.who}</span>}
+                </td>
+                <td className="p-2 text-right num">{r.amount}</td>
+                <td className="p-2"><StatusBadge status={r.status} /></td>
+                <td className="p-2"><Addr value={r.address} /></td>
+                <td className="p-2"><TxHash value={r.txHash} /></td>
+              </tr>
+            ))}
+            {rows.length === 0 && !data.loading && (
+              <tr><td colSpan={7} className="p-6 text-center text-sm text-muted">
+                No money has left the platform yet.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// ======================================================================
+// 5b. Treasury wallet - every in and out (founder, 2026-09-03)
+// ======================================================================
+// "Show me all the in and out of this particular wallet ... all kind of
+// transaction with a clickable transaction hash, so that we can see either
+// everything is going on smooth or not."
+//
+// WARNING: NO AUTO-REFRESH ON THIS PANEL, ON PURPOSE. Every other money queue
+// polls a cheap database read; this one reaches a block explorer. CLAUDE.md
+// records two real billing incidents caused by chain reads that ran with nobody
+// watching - so this is a manual Refresh only, backed by a 60s cache on the API.
+export function TreasuryWalletPanel() {
+  const data = useApi(() => fetchTreasuryLedger(50), []);
+  const d = data.data;
+
+  const amount = (r: TreasuryLedgerRow) =>
+    r.asset === "USDT"
+      ? `${formatUsdtMicro(r.micro ?? 0)} USDT`
+      : `${formatBnbWei(r.value)} BNB`;
+
+  return (
+    <section className={shellCls("accent")}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-bold text-brand-ink">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT.accent}`} aria-hidden />
+          <ChartIcon size={16} />
+          Treasury wallet - money in and out
+        </h2>
+        <button onClick={data.reload} disabled={data.loading}
+          className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand disabled:opacity-50">
+          {data.loading ? "Reading the chain..." : "Refresh"}
+        </button>
+      </div>
+
+      <p className="mb-2 rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+        Read straight from the BNB Chain, not from our own records - so anything that moved
+        without us starting it shows up here too. A row with no description underneath is
+        exactly that. Read only when you open or refresh this tab.
+      </p>
+
+      {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
+      {d && !d.address && (
+        <p className="rounded-lg border-2 border-line-strong bg-card p-4 text-sm text-muted">
+          No treasury address is set yet. Add it on the <b>Treasury</b> tab.
+        </p>
+      )}
+      {d && d.address && !d.explorerReady && (
+        <p className="rounded-lg border-2 border-line-strong bg-card p-4 text-sm text-muted">
+          Set <span className="num">BSCSCAN_API_KEY</span> on the API to read this
+          wallet&apos;s history. It is a free key, and nothing else on this screen needs it.
+        </p>
+      )}
+
+      {d?.explorerReady && (
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border-2 border-line-strong bg-card p-3 text-xs">
+            <span><span className="text-muted">Wallet:</span> <Addr value={d.address} /></span>
+            {d.totals && (
+              <>
+                <span className="text-success">
+                  in <span className="num font-semibold">{formatUsdtMicro(d.totals.inMicro)} USDT</span>
+                </span>
+                <span className="text-danger">
+                  out <span className="num font-semibold">{formatUsdtMicro(d.totals.outMicro)} USDT</span>
+                </span>
+                <span className="text-muted">over the last {d.totals.rows} transaction(s) shown</span>
+              </>
+            )}
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border-2 border-line-strong bg-card">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-muted">
+                  <th className="p-2">When</th>
+                  <th className="p-2">In / out</th>
+                  <th className="p-2 text-right">Amount</th>
+                  <th className="p-2">Other side</th>
+                  <th className="p-2">Transaction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.rows.map((r) => (
+                  <tr key={`${r.hash}:${r.asset}:${r.direction}`} className="border-b border-line/60">
+                    <td className="p-2"><TimeCell iso={r.at} /></td>
+                    <td className="p-2">
+                      <span className={`inline-flex items-center gap-1 text-xs font-semibold ${
+                        r.direction === "in" ? "text-success" : "text-danger"
+                      }`}>
+                        {r.direction === "in" ? <ArrowDownIcon size={13} /> : <ArrowUpIcon size={13} />}
+                        {r.direction === "in" ? "In" : "Out"}
+                      </span>
+                    </td>
+                    <td className="p-2 text-right num">{amount(r)}</td>
+                    <td className="p-2"><Addr value={r.counterparty} /></td>
+                    <td className="p-2">
+                      <TxHash value={r.hash} />
+                      {/* Blank on purpose when we do not recognise the hash -
+                          that is the row worth looking at. */}
+                      <span className="mt-0.5 block text-[11px] text-muted">{r.label ?? "not one of ours"}</span>
+                    </td>
+                  </tr>
+                ))}
+                {d.rows.length === 0 && (
+                  <tr><td colSpan={5} className="p-6 text-center text-sm text-muted">
+                    Nothing has moved through this wallet yet.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -1034,6 +1312,9 @@ export function WithdrawalsGroupPanel({ has }: { has: (p: UiPermission) => boole
       { id: "usdt", label: "USDT", node: <WithdrawalsPanel canOpenLedger={has("users.view")} /> },
       { id: "bnb", label: "BNB", node: <BnbWithdrawalsPanel canHandle={has("withdrawals.decide")} /> },
       { id: "relay", label: "Relay jobs", node: <RelayJobsPanel canHandle={has("withdrawals.decide")} /> },
+      // Read-only, and last on purpose: the first three tabs are where a
+      // decision gets made, this one only answers "did anything leave".
+      { id: "all", label: "All money out", node: <AllMoneyOutPanel canOpenLedger={has("users.view")} /> },
     ]} />
   );
 }
@@ -1077,6 +1358,11 @@ export function TreasuryGroupPanel({ has, canRecheck }: {
 }) {
   const items = [
     has("treasury.view") && { id: "treasury", label: "Treasury", node: <TreasuryPanel /> },
+    // "Wallet" - the real in/out of the treasury address, read from the chain
+    // (founder, 2026-09-03). Next to the address it belongs to, and before the
+    // reconciliation history, which answers a different question (do our books
+    // agree) than this one (what actually moved).
+    has("treasury.view") && { id: "wallet", label: "Wallet", node: <TreasuryWalletPanel /> },
     has("analytics.view") && { id: "reconciliation", label: "Reconciliation", node: <ReconciliationPanel canRecheck={canRecheck} /> },
   ].filter(Boolean) as { id: string; label: string; node: ReactNode }[];
   return <GroupTabs items={items} />;

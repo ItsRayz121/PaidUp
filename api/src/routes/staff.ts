@@ -16,6 +16,8 @@ import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSe
 import { ticketAutoCloseHoursNow } from "../settingsRuntime.ts";
 import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
 import { loadAnalytics } from "../analytics.ts";
+import { fetchTelegramChatIdentity } from "../telegram.ts";
+import { fetchTreasuryLedger, bscscanReady } from "../bscscan.ts";
 
 // Gate a route on ONE named permission (see permissions.ts). The old form took
 // a list of roles; a permission is the same gate stated as what it protects
@@ -173,6 +175,13 @@ export async function staffRoutes(app: FastifyInstance) {
         // talked into pasting somebody else's address.
         addressVerified: Boolean(r.address_verified),
         status: r.status, at: r.created_at,
+        // The proof that this payout really happened. `withdrawal_requests
+        // .tx_hash` has been written by every mark-paid and every auto-settle
+        // since payouts existed — it was simply never served, so the queue
+        // could not show it and a "paid" row had nothing to check against the
+        // chain (founder, 2026-09-03: "make sure you are showing the
+        // transaction hash").
+        txHash: r.tx_hash ?? null,
         withinAgentLimit: (r.amount as number) <= config.agentApprovalMaxPoints,
         relay: r.relay_status ? {
           phase: r.relay_status, fromAddress: r.relay_from_address,
@@ -1833,6 +1842,178 @@ export async function staffRoutes(app: FastifyInstance) {
       }, t);
     });
     return { ok: true, underReview: reason !== null, reason };
+  }));
+
+  // ---- Backfill Telegram identities (founder, 2026-09-03) ------------------
+  // "Instead of Telegram user, show his username." The username IS captured at
+  // login — but two populations never had it written: accounts that connected
+  // Telegram from the website (bindTelegramToUser wrote only telegram_id until
+  // this same date), and accounts created before the columns existed. Nothing
+  // a normal login does can fix an account that is not logging in right now,
+  // so this asks the Bot API directly, per account, on demand.
+  //
+  // Gated on users.review — a manager-tier write that changes only how a person
+  // is LABELLED on staff screens. It touches no money, no status, and nothing a
+  // user can see.
+  //
+  // ⚠️ CAPPED PER CALL, AND IT NEVER THROWS. One getChat per account is a real
+  // outbound request each; a full-table walk behind one click is how you turn a
+  // staff button into an incident. `pending` tells the caller how many are
+  // still left so the button can simply be pressed again.
+  const TELEGRAM_REFRESH_MAX = 50;
+  app.post("/staff/users/telegram/refresh", staffGuard("users.review", async ({ userId: actorId, role }) => {
+    const rows = await sql.all<{ id: string; telegram_id: string }>(
+      `SELECT id, telegram_id FROM users
+       WHERE telegram_id IS NOT NULL
+         AND (telegram_username IS NULL OR telegram_username = '')
+         AND (telegram_name IS NULL OR telegram_name = '')
+       ORDER BY created_at ASC
+       LIMIT ?`,
+      TELEGRAM_REFRESH_MAX,
+    );
+
+    let updated = 0;
+    let notFound = 0;
+    for (const r of rows) {
+      const id = await fetchTelegramChatIdentity(r.telegram_id);
+      if (!id || (!id.username && !id.name)) { notFound += 1; continue; }
+      await sql.run(
+        "UPDATE users SET telegram_username = ?, telegram_name = ? WHERE id = ? AND telegram_id = ?",
+        id.username, id.name, r.id, r.telegram_id,
+      );
+      updated += 1;
+    }
+
+    const left = await sql.get<{ n: string | number }>(
+      `SELECT COUNT(*) AS n FROM users
+       WHERE telegram_id IS NOT NULL
+         AND (telegram_username IS NULL OR telegram_username = '')
+         AND (telegram_name IS NULL OR telegram_name = '')`,
+    );
+    await logAudit({
+      actorUserId: actorId, actorRole: role, action: "telegram_identity_refresh",
+      detail: `checked ${rows.length}, updated ${updated}, no answer ${notFound}`,
+    });
+    return { checked: rows.length, updated, notFound, pending: Number(left?.n ?? 0) };
+  }));
+
+  // ---- Treasury wallet: every in and out (founder, 2026-09-03) ------------
+  // "Show me all the in and out of this particular wallet ... whether it could
+  // be to the platform users, whether it could be to any other place."
+  //
+  // ⚠️ THE CHAIN IS THE SOURCE, OUR TABLES ARE ONLY THE LABELS. A ledger built
+  // from withdrawal_requests / usdt_topups / sweep_jobs could only ever show
+  // movement WE started — and a treasury screen exists precisely to surface the
+  // movement we did not. So the rows come from the block explorer, and each is
+  // then annotated where we recognise its hash. A row with no label is the
+  // interesting one.
+  //
+  // ⚠️ ON DEMAND, NEVER POLLED. See bscscan.ts's header, and the two real
+  // billing incidents in CLAUDE.md that rule comes from.
+  app.get("/staff/treasury/wallet", staffGuard("treasury.view", async (_ctx, req) => {
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) })
+      .parse((req.query as Record<string, unknown>) ?? {});
+    const address = await getSetting("treasury_address_bep20", "");
+    if (!address) {
+      return { chain: "bep20", address: "", explorerReady: bscscanReady(), rows: [], totals: null };
+    }
+    if (!bscscanReady()) {
+      // Not an error — a deployment without the free explorer key simply has
+      // nothing to show here, and saying so beats an empty table that reads as
+      // "no money has ever moved".
+      return { chain: "bep20", address, explorerReady: false, rows: [], totals: null };
+    }
+
+    const txs = await fetchTreasuryLedger(address, q.limit);
+    const hashes = txs.map((t) => t.hash.toLowerCase());
+    const labels = hashes.length === 0 ? new Map<string, string>() : await labelTreasuryHashes(hashes);
+
+    const self = address.toLowerCase();
+    let inMicro = 0n;
+    let outMicro = 0n;
+    for (const t of txs) {
+      if (t.asset !== "USDT") continue;
+      // Base units -> micro-USDT, the unit every other money figure in this API
+      // is already in. BSC USDT is 18 decimals, NOT the 6 most deployments use.
+      const micro = BigInt(t.value) / 10n ** BigInt(Math.max(0, t.decimals - 6));
+      if (t.direction === "out") outMicro += micro; else inMicro += micro;
+    }
+
+    return {
+      chain: "bep20",
+      address,
+      explorerReady: true,
+      totals: { inMicro: Number(inMicro), outMicro: Number(outMicro), rows: txs.length },
+      rows: txs.map((t) => ({
+        hash: t.hash,
+        at: t.at,
+        asset: t.asset,
+        direction: t.direction,
+        // The other side of the transfer — who we paid, or who paid us.
+        counterparty: t.direction === "out" ? t.to : t.from,
+        value: t.value,
+        decimals: t.decimals,
+        micro: t.asset === "USDT"
+          ? Number(BigInt(t.value) / 10n ** BigInt(Math.max(0, t.decimals - 6)))
+          : null,
+        self,
+        label: labels.get(t.hash.toLowerCase()) ?? null,
+      })),
+    };
+  }));
+
+  // What each hash was, according to our own records. Five small IN-lookups
+  // rather than one union view: each table stores its hash in its own column,
+  // and a row we do not recognise must come back unlabelled rather than
+  // silently matched to the wrong thing.
+  async function labelTreasuryHashes(hashes: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const ph = hashes.map(() => "?").join(",");
+    const put = (h: unknown, label: string) => {
+      const key = String(h ?? "").toLowerCase();
+      if (key && !out.has(key)) out.set(key, label);
+    };
+
+    const [withdrawals, topups, refunds, sweeps, relays] = await Promise.all([
+      sql.all<{ tx_hash: string; email: string }>(
+        `SELECT w.tx_hash, u.email FROM withdrawal_requests w JOIN users u ON u.id = w.user_id
+         WHERE LOWER(w.tx_hash) IN (${ph})`, ...hashes),
+      sql.all<{ tx_hash: string; email: string }>(
+        `SELECT t.tx_hash, u.email FROM usdt_topups t JOIN users u ON u.id = t.user_id
+         WHERE LOWER(t.tx_hash) IN (${ph})`, ...hashes),
+      sql.all<{ tx_hash: string; email: string }>(
+        `SELECT r.tx_hash, u.email FROM usdt_refund_requests r JOIN users u ON u.id = r.user_id
+         WHERE LOWER(r.tx_hash) IN (${ph})`, ...hashes),
+      sql.all<{ sweep_tx_hash: string }>(
+        `SELECT sweep_tx_hash FROM sweep_jobs WHERE LOWER(sweep_tx_hash) IN (${ph})`, ...hashes),
+      sql.all<{ gas_tx_hash: string | null; prefund_tx_hash: string | null; forward_tx_hash: string | null }>(
+        `SELECT gas_tx_hash, prefund_tx_hash, forward_tx_hash FROM payout_relay_jobs
+         WHERE LOWER(gas_tx_hash) IN (${ph}) OR LOWER(prefund_tx_hash) IN (${ph})
+            OR LOWER(forward_tx_hash) IN (${ph})`, ...hashes, ...hashes, ...hashes),
+    ]);
+
+    for (const r of withdrawals) put(r.tx_hash, `Withdrawal paid · ${r.email}`);
+    for (const r of topups) put(r.tx_hash, `Deposit confirmed · ${r.email}`);
+    for (const r of refunds) put(r.tx_hash, `Deposit refunded · ${r.email}`);
+    for (const r of sweeps) put(r.sweep_tx_hash, "Deposit swept to treasury");
+    for (const r of relays) {
+      put(r.gas_tx_hash, "Payout relay · gas sent");
+      put(r.prefund_tx_hash, "Payout relay · USDT prefund");
+      put(r.forward_tx_hash, "Payout relay · forwarded to the user");
+    }
+    return out;
+  }
+
+  // How many accounts the button above would touch — so it can say so before
+  // it is pressed, and disappear when there is nothing left to do.
+  app.get("/staff/users/telegram/pending", staffGuard("users.list", async () => {
+    const left = await sql.get<{ n: string | number }>(
+      `SELECT COUNT(*) AS n FROM users
+       WHERE telegram_id IS NOT NULL
+         AND (telegram_username IS NULL OR telegram_username = '')
+         AND (telegram_name IS NULL OR telegram_name = '')`,
+    );
+    return { pending: Number(left?.n ?? 0), batchSize: TELEGRAM_REFRESH_MAX };
   }));
 
   // ---- Admin: adjust a user's points by hand ------------------------------

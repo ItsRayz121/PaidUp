@@ -15,6 +15,7 @@ import { useStaffNav } from "@/lib/staffNav";
 import { useToast } from "@/components/staff/toast";
 import { toTicketImageDataUrl } from "@/lib/imageUpload";
 import { ImageIcon, XIcon } from "@/components/icons";
+import { QrCode } from "@/components/QrCode";
 
 // ---- Live refresh bar (founder, 2026-08-27) --------------------------------
 // The money/fraud queues were pull-on-load only — open the panel, see a
@@ -295,28 +296,37 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
 
 // ---- Treasury / hot wallet (admin only) ------------------------------------
 // The wallet the founder funds with USDT and every manual payout is sent FROM.
-// One address per chain. The API stores only the ADDRESS (never a key), so this
-// screen can't move funds — it exists so (a) the founder records where the
-// treasury lives, (b) whoever pays a withdrawal sends from the right wallet,
-// and (c) the deposit address is one copy-click away when topping up.
+// The API stores only the ADDRESS (never a key), so this screen can't move
+// funds — it exists so (a) the founder records where the treasury lives, (b)
+// whoever pays a withdrawal sends from the right wallet, and (c) the deposit
+// address is one scan or copy away when topping up.
+//
+// ⚠️ BEP20 ONLY ON SCREEN (founder, 2026-09-03: "you can remove these Aptos ...
+// and even you can remove this base address"). One chain in, one chain out is
+// already the live rule (CLAUDE.md, 2026-07-29) — Base and Aptos were two empty
+// boxes inviting a treasury to be recorded on a chain nothing pays out on.
+//
+// ⚠️ `KNOWN_CHAINS` in chains.ts IS NOT TOUCHED BY THIS. Historical withdrawal
+// rows on those chains must keep labelling, and payout.ts must keep recognising
+// its own past work. This is a display narrowing on one panel, nothing else —
+// the settings endpoint still accepts all three.
 const TREASURY_CHAINS = [
-  { id: "bep20" as const, label: "BEP20 (BNB Chain)" },
-  { id: "base" as const, label: "Base" },
-  { id: "aptos" as const, label: "Aptos" },
+  { id: "bep20" as const, label: "BNB Smart Chain (BEP20)" },
 ];
+type TreasuryChain = (typeof TREASURY_CHAINS)[number]["id"];
 
 export function TreasuryPanel() {
   const s = useApi(fetchSettings, []);
   const toast = useToast();
-  const [draft, setDraft] = useState<Partial<Record<"bep20" | "base" | "aptos", string>>>({});
+  const [draft, setDraft] = useState<Partial<Record<TreasuryChain, string>>>({});
   const [busy, setBusy] = useState(false);
 
-  async function save(chain: "bep20" | "base" | "aptos") {
+  async function save(chain: TreasuryChain) {
     const address = (draft[chain] ?? "").trim();
     setBusy(true);
     try {
       await updateSettings({ treasury: { [chain]: address } });
-      toast.ok(`${chain.toUpperCase()} treasury address saved.`);
+      toast.ok("Treasury address saved.");
       s.reload();
       setDraft((d) => ({ ...d, [chain]: undefined }));
     } catch (e) {
@@ -330,39 +340,61 @@ export function TreasuryPanel() {
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Treasury wallet (hot wallet)</h2>
       <p className="mb-2 text-xs text-muted">
-        This is the wallet you fund with USDT and send every payout from — one address per
-        network. Deposit USDT to it from your exchange; when you mark a withdrawal paid, send
-        from this wallet. Only the address is stored here (never a key), and every change is
-        written to the audit log.
+        This is the wallet you fund with USDT and send every payout from. Only the address is
+        stored here (never a key), and every change is written to the audit log.
       </p>
       {s.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
         : s.error ? <p className="p-4 text-sm text-danger">{s.error}</p>
         : (
-          <div className="space-y-2 rounded-lg border-2 border-line-strong p-3">
+          <div className="space-y-3 rounded-lg border-2 border-line-strong p-3">
+            {/* The COIN and the NETWORK are two separate labelled facts, never
+                one sentence. The earner deposit screen already follows this
+                rule for the reason that matters: BNB is a real token in the
+                same wallet, and sending it instead of USDT is unrecoverable. */}
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+              <span><span className="text-muted">Coin to send:</span> <b className="text-brand-ink">USDT</b></span>
+              <span><span className="text-muted">Network:</span> <b className="text-brand-ink">BNB Smart Chain (BEP20)</b></span>
+            </div>
             {TREASURY_CHAINS.map((c) => {
               const saved = s.data?.treasury?.[c.id] ?? "";
               const value = draft[c.id] ?? saved;
               const dirty = draft[c.id] !== undefined && draft[c.id] !== saved;
               return (
-                <div key={c.id} className="flex flex-wrap items-center gap-2">
-                  <span className="w-36 shrink-0 text-sm font-semibold text-brand-ink">{c.label}</span>
-                  <input
-                    value={value}
-                    onChange={(e) => setDraft((d) => ({ ...d, [c.id]: e.target.value }))}
-                    placeholder="0x… (not set yet)"
-                    className="num min-w-0 flex-1 rounded border border-line bg-card p-1.5 text-xs outline-none"
-                  />
+                <div key={c.id} className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-48 shrink-0 text-sm font-semibold text-brand-ink">{c.label}</span>
+                    <input
+                      value={value}
+                      onChange={(e) => setDraft((d) => ({ ...d, [c.id]: e.target.value }))}
+                      placeholder="0x… (not set yet)"
+                      className="num min-w-0 flex-1 rounded border border-line bg-card p-1.5 text-xs outline-none"
+                    />
+                    {saved && !dirty && (
+                      <button onClick={() => navigator.clipboard?.writeText(saved)}
+                        className="rounded bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand" title="Copy the deposit address">
+                        Copy
+                      </button>
+                    )}
+                    {dirty && (
+                      <button disabled={busy} onClick={() => save(c.id)}
+                        className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                        Save
+                      </button>
+                    )}
+                  </div>
+                  {/* Scan to send (founder, 2026-09-03). Rendered client-side —
+                      a treasury address never leaves the browser to become a
+                      picture. Only the SAVED address is ever encoded, never a
+                      half-typed draft, or the code would say to send money to
+                      an address that does not exist yet. */}
                   {saved && !dirty && (
-                    <button onClick={() => navigator.clipboard?.writeText(saved)}
-                      className="rounded bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand" title="Copy the deposit address">
-                      Copy
-                    </button>
-                  )}
-                  {dirty && (
-                    <button disabled={busy} onClick={() => save(c.id)}
-                      className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-                      Save
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <QrCode value={saved} size={132} />
+                      <p className="text-xs text-muted">
+                        Scan to send <b className="text-brand-ink">USDT</b> on{" "}
+                        <b className="text-brand-ink">BEP20</b> to the treasury.
+                      </p>
+                    </div>
                   )}
                 </div>
               );

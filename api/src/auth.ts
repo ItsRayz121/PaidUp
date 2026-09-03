@@ -454,7 +454,7 @@ export async function authRoutes(app: FastifyInstance) {
     // used, or expired code falls through to a normal login: a stale link
     // must never strand someone at a dead screen.
     if (v.startParam?.startsWith("link-")) {
-      const bound = await loginViaLinkCode(v.startParam.slice(5), v.telegramId, req);
+      const bound = await loginViaLinkCode(v.startParam.slice(5), v.telegramId, req, v.username, v.name);
       if (bound) return bound;
     }
 
@@ -511,7 +511,7 @@ export async function authRoutes(app: FastifyInstance) {
       : verifyWidgetPayload(body.widget);
     if (!v.ok) return reply.code(v.code).send({ error: v.error });
 
-    const bindErr = await bindTelegramToUser(me, v.telegramId);
+    const bindErr = await bindTelegramToUser(me, v.telegramId, v.username, v.name);
     if (bindErr) return reply.code(bindErr.code).send({ error: bindErr.error });
     const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
     if (!fresh) return reply.code(500).send({ error: "Could not connect. Please try again." });
@@ -734,7 +734,18 @@ function verifyMiniAppInitData(body: unknown): TgVerified {
 //   • the Telegram belongs to an EMPTY @telegram.local shell (auto-created by
 //     a Mini App open, never used) — the shell is absorbed;
 //   • the Telegram belongs to any account with activity — refuse, never guess.
-async function bindTelegramToUser(me: UserRow, telegramId: string): Promise<{ code: number; error: string } | null> {
+//
+// ⚠️ IT ALSO STORES THE TELEGRAM USERNAME AND NAME (founder, 2026-09-03). It
+// used to write telegram_id and nothing else, so any account that connected
+// Telegram from the WEBSITE had no identity on file — which is why staff
+// screens showed a row reading "Telegram user" with nothing to search for.
+// The caller already holds a verified payload; there is no reason to throw the
+// only useful part of it away.
+async function bindTelegramToUser(
+  me: UserRow, telegramId: string, username?: string, name?: string,
+): Promise<{ code: number; error: string } | null> {
+  const tgUsername = username?.trim() || null;
+  const tgName = name?.trim() || null;
   if (me.telegram_id) {
     return me.telegram_id === telegramId
       ? null
@@ -753,10 +764,23 @@ async function bindTelegramToUser(me: UserRow, telegramId: string): Promise<{ co
     }
     await sql.tx(async (t) => {
       await t.run("UPDATE users SET telegram_id = NULL WHERE id = ?", owner.id);
-      await t.run("UPDATE users SET telegram_id = ? WHERE id = ?", telegramId, me.id);
+      await t.run(
+        "UPDATE users SET telegram_id = ?, telegram_username = ?, telegram_name = ? WHERE id = ?",
+        telegramId, tgUsername, tgName, me.id,
+      );
     });
   } else if (!owner) {
-    await sql.run("UPDATE users SET telegram_id = ? WHERE id = ?", telegramId, me.id);
+    await sql.run(
+      "UPDATE users SET telegram_id = ?, telegram_username = ?, telegram_name = ? WHERE id = ?",
+      telegramId, tgUsername, tgName, me.id,
+    );
+  } else {
+    // Already bound to this same account — still refresh the identity, since a
+    // username can change on Telegram's side between connections.
+    await sql.run(
+      "UPDATE users SET telegram_username = ?, telegram_name = ? WHERE id = ? AND telegram_id = ?",
+      tgUsername, tgName, me.id, telegramId,
+    );
   }
   return null;
 }
@@ -765,7 +789,10 @@ async function bindTelegramToUser(me: UserRow, telegramId: string): Promise<{ co
 // (single-use even under two racing opens), bind, and mint a session for the
 // WEBSITE account it belongs to. Any failure returns null and the caller
 // falls back to a normal Telegram login.
-async function loginViaLinkCode(code: string, telegramId: string, req: FastifyRequest) {
+async function loginViaLinkCode(
+  code: string, telegramId: string, req: FastifyRequest,
+  username?: string, name?: string,
+) {
   if (!/^[a-f0-9]{32}$/.test(code)) return null;
   const claimed = await sql.get<{ user_id: string }>(
     `UPDATE telegram_link_codes SET used_at = ?
@@ -776,7 +803,7 @@ async function loginViaLinkCode(code: string, telegramId: string, req: FastifyRe
   if (!claimed) return null;
   const me = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", claimed.user_id);
   if (!me) return null;
-  if (await bindTelegramToUser(me, telegramId)) return null; // refused — normal login instead
+  if (await bindTelegramToUser(me, telegramId, username, name)) return null; // refused — normal login instead
   const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", me.id);
   if (!fresh) return null;
   await ensureAdminRole(fresh.id, fresh.email);

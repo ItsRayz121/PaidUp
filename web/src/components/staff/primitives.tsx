@@ -132,6 +132,57 @@ export function Addr({ value, lead = 8, tail = 6 }: { value?: string | null; lea
   );
 }
 
+// ---- block-explorer links (founder, 2026-09-03) -------------------
+// "Make that transaction hash clickable ... one person can click on that
+// transaction hash and then he can go to the BNB blockchain to see that the
+// transaction is real or not."
+//
+// ⚠️ AN UNKNOWN CHAIN GETS NO LINK, NEVER A GUESSED ONE. We settle on BEP20 and
+// nothing else today, but historical rows still carry `base` and `aptos` (see
+// KNOWN_CHAINS in chains.ts) — sending someone to BscScan for a Base hash would
+// show "not found" and read as money that never moved.
+const EXPLORERS: Record<string, string> = { bep20: "https://bscscan.com" };
+
+export function explorerTxUrl(hash?: string | null, chain = "bep20"): string | null {
+  const base = EXPLORERS[chain];
+  if (!base || !hash) return null;
+  const h = hash.trim();
+  return /^0x[0-9a-fA-F]{64}$/.test(h) ? `${base}/tx/${h}` : null;
+}
+export function explorerAddressUrl(address?: string | null, chain = "bep20"): string | null {
+  const base = EXPLORERS[chain];
+  if (!base || !address) return null;
+  const a = address.trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(a) ? `${base}/address/${a}` : null;
+}
+
+// A transaction hash: middle-truncated, copyable, and one tap from the chain.
+// Same shape as <Addr> so the two sit together in a row without a size jump.
+export function TxHash({ value, chain = "bep20", label }: {
+  value?: string | null; chain?: string; label?: string;
+}) {
+  const url = explorerTxUrl(value, chain);
+  if (!value) return <span className="text-muted">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {label && <span className="text-[10px] text-muted">{label}:</span>}
+      <Addr value={value} lead={10} tail={8} />
+      {url && (
+        <a
+          href={url} target="_blank" rel="noreferrer"
+          // stopPropagation: these live inside clickable table rows, and opening
+          // the explorer must not also open the row's detail behind it.
+          onClick={(e) => e.stopPropagation()}
+          title="Open on BscScan"
+          className="rounded bg-brand-tint px-1.5 py-0.5 text-[10px] font-semibold text-brand hover:underline"
+        >
+          open ↗
+        </a>
+      )}
+    </span>
+  );
+}
+
 // ---- long error text (list view) --------------------------------
 // A relay / payout error can be a whole paragraph. Show two lines with an
 // ellipsis and the full text on hover; the row's detail view carries it in

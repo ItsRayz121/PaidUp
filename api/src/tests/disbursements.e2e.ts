@@ -458,6 +458,83 @@ console.log("\n-- payoutRelay.failJob returns the right currency (regression) --
     (await sql.get<{ status: string }>("SELECT status FROM withdrawal_requests WHERE id = ?", reqId))?.status === "rejected");
 }
 
+// ---------------------------------------------------------------------------
+// Scoping by task, and a batch that has a NAME (founder, 2026-09-03).
+//
+// The whole Disbursements screen is now mounted three times: Money & payouts,
+// Tasks & networks, and a single task's own Rewards tab. The last of those
+// passes ?taskId=..., so the SCOPE has to hold server-side on all three reads —
+// the pool, the batch list, and "batch everything eligible". A scope that only
+// filtered the pool would let one click on a task page sweep every OTHER
+// campaign's rewards into a batch, which is the expensive way to get this wrong.
+console.log("\n-- scoped to one campaign, and a batch you can read the name of --");
+{
+  const taskA = await mkTask("scoped campaign A");
+  const taskB = await mkTask("scoped campaign B");
+  const ua = await mkUser("scoped-a");
+  const ub = await mkUser("scoped-b");
+  await approvedProof(taskA, ua);
+  await approvedProof(taskB, ub);
+
+  const poolA = (await get(`/staff/disbursements/eligible?taskId=${taskA}&limit=50`, admin))
+    .json() as { items: { taskId: string }[]; total: number };
+  check("the pool can be scoped to one campaign",
+    poolA.items.length === 1 && poolA.items[0].taskId === taskA, JSON.stringify(poolA));
+
+  const poolAll = (await get("/staff/disbursements/eligible?limit=50", admin))
+    .json() as { items: { taskId: string }[] };
+  check("and unscoped it still shows every campaign",
+    poolAll.items.some((i) => i.taskId === taskA) && poolAll.items.some((i) => i.taskId === taskB));
+
+  // ⚠️ THE SCOPE MUST REACH allEligible. This is the one that costs money.
+  const made = await post("/staff/disbursements", admin, { mode: "balance", allEligible: true, taskId: taskA });
+  const batchId = (made.json() as { batchId: string; added: number }).batchId;
+  check("'batch everything eligible' on a task page takes ONLY that task",
+    (made.json() as { added: number }).added === 1, made.body);
+
+  const detail = (await get(`/staff/disbursements/${batchId}`, admin))
+    .json() as { batch: { name: string | null }; rows: { proofId: string | null }[] };
+  check("the batch really holds one row", detail.rows.length === 1);
+  check("a new batch is NAMED after the campaign it pays, not left as a uuid",
+    Boolean(detail.batch.name) && detail.batch.name!.includes("scoped campaign A"),
+    JSON.stringify(detail.batch.name));
+  check("and the name says how many people are in it",
+    detail.batch.name!.includes("1 reward"), JSON.stringify(detail.batch.name));
+
+  const listA = (await get(`/staff/disbursements?taskId=${taskA}&status=all&limit=50`, admin))
+    .json() as { batches: { id: string }[] };
+  check("a task's own batch list shows it", listA.batches.some((b) => b.id === batchId));
+
+  const listB = (await get(`/staff/disbursements?taskId=${taskB}&status=all&limit=50`, admin))
+    .json() as { batches: { id: string }[] };
+  check("and another campaign's list does not", !listB.batches.some((b) => b.id === batchId));
+
+  const renamed = await app.inject({
+    method: "PATCH", url: `/staff/disbursements/${batchId}`,
+    headers: authOf(admin), payload: { name: "August rewards" },
+  });
+  check("a batch can be renamed", renamed.statusCode === 200, renamed.body);
+  check("and the rename sticks",
+    (renamed.json() as { batch: { name: string } }).batch.name === "August rewards");
+  check("an empty name is refused — a batch must always have something to read",
+    (await app.inject({
+      method: "PATCH", url: `/staff/disbursements/${batchId}`,
+      headers: authOf(admin), payload: { name: "   " },
+    })).statusCode === 400);
+  check("renaming is audited",
+    Boolean(await sql.get("SELECT 1 AS x FROM admin_audit_log WHERE action = 'disbursement_batch_rename'")));
+
+  const found = (await get(`/staff/disbursements?status=all&q=${encodeURIComponent("August rewards")}`, admin))
+    .json() as { batches: { id: string }[] };
+  check("the name is searchable, so a person can find a batch by what it is called",
+    found.batches.some((b) => b.id === batchId), JSON.stringify(found.batches.map((b) => b.id)));
+
+  check("an agent still cannot rename a batch", (await app.inject({
+    method: "PATCH", url: `/staff/disbursements/${batchId}`,
+    headers: authOf(agent), payload: { name: "nope" },
+  })).statusCode === 403);
+}
+
 console.log("\n-- audit trail --");
 {
   const rows = await sql.all<{ action: string }>(
