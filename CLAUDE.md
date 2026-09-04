@@ -3296,4 +3296,138 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     `bg-*` on one element" anti-pattern that caused the logo bug elsewhere in
     `web/src` — no other instance found; the Logo component was the only one.
 
+- **A FULL PRODUCT AUDIT, THEN ITS FIXES: A ONE-TIME-CODE REUSE BUG AND SIX
+  MEASURED CAPACITY LIMITS (2026-09-03/04).** A senior-auditor pass over the
+  whole product (`audit/`, committed) followed by the founder authorising fixes.
+  Two commits: `50ea7a3` (the fixes) and `9b0c457` (the audit + its raw
+  evidence). Verified: **38 suites, 1,497 checks, 0 failures**, every e2e suite
+  from a genuinely fresh database; api + web typecheck, web production build,
+  lint all clean. Read `audit/FIXES_APPLIED.md` for the before/after on every
+  item and `audit/FINDINGS.md` for what is still open.
+  - ⚠️ **THE SECURITY BUG: A ONE-TIME EMAIL CODE COULD BE REDEEMED SEVERAL
+    TIMES AT ONCE.** `consumeCode` (`api/src/auth.ts`) read the row, compared
+    the hash in JS, then wrote `consumed = 1` **unconditionally** — so twelve
+    simultaneous confirmations of ONE valid code were all hash-matched and
+    **four were accepted**. It hit signup verification, password reset, account
+    linking, and the **withdrawal step-up code**, which is consumed OUTSIDE the
+    per-user lock that guards the debit — so one emailed code could satisfy
+    several concurrent withdrawal requests. The five-attempt guess cap had the
+    same shape: the count was read BEFORE the increment, so a burst of wrong
+    guesses all saw zero and walked past it. The claim is now the atomic act
+    (`UPDATE … WHERE id = ? AND consumed = 0 RETURNING …`; zero rows means
+    someone else spent it), and the attempts counter is read from its own
+    `RETURNING`.
+    ⚠️ **NO EXISTING SUITE COULD EVER HAVE CAUGHT THIS, AND THAT IS THE
+    LESSON.** PGlite has a single connection, so it serialises the exact
+    interleaving that breaks and the broken code **passes** there. Run the
+    sequence one request at a time and the old version is correct. This is why
+    `test:otprace` carries a **structural tripwire** that reads `auth.ts`'s own
+    source and fails if either write is turned back into a blind one — on the
+    default driver that tripwire is the only thing protecting the fix. The fix
+    was also reverted in place and the suite re-run against the old code to
+    prove the test can fail (3 of 12 accepted, attempts reached 12 against a
+    cap of 5): a regression test nobody has watched fail is not evidence.
+  - **Three money races were run against real multi-connection Postgres for the
+    first time** — the checks the project's own suites had always skipped.
+    Withdrawal double-spend **passed**, mining claim double-credit **passed**,
+    one-time code single-use **failed** (above). So guardrail #8's per-user
+    `pg_advisory_xact_lock` genuinely works where it is applied; `consumeCode`
+    was the path that had none.
+  - **The pool now sheds load instead of queueing forever.** `max: 10` with no
+    `connectionTimeoutMillis` and no `statement_timeout` meant overload produced
+    an unbounded queue, not errors: offered load 100 → 150 → 220
+    screen-loads/second moved throughput not at all (426 / 407 / 438 req/s)
+    while p95 went 38 ms → 22 s → 41 s. Now bounded, env-tunable
+    (`PG_POOL_MAX`, `PG_CONNECT_TIMEOUT_MS`, `PG_STATEMENT_TIMEOUT_MS`), with a
+    `pool.on("error")` handler so a dropped idle connection replaces itself
+    instead of killing the process.
+    ⚠️ **BOOT DDL IS DELIBERATELY EXEMPT FROM `statement_timeout`** —
+    `CREATE INDEX` on a large table can legitimately outlast any request
+    deadline, and a deadline there means the bigger the database gets, the
+    likelier the API is to fail to boot **at all**. `driver.exec` sets
+    `statement_timeout = 0` on its own client and destroys that connection
+    rather than returning it if the DDL throws.
+  - **All five background timers now go through one no-overlap guard**
+    (`everyNoOverlap` in `server.ts`), which also logs tick duration — the
+    audit's closing note was that nothing here would tell you which limit you
+    were approaching, and a tick quietly exceeding its interval is the first
+    symptom of most of them. The two **global** advisory locks became
+    **try**-locks (`hashtext('rozi-settlement')`, `hashtext('deposit-scan')`),
+    matching what `payoutRelay.ts` already did: a blocking wait held a pooled
+    connection for the holder's whole duration, and declining costs nothing
+    because settlement is idempotent on the `mining_epochs` PK and the deposit
+    scan is cursor-based.
+  - ⚠️ **`users.referred_by` HAD NO INDEX.** Mining walks it twice per hashrate
+    calculation and `/mining/state` computed the hashrate three times — **six
+    sequential scans of the whole `users` table on the app's most-visited
+    screen**, plus two per accrual, getting worse fastest exactly when growth
+    is working. Three indexes added (`idx_users_referred_by`,
+    `idx_mining_sessions_user_started`, `idx_completions_task_credited`) and
+    **verified with `EXPLAIN` against the real queries**, not assumed.
+    ⚠️ `idx_mining_sessions_user_started` lives in **`MINING_SCHEMA`, not
+    `MIGRATIONS`**, because MIGRATIONS runs first and `mining_sessions` does not
+    exist yet — putting it there fails `initDb()` outright on a fresh database,
+    the **same mistake that already shipped once** with `rigs.base_cost_usdt`.
+    Caught by booting a genuinely empty database, not by reading the code.
+  - **`/mining/state`: 32 statements → 15**, measured. Settings are read once
+    and threaded through, and accrual's own hashrate is reused for display
+    rather than computed twice more (`sessionState` now carries `breakdown`).
+    Reusing it is correct, not a shortcut: accrual claims the device and writes
+    shares — it touches no rig, boost, streak or referral row.
+  - **The mining accrual sweep at 100k: 998,601 statements / 6.0 min →
+    400,625 / 3.4 min.** Over a real network that is ~4.7 minutes of round
+    trips instead of ~11.6, inside a 15-minute interval that settlement queues
+    behind. The reads are set-wise now (`hashrateOfBatch`).
+    ⚠️ **THE PER-SESSION WRITES ARE DELIBERATELY STILL PER-SESSION** — each
+    claims the device for the day via a PK conflict (how one-device-one-account
+    is enforced) and each sits in its own try/catch, which is what makes the
+    sweep safe to run unattended. Batching the reads is a pure win; batching
+    the writes trades that isolation away for less than it costs.
+    ⚠️ **CHUNKING IS A CORRECTNESS REQUIREMENT, NOT TUNING** — Postgres refuses
+    a statement past 65,535 bound parameters and these bind one per user id, so
+    a 100k sweep *cannot* be one query however well written.
+    ⚠️ **READ `MINING_PLAN.md` M9.5 BEFORE TOUCHING THIS AGAIN.** The batch is
+    only safe because `test:miningbatch` **runs both implementations against the
+    same data and requires identical results** — hashrate *and* breakdown — for
+    a population built to make disagreement possible (rigs at several levels,
+    more boosts than the stack cap allows, streaks either side of the cap, a
+    two-level downline, invitees that must not count, a referral **cycle**, and
+    an input list long enough to cross the chunk boundary). **That test
+    immediately caught a real bug in the new code**: `SELECT DISTINCT` is per
+    STATEMENT and the query runs once per chunk, so an id in two chunks
+    contributed its invitees twice and its referral component was **summed
+    twice** — users would have quietly mined faster than they should, with
+    nothing on any screen to show it. Both paths now assemble through one
+    shared `hashrateFromParts()` so they cannot drift apart later.
+  - **Measured effect:** 100 screens/s went from **p95 7.06 s with 219 dropped**
+    to **p95 49 ms with none**; the ceiling moved from a flat ~430–470 req/s to
+    ~600; the knee moved from between 60 and 100 screen-loads/second to between
+    125 and 150. At 125 (598 req/s) **all four of the audit's own provisional
+    gates pass** (p95 229 ms, p99 487 ms, 0.00% failures, nothing dropped) where
+    the previous build failed every one at 100. **The 10,000-active-user model
+    now clears the gates; the 100,000 model still does not** — and the reason is
+    **not the database**: at the new ceiling only 1.1 of 20 connections were
+    busy on average, zero lock waits. That needs a second replica and the timers
+    out of the API process (`audit/REMEDIATION_PLAN.md` § P2).
+    ⚠️ **The rig was ONE Windows machine shared with the load generator,
+    loopback Postgres and a stub RPC.** Loopback removes the per-query round
+    trip production has; the co-located generator takes CPU the API would
+    otherwise get. These are **floors of confidence, not a Railway forecast** —
+    which is why the accrual result is stated in **statements**, not seconds.
+  - ⚠️ **STILL OPEN, UNCHANGED, and five of them are High:** email fail-open +
+    OTP logging in production logs (A-01), non-revocable 30-day JWTs — a
+    password reset does not invalidate an old token (A-03), replica-local rate
+    limits (A-04), database TLS verification disabled on the public proxy
+    (A-05), and 13 high-severity dependency advisories (A-06). Three of those
+    are infrastructure decisions rather than code (a Redis add-on, Railway TLS,
+    a dependency-upgrade window with a full re-run). Also open: splitting the
+    staff DB pool (B10) and bounding the unbounded list endpoints (B12).
+  - **Two local-rig traps, both recorded in `audit/TESTING.md`** because each
+    looks exactly like a broken migration: a fresh test database must be created
+    **UTF-8** (`CREATE DATABASE x WITH ENCODING 'UTF8' TEMPLATE template0` — the
+    schema blocks hold 491 non-ASCII characters that WIN1252 cannot encode), and
+    **wait for the boot-time ticks to finish before measuring** (a stage started
+    25 s after boot reported p95 941 ms where the same stage warm reported
+    22 ms — the accrual sweep was still running).
+
 See `docs/` for the full spec.
