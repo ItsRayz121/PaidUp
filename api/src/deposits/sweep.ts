@@ -30,6 +30,7 @@ import { ONCHAIN_CHAINS } from "../payout.ts";
 import { treasurySignerKey } from "../signer.ts";
 import { deriveChildPrivateKey, sweepSigningEnabled } from "../custodySeeds.ts";
 import { rpcCall } from "../rpc.ts";
+import { charge } from "../costGuard.ts";
 
 type SweepJob = { id: string; status: string; gas_tx_hash: string | null };
 
@@ -106,6 +107,20 @@ export async function sweepDepositAddress(chain: string, address: string, addrIn
   if (!token) return;
   const treasuryPk = treasurySignerKey();
   if (!treasuryPk) return; // no treasury signer — same as sweeping being off
+
+  // Charged against the process ceiling before anything is spent (costGuard.ts).
+  // This is the worst-shaped loop in the codebase for cost: it runs PER DEPOSIT
+  // ADDRESS, and viem's sendTransaction with a local account is roughly five
+  // JSON-RPC calls before the broadcast (chain id, nonce, fee estimate, gas
+  // estimate, raw send), times up to two sends, times the transport's own
+  // retries. 30 is a deliberate over-estimate — the point of a ceiling is that
+  // it is not surprised. These go out through viem's transport rather than
+  // rpc.ts, so this is the only place they can be counted.
+  //
+  // "low": sweeping is treasury consolidation, it is OFF by default, and a
+  // skipped sweep costs nothing but a delay — the money is already credited
+  // and already at the user's own address (deposits/sweep.ts's header).
+  if (!charge("rpc", 30, "low")) return;
 
   const transport = fallback(config.payoutRpc[chain].map((url) => http(url)));
   const publicClient = createPublicClient({ chain: token.viemChain, transport });

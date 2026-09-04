@@ -84,12 +84,14 @@ async function fetchLogsForWindow(
   const logs: EvmLog[] = [];
   for (let i = 0; i < addrList.length; i += MAX_ADDRESSES_PER_CALL) {
     const batch = addrList.slice(i, i + MAX_ADDRESSES_PER_CALL);
+    // "high" for the same reason as scanner.ts's block-number read: this is
+    // the call that finds a deposit, and it is fixed-cadence.
     const batchLogs = (await rpcCall(chain, "eth_getLogs", [{
       fromBlock: "0x" + fromBlock.toString(16),
       toBlock: "0x" + toBlock.toString(16),
       address: tokenAddress,
       topics: [TRANSFER_TOPIC, null, batch.map(addressToTopic)],
-    }])) as EvmLog[];
+    }], { priority: "high" })) as EvmLog[];
     logs.push(...batchLogs);
   }
   return logs;

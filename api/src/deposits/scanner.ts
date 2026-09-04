@@ -29,7 +29,15 @@ import { sendPushToUser } from "../push.ts";
 const EVM_CHAINS = ["bep20"];
 
 async function latestBlock(chain: string): Promise<number> {
-  const hex = (await rpcCall(chain, "eth_blockNumber", [])) as string;
+  // ⚠️ "high", NOT the default "low", AND THE REASON IS THE WHOLE POINT OF THE
+  // TIERS. The low tier is for work that can simply run later — screen reads,
+  // the hourly reconciliation. This is neither: it is fixed-cadence (its volume
+  // cannot grow with the user base, the interval bounds it) and it is what
+  // credits a deposit. Sharing a tier with per-user display reads meant a busy
+  // hour of wallet screens could fill the soft ceiling and stall deposit
+  // crediting behind it — and rpc.ts's own header says the unacceptable
+  // outcome is "a user who paid us and got nothing". Found in review.
+  const hex = (await rpcCall(chain, "eth_blockNumber", [], { priority: "high" })) as string;
   return parseInt(hex, 16);
 }
 

@@ -32,14 +32,14 @@ import {
 import { QrCode } from "@/components/QrCode";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchUsdt, claimUsdtTopup } from "@/lib/api";
+import { fetchUsdtNoGas, claimUsdtTopup } from "@/lib/api";
 import { formatUsdtMicro, timeAgo } from "@/lib/format";
 import { chainLabel } from "@/lib/chains";
 
 export default function TopUpPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
-  const usdt = useApi(fetchUsdt, []);
+  const usdt = useApi(fetchUsdtNoGas, []);
 
   // Manual claim state — only used on the fallback path (no personal address).
   const [tx, setTx] = useState("");

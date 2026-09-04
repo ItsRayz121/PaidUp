@@ -11,7 +11,7 @@ import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchLedger, fetchMiningState, fetchUsdt, fetchWithdrawals } from "@/lib/api";
+import { fetchBalance, fetchLedger, fetchMiningState, fetchUsdtNoGas, fetchWithdrawals } from "@/lib/api";
 import { formatUsdtMicro } from "@/lib/format";
 import { chainLabel } from "@/lib/chains";
 import { unifyHistory, type Row } from "@/lib/walletHistory";
@@ -27,7 +27,7 @@ export default function UsdtWalletPage() {
   const mining = useApi(fetchMiningState, []);
   const withdrawals = useApi(fetchWithdrawals, []);
   const usdtOn = Boolean(mining.data?.usdtTopup);
-  const usdt = useApi(fetchUsdt, [usdtOn], usdtOn);
+  const usdt = useApi(fetchUsdtNoGas, [usdtOn], usdtOn);
   const [copied, setCopied] = useState(false);
   const [openTx, setOpenTx] = useState<Row | null>(null);
   const [showAll, setShowAll] = useState(false);

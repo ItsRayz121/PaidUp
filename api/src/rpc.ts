@@ -14,7 +14,7 @@
 // surfaces as a user who paid us and was never credited, silently. Those are
 // different risks and only one of them is acceptable on free infrastructure.
 import { config } from "./config.ts";
-import { charge } from "./costGuard.ts";
+import { charge, CostCeilingError } from "./costGuard.ts";
 
 export class RpcError extends Error {
   constructor(message: string, readonly attempts: { url: string; reason: string }[] = []) {
@@ -62,10 +62,12 @@ export async function rpcCall(
     // loop rather than skipping one endpoint — every attempt would be refused
     // for the same reason, and trying anyway is how a budget becomes advice.
     if (!charge("rpc", 1, priority)) {
-      throw new RpcError(
+      // NOT an RpcError: the chain is fine and nothing was tried. The retry
+      // loops in payoutRelay.ts / bnbWithdraw.ts check for this type and do
+      // not spend an attempt on it — see CostCeilingError's own comment.
+      throw new CostCeilingError(
         `${method} not attempted: this process has reached its hourly RPC ceiling ` +
         `(RPC_MAX_CALLS_PER_HOUR). See costGuard.ts.`,
-        attempts,
       );
     }
     // Each endpoint gets its own timeout. A shared deadline across the whole

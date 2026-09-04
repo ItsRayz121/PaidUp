@@ -15,7 +15,7 @@
 //   npm run test:costguard
 import { strict as assert } from "node:assert";
 import test, { beforeEach } from "node:test";
-import { config } from "../config.ts";
+import { config, num } from "../config.ts";
 import { charge, usage, __resetForTests } from "../costGuard.ts";
 
 const withLimit = (n: number, fn: () => void) => {
@@ -95,6 +95,53 @@ test("the window ROLLS — an hour of quiet restores the whole budget", () => {
     } finally {
       Date.now = realNow;
     }
+  });
+});
+
+test("an EMPTY env var falls back to the default, it does not disable the ceiling", () => {
+  // ⚠️ THE CASE THAT ACTUALLY HAPPENS. `Number("")` is 0 — finite, so a NaN
+  // guard alone waves it straight through, and 0 means "no ceiling". On Railway,
+  // CLEARING a variable's value rather than deleting the variable is a routine
+  // action and leaves exactly this. The same slip on DEPOSIT_SCAN_INTERVAL_MS,
+  // which is set to 90000 live because of a past billing incident, would drop it
+  // to the floor. Found in review before this shipped.
+  assert.equal(num("", 5_000), 5_000);
+  assert.equal(num("   ", 5_000), 5_000);
+  assert.equal(num("\n", 5_000), 5_000);
+  assert.equal(num(undefined, 5_000), 5_000);
+  assert.equal(num("abc", 5_000), 5_000);
+  // ...while an explicit 0 still means what it is documented to mean.
+  assert.equal(num("0", 5_000), 0);
+  assert.equal(num("250", 5_000), 250);
+  // And a floor really floors, so an interval can never become a busy loop.
+  assert.equal(num("0", 20_000, 5_000), 5_000);
+});
+
+test("a disabled ceiling reports as disabled, not as a breach", () => {
+  // `{used: 12000, limit: 0, softCeiling: 0}` reads as a catastrophic overrun on
+  // the one screen built to answer "did the ceiling bite" — when in fact there
+  // is no ceiling at all.
+  withLimit(0, () => {
+    charge("rpc", 12_000, "low");
+    const u = usage().rpc;
+    assert.equal(u.enabled, false);
+    assert.equal(u.softCeiling, null);
+    assert.equal(u.refusedLow, 0, "nothing was refused, because nothing was limited");
+  });
+  withLimit(100, () => {
+    const u = usage().rpc;
+    assert.equal(u.enabled, true);
+    assert.equal(u.softCeiling, 80);
+  });
+});
+
+test("a tiny limit rations low priority rather than refusing it outright", () => {
+  // Math.floor(1 * 0.8) is 0, which would refuse every low-priority call at zero
+  // usage. "1 means nothing works" is a bad answer to a number someone chose.
+  withLimit(1, () => {
+    assert.equal(usage().rpc.softCeiling, 1);
+    assert.equal(charge("rpc", 1, "low"), true);
+    assert.equal(charge("rpc", 1, "low"), false);
   });
 });
 

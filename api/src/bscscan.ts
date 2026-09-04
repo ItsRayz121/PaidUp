@@ -51,6 +51,10 @@ function remember<T>(m: Map<string, T & { at: number }>, key: string, value: T &
       m.delete(oldest.value);
     }
   }
+  // delete-then-set so a refreshed key moves to the end — a plain `set` on an
+  // existing key keeps its original position, and the eviction above would
+  // then drop the hottest entries first.
+  m.delete(key);
   m.set(key, value);
 }
 // Etherscan V2 multichain — chainid 56 is BNB Smart Chain. See the endpoint
@@ -92,10 +96,19 @@ async function queryList(action: string, address: string, key: string): Promise<
     `${API}?chainid=${CHAIN_ID}&module=account&action=${action}&address=${address}` +
     `&startblock=0&endblock=99999999&sort=desc&page=1&offset=25&apikey=${key}`;
   // The explorer allowance is a DAILY quota, and this read is per user — so
-  // its cost grows with the user base. costGuard.ts caps it; being refused
-  // here is the same outcome as the provider being down, which this function
-  // already answers with an empty list rather than an error.
-  if (!charge("explorer", 1, "low")) return [];
+  // its cost grows with the user base. costGuard.ts caps it.
+  //
+  // ⚠️ A REFUSAL THROWS. It must NOT return an empty list, and the difference
+  // is not cosmetic: `[]` is indistinguishable from "this address has no
+  // transactions", so the caller takes its SUCCESS path and writes that empty
+  // result into the cache — overwriting a good 25-row entry and then serving
+  // the empty one for the next 60 seconds. Throwing lands in the caller's
+  // existing catch, which returns the previously cached rows and leaves the
+  // cache alone: exactly what already happens when the provider is down.
+  // Found in review; the first version of this returned `[]`.
+  if (!charge("explorer", 1, "low")) {
+    throw new Error("explorer read not attempted: daily call ceiling reached (EXPLORER_MAX_CALLS_PER_DAY)");
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -213,7 +226,11 @@ async function queryTokenList(address: string, key: string, limit: number): Prom
     `${API}?chainid=${CHAIN_ID}&module=account&action=tokentx&address=${address}` +
     `&contractaddress=${BSC_USDT}&startblock=0&endblock=99999999&sort=desc&page=1` +
     `&offset=${Math.min(Math.max(limit, 1), 100)}&apikey=${key}`;
-  if (!charge("explorer", 1, "low")) return [];
+  // Throws rather than returning [] — see queryList above for why an empty
+  // list here would poison the cache with a false "no transactions".
+  if (!charge("explorer", 1, "low")) {
+    throw new Error("explorer read not attempted: daily call ceiling reached (EXPLORER_MAX_CALLS_PER_DAY)");
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {

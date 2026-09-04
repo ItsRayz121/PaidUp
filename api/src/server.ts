@@ -110,9 +110,25 @@ const app = Fastify({ logger: true, trustProxy: config.trustProxy });
 // still equals the socket peer. Logged at most once every ten minutes, because
 // if it is wrong it is wrong on every single request.
 let lastProxyWarnAt = 0;
+// ...and the other half: CONFIRMATION. The warning below only fires when the
+// list is wrong, so a correct deployment gets silence — which is
+// indistinguishable from "the hook never ran". Logged once per process, on the
+// first request that actually carries an X-Forwarded-For, so the deploy log
+// says in one line what this API believes a user's address is and what it
+// derived that from. That is the difference between "I think the proxy config
+// is right" and knowing it.
+let loggedProxyResolution = false;
 app.addHook("onRequest", async (req) => {
   if (!req.headers["x-forwarded-for"]) return;
   const peer = req.socket?.remoteAddress ?? "";
+  if (!loggedProxyResolution) {
+    loggedProxyResolution = true;
+    app.log.info(
+      { peer, xForwardedFor: req.headers["x-forwarded-for"], resolvedIp: req.ip, trustProxy: config.trustProxy },
+      "proxy check: this is the address rate limits and IP fraud rules will use. " +
+      "resolvedIp should be the USER's address, not peer.",
+    );
+  }
   if (!peer || req.ip !== peer) return;
   const now = Date.now();
   if (now - lastProxyWarnAt < 10 * 60_000) return;

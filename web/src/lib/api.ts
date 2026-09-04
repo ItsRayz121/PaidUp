@@ -1802,7 +1802,18 @@ export type UsdtState = {
   // BNB deposits into the same personal address, for history display only.
   nativeDeposits: BnbDeposit[];
 };
+// ⚠️ USE `fetchUsdtNoGas` ON A SCREEN THAT DOES NOT RENDER THE BNB FIGURES.
+// `personalGasWei` / `personalGasRequiredWei` / `personalGasReady` are read
+// from the chain by the API, so asking for them on a screen that throws them
+// away costs a paid call per user per visit — the same cost `fetchBalance` /
+// `fetchBalanceWithGas` exists to avoid.
+//
+// Opt-OUT here, where /wallet/balance is opt-IN, and that asymmetry is
+// deliberate: most callers of this one DO show the BNB balance, so a new
+// screen that forgets to ask should still get a correct one. Showing someone
+// "no BNB" when they have some would be worse than spending a call.
 export const fetchUsdt = () => apiFetch<UsdtState>("/usdt");
+export const fetchUsdtNoGas = () => apiFetch<UsdtState>("/usdt?gas=0");
 export const claimUsdtTopup = (txHash: string, amount: number) =>
   apiFetch<{ ok: true; id: string; status: string }>(
     "/usdt/topups", { method: "POST", body: JSON.stringify({ txHash, amount }) });

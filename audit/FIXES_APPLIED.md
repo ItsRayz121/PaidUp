@@ -512,6 +512,14 @@ The gas read is now opt-in (`?gas=1`), and `fetchBalanceWithGas` is used only by
 the two screens that show it. Everyone else gets `null`, which those screens
 already treat as "not checked".
 
+`GET /usdt` got the same treatment one route over, in the other direction:
+`/wallet/usdt` and `/mine/topup` both load it and render **none** of the three
+gas fields. That one is opt-**out** (`?gas=0`), because most of its callers
+(`/wallet`, `/wallet/bnb`, `/wallet/bnb/withdraw`, `/mine/refund`) genuinely do
+show the BNB balance — a new screen that forgets to ask should still get a
+correct one, since showing somebody "no BNB" when they have some is worse than
+spending a call. The asymmetry is deliberate and commented at both sites.
+
 ⚠️ One trap worth recording: `relayReady` was doing double duty in that handler —
 it also decides whether the gas SURCHARGE applies. Gating both on the new flag
 would have made every screen that skipped the read start previewing a fee this
@@ -602,3 +610,100 @@ sits between the two statements. Verified by removing one guard: the four
 behavioural checks stayed green and the tripwire failed, naming the line.
 
 `npm run test:sessions` is **38 checks**.
+
+## 16. What the independent correctness review found, and what it changed
+
+The commit above was reviewed for correctness (separately from `security-review`,
+which had already run). It found **five real defects in this work**, one of which
+would have re-created the exact billing incident the work exists to prevent.
+Recorded in full, because these are the failure shapes worth remembering.
+
+### `num("")` is `0`, and that is the case that actually happens
+
+`Number("")`, `Number("  ")` and `Number("\n")` are all **0 and finite**, so a
+NaN guard waves them straight through. On Railway, *clearing a variable's value*
+rather than deleting the variable is a routine action and leaves exactly this.
+
+- `RPC_MAX_CALLS_PER_HOUR=""` → 0 → **the spend ceiling switches itself off**,
+  which `costGuard.ts`'s own header says must not be possible by accident.
+- `DEPOSIT_SCAN_INTERVAL_MS=""` → the 5s floor. That variable is set to **90000
+  live, because of a past billing incident** — an 18x cost increase from one
+  cleared field.
+
+Fixed by trimming and returning the fallback on empty. An explicit `0` still
+means what it is documented to mean. Regression test with all five inputs.
+
+### A refused explorer read poisoned the cache with a false "no transactions"
+
+`queryList` returned `[]` on refusal. `[]` is indistinguishable from "this
+address has no transactions", so the caller took its **success** path and wrote
+that empty result into the cache — overwriting a good 25-row entry and serving
+the empty one for the next 60 seconds. On the staff treasury panel, whose stated
+job is spotting movement we did not start, a missing row is the whole failure.
+
+The comment claimed a refusal was "the same outcome as the provider being down".
+It was the opposite: a provider being down **throws**, hits the existing catch,
+returns the cached rows and leaves the cache alone. Refusal now throws too.
+
+### A cost refusal spent a retry, and could retire a live payout
+
+`payoutRelay.ts` and `bnbWithdraw.ts` increment `attempts` on **every** thrown
+error and mark a job `failed` at `relayMaxAttempts` (15). A refusal is not a
+failed attempt — nothing was tried — but it counted as one, so roughly 22 minutes
+at the hard ceiling would fail every relay job in flight. Past the prefund leg
+`safe` is false, meaning that job is dead and a human has to reconcile it on
+chain. That is precisely the outcome the two-tier split exists to prevent.
+
+`CostCeilingError` is now its own type and both loops return without spending an
+attempt.
+
+### The deposit scanner shared a tier with per-user screen reads
+
+Both defaulted to `"low"`. The soft ceiling is 4,000/hour; the scanner uses ~80,
+and every wallet screen load outside a user's 60s cache costs 1 — so **~4,000
+wallet loads in an hour would stall deposit crediting behind them**, and
+`rpc.ts`'s own header calls the consequence unacceptable: "a user who paid us and
+got nothing". Deferred rather than lost (the tick's transaction rolls back and
+the cursor does not advance), but deferred by up to an hour and visible only in a
+`console.warn`.
+
+The scanner is now `"high"`. It earns it by being fixed-cadence — its volume
+cannot grow with the user base — and by being the call that credits money.
+
+### Suspension revoked sessions, which broke two stated contracts
+
+The epoch is compared **before** the status check, so bumping it on suspend
+turned the 403 *"This account is suspended. Please contact support."* into a 401
+*"Session expired"* — and `/auth/me`, whose entire documented job is letting a
+suspended user load their account and be **told why**, signed them out instead.
+
+Reverted: suspending no longer touches the epoch. The status check was always the
+mechanism, every authenticated route passes through it, and there is now a
+structural tripwire proving that. Revocation is reserved for the three places
+where credentials genuinely change or the user asks: password reset, email
+linking, and logout-all. `test:sessions` pins the 403.
+
+### Also fixed, smaller
+
+- The `rpc` meter's comment **overclaimed**: it said viem transports in
+  payout/relay/sweep/reconcile were counted, when only reconcile was. The sweep
+  loop — the worst-shaped in the codebase, running per deposit address with ~5
+  JSON-RPC calls per viem `sendTransaction` — now charges an estimate; the
+  comment states exactly what is and is not counted, and what to do when adding
+  a new viem loop.
+- `Math.floor(limit * 0.8)` was 0 at `limit = 1`, refusing all low-priority work
+  at zero usage. Floored to 1.
+- `usage()` reported `softCeiling: 0` when the ceiling was **disabled** —
+  indistinguishable from a total breach on the one screen built to answer "did
+  the ceiling bite". It returns `null` plus an `enabled` flag now.
+- The warn throttle used a hard-coded 60s slot for both meters; the explorer's
+  slots are hours, so it would have logged 1,440 lines a day instead of 24.
+- `__resetForTests` rebuilt the window geometry by matching the meter's **name**;
+  it reads it off the meter now, so a third meter cannot silently get the wrong
+  one.
+- Both bounded caches evicted **FIFO, not LRU**: a plain `set` on an existing key
+  does not move it in a JS `Map`, so a frequently refreshed entry kept its
+  original position and was evicted while colder entries survived. `delete` then
+  `set` on every write.
+
+`test:costguard` is **10 checks**; `test:sessions` is **40**.

@@ -3472,6 +3472,11 @@ See `docs/` for the full spec.
     that handler `relayReady` does double duty — it decides the gas SURCHARGE
     too — so the read is gated on a *separate* `readGas`, or every screen that
     skips the read starts previewing a fee this deployment does not charge.
+    **`GET /usdt` has the same read and it is opt-OUT (`?gas=0`,
+    `fetchUsdtNoGas`) — the asymmetry is deliberate**: only two of six callers
+    of `/wallet/balance` wanted the gas fields, but four of six callers of
+    `/usdt` do, so the safe default is the other way round there. A new screen
+    forgetting to ask must not be shown "no BNB" when the user has some.
   - **`api/src/costGuard.ts` — one ceiling that holds when a specific safeguard
     has a gap.** This project has shipped two real billing incidents, both the
     same shape (a loop polling a paid provider at a rate set by code, found by
@@ -3581,3 +3586,43 @@ See `docs/` for the full spec.
     explanation sits between the two statements. Proven by removing one guard:
     the four behavioural checks stayed green, the tripwire failed and named the
     line. Same family as `otp-race.e2e.ts`'s tripwire and `LOCKED_PATHS`.
+  - ⚠️ **AN INDEPENDENT CORRECTNESS REVIEW OF THAT SAME WORK FOUND FIVE MORE
+    REAL DEFECTS, ONE OF WHICH WOULD HAVE RE-CREATED THE VERY BILLING INCIDENT
+    THE WORK EXISTS TO PREVENT.** All fixed; full write-up in
+    `audit/FIXES_APPLIED.md` § 16. The four worth carrying forward:
+    1. **`Number("")` IS 0, AND THAT IS THE CASE THAT ACTUALLY HAPPENS.** A NaN
+       guard does not catch it. On Railway, *clearing a variable's value*
+       (rather than deleting the variable) is routine and leaves `""` — which
+       would have switched the spend ceiling off, and dropped
+       `DEPOSIT_SCAN_INTERVAL_MS` from the **90000 it is set to live because of
+       a past billing incident** to the 5s floor, an 18x cost rise. `num()` in
+       `config.ts` trims and falls back on empty; an explicit `0` still means
+       what it is documented to mean. Use `num()` for every numeric env var.
+    2. **A COST REFUSAL MUST NOT LOOK LIKE A FAILURE.** `payoutRelay.ts` and
+       `bnbWithdraw.ts` count every thrown error toward `relayMaxAttempts` (15)
+       and then mark the job **failed** — and past the prefund leg that is not
+       auto-recoverable. So ~22 minutes at the ceiling would have retired every
+       live payout. `CostCeilingError` is its own type and both loops `return`
+       without spending an attempt. **A new retry loop that catches broadly must
+       do the same.**
+    3. **A REFUSED READ MUST NOT BE CACHED AS AN EMPTY SUCCESS.** `bscscan.ts`
+       returned `[]` on refusal; `[]` is indistinguishable from "no
+       transactions", so the caller took its success path and overwrote a good
+       25-row cache entry with an empty one. It throws now, landing in the
+       existing catch that returns cached rows and leaves the cache alone —
+       which is what already happened when the provider was down.
+    4. ⚠️ **SUSPENDING NO LONGER REVOKES SESSIONS — THIS REVERSES THE FIRST CUT
+       AND MUST NOT BE PUT BACK.** The epoch is compared BEFORE the status
+       check, so bumping it on suspend turned the 403 *"This account is
+       suspended. Please contact support."* into a 401 *"Session expired"*, and
+       `/auth/me` — whose documented job is letting a suspended user load their
+       account and be told why — signed them out instead. The status check was
+       always the mechanism. Revocation is for the three places credentials
+       really change or the user asks: password reset, email linking,
+       logout-all. `test:sessions` pins the 403.
+    Also: the deposit scanner moved to the **`"high"`** tier (it shared `"low"`
+    with per-user screen reads, so ~4,000 wallet loads in an hour could stall
+    deposit crediting — and `rpc.ts`'s header calls that outcome unacceptable);
+    the sweep loop now charges an estimate and the meter's comment states
+    exactly what is and is not counted; both bounded caches evict LRU rather
+    than FIFO (a plain `set` on an existing key does not move it in a JS `Map`).

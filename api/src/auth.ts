@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
-import { sendLoginCode } from "./email.ts";
+import { sendLoginCode, emailConfigured } from "./email.ts";
 import { recordDevice } from "./fraud.ts";
 // permissions.ts imports nothing, so pulling it in here cannot create the cycle
 // that roles.ts would (roles.ts imports from this file).
@@ -142,6 +142,20 @@ export async function consumeCode(
   );
   if (!claimed) return { ok: false, statusCode: 400, error: "No code found. Please ask for a new code." };
   return { ok: true, pendingPasswordHash: claimed.pending_password_hash ?? null };
+}
+
+// What to tell a user when the code could not be sent.
+//
+// "Please try again" is the right answer to a provider hiccup and the WRONG
+// answer to "this server has no email provider configured" — that one never
+// succeeds, so the advice is to retry forever. Since email now fails closed in
+// production (email.ts, audit finding A-01), the second case is a real state
+// this deployment can be in, and it has a working way out: Telegram sign-in
+// does not touch email at all.
+function emailUnavailableMessage(): string {
+  return emailConfigured()
+    ? "We could not send the email. Please try again."
+    : "Email is not switched on yet, so we cannot send you a code. Please continue with Telegram instead.";
 }
 
 // ---- Session revocation (audit finding A-03) --------------------------------
@@ -407,7 +421,7 @@ export async function authRoutes(app: FastifyInstance) {
       await issueCode(email, "verify", passwordHash);
     } catch (err) {
       req.log.error({ err }, "email send failed");
-      return reply.code(502).send({ error: "We could not send the email. Please try again." });
+      return reply.code(502).send({ error: emailUnavailableMessage() });
     }
     return { ok: true };
   });
@@ -706,7 +720,7 @@ export async function authRoutes(app: FastifyInstance) {
       await issueCode(email, "link", passwordHash);
     } catch (err) {
       req.log.error({ err }, "email send failed");
-      return reply.code(502).send({ error: "We could not send the email. Please try again." });
+      return reply.code(502).send({ error: emailUnavailableMessage() });
     }
     return { ok: true };
   });

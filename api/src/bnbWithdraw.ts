@@ -23,6 +23,7 @@ import { sql, getOrCreateDepositWallet, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { deriveChildPrivateKey } from "./custodySeeds.ts";
 import { rpcCall } from "./rpc.ts";
+import { CostCeilingError } from "./costGuard.ts";
 import { sendPushToUser } from "./push.ts";
 import { requiredGasWei } from "./payoutRelay.ts";
 
@@ -148,6 +149,9 @@ export async function advanceBnbWithdrawal(jobId: string): Promise<void> {
         }
       }
     } catch (err) {
+      // See advanceRelayJob for why a cost-ceiling refusal must not spend an
+      // attempt: nothing was tried, and the retry budget is what retires a job.
+      if (err instanceof CostCeilingError) return;
       await t.run(
         "UPDATE bnb_withdrawal_requests SET attempts = attempts + 1, last_error = ? WHERE id = ?",
         (err as Error)?.message ?? String(err), job.id,

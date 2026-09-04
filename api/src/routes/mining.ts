@@ -570,7 +570,7 @@ export async function miningRoutes(app: FastifyInstance) {
   // (CUSTODY_SPEC.md § 5 steps 2-3) is detected and credited automatically by
   // deposits/scanner.ts + credit.ts, no staff step — both paths land in the
   // same usdt_ledger and the same `topups` array below.
-  app.get("/usdt", guard(async (userId) => {
+  app.get("/usdt", guard(async (userId, req) => {
     const s = await loadMiningSettings();
     const enabled = Boolean(s.usdtTopupEnabled) && s.usdtTreasuryAddress !== "";
     const rows = await sql.all<{
@@ -623,7 +623,27 @@ export async function miningRoutes(app: FastifyInstance) {
     // (nothing changes there; the old direct-treasury fallback pays its own
     // gas, same as always).
     const relayReady = enabled && relayAvailable(s.usdtTreasuryChain);
-    const gas = relayReady ? await hasEnoughGasForDisplay(userId, s.usdtTreasuryChain as "bep20") : null;
+    // ⚠️ THE GAS READ CAN BE OPTED OUT OF (`?gas=0`), BECAUSE IT REACHES THE
+    // CHAIN AND THIS ROUTE IS LOADED BY SCREENS THAT DO NOT SHOW IT.
+    // /wallet/usdt and /mine/topup both call this and render none of the three
+    // gas fields, so they were paying for an eth_getBalance to throw it away —
+    // the same per-user, scales-with-the-user-base cost that /wallet/balance
+    // was fixed for.
+    //
+    // ⚠️ OPT-OUT HERE, WHERE /wallet/balance IS OPT-IN, AND THE ASYMMETRY IS
+    // DELIBERATE. Most callers of THIS route do render the BNB balance
+    // (/wallet, /wallet/bnb, /wallet/bnb/withdraw, /mine/refund), so a new
+    // screen forgetting to ask should still get a correct one; on
+    // /wallet/balance only two of six callers wanted it, so the safe default
+    // is the other way round. Silently showing "no BNB" would be worse than
+    // spending a call.
+    const skipGas = (() => {
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return q.gas === "0" || q.gas === "false";
+    })();
+    const gas = relayReady && !skipGas
+      ? await hasEnoughGasForDisplay(userId, s.usdtTreasuryChain as "bep20")
+      : null;
     return {
       enabled,
       balanceMicro: await usdtBalanceMicroOf(userId),

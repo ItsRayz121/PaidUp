@@ -72,6 +72,7 @@ import { treasurySignerKey } from "./signer.ts";
 import { custodyEnabled } from "./custody.ts";
 import { deriveChildPrivateKey, sweepSigningEnabled } from "./custodySeeds.ts";
 import { rpcCall } from "./rpc.ts";
+import { CostCeilingError } from "./costGuard.ts";
 import { sendPushToUser } from "./push.ts";
 
 export type RelayPurpose = "withdrawal" | "refund";
@@ -125,6 +126,11 @@ function rememberGasBalance(key: string, balanceWei: bigint, ttlMs: number): voi
       gasBalanceCache.delete(oldest.value);
     }
   }
+  // delete-then-set, so a REFRESHED key moves to the end of the Map. A plain
+  // `set` on an existing key leaves it in its original position, which would
+  // make the oldest-first eviction below evict the hottest entries and keep
+  // cold ones — the opposite of what a cost cache wants.
+  gasBalanceCache.delete(key);
   gasBalanceCache.set(key, { balanceWei, expiresAt: Date.now() + ttlMs });
 }
 
@@ -585,6 +591,14 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
         if (moved) box.push = await completeRequest(t, job);
       }
     } catch (err) {
+      // ⚠️ A COST-CEILING REFUSAL IS NOT A FAILED ATTEMPT, AND COUNTING IT
+      // COULD KILL A LIVE PAYOUT. Nothing was tried, nothing is wrong with this
+      // job, and the same work succeeds once the budget window rolls. Spending
+      // an attempt on it means a busy hour can walk a job to
+      // `relayMaxAttempts` and mark it failed — and past the prefund leg that
+      // is not recoverable automatically. Leave it untouched and let the next
+      // tick pick it up. (Found in review, 2026-09-04.)
+      if (err instanceof CostCeilingError) return;
       await t.run(
         "UPDATE payout_relay_jobs SET attempts = attempts + 1, last_error = ? WHERE id = ?",
         (err as Error)?.message ?? String(err), job.id,

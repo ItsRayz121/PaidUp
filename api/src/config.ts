@@ -25,8 +25,18 @@ function rpcList(raw: string | undefined, fallback: string[]): string[] {
 // floor for the intervals: `RECONCILE_INTERVAL_MS=0` would otherwise mean "run
 // the treasury reconciliation as fast as the event loop allows", i.e. exactly
 // the runaway paid-call loop this project has already shipped twice.
-function num(raw: string | undefined, fallback: number, min = 0): number {
-  const n = Number(raw);
+export function num(raw: string | undefined, fallback: number, min = 0): number {
+  // ⚠️ THE EMPTY STRING IS THE CASE THAT ACTUALLY HAPPENS, AND IT IS NOT NaN.
+  // `Number("")` is 0 — finite, so a NaN guard alone waves it straight through.
+  // On Railway, CLEARING a variable's value (rather than deleting the variable)
+  // is a routine thing to do and leaves exactly this. Doing it to
+  // RPC_MAX_CALLS_PER_HOUR would switch the spend ceiling off; doing it to
+  // DEPOSIT_SCAN_INTERVAL_MS — which is set to 90000 live precisely because of
+  // a past billing incident — would drop it to the 5s floor, an 18x cost
+  // increase. Found in review before this shipped.
+  const t = (raw ?? "").trim();
+  if (t === "") return fallback;
+  const n = Number(t);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, n);
 }

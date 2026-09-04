@@ -112,25 +112,35 @@ console.log("\n-- sign out everywhere keeps THIS device signed in --");
   check("the replacement works immediately", withNew.statusCode === 200);
 }
 
-console.log("\n-- suspending an account also kills its tokens --");
+console.log("\n-- suspending an account blocks it, and says WHY (403, not 401) --");
 {
+  // SUSPENDING DELIBERATELY DOES NOT REVOKE, AND THIS IS THE TEST THAT PINS IT.
+  // An earlier version of this change bumped the epoch on suspend. Because the
+  // epoch is compared BEFORE the status check, that turned the 403 "this
+  // account is suspended, contact support" into a 401 "session expired" - and
+  // /auth/me, whose whole job is letting a suspended user load their account
+  // and be told why, signed them out instead. The status check is the
+  // mechanism; revocation is for credential changes and logout-all.
   const victim = await mkUser("suspendme");
   const t = legacyToken(victim);
   check("works before", (await app.inject({ method: "GET", url: "/auth/me", headers: bearer(t) })).statusCode === 200);
 
-  // The same statement setUserStatusOne runs (routes/staff.ts).
-  await sql.run("UPDATE users SET status = 'suspended', session_epoch = session_epoch + 1 WHERE id = ?", victim);
-  const me = await app.inject({ method: "GET", url: "/auth/me", headers: bearer(t) });
-  check("the token is refused as expired, not merely blocked", me.statusCode === 401);
+  await sql.run("UPDATE users SET status = 'suspended' WHERE id = ?", victim);
+  check("the epoch is untouched by a suspension", await epochOf(victim) === 0);
 
-  // Restoring must NOT bump again — coming back from a suspension is not a
-  // reason to sign out every device a second time.
-  const epochWhileSuspended = await epochOf(victim);
+  const me = await app.inject({ method: "GET", url: "/auth/me", headers: bearer(t) });
+  check("...so /auth/me still loads the account, which is how the app explains itself",
+    me.statusCode === 200, `got ${me.statusCode}`);
+
+  const guarded = await app.inject({ method: "GET", url: "/wallet/balance", headers: bearer(t) });
+  check("...and a guarded route says SUSPENDED (403), not 'session expired' (401)",
+    guarded.statusCode === 403, `got ${guarded.statusCode} ${guarded.body.slice(0, 80)}`);
+
   await sql.run("UPDATE users SET status = 'active' WHERE id = ?", victim);
-  check("restoring leaves the epoch alone", await epochOf(victim) === epochWhileSuspended);
-  const back = await app.inject({ method: "GET", url: "/auth/me", headers: bearer(tokenAt(victim, epochWhileSuspended)) });
-  check("a token minted after the suspension works once restored", back.statusCode === 200);
+  check("restoring lets the same token work again",
+    (await app.inject({ method: "GET", url: "/wallet/balance", headers: bearer(t) })).statusCode === 200);
 }
+
 
 console.log("\n-- a password reset ends the sessions, which is the whole finding --");
 {
@@ -266,8 +276,11 @@ console.log("\n-- structural tripwire --");
   check("/auth/me still enforces it independently", /tokenEpochOf\(req\) !== Number\(user\.session_epoch/.test(auth));
 
   const staff = readFileSync(new URL("../routes/staff.ts", import.meta.url), "utf8");
-  check("suspending still bumps the epoch",
-    /status = \?, session_epoch = session_epoch \+ 1 WHERE id = \?/.test(staff));
+  check("suspending still does NOT touch the epoch (see the suspension block above)",
+    !/status = \?, session_epoch = session_epoch \+ 1 WHERE id = \?/.test(staff));
+
+  check("linking an email still bumps it — that write sets a password",
+    /password_hash = \?, session_epoch = session_epoch \+ 1 WHERE id = \?/.test(auth));
 
   // requireActiveUser's second argument is REQUIRED so the compiler forces every
   // authenticated path to supply it; an optional one could be silently forgotten
