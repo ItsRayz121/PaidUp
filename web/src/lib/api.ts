@@ -352,15 +352,38 @@ export const startEmailLink = (email: string, password: string) =>
   apiFetch<{ ok: true }>("/auth/email/link-start", {
     method: "POST", body: JSON.stringify({ email, password }),
   });
+// Returns a REPLACEMENT token: this sets a password on the account, which ends
+// every existing session (see auth.ts), including the one that called it. Store
+// it or the user is signed out by adding their own email.
 export const confirmEmailLink = (email: string, code: string) =>
-  apiFetch<{ ok: true; user: SessionUser }>("/auth/email/link-confirm", {
+  apiFetch<{ ok: true; token: string; user: SessionUser }>("/auth/email/link-confirm", {
     method: "POST", body: JSON.stringify({ email, code }),
   });
 
 export const fetchMe = () => apiFetch<{ user: SessionUser }>("/auth/me");
 
+// End every session this account has, and get a replacement token so THIS
+// device stays signed in. Deliberately not what the ordinary sign-out button
+// calls: there is one token per account and nothing tells one device's from
+// another's, so revocation is all-or-nothing (see auth.ts). This is the
+// explicit "someone else may have my password" action.
+export const signOutEverywhere = () =>
+  apiFetch<{ token: string; user: SessionUser }>("/auth/logout-all", { method: "POST" });
+
 // ---- Earner ---------------------------------------------------------------
-export const fetchBalance = () =>
+// ⚠️ THE GAS FIELDS COST A REAL BLOCKCHAIN CALL, SO THEY ARE OPT-IN.
+// `personalGasReady` and its two companions are read from the chain by the
+// API. Only the two withdraw screens render them, but this endpoint is loaded
+// by home, /mine, /wallet and /wallet/usdt as well — so asking for them
+// everywhere made an eth_getBalance the price of opening the app, i.e. the one
+// paid call in this system that grows with the user base rather than with a
+// fixed tick. Use `fetchBalanceWithGas` on a screen that actually shows the
+// gas warning; use `fetchBalance` everywhere else and the three fields come
+// back null, which every caller already treats as "not checked".
+export const fetchBalance = () => fetchBalanceInner(false);
+export const fetchBalanceWithGas = () => fetchBalanceInner(true);
+
+const fetchBalanceInner = (withGas: boolean) =>
   apiFetch<{
     points: number; minWithdrawPoints: number; withdrawalFeePoints: number;
     earnedUsdtMicro: number;
@@ -388,7 +411,7 @@ export const fetchBalance = () =>
     pointsAsUsdtMicro: number;
     // The $1 platform minimum, in the same unit /wallet/withdraw takes.
     minWithdrawUsdtMicro: number;
-  }>("/wallet/balance");
+  }>(withGas ? "/wallet/balance?gas=1" : "/wallet/balance");
 export const fetchLedger = () => apiFetch<{ entries: LedgerEntry[] }>("/wallet/ledger");
 export type UsdtTaskReward = { id: string; amountMicro: number; completionId: string | null; label: string; at: string };
 export const fetchUsdtTaskRewards = () => apiFetch<{ rewards: UsdtTaskReward[] }>("/wallet/usdt-task-rewards");

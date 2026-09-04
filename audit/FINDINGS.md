@@ -3,19 +3,34 @@
 Statuses distinguish observed behavior from architectural risk and missing evidence.
 Line references are to commit `8bc95ac1a97780c7962694cd6ccbb3e920b93e83`.
 
-⚠️ **Two of these findings have since been FIXED (2026-09-04), with before/after
-measurements in `FIXES_APPLIED.md`:** A-14 (one-time codes redeemable in parallel)
-and A-07 (capacity), the latter improved rather than closed — the 10,000-user model
-now clears every gate on the audit's own rig; the 100,000-user model still does
-not. The remaining High findings are untouched. Each fixed entry says so at the
-top; the description of the defect is left as written, because a finding that
-quietly turns into a success story is no longer evidence of anything.
+⚠️ **FIXED SO FAR.** Each closed entry says so at its top; the description of the
+defect is left as written, because a finding that quietly turns into a success
+story is no longer evidence of anything.
+
+| Round | Findings closed | Evidence |
+|---|---|---|
+| 2026-09-04 (first) | A-14 (one-time codes redeemable in parallel), A-07 (capacity - improved, not closed) | `FIXES_APPLIED.md` 1-7 |
+| 2026-09-04 (second) | **A-01** (email fail-open / OTPs in logs), **A-03** (unrevocable tokens), **A-05** (unverified database TLS), **A-06** (dependency advisories - 0 remaining), **A-09** (unbounded list endpoints), and A-04 in part (the Fastify advisory) | `FIXES_APPLIED.md` 8-14 |
+
+**Still open:** A-02 (email queue/retry - blocked on a provider key), A-04 in part
+(replica-local rate limits - needs a shared store, i.e. a paid add-on), A-08,
+A-10, A-11, A-12, A-13, and the remaining half of A-07 (a second replica plus the
+timers out of the API process).
 
 ## High severity
 
 ### A-01 — Production email can fail open and expose OTPs in logs
 
-**Status:** Confirmed  
+**Status:** ✅ **FIXED 2026-09-04 (second round).** The console sink is now
+development-only: in production, `sendLoginCode` with no `RESEND_API_KEY`
+**throws** instead of printing the code and returning normally, so a route
+returns a real error rather than a false success, and a one-time authentication
+secret can no longer reach centralised logs. Boot prints a loud warning naming
+exactly which flows are affected - a WARNING and not a fatal, deliberately,
+because Telegram sign-in does not touch email and refusing to boot would take
+down a working deployment over a feature that has its own fallback. See
+`FIXES_APPLIED.md` section 8. The finding as originally written follows.
+**Status (original):** Confirmed  
 **Evidence:** `api/src/email.ts:22-26`, `api/src/server.ts:39-65`,
 `api/src/server.ts:327-330`, `api/src/auth.ts:312-318`, and
 `results/auth-resilience.txt`.
@@ -48,7 +63,20 @@ store provider IDs, consume delivery/bounce webhooks, and expose queue-age/failu
 
 ### A-03 — Password reset and logout do not revoke 30-day bearer tokens
 
-**Status:** Confirmed  
+**Status:** ✅ **FIXED 2026-09-04 (second round).** `users.session_epoch` is stamped into
+every token as `se` and compared on every authenticated request
+(`requireActiveUser`, and independently in `/auth/me`, which is what the web
+client uses to decide a token is dead). Bumping it invalidates every token the
+account has ever been issued; it is bumped on password reset - in the same
+statement as the new password, so there is no window - on staff suspension, and
+by the new `POST /auth/logout-all`. Regression: `npm run test:sessions`
+(27 checks incl. the audit's exact walk, plus a structural tripwire). The fix was
+reverted in place and the suite re-run against the old code to confirm it can
+fail: it reproduced the audit's HTTP 200. **Known limit, stated rather than
+hidden:** revocation is all-or-nothing per account, because nothing distinguishes
+one device's token from another's - per-device revocation still needs the session
+record this finding describes. See `FIXES_APPLIED.md` section 9.
+**Status (original):** Confirmed  
 **Evidence:** `api/src/auth.ts:110-123` signs stateless 30-day JWTs containing only `sub`;
 `api/src/auth.ts:396-413` resets the password without changing session state;
 `web/src/lib/api.ts:72-103` stores the token in local storage and logout only deletes it
@@ -64,7 +92,15 @@ staff changes. Shorten access-token lifetime and use rotating, revocable refresh
 
 ### A-04 — Abuse controls are replica-local and depend on a vulnerable proxy path
 
-**Status:** Confirmed architecture and dependency exposure  
+**Status:** 🟡 **HALF FIXED 2026-09-04 (second round).** The dependency half is
+closed: Fastify is on **5.12.3**, past the `GHSA-3m5p-2c4r-xxw2` patch boundary
+of 5.12.1, and `npm audit --omit=dev` on the API now reports **0
+vulnerabilities**. The architectural half is **open, and it is a spending
+decision rather than a coding one**: a shared store means a Redis add-on, paid
+for every month, to defend against an attack that only becomes possible once a
+second replica exists - and this deployment runs one. Recorded so the trade-off
+is explicit rather than forgotten. See `FIXES_APPLIED.md` section 11.
+**Status (original):** Confirmed architecture and dependency exposure  
 **Evidence:** `api/src/server.ts:80` trusts a hop count; `api/src/server.ts:101-107`
 registers Fastify rate limiting without an external store. The installed `fastify@5.10.0`
 falls in `GHSA-3m5p-2c4r-xxw2` (`>=5.8.3 <5.12.1`), which concerns
@@ -80,7 +116,16 @@ move critical rate limits to a shared store with atomic increments.
 
 ### A-05 — Public Postgres TLS does not authenticate the server
 
-**Status:** Confirmed  
+**Status:** ✅ **CODE FIXED 2026-09-04 (second round); one operator step remains.**
+`pgSslOptions` (`api/src/db.ts`) turns verification **on** whenever a CA is
+supplied - `DATABASE_CA_CERT` (inline PEM) or `DATABASE_CA_CERT_PATH`, with
+`DATABASE_TLS_SERVERNAME` for the hostname mismatch that caused this in the
+first place: naming the right host is the proper fix, rather than giving up on
+checking. Railway's private network needs none of it. With nothing configured
+the API still connects - refusing to boot would take down a running deployment
+over a change only the operator can make - but it now warns loudly on every boot
+instead of being silent. See `FIXES_APPLIED.md` section 10.
+**Status (original):** Confirmed  
 **Evidence:** `api/src/db.ts:40-48` sets `ssl: { rejectUnauthorized: false }` for every
 non-internal connection because of a hostname mismatch.
 
@@ -93,7 +138,15 @@ Add a deployment smoke test that fails on certificate mismatch.
 
 ### A-06 — Production dependency scan reports high-severity advisories
 
-**Status:** Confirmed versions; exploitability varies  
+**Status:** ✅ **FIXED 2026-09-04 (second round).** `npm audit --omit=dev` reports **0
+vulnerabilities** on both projects (was 3 high in the API, 4 in the web). Fastify
+5.10.0 -> **5.12.3** (which also carries patched `find-my-way` and `fast-uri`),
+sharp 0.34.3 -> **0.35.4** (a major, smoke-tested against the exact resize/webp
+pipeline `staffTasks.ts` uses), Next 16.2.10 -> **16.3.4** (past the 16.2.11
+advisory boundary, carrying patched postcss/nanoid/sharp). Verified by re-running
+the whole backend matrix and the web build, not by the scanner alone. See
+`FIXES_APPLIED.md` section 11.
+**Status (original):** Confirmed versions; exploitability varies  
 **Evidence:** `results/api-npm-audit.json`, `results/web-npm-audit.json`, and package locks.
 
 - API: 9 aggregate high findings, including `fastify@5.10.0`,
@@ -236,7 +289,16 @@ retention period, add a purge job, and restrict staff/database access.
 
 ### A-09 — Legacy history endpoints return unbounded collections
 
-**Status:** Confirmed  
+**Status:** ✅ **BOUNDED 2026-09-04 (second round)** - capped, not paginated.
+`/wallet/ledger` and `/wallet/usdt-task-rewards` cap at 500 rows,
+`/support/tickets` at 50 tickets and 200 messages (newest kept, then re-ordered
+ascending so a thread still reads correctly). Every cap is far above what any
+screen renders, so this is invisible in the product and bounded in the process.
+The support one mattered most: each message carries a base64 data URL of up to
+2MB, so the unbounded version was "every screenshot this user ever sent, in one
+JSON body". Cursor pagination and object storage - the fuller remedy below - are
+unbuilt. See `FIXES_APPLIED.md` section 12.
+**Status (original):** Confirmed  
 **Evidence:** `api/src/routes/app.ts:463-481` (`/wallet/ledger`), `:484+`
 (`/wallet/usdt-task-rewards`), and `:877-909` (`/support/tickets`) have no pagination.
 The support response can include all messages and data-URL images; uploads can be large.

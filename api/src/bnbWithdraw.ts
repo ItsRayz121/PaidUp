@@ -103,7 +103,7 @@ export async function advanceBnbWithdrawal(jobId: string): Promise<void> {
 
       if (job.status === "pending") {
         const amountWei = BigInt(job.amount_wei);
-        const raw = (await rpcCall("bep20", "eth_getBalance", [account.address, "latest"])) as string;
+        const raw = (await rpcCall("bep20", "eth_getBalance", [account.address, "latest"], { priority: "high" })) as string;
         const balanceWei = BigInt(raw);
         // Defensive re-check, right before signing — the balance could have
         // moved since the route's own check at request time.
@@ -128,7 +128,7 @@ export async function advanceBnbWithdrawal(jobId: string): Promise<void> {
           await markFailed(t, job.id, "No transaction hash recorded — cannot check status.");
           return;
         }
-        const receipt = (await rpcCall("bep20", "eth_getTransactionReceipt", [job.tx_hash])) as
+        const receipt = (await rpcCall("bep20", "eth_getTransactionReceipt", [job.tx_hash], { priority: "high" })) as
           { status: string } | null;
         if (!receipt) return; // still pending on-chain, check again next tick
         if (receipt.status !== "0x1") {

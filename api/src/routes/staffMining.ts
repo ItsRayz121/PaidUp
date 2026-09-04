@@ -16,6 +16,7 @@ import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
 import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
+import { usage as costUsage } from "../costGuard.ts";
 import { reconcileChain } from "../deposits/reconcile.ts";
 import { alertsEnabled, sendStaffAlert } from "../alerts.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
@@ -761,10 +762,16 @@ export async function staffMiningRoutes(app: FastifyInstance) {
     const q = z.object({ chain: z.string().min(1).max(20).default("bep20") })
       .parse((req.query as Record<string, unknown>) ?? {});
     const endpoints = endpointsFor(q.chain);
+    // Spend ceilings (costGuard.ts) ride along with the health check because
+    // this is the one screen an operator opens when asking "what is this
+    // costing me" — a live endpoint list and no usage figure answers half the
+    // question. `refused` above zero is the signal that a ceiling actually
+    // bit, which is either a runaway loop or a limit set too low.
+    const spend = costUsage();
     if (!endpoints.length) {
-      return { chain: q.chain, endpoints: [], results: [], note: "No RPC endpoints are configured for this network." };
+      return { chain: q.chain, endpoints: [], results: [], spend, note: "No RPC endpoints are configured for this network." };
     }
-    return { chain: q.chain, endpoints, results: await rpcHealth(q.chain) };
+    return { chain: q.chain, endpoints, spend, results: await rpcHealth(q.chain) };
   }));
 
   // Staff paging (alerts.ts) — confirms the Telegram channel is actually wired

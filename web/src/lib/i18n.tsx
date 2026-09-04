@@ -82,6 +82,15 @@ const copy: Record<string, string> = {
   "profile.referHint": "Share your link. Earn when friends earn.",
   "profile.signOut": "Sign out",
   "profile.signOutHint": "You'll need your password to sign in again.",
+  // "Sign out everywhere" is a SEPARATE action from the row above it, not a
+  // stronger version of the same button. Ordinary sign-out clears this phone;
+  // this one ends every phone and computer the account is signed in on. It is
+  // what a user needs when they think someone else has their password, and
+  // saying that plainly is the whole reason it earns its own row.
+  "profile.signOutAll": "Sign out everywhere",
+  "profile.signOutAllHint": "Signs you out on every other phone and computer. Use this if you think someone else got into your account.",
+  "profile.signOutAllConfirm": "Sign out on all your other devices?",
+  "profile.signOutAllDone": "Done. Every other device has been signed out.",
 
   // ---- Edit your profile ----------------------------------------------------
   // The handle is the hard part to word. It is the name people SEND MONEY TO, so

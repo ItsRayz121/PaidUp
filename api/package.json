@@ -47,7 +47,9 @@
     "test:messagesadmin": "tsx src/tests/messagesAdmin.e2e.ts",
     "test:disbursements": "tsx src/tests/disbursements.e2e.ts",
     "test:otprace": "tsx src/tests/otp-race.e2e.ts",
-    "test:miningbatch": "tsx src/tests/mining-batch.e2e.ts"
+    "test:miningbatch": "tsx src/tests/mining-batch.e2e.ts",
+    "test:costguard": "tsx --test src/tests/costGuard.test.ts",
+    "test:sessions": "tsx src/tests/sessions.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
@@ -57,10 +59,10 @@
     "@noble/hashes": "^2.2.0",
     "@scure/bip32": "^2.2.0",
     "@scure/bip39": "^2.2.0",
-    "fastify": "^5.2.0",
+    "fastify": "^5.12.3",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0",
-    "sharp": "^0.34.3",
+    "sharp": "^0.35.4",
     "tsx": "^4.19.2",
     "viem": "^2.55.11",
     "web-push": "^3.6.7",

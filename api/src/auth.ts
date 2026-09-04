@@ -144,8 +144,49 @@ export async function consumeCode(
   return { ok: true, pendingPasswordHash: claimed.pending_password_hash ?? null };
 }
 
-function signToken(userId: string): string {
-  return jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: "30d" });
+// ---- Session revocation (audit finding A-03) --------------------------------
+// A token here is a stateless 30-day JWT. Verifying it proves the signature,
+// which is a statement about the PAST: that we issued this, once. It says
+// nothing about whether the session should still exist. Before `se`, a stolen
+// token survived a password reset, so the one action a worried user can take
+// on their own did not actually take their account back.
+//
+// `se` is the account's session epoch at the moment the token was signed.
+// Bumping the column invalidates every token ever issued for that account, in
+// one integer, with no session table to keep and nothing to expire. The cost
+// is that revocation is all-or-nothing per account: there is no way to end one
+// device's session and keep another's, because there is nothing that tells the
+// two apart. Per-device revocation needs a session record, which is the bigger
+// change the audit describes and this deliberately is not.
+//
+// A token minted before this existed has no `se` claim. It reads as 0 and the
+// column defaults to 0, so deploying this signs nobody out.
+const TOKEN_EPOCH = Symbol("tokenEpoch");
+
+async function signToken(userId: string): Promise<string> {
+  const row = await sql.get<{ session_epoch: number }>(
+    "SELECT session_epoch FROM users WHERE id = ?", userId,
+  );
+  return jwt.sign(
+    { sub: userId, se: Number(row?.session_epoch ?? 0) },
+    config.jwtSecret, { expiresIn: "30d" },
+  );
+}
+
+/**
+ * End every session this account has. The next request carrying any previously
+ * issued token is refused with a 401.
+ *
+ * Callers must decide whether to hand the actor a fresh token afterwards: a
+ * password reset does (they just proved they own the inbox), a staff-initiated
+ * revocation does not.
+ */
+export async function revokeSessions(userId: string): Promise<void> {
+  await sql.run("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?", userId);
+}
+
+function tokenEpochOf(req: FastifyRequest): number {
+  return Number((req as unknown as Record<symbol, unknown>)[TOKEN_EPOCH] ?? 0);
 }
 
 export function getUserId(req: FastifyRequest): string {
@@ -153,7 +194,13 @@ export function getUserId(req: FastifyRequest): string {
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!token) throw { statusCode: 401, message: "Not signed in" };
   try {
-    const payload = jwt.verify(token, config.jwtSecret) as { sub: string };
+    const payload = jwt.verify(token, config.jwtSecret) as { sub: string; se?: number };
+    // Stashed rather than returned so that adding the check did not have to
+    // change what every caller of this function receives. requireActiveUser is
+    // where it is actually compared, because that is the one place already
+    // reading the user row on every authenticated request — the check costs no
+    // extra query.
+    (req as unknown as Record<symbol, unknown>)[TOKEN_EPOCH] = Number(payload.se ?? 0);
     return payload.sub;
   } catch {
     throw { statusCode: 401, message: "Session expired. Please sign in again." };
@@ -165,9 +212,19 @@ export function getUserId(req: FastifyRequest): string {
 // expires. Every earner route must therefore re-check the account's status, or
 // "suspend" would be a button that does nothing while the user keeps earning
 // and withdrawing.
-export async function requireActiveUser(userId: string): Promise<void> {
-  const row = await sql.get<{ status: string }>("SELECT status FROM users WHERE id = ?", userId);
+export async function requireActiveUser(userId: string, req: FastifyRequest): Promise<void> {
+  const row = await sql.get<{ status: string; session_epoch: number }>(
+    "SELECT status, session_epoch FROM users WHERE id = ?", userId,
+  );
   if (!row) throw { statusCode: 401, message: "Session expired. Please sign in again." };
+  // The revocation check (audit finding A-03). `req` is REQUIRED rather than
+  // optional on purpose: an optional argument would let a new route silently
+  // opt out of the check by forgetting it, and the compiler is the only thing
+  // that can guarantee every authenticated path is covered.
+  const tokenEpoch = tokenEpochOf(req);
+  if (tokenEpoch !== Number(row.session_epoch ?? 0)) {
+    throw { statusCode: 401, message: "Session expired. Please sign in again." };
+  }
   if (row.status !== "active") {
     throw { statusCode: 403, message: "This account is suspended. Please contact support." };
   }
@@ -378,7 +435,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
+    return { token: await signToken(user.id), user: await publicUser(user) };
   });
 
   // Log in with email + password. No code needed once the email is verified.
@@ -411,7 +468,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
+    return { token: await signToken(user.id), user: await publicUser(user) };
   });
 
   // Forgot password: email a reset code. Always returns ok so the endpoint
@@ -441,13 +498,24 @@ export async function authRoutes(app: FastifyInstance) {
     if (!result.ok) return reply.code(result.statusCode).send({ error: result.error });
 
     const passwordHash = await hashPassword(parsed.data.password);
-    await sql.run("UPDATE users SET password_hash = ?, email_verified = 1 WHERE email = ?", passwordHash, email);
+    // ⚠️ THE EPOCH BUMP IS PART OF THE SAME WRITE AS THE NEW PASSWORD (audit
+    // finding A-03). A reset is the one action a user takes when they think
+    // someone else is in their account, and before this it did not end that
+    // someone else's session — their 30-day token stayed valid. Bumping here,
+    // in the same statement, means there is no window in which the password is
+    // new but the old sessions are still live, and the token signed a few lines
+    // below picks up the new epoch so the person doing the reset stays signed
+    // in on this device only.
+    await sql.run(
+      "UPDATE users SET password_hash = ?, email_verified = 1, session_epoch = session_epoch + 1 WHERE email = ?",
+      passwordHash, email,
+    );
     const user = await sql.get<UserRow>("SELECT * FROM users WHERE email = ?", email);
     if (!user) return reply.code(404).send({ error: "Account not found." });
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
+    return { token: await signToken(user.id), user: await publicUser(user) };
   });
 
   // Telegram login fallback (P2). The web Telegram Login Widget posts the signed
@@ -468,7 +536,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
+    return { token: await signToken(user.id), user: await publicUser(user) };
   });
 
   // Telegram MINI APP login (2026-07-18). Inside Telegram the app receives a
@@ -500,7 +568,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
-    return { token: signToken(user.id), user: await publicUser(user) };
+    return { token: await signToken(user.id), user: await publicUser(user) };
   });
 
   // Which Telegram bot to render the login widget for — served by the API so
@@ -532,6 +600,18 @@ export async function authRoutes(app: FastifyInstance) {
     let userId: string;
     try {
       userId = getUserId(req);
+      // ⚠️ requireActiveUser IS NOT OPTIONAL ON THESE FOUR ROUTES, AND THEY ARE
+      // THE ONES WHERE IT MATTERS MOST. They attach a NEW CREDENTIAL to an
+      // existing account — a Telegram identity, or an email and password — so a
+      // token that reaches them can be laundered into permanent access that no
+      // later revocation can dislodge. Skipping the check would mean "sign out
+      // everywhere" and a password reset both silently failed to cover exactly
+      // the routes an attacker would want. (Found by `security-review` on the
+      // change that introduced session revocation — these four predate the rule
+      // that every authenticated path passes through here.) It also means a
+      // SUSPENDED account can no longer link anything, which was true of every
+      // other earner route already.
+      await requireActiveUser(userId, req);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
@@ -568,6 +648,9 @@ export async function authRoutes(app: FastifyInstance) {
     let userId: string;
     try {
       userId = getUserId(req);
+      // Credential-linking route: see /auth/telegram/link above for why the
+      // revocation + suspension check is mandatory here specifically.
+      await requireActiveUser(userId, req);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
@@ -595,6 +678,9 @@ export async function authRoutes(app: FastifyInstance) {
     let userId: string;
     try {
       userId = getUserId(req);
+      // Credential-linking route: see /auth/telegram/link above for why the
+      // revocation + suspension check is mandatory here specifically.
+      await requireActiveUser(userId, req);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
@@ -629,6 +715,9 @@ export async function authRoutes(app: FastifyInstance) {
     let userId: string;
     try {
       userId = getUserId(req);
+      // Credential-linking route: see /auth/telegram/link above for why the
+      // revocation + suspension check is mandatory here specifically.
+      await requireActiveUser(userId, req);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
       return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
@@ -650,8 +739,14 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       // The UNIQUE index on users.email is the last line against a race where
       // the email was registered between start and confirm.
+      // ⚠️ THE EPOCH BUMP IS HERE FOR THE SAME REASON IT IS IN /auth/reset:
+      // this statement writes a NEW PASSWORD onto the account. Any route that
+      // changes what someone can log in with has to end the sessions that
+      // existed under the old credentials, or "I changed my password" stops
+      // meaning "I took my account back". Same statement, so there is no
+      // window. (Found by `security-review`, 2026-09-04.)
       await sql.run(
-        "UPDATE users SET email = ?, email_verified = 1, password_hash = ? WHERE id = ?",
+        "UPDATE users SET email = ?, email_verified = 1, password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?",
         email, result.pendingPasswordHash, userId,
       );
     } catch {
@@ -659,15 +754,59 @@ export async function authRoutes(app: FastifyInstance) {
     }
     const fresh = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
     if (!fresh) return reply.code(500).send({ error: "Could not save. Please try again." });
-    return { ok: true, user: await publicUser(fresh) };
+    // A REPLACEMENT TOKEN IS PART OF THE BUMP ABOVE, NOT AN EXTRA. Ending every
+    // session for this account includes the one that just did the linking, so
+    // without handing back a fresh token the user would be signed out by the
+    // act of adding their own email. Minted after the update, so it carries the
+    // new epoch. The client stores it (ConnectEmailCard).
+    return { ok: true, token: await signToken(userId), user: await publicUser(fresh) };
   });
 
   // Who am I (used by the app after it has a token)
+  // Sign out everywhere (audit finding A-03). Ends every session this account
+  // has and hands the caller a fresh token, so the device that asked stays
+  // signed in and every other one is dropped at its next request.
+  //
+  // ⚠️ THE ORDINARY SIGN-OUT BUTTON DELIBERATELY DOES NOT CALL THIS. There is
+  // exactly one token per account and nothing distinguishes one device's from
+  // another's, so revocation is all-or-nothing — wiring the normal button to it
+  // would mean signing out on a phone also signed you out on a laptop, which is
+  // not what that button says it does. Per-device sign-out needs a session
+  // record, which is the larger change the audit describes. This is the
+  // deliberate, user-initiated "someone else may have my password" action.
+  app.post("/auth/logout-all", async (req, reply) => {
+    try {
+      const userId = getUserId(req);
+      await requireActiveUser(userId, req);
+      await revokeSessions(userId);
+      const user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+      if (!user) return reply.code(404).send({ error: "User not found" });
+      return { token: await signToken(userId), user: await publicUser(user) };
+    } catch (e) {
+      const err = e as { statusCode?: number; message?: string };
+      return reply.code(err.statusCode ?? 401).send({ error: err.message ?? "Not signed in" });
+    }
+  });
+
   app.get("/auth/me", async (req, reply) => {
     try {
       const userId = getUserId(req);
-      const user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", userId);
+      const user = await sql.get<UserRow & { session_epoch?: number }>(
+        "SELECT * FROM users WHERE id = ?", userId,
+      );
       if (!user) return reply.code(404).send({ error: "User not found" });
+      // ⚠️ THIS ROUTE HAS TO CHECK REVOCATION ITSELF, AND IT IS THE ONE THAT
+      // MATTERS MOST. It deliberately does not call requireActiveUser (a
+      // suspended user must still be able to load their own account and be
+      // told why, rather than be silently signed out), so the epoch check has
+      // to be repeated here — and the web client decides whether a token is
+      // really dead by asking THIS endpoint (lib/api.ts). If a revoked token
+      // still passed here, every other route would refuse it while the client
+      // concluded the session was fine, and the user would sit in an app where
+      // nothing worked and nothing explained why.
+      if (tokenEpochOf(req) !== Number(user.session_epoch ?? 0)) {
+        return reply.code(401).send({ error: "Session expired. Please sign in again." });
+      }
       return { user: await publicUser(user) };
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
@@ -845,7 +984,7 @@ async function loginViaLinkCode(
   if (!fresh) return null;
   await ensureAdminRole(fresh.id, fresh.email);
   await recordDevice(fresh.id, deviceOf(req), req.ip);
-  return { token: signToken(fresh.id), user: await publicUser(fresh) };
+  return { token: await signToken(fresh.id), user: await publicUser(fresh) };
 }
 
 // Find-or-create shared by the Login Widget and Mini App routes — the two

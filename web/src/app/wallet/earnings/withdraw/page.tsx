@@ -10,7 +10,7 @@ import { WalletIcon, CheckIcon, ClockIcon, ArrowRightIcon } from "@/components/i
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchBalance, fetchPayoutAddresses, createWithdrawal, requestWithdrawalStepUp, ApiError,
+  fetchBalanceWithGas, fetchPayoutAddresses, createWithdrawal, requestWithdrawalStepUp, ApiError,
 } from "@/lib/api";
 import { formatMoney, usdtToPoints, pointsToUsdt, formatBnbWei } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
@@ -30,7 +30,7 @@ import { shortAddress } from "@/lib/wallet";
 export default function EarningsWithdrawPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
-  const bal = useApi(fetchBalance, []);
+  const bal = useApi(fetchBalanceWithGas, []);
   const saved = useApi(fetchPayoutAddresses, []);
 
   const [chain] = useState<ChainId>("bep20");

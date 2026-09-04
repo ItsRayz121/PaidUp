@@ -22,6 +22,7 @@
 // of whether sweeping is ever turned back on — a swept address just
 // contributes ~0.
 import { createPublicClient, http, fallback, erc20Abi } from "viem";
+import { charge } from "../costGuard.ts";
 import { privateKeyToAccount } from "viem/accounts";
 import { sql, now, newId, getSetting, setSetting } from "../db.ts";
 import { config } from "../config.ts";
@@ -120,6 +121,22 @@ export async function reconcileChain(chain: string): Promise<void> {
   if (!pk) return; // no treasury signer configured — nothing on-chain to compare against yet
 
   const treasuryAddress = privateKeyToAccount(pk).address;
+
+  // Count this tick against the process-wide RPC ceiling (costGuard.ts) before
+  // spending anything. These calls go out through viem's own transport rather
+  // than rpc.ts, so they are invisible to the per-call charge there — this is
+  // where they get counted. The estimate is one treasury balanceOf plus one
+  // multicall per batch of deposit addresses; being refused simply means the
+  // hourly snapshot is skipped, and the next tick takes it, which is already
+  // how every other failure of this job behaves.
+  const addressCount = Number(
+    (await sql.get<{ n: number | string }>(
+      "SELECT COUNT(*) AS n FROM deposit_wallets WHERE chain = ?", chain,
+    ))?.n ?? 0,
+  );
+  const estimatedCalls = 1 + Math.ceil(addressCount / MULTICALL_BATCH_SIZE);
+  if (!charge("rpc", estimatedCalls, "low")) return;
+
   const transport = fallback(config.payoutRpc[chain].map((url) => http(url)));
   const publicClient = createPublicClient({ chain: token.viemChain, transport });
 

@@ -16,7 +16,11 @@ credentials.
 
 ## Deliverables
 
-- `FIXES_APPLIED.md` — **the fixes made on 2026-09-04, with before/after measurements.** Read this alongside any finding.
+- `FIXES_APPLIED.md` — **the fixes made on 2026-09-04, in two rounds, with
+  before/after measurements.** Read this alongside any finding. The second round
+  closed A-01, A-03, A-05, A-06 and A-09, bounded the paid-call and memory
+  surfaces, and records the account-takeover gap `security-review` found in the
+  session-revocation fix before it shipped.
 - `EXECUTIVE_REPORT.md` — verdict, principal risks, and next actions.
 - `ARCHITECTURE_AND_COVERAGE.md` — system/data-flow map, trust boundaries, and coverage.
 - `PROMISE_MATRIX.md` — documented/user-facing promises versus implementation evidence.

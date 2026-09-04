@@ -75,7 +75,7 @@ function guard(handler: (userId: string, req: FastifyRequest, reply: FastifyRepl
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const userId = getUserId(req);
-      await requireActiveUser(userId); // suspended accounts cannot move money
+      await requireActiveUser(userId, req); // suspended accounts cannot move money
       return await handler(userId, req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };

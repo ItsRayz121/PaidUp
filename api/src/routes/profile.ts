@@ -25,7 +25,7 @@ function guard(
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const userId = getUserId(req);
-      await requireActiveUser(userId);
+      await requireActiveUser(userId, req);
       return await handler(userId, req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };

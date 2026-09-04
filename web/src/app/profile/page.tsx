@@ -4,6 +4,7 @@
 // other destination (invites, ID check, leaderboard, help, notifications,
 // sign out) lives here as a row, so the bar never grows past five tabs
 // (founder, 2026-07-17 — Help's old slot was given to Profile).
+import { useState } from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui";
 import { NotificationsCard } from "@/components/NotificationsCard";
@@ -22,7 +23,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchKyc, fetchAvatar, fetchFeatures, clearSession, type KycState } from "@/lib/api";
+import { fetchKyc, fetchAvatar, fetchFeatures, clearSession, setSession, signOutEverywhere, type KycState } from "@/lib/api";
 
 export default function ProfilePage() {
   const { user, ready } = useRequireAuth();
@@ -134,7 +135,54 @@ export default function ProfilePage() {
           — and "how do I log out" is the support ticket that gets asked when a
           phone is shared. */}
       <SignOutRow />
+
+      {/* A SEPARATE row, below the ordinary sign-out, because it does a
+          different thing: this one reaches every other device. Kept last and
+          styled quietly — it is the rare action, and putting it beside the
+          everyday button would get it tapped by accident. */}
+      <SignOutEverywhereRow />
     </div>
+  );
+}
+
+function SignOutEverywhereRow() {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      disabled={busy || done}
+      onClick={async () => {
+        if (!window.confirm(t("profile.signOutAllConfirm"))) return;
+        setBusy(true);
+        try {
+          // The replacement token is what keeps THIS device signed in; without
+          // storing it, the very next request from here would 401 and the user
+          // would have signed themselves out along with everyone else.
+          const res = await signOutEverywhere();
+          setSession(res.token, res.user);
+          setDone(true);
+        } catch {
+          // Nothing was revoked if this failed, so there is nothing to undo —
+          // leave the row tappable rather than showing an alarming error over
+          // a security action that simply did not happen.
+          setBusy(false);
+        }
+      }}
+      className="block w-full text-left disabled:opacity-60"
+    >
+      <Card className="flex items-center gap-3 p-4">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
+          <ShieldIcon size={22} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">{t("profile.signOutAll")}</p>
+          <p className="text-sm text-muted">
+            {done ? t("profile.signOutAllDone") : t("profile.signOutAllHint")}
+          </p>
+        </div>
+      </Card>
+    </button>
   );
 }
 

@@ -2739,7 +2739,20 @@ async function setUserStatusOne(
   if (!target) return { ok: false, error: "User not found." };
 
   await sql.tx(async (t) => {
-    await t.run("UPDATE users SET status = ? WHERE id = ?", status, targetId);
+    // Suspending also ENDS EVERY SESSION the account has (audit finding A-03),
+    // in the same statement as the status change. requireActiveUser already
+    // refuses a suspended account on the next request, so this is defence in
+    // depth rather than the only gate — but a suspension is usually a response
+    // to a compromised or abusive account, and "their token is now worthless"
+    // is a stronger property than "every route remembers to re-check status".
+    // Restoring deliberately does NOT bump it: the account comes back, and
+    // signing everyone out is not part of being un-suspended.
+    await t.run(
+      status === "suspended"
+        ? "UPDATE users SET status = ?, session_epoch = session_epoch + 1 WHERE id = ?"
+        : "UPDATE users SET status = ? WHERE id = ?",
+      status, targetId,
+    );
     // Suspending an account closes out its open fraud flags automatically
     // (founder, 2026-09-02: "if I suspend the account you don't need to keep
     // showing its flags"). The trail is kept — resolved_by records it was the

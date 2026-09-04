@@ -3431,3 +3431,153 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     22 ms — the accrual sweep was still running).
 
 See `docs/` for the full spec.
+
+- **COST CEILINGS FIRST, THEN FOUR OF THE FIVE REMAINING HIGH AUDIT FINDINGS
+  (founder, 2026-09-04, second pass).** The founder's ordering, in their own
+  words: control anything that could run up Railway or blockchain-API cost
+  first, then fix what can be fixed without them. Verified: **41 backend
+  suites, all green, each from a genuinely fresh PGlite store**; api + web
+  typecheck; eslint 0 errors; web production build (38 routes); `npm audit
+  --omit=dev` now reports **0 vulnerabilities on both projects** (was 3 high in
+  the API, 4 in the web). Full before/after: `audit/FIXES_APPLIED.md` §§ 8-14.
+  - ⚠️ **`TRUST_PROXY_HOPS` IS DEAD AND `req.ip` SILENTLY BROKE WHEN FASTIFY WAS
+    UPGRADED. READ THIS BEFORE TOUCHING PROXY CONFIG.** Fastify 5.12.1's fix for
+    `GHSA-3m5p-2c4r-xxw2` was to neuter numeric `trustProxy`, so on 5.12.3 a hop
+    count **stops resolving `X-Forwarded-For` at all** — `req.ip` becomes the
+    socket peer, i.e. the edge's address, identical for every request, with no
+    error anywhere. `req.ip` feeds the per-IP rate limits, `ip_reuse`,
+    referral-ring-by-IP, the audit log and the postback IP pin, so per-IP
+    limiting would have collapsed into ONE GLOBAL BUCKET — the login limiter
+    turning into a self-inflicted lockout — and every IP fraud rule would have
+    compared everyone to everyone. It looks exactly like "lots of users behind
+    one NAT", which is real in our markets, so the data would never have shown
+    it. **`npm run test:proxy` was the only thing that caught it** (5 checks →
+    11), which is the argument for keeping small suites that assert an
+    infrastructure property rather than a feature. Replaced with
+    `config.trustProxy` — a list of trusted NETWORKS, default
+    `loopback, linklocal, uniquelocal, 100.64.0.0/10`, the last because
+    carrier-grade NAT is not in `uniquelocal` and several hosts use it
+    internally. **NEVER set `TRUST_PROXY=true`**: that trusts the left-most
+    `X-Forwarded-For` entry, which the client writes. A wrong list is silent
+    too, so `server.ts` warns (≤ once per 10 min) when an `X-Forwarded-For`
+    arrives and `req.ip` still equals the socket peer.
+  - ⚠️ **THE GAS READ ON `GET /wallet/balance` IS OPT-IN (`?gas=1`) AND THAT IS
+    A COST CONTROL, NOT A MICRO-OPTIMISATION.** It was the ONE paid call in this
+    system whose cost grew with the USER BASE rather than with a fixed tick:
+    `personalGasReady` reaches the chain, and that endpoint is loaded by home,
+    `/mine`, `/wallet` and `/wallet/usdt` — none of which render it. Only the
+    two withdraw screens do, and they now use `fetchBalanceWithGas`. An
+    on-chain call was the price of opening the app. **If you "simplify"
+    `fetchBalance` back into one function, you put that cost back.** Also: in
+    that handler `relayReady` does double duty — it decides the gas SURCHARGE
+    too — so the read is gated on a *separate* `readGas`, or every screen that
+    skips the read starts previewing a fee this deployment does not charge.
+  - **`api/src/costGuard.ts` — one ceiling that holds when a specific safeguard
+    has a gap.** This project has shipped two real billing incidents, both the
+    same shape (a loop polling a paid provider at a rate set by code, found by
+    looking at a bill — the 2026-08-13 and 2026-08-27 entries above). Each was
+    fixed at its call site, which is the right fix and also the one that only
+    arrives afterwards. `RPC_MAX_CALLS_PER_HOUR` (5,000, against a steady state
+    of ~80-100) and `EXPLORER_MAX_CALLS_PER_DAY` (20,000, a DAY window because
+    that is the shape of the allowance it runs out against); `0` disables.
+    ⚠️ **TWO TIERS, AND THE SPLIT IS LOAD-BEARING.** Low priority is cut off at
+    80% of the limit; the rest is reserved for money in flight, or a cost
+    control becomes an outage — the relay unable to confirm a broadcast it has
+    already made, a withdrawal gate failing closed on an innocent user.
+    **A NEW `rpcCall` DEFAULTS TO `low`. If you add one on a money path, pass
+    `{ priority: "high" }`** — same class of thing to remember as `lockUser()`
+    and its `LOCKED_PATHS` list. Live usage is on `GET /staff/mining/rpc`.
+  - **Three unbounded per-user caches were bounded** (Railway bills memory):
+    `payoutRelay`'s gas balances (expiry sweep + 5,000 cap, TTL now
+    `GAS_BALANCE_CACHE_MS`, 20s → 60s) and both `bscscan` caches (sweep + 2,000
+    cap). `RECONCILE_INTERVAL_MS` is env-tunable now — its cost is one multicall
+    per 300 deposit addresses, so it grows with the user base too — and that
+    tick charges its whole estimate against the budget before spending, because
+    viem's transport bypasses `rpc.ts` and was invisible to the per-call charge.
+  - ⚠️ **A-03 CLOSED: TOKENS ARE REVOCABLE NOW, AND `requireActiveUser` TAKES
+    THE REQUEST.** The audit signed a token, reset the password, and got HTTP
+    200 from `/auth/me` with the old one — so the single action a worried user
+    can take on their own did not take their account back. `users.session_epoch`
+    is stamped into every token as `se` and compared on every authenticated
+    request; bumping it kills every token that account has ever held. Bumped on
+    **password reset** (in the SAME statement as the new password, so there is
+    no window), on **staff suspension**, and by `POST /auth/logout-all` ("Sign
+    out everywhere" on `/profile`). The check lives in `requireActiveUser`,
+    which already read the user row so it costs no extra query — **and
+    independently in `/auth/me`**, because that is what the web client uses to
+    decide a token is dead; if the two disagreed the user would sit in an app
+    where nothing worked and nothing signed them out. **The `req` argument is
+    REQUIRED, not optional**: an optional one lets a new route silently skip the
+    check, and the compiler is the only thing that can guarantee coverage.
+    **Deploying it signs nobody out** — tokens in the wild carry no `se`, read
+    as 0, and the column defaults to 0 (which is also why 40 other suites needed
+    no change). ⚠️ **Revocation is all-or-nothing per account**, because nothing
+    distinguishes one device's token from another's — which is exactly why the
+    ORDINARY sign-out button was deliberately NOT wired to it. Per-device
+    sign-out needs a real session record. Regression: `npm run test:sessions`
+    (27 checks + a structural tripwire); the fix was reverted in place and the
+    suite re-run against the old code, reproducing the audit's 200.
+  - ⚠️ **A-01 CLOSED: EMAIL FAILS CLOSED IN PRODUCTION AND NEVER LOGS A CODE.**
+    `sendLoginCode` printed the recipient and the plaintext code and then
+    RETURNED NORMALLY, in every environment — a one-time auth secret in
+    centralised logs, and signup reporting success while no email existed
+    anywhere. The console sink is development-only now; production without
+    `RESEND_API_KEY` **throws**, so the route returns a real error. **This is
+    not a behaviour regression**: with no key nobody could ever receive a code,
+    so every email flow was already broken — it just said otherwise. Boot warns
+    (not fatal, deliberately: Telegram sign-in does not touch email, and
+    refusing to boot would take down a working deployment over a feature that
+    has its own fallback).
+  - **A-05 code-complete, one operator step left.** `pgSslOptions` (`db.ts`)
+    turns certificate verification ON whenever a CA is supplied —
+    `DATABASE_CA_CERT` / `DATABASE_CA_CERT_PATH`, plus `DATABASE_TLS_SERVERNAME`
+    for the hostname mismatch that caused this in the first place. Railway's
+    private network needs none of it. With nothing set the API still connects
+    (refusing to boot would take down a live deployment over a change only the
+    operator can make) but warns on every boot instead of being silent.
+  - **A-06 closed; A-09 bounded.** fastify 5.10.0 → 5.12.3, sharp 0.34.3 →
+    0.35.4 (a major — smoke-tested against the exact
+    `rotate → resize(256) → webp` pipeline `staffTasks.ts` uses, not just
+    installed), next 16.2.10 → 16.3.4. `/wallet/ledger` and
+    `/wallet/usdt-task-rewards` cap at 500 rows, `/support/tickets` at 50
+    tickets / 200 messages — every cap far above what any screen renders. The
+    support one mattered most: each message carries a base64 data URL of up to
+    2MB, so the unbounded response was every screenshot a user had ever sent, in
+    one JSON body. The earner app stopped calling it when `/support/chat`
+    landed, and a route nobody calls is the one nobody notices going wrong.
+  - **Still open, and three of them are the founder's call, not code**: A-02
+    (email queue/retry — nothing to queue against until there is a provider
+    key); **A-04's second half — a shared rate-limit store, which is a SPENDING
+    decision**: a Redis add-on costs money every month to defend against an
+    attack that only becomes possible once a second replica exists, and this
+    runs one; A-08, A-10, A-11, A-12, A-13; A-07's remaining half (a second
+    replica + the timers out of the API process — the binding constraint was
+    never the database); and B10 (splitting the staff pool).
+  - ⚠️ **`security-review` FOUND A HOLE IN THE SESSION FIX BEFORE IT SHIPPED, IN
+    THE WORST POSSIBLE PLACE — READ THIS BEFORE ADDING A ROUTE TO `auth.ts`.**
+    Four routes there call `getUserId()` and hand-roll their own
+    `try { … } catch` instead of going through a shared guard, so nothing forced
+    them to opt in to the new check: `/auth/telegram/link`,
+    `/auth/telegram/link-code`, `/auth/email/link-start`,
+    `/auth/email/link-confirm`. They are also **the four routes that attach a NEW
+    CREDENTIAL to an existing account**, so the bypass defeated the whole
+    feature: hold a stolen token, let the victim reset their password, then POST
+    the revoked token to `/auth/telegram/link-code`, open the binding code in
+    **your own** Telegram, and the bind returns a fresh token at the NEW epoch —
+    permanent access no later revocation can touch. All four now call
+    `requireActiveUser(userId, req)`, which also closes a pre-existing gap: a
+    **suspended** account could link credentials, already untrue of every other
+    earner route. And `/auth/email/link-confirm` writes a `password_hash`, so it
+    now bumps the epoch like `/auth/reset` — **and returns a replacement token**,
+    or a user signs themselves out by adding their own email.
+    ⚠️ **THE REGRESSION TEST FOR THIS IS STRUCTURAL, AND IT HAD TO BE.**
+    Request-level checks on all four passed *even with a guard removed* — the
+    Telegram routes answer 503 before they authenticate when no bot token is
+    set, so "did not succeed" is all a request can prove there. The tripwire in
+    `sessions.e2e.ts` reads `auth.ts`'s source and asserts every
+    `getUserId(req)` is followed by the check, `/auth/me` excepted (it must
+    serve a suspended user their own account, and repeats the comparison
+    inline). Comment lines are stripped first, or the answer depends on how much
+    explanation sits between the two statements. Proven by removing one guard:
+    the four behavioural checks stayed green, the tripwire failed and named the
+    line. Same family as `otp-race.e2e.ts`'s tripwire and `LOCKED_PATHS`.

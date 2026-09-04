@@ -18,6 +18,38 @@ function rpcList(raw: string | undefined, fallback: string[]): string[] {
   return parsed.length ? parsed : fallback;
 }
 
+// A numeric env var that must not be able to break things by being wrong.
+// `Number(undefined)` and `Number("abc")` are both NaN, and NaN silently
+// disables a ceiling or turns setInterval into a busy loop — so a bad value
+// falls back to the default rather than to something surprising. `min` is a
+// floor for the intervals: `RECONCILE_INTERVAL_MS=0` would otherwise mean "run
+// the treasury reconciliation as fast as the event loop allows", i.e. exactly
+// the runaway paid-call loop this project has already shipped twice.
+function num(raw: string | undefined, fallback: number, min = 0): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, n);
+}
+
+// See config.trustProxy below. Accepts a comma-separated list of addresses /
+// CIDRs / proxy-addr keywords, or the literal "true"/"false".
+function parseTrustProxy(raw: string | undefined): string | boolean {
+  const v = (raw ?? "").trim();
+  if (v === "") return "loopback, linklocal, uniquelocal, 100.64.0.0/10";
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^\d+$/.test(v)) {
+    console.warn(
+      `WARNING: TRUST_PROXY is set to the number "${v}". Hop counts stopped working in ` +
+      "Fastify 5.12.1 (GHSA-3m5p-2c4r-xxw2) and now make req.ip the edge proxy's own " +
+      "address for every request. Ignoring it and using the trusted-network default. " +
+      "Set TRUST_PROXY to a comma-separated list of networks instead.",
+    );
+    return "loopback, linklocal, uniquelocal, 100.64.0.0/10";
+  }
+  return v;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   // Postgres. Unset locally => PGlite (embedded Postgres) under api/data/pg.
@@ -216,20 +248,40 @@ export const config = {
   // log, or you'd silently reject real paid completions.
   cpxEnforceIp: (process.env.CPX_ENFORCE_IP ?? "false").toLowerCase() === "true",
 
-  // How many reverse proxies sit in front of us. req.ip is what the IP fraud
-  // rules (ip_reuse, referral-ring-by-IP) and the postback IP pin read, and
-  // Fastify defaults to the socket peer — which behind Railway is RAILWAY'S edge,
-  // identical for every user. Untrusted, those rules compare everyone to everyone.
+  // req.ip is what the IP fraud rules (ip_reuse, referral-ring-by-IP), the
+  // per-IP rate limits and the postback IP pin all read, and Fastify defaults to
+  // the socket peer — which behind Railway is RAILWAY'S edge, identical for every
+  // user. Untrusted, those rules compare everyone to everyone.
   //
-  // This is a hop COUNT, not `true`, on purpose. `trustProxy: true` takes the
-  // left-most X-Forwarded-For entry, which the client writes — so a user could
-  // send `X-Forwarded-For: 1.2.3.4` and choose their own apparent IP, defeating
-  // the very rules this exists to feed. Counting hops from the right reads the
-  // address OUR proxy observed, which the client cannot forge.
+  // ⚠️ WHICH UPSTREAM PROXIES req.ip IS ALLOWED TO BELIEVE.
   //
-  //   1 = Railway only (api.rozipay.xyz on "DNS only" / grey cloud)  <- default
-  //   2 = Cloudflare proxy (orange cloud) in front of Railway
-  trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? 1),
+  // This used to be a HOP COUNT (TRUST_PROXY_HOPS=1). That mode is gone:
+  // Fastify 5.12.1 fixed GHSA-3m5p-2c4r-xxw2 by neutering numeric trustProxy,
+  // and on 5.12.3 a hop count silently resolves req.ip to the SOCKET address
+  // and ignores X-Forwarded-For entirely. Silently is the dangerous part —
+  // nothing errors, every request simply reports the edge proxy's address, so
+  // every user on earth shares one IP. That collapses per-IP rate limiting into
+  // a single global bucket (the login limiter becomes a self-inflicted lockout)
+  // and makes every IP fraud rule see one enormous shared address. Caught by
+  // `npm run test:proxy` during the dependency upgrade, which is the entire
+  // reason that suite exists.
+  //
+  // The replacement is what the audit's own remediation asked for: name the
+  // trusted networks instead of counting hops. proxy-addr walks X-Forwarded-For
+  // from the right, skipping addresses in this list, and returns the first one
+  // that is not — so a client PREPENDING a forged entry still cannot win,
+  // because the value the real edge appended sits to the right of theirs.
+  //
+  // The default covers loopback, link-local, RFC1918 private space and
+  // 100.64.0.0/10 (carrier-grade NAT, which several hosts use for internal
+  // traffic and which `uniquelocal` does NOT include). If the edge in front of
+  // this API ever presents a PUBLIC address instead, none of these match and
+  // req.ip falls back to that edge address — safe, but wrong, and server.ts
+  // logs a warning saying so rather than letting it pass unnoticed.
+  //
+  // ⚠️ DO NOT SET THIS TO `true`. That trusts the left-most X-Forwarded-For
+  // entry, which is the one a client writes, so any user could hand us any IP.
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
 
   // Ceiling on a SINGLE hand-made points adjustment by staff. A manual credit
   // mints money that is redeemable for real USDT, so an admin session is now a
@@ -385,7 +437,39 @@ export const config = {
   // How often the deposit scanner ticks, per chain family cadence. One value
   // today (EVM); other chain families will want their own once built (a
   // 10-minute-block UTXO chain scanning every 20s is pure wasted RPC calls).
-  depositScanIntervalMs: Number(process.env.DEPOSIT_SCAN_INTERVAL_MS ?? 20_000),
+  depositScanIntervalMs: num(process.env.DEPOSIT_SCAN_INTERVAL_MS, 20_000, 5_000),
+
+  // ---- Spend ceilings on paid external calls — see costGuard.ts -----------
+  // These are NOT throughput tuning. They are the ceiling that holds when a
+  // specific safeguard turns out to have a gap, which has happened twice on
+  // this project already (CLAUDE.md, the two Alchemy billing entries). Set per
+  // REPLICA: the counter lives in the process, so N replicas means N budgets.
+  //
+  // Steady state at launch is roughly 80-100 RPC calls an hour — the deposit
+  // scanner's two per tick plus whatever the relay and the withdraw screens
+  // ask for. The default below is ~50x that, so it never shapes normal traffic
+  // and still stops an unattended loop at a known number instead of at a bill.
+  // 0 disables the ceiling entirely (deliberate, for an operator who would
+  // rather have an unbounded bill than a refused call).
+  rpcMaxCallsPerHour: num(process.env.RPC_MAX_CALLS_PER_HOUR, 5_000),
+  // Block-explorer reads (bscscan.ts). A DAY window, because that is the shape
+  // of the free-tier allowance this actually runs out against.
+  explorerMaxCallsPerDay: num(process.env.EXPLORER_MAX_CALLS_PER_DAY, 20_000),
+
+  // How long a user's on-chain BNB (gas) balance is reused before asking the
+  // chain again. This read is per USER, so unlike the fixed-cadence scanners
+  // its cost grows with the user base — it is the one RPC cost that scales
+  // with success. Raising this trades freshness (a user who just topped up
+  // waits a little longer to see "gas ready") for a directly proportional cut
+  // in paid calls; the withdraw path itself never trusts it for a decision it
+  // has not just re-read (payoutRelay.ts's advanceRelayJob re-checks before
+  // signing).
+  gasBalanceCacheMs: num(process.env.GAS_BALANCE_CACHE_MS, 60_000),
+
+  // How often the hourly treasury-vs-ledger reconciliation runs. Its cost is
+  // one multicall per 300 deposit addresses, so this one also grows with the
+  // user base. Env-tunable so it can be slowed without a deploy.
+  reconcileIntervalMs: num(process.env.RECONCILE_INTERVAL_MS, 60 * 60 * 1000, 60_000),
 
   // Support tickets sitting in 'answered' (staff replied last, user never
   // came back) auto-close after this many HOURS — see ticketAutoClose.ts. 0

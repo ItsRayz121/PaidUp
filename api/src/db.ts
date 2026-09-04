@@ -10,7 +10,7 @@
 // keep writing portable SQL.
 import { Pool } from "pg";
 import { PGlite } from "@electric-sql/pglite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
@@ -37,10 +37,64 @@ function toPg(text: string): string {
   return text.replace(/\?/g, () => `$${++i}`);
 }
 
-function makePgDriver(connectionString: string): Driver {
-  // Railway's private network (*.railway.internal) speaks plain TCP. The public
-  // proxy requires TLS but presents a cert for a different host.
+// ---- TLS to Postgres (audit finding A-05) ------------------------------------
+// The public proxy requires TLS but presents a certificate for a different
+// host, so `rejectUnauthorized: false` was the only way to connect over it.
+// That encrypts the traffic and authenticates NOTHING: anyone able to answer
+// in the middle can present any certificate at all and read every query,
+// which for this database means balances, payout addresses and password
+// hashes.
+//
+// Three configurations, and the right one depends on where the API runs:
+//
+//   1. Railway's PRIVATE network (*.railway.internal) — plain TCP inside the
+//      project, never crossing the internet. No TLS, nothing to verify. This
+//      is the best answer and needs no certificate; it is what production
+//      should use.
+//   2. A public endpoint WITH a CA supplied (DATABASE_CA_CERT, PEM, or
+//      DATABASE_CA_CERT_PATH pointing at one) — verification ON. Set
+//      DATABASE_TLS_SERVERNAME as well when the certificate names a different
+//      host than the connection string does, which is exactly the mismatch
+//      that caused this in the first place: it tells the TLS layer which name
+//      to validate against, instead of giving up on validating at all.
+//   3. A public endpoint with NO CA — verification off, as before, and a loud
+//      warning on every boot. Kept because removing it would take down a
+//      running deployment over a configuration change only the operator can
+//      make; the warning is what stops it staying invisible.
+function pgSslOptions(connectionString: string): false | Record<string, unknown> {
   const internal = /\.railway\.internal|localhost|127\.0\.0\.1/.test(connectionString);
+  if (internal) return false;
+
+  const inlineCa = process.env.DATABASE_CA_CERT?.trim();
+  const caPath = process.env.DATABASE_CA_CERT_PATH?.trim();
+  let ca = inlineCa && inlineCa.length > 0 ? inlineCa : undefined;
+  if (!ca && caPath) {
+    try {
+      ca = readFileSync(caPath, "utf8");
+    } catch (err) {
+      // Refusing to start here would be worse than the warning: a wrong path
+      // in an env var should not be able to take the API down, and the
+      // fallback below is the behaviour that was already live.
+      console.error(`WARNING: DATABASE_CA_CERT_PATH is set to ${caPath} but could not be read (${(err as Error).message}). Falling back to UNVERIFIED TLS.`);
+    }
+  }
+
+  if (ca) {
+    const servername = process.env.DATABASE_TLS_SERVERNAME?.trim();
+    return { rejectUnauthorized: true, ca, ...(servername ? { servername } : {}) };
+  }
+
+  console.warn(
+    "WARNING: connecting to Postgres over a PUBLIC endpoint with TLS certificate " +
+    "verification DISABLED. The connection is encrypted but the server is not " +
+    "authenticated, so it can be impersonated. Fix by using Railway's private " +
+    "network (DATABASE_URL on *.railway.internal), or by setting DATABASE_CA_CERT " +
+    "(and DATABASE_TLS_SERVERNAME if the certificate names a different host).",
+  );
+  return { rejectUnauthorized: false };
+}
+
+function makePgDriver(connectionString: string): Driver {
   // ⚠️ THE TWO TIMEOUTS BELOW ARE HOW THIS API SHEDS LOAD. WITHOUT THEM IT DOES NOT.
   //
   // With `max` alone, `pool.connect()` (sql.tx, below) waits with NO deadline once
@@ -64,7 +118,7 @@ function makePgDriver(connectionString: string): Driver {
   // named prepared statements, no LISTEN.
   const pool = new Pool({
     connectionString,
-    ssl: internal ? undefined : { rejectUnauthorized: false },
+    ssl: pgSslOptions(connectionString) || undefined,
     max: Math.max(1, Number(process.env.PG_POOL_MAX ?? 20)),
     connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS ?? 5_000),
     idleTimeoutMillis: 30_000,
@@ -441,6 +495,17 @@ const MIGRATIONS = `
   -- ever be reached. Stamping the attempt is what lets the query move on.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_checked_at TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
+  -- Session revocation (audit finding A-03). A bearer token here is a stateless
+  -- 30-day JWT, so before this column existed a stolen token stayed valid for
+  -- its full life: resetting the password did not end it, and neither did
+  -- anything else. The token now carries the epoch it was signed under and
+  -- every authenticated request compares the two, so bumping this one integer
+  -- invalidates every token that account has ever been issued.
+  --
+  -- Defaulting to 0 is what makes deploying this a non-event: tokens already
+  -- in the wild carry no epoch claim, are read as 0, and match the default —
+  -- so nobody is signed out by the migration itself, only by a real revocation.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'verify';
   ALTER TABLE email_codes ADD COLUMN IF NOT EXISTS pending_password_hash TEXT;
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_address TEXT;

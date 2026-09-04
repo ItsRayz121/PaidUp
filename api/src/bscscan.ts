@@ -17,6 +17,7 @@
 // (`api.etherscan.io/v2/api` + `chainid=56` for BNB Smart Chain); a free
 // BscScan/Etherscan key works on it unchanged. Same `{status, result}` shape.
 import { config } from "./config.ts";
+import { charge } from "./costGuard.ts";
 
 export type BnbAddressTx = {
   hash: string;
@@ -30,8 +31,28 @@ export type BnbAddressTx = {
 type RawTx = { hash: string; from: string; to: string; value: string; timeStamp: string };
 type CacheEntry = { at: number; rows: BnbAddressTx[] };
 
+// ⚠️ BOTH CACHES IN THIS FILE ARE BOUNDED, AND THAT IS NOT TIDINESS.
+// The key is a user's own address, so an unbounded Map is one entry per user
+// who has ever opened /wallet/bnb — each holding up to 25 transaction rows,
+// held for the life of the process. It is a leak that only appears once the
+// app is working, and memory is billed. `remember` sweeps what has expired
+// and then evicts oldest-first if that was not enough.
 const cache = new Map<string, CacheEntry>();
 const TTL_MS = 60_000;
+const MAX_ENTRIES = 2_000;
+
+function remember<T>(m: Map<string, T & { at: number }>, key: string, value: T & { at: number }): void {
+  if (m.size >= MAX_ENTRIES) {
+    const cutoff = Date.now() - TTL_MS;
+    for (const [k, v] of m) if (v.at < cutoff) m.delete(k);
+    while (m.size >= MAX_ENTRIES) {
+      const oldest = m.keys().next();
+      if (oldest.done) break;
+      m.delete(oldest.value);
+    }
+  }
+  m.set(key, value);
+}
 // Etherscan V2 multichain — chainid 56 is BNB Smart Chain. See the endpoint
 // note in this file's header for why the old api.bscscan.com host is gone.
 const API = "https://api.etherscan.io/v2/api";
@@ -59,7 +80,7 @@ export async function fetchBnbAddressHistory(address: string): Promise<BnbAddres
       .filter((r, i, all) => all.findIndex((x) => x.hash === r.hash) === i)
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
       .slice(0, 25);
-    cache.set(addr, { at: Date.now(), rows });
+    remember(cache, addr, { at: Date.now(), rows });
     return rows;
   } catch {
     return hit?.rows ?? [];
@@ -70,6 +91,11 @@ async function queryList(action: string, address: string, key: string): Promise<
   const url =
     `${API}?chainid=${CHAIN_ID}&module=account&action=${action}&address=${address}` +
     `&startblock=0&endblock=99999999&sort=desc&page=1&offset=25&apikey=${key}`;
+  // The explorer allowance is a DAILY quota, and this read is per user — so
+  // its cost grows with the user base. costGuard.ts caps it; being refused
+  // here is the same outcome as the provider being down, which this function
+  // already answers with an empty list rather than an error.
+  if (!charge("explorer", 1, "low")) return [];
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -175,7 +201,7 @@ export async function fetchTreasuryLedger(address: string, limit = 50): Promise<
       // show zero BNB rows on a panel that promises both, and whose entire job
       // is spotting movement we did not start. Two capped rails, both kept.
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
-    tokenCache.set(cacheKey, { at: Date.now(), rows });
+    remember(tokenCache, cacheKey, { at: Date.now(), rows });
     return rows;
   } catch {
     return hit?.rows ?? [];
@@ -187,6 +213,7 @@ async function queryTokenList(address: string, key: string, limit: number): Prom
     `${API}?chainid=${CHAIN_ID}&module=account&action=tokentx&address=${address}` +
     `&contractaddress=${BSC_USDT}&startblock=0&endblock=99999999&sort=desc&page=1` +
     `&offset=${Math.min(Math.max(limit, 1), 100)}&apikey=${key}`;
+  if (!charge("explorer", 1, "low")) return [];
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {

@@ -15,7 +15,9 @@ import { rpcCall } from "../rpc.ts";
 import type { ObservedDeposit } from "./types.ts";
 
 async function currentBlockHash(chain: string, blockNumber: number): Promise<string | null> {
-  const block = (await rpcCall(chain, "eth_getBlockByNumber", ["0x" + blockNumber.toString(16), false])) as
+  // "high": this is the reorg re-check that gates crediting a real deposit —
+  // refusing it on a cost ceiling would leave a user who paid us uncredited.
+  const block = (await rpcCall(chain, "eth_getBlockByNumber", ["0x" + blockNumber.toString(16), false], { priority: "high" })) as
     { hash: string } | null;
   return block?.hash ?? null;
 }

@@ -28,6 +28,7 @@ import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
 import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
 import { tickTicketAutoClose } from "./ticketAutoClose.ts";
+import { emailConfigured } from "./email.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
 // Node version (node:sqlite needs Node >= 22.5; we pin 24).
@@ -56,6 +57,22 @@ if (process.env.NODE_ENV === "production") {
     console.error(`FATAL: not starting — these secrets are still defaults: ${missing.join(", ")}. Set them in the host environment and redeploy.`);
     process.exit(1);
   }
+  // Email: a WARNING, not a fatal. Sending now fails closed in production
+  // (email.ts, audit finding A-01), so an unconfigured provider is an honest
+  // error at the moment a user asks for a code rather than a silent success —
+  // and the Telegram sign-in path does not touch email at all, so the app is
+  // still usable without it. Refusing to boot would take down a working
+  // deployment over a feature that has its own working fallback. What must not
+  // happen is that this stays invisible, so it is loud, once, on every start.
+  if (!emailConfigured()) {
+    console.warn(
+      "WARNING: RESEND_API_KEY is not set. Email codes CANNOT be sent, so signup " +
+      "verification, password reset, email linking and withdrawal step-up will all " +
+      "return an error when used. Telegram sign-in is unaffected. Set RESEND_API_KEY " +
+      "and a verified EMAIL_FROM domain to enable them.",
+    );
+  }
+
   // A sender on an unverified domain is rejected by the provider at send time,
   // which surfaces to the user as a generic login failure. Fail here instead.
   if (config.resendApiKey && config.emailFrom.endsWith("@rozipay.invalid")) {
@@ -74,10 +91,39 @@ if (process.env.NODE_ENV === "production" && !usingRealPostgres) {
 await initDb();
 
 // trustProxy is required for req.ip to be the USER's address rather than the
-// edge proxy's. The IP fraud rules and the postback IP pin are only meaningful
-// if that is right. See config.trustProxyHops for why it is a hop count and not
-// `true` (a client can forge the left-most X-Forwarded-For entry).
-const app = Fastify({ logger: true, trustProxy: config.trustProxyHops });
+// edge proxy's. The IP fraud rules, the per-IP rate limits and the postback IP
+// pin are only meaningful if that is right. See config.trustProxy for why it is
+// a list of trusted networks and not a hop count (Fastify 5.12.1 neutered hop
+// counts) and not `true` (a client can forge the left-most X-Forwarded-For).
+const app = Fastify({ logger: true, trustProxy: config.trustProxy });
+
+// ⚠️ A MISCONFIGURED TRUST LIST IS SILENT, WHICH IS WHY THIS EXISTS.
+// If the edge in front of this API presents an address the list does not cover,
+// nothing errors: req.ip simply becomes that edge's address, the same value for
+// every request. Per-IP rate limiting then shares one bucket for the whole
+// internet — the login limiter turns into a self-inflicted lockout — and every
+// IP fraud rule sees one enormous address. The symptom is indistinguishable
+// from "we have a lot of users behind one NAT", which is a real thing in our
+// markets, so it would not be noticed by looking at the data.
+//
+// The tell is unambiguous, though: an X-Forwarded-For header arrived AND req.ip
+// still equals the socket peer. Logged at most once every ten minutes, because
+// if it is wrong it is wrong on every single request.
+let lastProxyWarnAt = 0;
+app.addHook("onRequest", async (req) => {
+  if (!req.headers["x-forwarded-for"]) return;
+  const peer = req.socket?.remoteAddress ?? "";
+  if (!peer || req.ip !== peer) return;
+  const now = Date.now();
+  if (now - lastProxyWarnAt < 10 * 60_000) return;
+  lastProxyWarnAt = now;
+  app.log.warn(
+    { peer, xForwardedFor: req.headers["x-forwarded-for"], trustProxy: config.trustProxy },
+    "TRUST_PROXY does not cover the proxy in front of this API: req.ip is the edge's own " +
+    "address, identical for every user, so per-IP rate limits and IP fraud rules are not " +
+    "working. Add the peer address/network shown here to TRUST_PROXY.",
+  );
+});
 
 // In production, only allow the configured web origin(s). In dev, reflect any
 // origin so the app is reachable from localhost AND your phone on the LAN.
@@ -358,8 +404,10 @@ const runPayoutRelayJob = everyNoOverlap("payout-relay", config.depositScanInter
 // Hourly, much slower than the deposit/sweep ticks above: this is a
 // treasury-balance-vs-ledger check, not something that needs to be fresh to
 // the second. A no-op until a treasury signer is configured (reconcile.ts).
-const RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
-const runReconcile = everyNoOverlap("reconcile", RECONCILE_INTERVAL_MS, tickReconcile);
+// Env-tunable (RECONCILE_INTERVAL_MS): its RPC cost is one multicall per 300
+// deposit addresses, so unlike the fixed-cadence ticks above this one grows
+// with the user base. Slowing it must be possible without a deploy.
+const runReconcile = everyNoOverlap("reconcile", config.reconcileIntervalMs, tickReconcile);
 
 // ---- Support tickets: auto-close a stale 'answered' ticket — ticketAutoClose.ts
 // ⚠️ ITS OWN, FINER cadence — NOT the hourly reconcile interval above. The

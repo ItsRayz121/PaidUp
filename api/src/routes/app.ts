@@ -24,7 +24,7 @@ function guard(
   return async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const userId = getUserId(req);
-      await requireActiveUser(userId); // a suspended account is locked out here
+      await requireActiveUser(userId, req); // a suspended account is locked out here
       return await handler(userId, req, reply);
     } catch (e) {
       const err = e as { statusCode?: number; message?: string };
@@ -32,6 +32,14 @@ function guard(
     }
   };
 }
+
+// Hard ceilings on the legacy, un-paginated history endpoints below (audit
+// finding A-09). Each is far above what any screen actually renders; they
+// exist so that "a user with a very long history" can never become "a very
+// large allocation in a process billed by memory".
+const HISTORY_ROW_CAP = 500;
+const TICKET_LIST_CAP = 50;
+const TICKET_MESSAGE_CAP = 200;
 
 type UserRow = { id: string; country: string; referral_code: string };
 
@@ -382,17 +390,39 @@ export async function appRoutes(app: FastifyInstance) {
 
   // Balance = SUM(ledger). Never a stored field. Also returns the current
   // withdrawal fee (points) so the withdraw screen can show fee + net.
-  app.get("/wallet/balance", guard(async (userId) => {
+  app.get("/wallet/balance", guard(async (userId, req) => {
     // "ONE CHAIN IN, ONE CHAIN OUT" — bep20 is the only chain ever offered
     // (chains.ts), so this preview endpoint can check it directly without
     // waiting for the user to pick one.
+    //
+    // ⚠️ THE GAS READ IS OPT-IN (`?gas=1`) AND THAT IS A COST CONTROL, NOT A
+    // MICRO-OPTIMISATION. personalGasReady reaches the chain, and this
+    // endpoint is loaded by home, /mine, /wallet and /wallet/usdt — none of
+    // which render it. Only the two withdraw screens do. Asking every screen
+    // to pay for an eth_getBalance made it the one RPC cost in this system
+    // that scales with the SIZE OF THE USER BASE rather than with a fixed
+    // tick, which is exactly the shape of the two billing incidents already
+    // recorded in CLAUDE.md. Callers that do not ask get null, which is the
+    // same "could not check" value those screens already handle.
+    const wantsGas = (() => {
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      const v = q.gas;
+      return v === "1" || v === "true" || v === true;
+    })();
+    // ⚠️ TWO DIFFERENT QUESTIONS, KEPT APART. `relayReady` is "can the relay
+    // sign from the user's own address", which is what decides whether the
+    // gas SURCHARGE applies (below) — that answer must not change just
+    // because a caller did not ask for a balance read, or every screen that
+    // skips the read would start previewing a fee this deployment does not
+    // charge. `readGas` is the narrower "should we spend an RPC call now".
     const relayReady = relayAvailable("bep20");
+    const readGas = wantsGas && relayReady;
     // This screen is polled from the TopBar on every page (CLAUDE.md, the
     // wallet-becomes-a-real-wallet entry), so the several independent reads
     // below run concurrently rather than one round-trip at a time.
     const [gasFeeRate, gas, points, depositUsdtMicro, earnedUsdtMicro, minWithdraw, withdrawalFeeSetting] = await Promise.all([
       getGasFeeRate(),
-      relayReady ? hasEnoughGasForDisplay(userId, "bep20") : Promise.resolve(null),
+      readGas ? hasEnoughGasForDisplay(userId, "bep20") : Promise.resolve(null),
       balanceOf(userId),
       usdtBalanceMicroOf(userId),
       earnedUsdtBalanceMicroOf(userId),
@@ -457,17 +487,26 @@ export async function appRoutes(app: FastifyInstance) {
     };
   }));
 
-  // Full ledger history for the user. A withdrawal's status comes from the
-  // withdrawal_requests row (pending/paid/rejected) — NEVER hard-coded, or a
-  // just-requested payout would falsely read as "paid".
+  // Ledger history for the user, newest first. A withdrawal's status comes
+  // from the withdrawal_requests row (pending/paid/rejected) — NEVER
+  // hard-coded, or a just-requested payout would falsely read as "paid".
+  //
+  // ⚠️ CAPPED, DELIBERATELY (audit finding A-09). This used to return every row
+  // a user had ever accumulated. Three screens load it, the app polls, and a
+  // long-lived earner's history has no natural size — so the worst case was a
+  // large SQL result, a large allocation and a large response body, all paid
+  // for on a plan billed by memory. The cap is far above what any screen
+  // renders (each of them shows a preview and a "see more" list), so this is
+  // invisible in the product and bounded in the process.
   app.get("/wallet/ledger", guard(async (userId) => {
     const rows = await sql.all<Record<string, unknown>>(
       `SELECT le.*, w.status AS w_status
        FROM ledger_entries le
        LEFT JOIN withdrawal_requests w
          ON w.id = le.source_ref_id AND le.source_type = 'withdrawal'
-       WHERE le.user_id = ? ORDER BY le.created_at DESC`,
-      userId,
+       WHERE le.user_id = ? ORDER BY le.created_at DESC
+       LIMIT ?`,
+      userId, HISTORY_ROW_CAP,
     );
     return {
       entries: rows.map((e) => ({
@@ -491,7 +530,8 @@ export async function appRoutes(app: FastifyInstance) {
        LEFT JOIN task_completions c ON c.id = u.source_ref_id
        LEFT JOIN tasks t ON t.id = c.task_id
        WHERE u.user_id = ? AND u.source_type = 'task_reward'
-       ORDER BY u.created_at DESC`, userId,
+       ORDER BY u.created_at DESC
+       LIMIT ?`, userId, HISTORY_ROW_CAP,
     );
     return { rewards: rows.map((r) => ({
       id: r.id, amountMicro: Number(r.amount), completionId: r.source_ref_id,
@@ -874,10 +914,25 @@ export async function appRoutes(app: FastifyInstance) {
 
   // My tickets, newest first, each with its full message thread. One query for
   // the tickets + one for ALL their messages — not one query per ticket.
+  //
+  // ⚠️ CAPPED, AND THIS IS THE ONE THAT MATTERED MOST (audit finding A-09).
+  // Every message carries `image`, which is a base64 data URL of up to 2MB, so
+  // an unbounded version of this response is "every screenshot this user has
+  // ever sent, in one JSON body, held in memory". The earner app no longer
+  // calls this at all (lib/api.ts says so) — /support/chat with its `?since=`
+  // delta replaced it — but the route is still reachable, and a route nobody
+  // calls is exactly the one nobody notices going wrong.
+  //
+  // Note the message cap is across ALL of this user's tickets, newest first, so
+  // an account with a very long history can see an older ticket come back with
+  // no messages attached. That is a deliberate consequence of capping in one
+  // query rather than per ticket, and it is acceptable HERE only because
+  // nothing in the product reads this. A per-ticket cap (or real pagination) is
+  // what this would need if it were ever put back in front of a user.
   app.get("/support/tickets", guard(async (userId) => {
     const tickets = await sql.all<Record<string, unknown>>(
-      "SELECT id, subject, status, rating, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC",
-      userId,
+      "SELECT id, subject, status, rating, created_at, updated_at FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+      userId, TICKET_LIST_CAP,
     );
     const messages = tickets.length === 0 ? [] : await sql.all<{
       ticket_id: string; author_role: string; body: string; image: string | null; created_at: string;
@@ -891,9 +946,13 @@ export async function appRoutes(app: FastifyInstance) {
       `SELECT m.ticket_id, m.author_role, m.body, m.image, m.created_at
        FROM ticket_messages m JOIN support_tickets s ON s.id = m.ticket_id
        WHERE s.user_id = ? AND m.author_role <> 'internal'
-       ORDER BY m.created_at ASC`,
-      userId,
+       ORDER BY m.created_at DESC
+       LIMIT ?`,
+      userId, TICKET_MESSAGE_CAP,
     );
+    // Read newest-first for the cap to keep the RECENT messages rather than the
+    // oldest, then restore ascending order, which is what a thread reads as.
+    messages.reverse();
     const byTicket = new Map<string, { author_role: string; body: string; image: string | null; created_at: string }[]>();
     for (const m of messages) {
       const list = byTicket.get(m.ticket_id) ?? [];

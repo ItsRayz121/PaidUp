@@ -102,8 +102,31 @@ export function microToDecimalString(micro: number): string {
 // Mine, and every USDT/BNB sub-screen — real, user-visible lag whenever the
 // lead RPC endpoint was slow, for a number that is a "signal, never a gate"
 // (see hasEnoughGas's own callers) anyway (2026-08-27, performance pass).
-const GAS_BALANCE_CACHE_MS = 20_000;
+// ⚠️ BOUNDED ON PURPOSE. This is keyed by the user's own derived address, so
+// an unbounded Map here is one entry per user who has ever loaded a wallet
+// screen, held for the life of the process — a slow leak that only shows up
+// once the app is working, and Railway bills memory. Expired entries are
+// swept on write, and a hard cap evicts the oldest if the sweep is not enough
+// (a burst of distinct users inside one TTL window). Losing an entry only
+// costs one extra RPC read; keeping every entry forever costs rent.
 const gasBalanceCache = new Map<string, { balanceWei: bigint; expiresAt: number }>();
+const GAS_CACHE_MAX_ENTRIES = 5_000;
+
+function rememberGasBalance(key: string, balanceWei: bigint, ttlMs: number): void {
+  if (gasBalanceCache.size >= GAS_CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [k, v] of gasBalanceCache) {
+      if (v.expiresAt <= now) gasBalanceCache.delete(k);
+    }
+    // Map iterates in insertion order, so the first keys left are the oldest.
+    while (gasBalanceCache.size >= GAS_CACHE_MAX_ENTRIES) {
+      const oldest = gasBalanceCache.keys().next();
+      if (oldest.done) break;
+      gasBalanceCache.delete(oldest.value);
+    }
+  }
+  gasBalanceCache.set(key, { balanceWei, expiresAt: Date.now() + ttlMs });
+}
 
 // The user's own derived deposit address for `chain`, and its live native
 // balance (wei, as a bigint) — used by routes/withdrawals.ts and
@@ -114,6 +137,10 @@ const gasBalanceCache = new Map<string, { balanceWei: bigint; expiresAt: number 
 // "job actually runs".
 export async function userGasWallet(
   userId: string, chain: "bep20",
+  // Which spend tier this read belongs to (costGuard.ts). "high" is the
+  // default because the request-time gates are the callers that must not be
+  // refused by a cost ceiling; only the display callers below opt down.
+  priority: "low" | "high" = "high",
 ): Promise<{ address: string; addrIndex: number; balanceWei: bigint }> {
   const wallet = await getOrCreateDepositWallet(userId, chain);
   const cacheKey = `${chain}:${wallet.address}`;
@@ -124,9 +151,9 @@ export async function userGasWallet(
   // A shorter-than-default timeout: this value is only ever a UI signal, so
   // failing fast to "can't check right now" beats making a page load wait
   // out the full failover chain (up to DEFAULT_TIMEOUT_MS per endpoint).
-  const raw = (await rpcCall(chain, "eth_getBalance", [wallet.address, "latest"], { timeoutMs: 4_000 })) as string;
+  const raw = (await rpcCall(chain, "eth_getBalance", [wallet.address, "latest"], { timeoutMs: 4_000, priority })) as string;
   const balanceWei = BigInt(raw);
-  gasBalanceCache.set(cacheKey, { balanceWei, expiresAt: Date.now() + GAS_BALANCE_CACHE_MS });
+  rememberGasBalance(cacheKey, balanceWei, config.gasBalanceCacheMs);
   return { address: wallet.address, addrIndex: wallet.addrIndex, balanceWei };
 }
 
@@ -154,9 +181,11 @@ export const gasCheckHook: { override: ((userId: string, chain: "bep20") => Prom
   override: null,
 };
 
-export async function hasEnoughGas(userId: string, chain: "bep20"): Promise<GasCheckResult> {
+export async function hasEnoughGas(
+  userId: string, chain: "bep20", priority: "low" | "high" = "high",
+): Promise<GasCheckResult> {
   if (gasCheckHook.override) return gasCheckHook.override(userId, chain);
-  const { address, balanceWei } = await userGasWallet(userId, chain);
+  const { address, balanceWei } = await userGasWallet(userId, chain, priority);
   const requiredWei = requiredGasWei();
   return { ok: balanceWei >= requiredWei, address, balanceWei, requiredWei };
 }
@@ -169,7 +198,10 @@ export async function hasEnoughGas(userId: string, chain: "bep20"): Promise<GasC
 // on a real RPC outage rather than silently waving a debit through.
 export async function hasEnoughGasForDisplay(userId: string, chain: "bep20"): Promise<GasCheckResult | null> {
   try {
-    return await hasEnoughGas(userId, chain);
+    // "low": a screen wanting to render a hint is exactly the call that should
+    // give way when the process is near its ceiling, and this function already
+    // has a well-defined "could not check" answer for it to fall back to.
+    return await hasEnoughGas(userId, chain, "low");
   } catch {
     return null;
   }
@@ -443,7 +475,7 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
       // moved yet), false from the withdrawal/prefund_confirmed call site
       // (treasury's USDT already genuinely sits at this address).
       async function requireGasOrFail(safe: boolean): Promise<boolean> {
-        const raw = (await rpcCall(job!.chain, "eth_getBalance", [childAccount.address, "latest"])) as string;
+        const raw = (await rpcCall(job!.chain, "eth_getBalance", [childAccount.address, "latest"], { priority: "high" })) as string;
         if (BigInt(raw) >= requiredGasWei()) return true;
         box.push = await failJob(
           t, job!,
@@ -502,7 +534,7 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
       }
 
       if (job.status === "prefund_sent") {
-        const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.prefund_tx_hash])) as
+        const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.prefund_tx_hash], { priority: "high" })) as
           { status: string } | null;
         if (!receipt) return;
         if (receipt.status !== "0x1") {
@@ -536,7 +568,7 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
       }
 
       if (job.status === "forward_sent") {
-        const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.forward_tx_hash])) as
+        const receipt = (await rpcCall(job.chain, "eth_getTransactionReceipt", [job.forward_tx_hash], { priority: "high" })) as
           { status: string } | null;
         if (!receipt) return;
         if (receipt.status !== "0x1") {

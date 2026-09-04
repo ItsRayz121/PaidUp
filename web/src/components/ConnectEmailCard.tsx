@@ -11,7 +11,7 @@ import { Card, Button } from "./ui";
 import { MailIcon, CheckIcon } from "./icons";
 import { useI18n } from "@/lib/i18n";
 import {
-  startEmailLink, confirmEmailLink, getToken, setSession, type SessionUser,
+  startEmailLink, confirmEmailLink, setSession, type SessionUser,
 } from "@/lib/api";
 
 const inputClass =
@@ -55,8 +55,10 @@ export function ConnectEmailCard({ user }: { user: SessionUser }) {
     setError(null);
     try {
       const r = await confirmEmailLink(email.trim(), code);
-      const token = getToken();
-      if (token) setSession(token, r.user); // every screen learns the new email
+      // The REPLACEMENT token, not the one we arrived with: setting a password
+      // ends every session on the account, this one included, so reusing the
+      // old token would sign the user out the moment they added their email.
+      setSession(r.token, r.user); // every screen learns the new email
       setStep("done");
     } catch (e) {
       setError((e as Error).message);

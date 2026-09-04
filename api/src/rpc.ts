@@ -14,6 +14,7 @@
 // surfaces as a user who paid us and was never credited, silently. Those are
 // different risks and only one of them is acceptable on free infrastructure.
 import { config } from "./config.ts";
+import { charge } from "./costGuard.ts";
 
 export class RpcError extends Error {
   constructor(message: string, readonly attempts: { url: string; reason: string }[] = []) {
@@ -44,16 +45,29 @@ export async function rpcCall(
   chain: string,
   method: string,
   params: unknown[] = [],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; priority?: "low" | "high" } = {},
 ): Promise<unknown> {
   const urls = endpointsFor(chain);
   if (!urls.length) {
     throw new RpcError(`No RPC endpoint is configured for ${chain}.`);
   }
 
+  const priority = opts.priority ?? "low";
   const attempts: { url: string; reason: string }[] = [];
 
   for (const url of urls) {
+    // Charged PER ATTEMPT, not per call: a failover across five endpoints is
+    // five requests a provider can bill for, and the whole point of a ceiling
+    // is that it counts what actually leaves the process. Refusal ends the
+    // loop rather than skipping one endpoint — every attempt would be refused
+    // for the same reason, and trying anyway is how a budget becomes advice.
+    if (!charge("rpc", 1, priority)) {
+      throw new RpcError(
+        `${method} not attempted: this process has reached its hourly RPC ceiling ` +
+        `(RPC_MAX_CALLS_PER_HOUR). See costGuard.ts.`,
+        attempts,
+      );
+    }
     // Each endpoint gets its own timeout. A shared deadline across the whole
     // list would mean one slow node eats the budget for all the healthy ones
     // behind it — which is precisely the failure failover exists to survive.
@@ -113,6 +127,16 @@ export async function rpcHealth(chain: string): Promise<{
   url: string; ok: boolean; blockNumber?: number; reason?: string;
 }[]> {
   const urls = endpointsFor(chain);
+  // Counted against the ceiling like everything else: this pings EVERY endpoint,
+  // so a staff member holding down refresh really does spend. Refused rather
+  // than silently uncounted — a diagnostic that quietly exempts itself from the
+  // meter it is displaying would be the one place the number is wrong.
+  if (urls.length && !charge("rpc", urls.length, "low")) {
+    return urls.map((url) => ({
+      url, ok: false,
+      reason: "not checked: this process has reached its hourly RPC ceiling (RPC_MAX_CALLS_PER_HOUR)",
+    }));
+  }
   return Promise.all(urls.map(async (url) => {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 5_000);

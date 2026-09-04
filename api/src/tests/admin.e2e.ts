@@ -53,17 +53,23 @@ const audit = await sql.all<{ action: string; actor_user_id: string }>("SELECT a
 check("privileged action is attributed to the actor", audit.length === 1 && audit[0].actor_user_id === adminId);
 
 console.log("\n-- suspension is actually enforced --");
-await requireActiveUser(userId); // should not throw
+// requireActiveUser now also compares the token's session epoch against the
+// account's (audit finding A-03), so it needs a request to read that from. A
+// bare object stands in for a token carrying no epoch claim: read as 0, which
+// matches the column default. That is exactly a token issued before revocation
+// existed, and it must keep working.
+const reqAtEpoch = () => ({}) as never;
+await requireActiveUser(userId, reqAtEpoch()); // should not throw
 check("active user passes the guard", true);
 
 await sql.run("UPDATE users SET status = 'suspended' WHERE id = ?", userId);
 let blocked = false;
-try { await requireActiveUser(userId); } catch (e) { blocked = (e as { statusCode: number }).statusCode === 403; }
+try { await requireActiveUser(userId, reqAtEpoch()); } catch (e) { blocked = (e as { statusCode: number }).statusCode === 403; }
 check("SUSPENDED user is blocked from earner routes (403)", blocked);
 
 await sql.run("UPDATE users SET status = 'active' WHERE id = ?", userId);
 let restored = true;
-try { await requireActiveUser(userId); } catch { restored = false; }
+try { await requireActiveUser(userId, reqAtEpoch()); } catch { restored = false; }
 check("restored user can act again", restored);
 
 console.log("\n-- suspension revokes STAFF access too (security review finding) --");
@@ -72,7 +78,7 @@ console.log("\n-- suspension revokes STAFF access too (security review finding) 
 // already-issued JWT stays valid until it expires.
 await sql.run("UPDATE users SET status = 'suspended' WHERE id = ?", adminId);
 let staffBlocked = false;
-try { await requireActiveUser(adminId); } catch (e) { staffBlocked = (e as { statusCode: number }).statusCode === 403; }
+try { await requireActiveUser(adminId, reqAtEpoch()); } catch (e) { staffBlocked = (e as { statusCode: number }).statusCode === 403; }
 check("suspended ADMIN is refused by the staff guard's status check", staffBlocked);
 // The role row still exists — access is denied by status, not by removing the role.
 const stillHasRole = await sql.get<{ role: string }>("SELECT role FROM admin_users WHERE user_id = ?", adminId);

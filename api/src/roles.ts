@@ -46,7 +46,7 @@ export async function requirePermission(
   req: FastifyRequest, perm: Permission,
 ): Promise<{ userId: string; role: Role }> {
   const userId = getUserId(req); // throws 401 if not signed in
-  await requireActiveUser(userId); // 403 if the account is suspended
+  await requireActiveUser(userId, req); // 403 if the account is suspended
   const role = await roleOf(userId);
   if (!role || !hasPermission(role, perm)) {
     throw { statusCode: 403, message: "You do not have access to this." };
@@ -58,7 +58,7 @@ export async function requirePermission(
 // caller is staff, not what they may do.
 export async function requireStaff(req: FastifyRequest): Promise<{ userId: string; role: Role }> {
   const userId = getUserId(req);
-  await requireActiveUser(userId);
+  await requireActiveUser(userId, req);
   const role = await roleOf(userId);
   if (!role) throw { statusCode: 403, message: "You do not have access to this." };
   return { userId, role };

@@ -11,7 +11,7 @@ import { UsdtLogo } from "@/components/tokenIcons";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import {
-  fetchBalance, fetchPayoutAddresses, createWalletWithdrawal, requestWithdrawalStepUp, ApiError,
+  fetchBalanceWithGas, fetchPayoutAddresses, createWalletWithdrawal, requestWithdrawalStepUp, ApiError,
 } from "@/lib/api";
 import { formatMoney, usdtToPoints, formatBnbWei, formatUsdtMicro } from "@/lib/format";
 import { CHAINS, addressLooksValid, type ChainId } from "@/lib/chains";
@@ -34,7 +34,7 @@ import { shortAddress } from "@/lib/wallet";
 export default function WithdrawPage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
-  const bal = useApi(fetchBalance, []);
+  const bal = useApi(fetchBalanceWithGas, []);
   const saved = useApi(fetchPayoutAddresses, []);
 
   const [chain] = useState<ChainId>("bep20");

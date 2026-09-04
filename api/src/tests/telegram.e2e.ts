@@ -320,6 +320,19 @@ res = await app.inject({
 body = res.json();
 check("the right code attaches the email", res.statusCode === 200 && body.user?.hasEmail === true);
 
+// ⚠️ ATTACHING AN EMAIL SETS A PASSWORD, SO IT ENDS EVERY EXISTING SESSION
+// (audit finding A-03 — any route that changes what you can log in with has to
+// revoke what was issued under the old credentials). `tgHdr` is therefore now a
+// DEAD token, and the route hands back a replacement so the user is not signed
+// out by the act of adding their own email. Everything below has to use it.
+check("...and hands back a replacement token", typeof body.token === "string" && body.token.length > 0);
+{
+  const stale = await app.inject({ method: "GET", url: "/auth/me", headers: tgHdr });
+  check("...while the token that called it is now revoked", stale.statusCode === 401,
+    `got ${stale.statusCode}`);
+}
+const tgHdrAfterEmail = { authorization: `Bearer ${body.token}` };
+
 // THE POINT: the same account now works on the website.
 res = await app.inject({
   method: "POST", url: "/auth/login",
@@ -330,10 +343,10 @@ check("email+password now log into the SAME account", res.statusCode === 200 && 
 check("...which still has its Telegram connected", body.user?.hasTelegram === true);
 
 res = await app.inject({
-  method: "POST", url: "/auth/email/link-start", headers: tgHdr,
+  method: "POST", url: "/auth/email/link-start", headers: tgHdrAfterEmail,
   payload: { email: `x${newEmail}`, password: "hunter2pass" },
 });
-check("an account WITH an email cannot start again", res.statusCode === 400);
+check("an account WITH an email cannot start again", res.statusCode === 400, `got ${res.statusCode}`);
 
 // An email someone else already uses is refused with a helpful message.
 res = await post(signInitData({ user: tgUser(tgId(3)), auth_date: freshDate() }));
