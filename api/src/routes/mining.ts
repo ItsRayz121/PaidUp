@@ -23,7 +23,7 @@ import { sendPushToUser } from "../push.ts";
 import { relayAvailable, hasEnoughGas, hasEnoughGasForDisplay } from "../payoutRelay.ts";
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
-  startSession, sessionState, accrue, hashrateOf, grantBoost,
+  startSession, sessionState, accrue, grantBoost,
   claimableRoziMicro, claimRozi, effectivePiRate, minerPopulation,
 } from "../mining/engine.ts";
 import {
@@ -219,7 +219,11 @@ export async function miningRoutes(app: FastifyInstance) {
   app.get("/mining/state", guard(async (userId) => {
     const s = await loadMiningSettings();
     const state = await sessionState(userId);
-    const { breakdown } = await hashrateOf(userId, s);
+    // The breakdown comes back ON the state now. It used to be a third
+    // hashrateOf() call for this one field — 8 queries including two walks of the
+    // referral tree, on the app's most-requested endpoint, for a number
+    // sessionState had just finished computing. Audit 2026-09-04, finding B2.
+    const breakdown = state.breakdown;
     const [roziMicro, claimableMicro, streak, boosts, adsToday, me, sentToday, store] = await Promise.all([
       roziBalanceMicroOf(userId),
       claimableRoziMicro(userId),

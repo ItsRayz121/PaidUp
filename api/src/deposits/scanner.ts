@@ -111,7 +111,17 @@ export async function tickDepositScan(): Promise<{ chain: string; scanned: boole
     // One global lock, not per-chain — scanning is I/O-bound and cheap enough
     // to serialize across chains; split into per-chain locks only if scan
     // time ever approaches the tick interval.
-    await t.run("SELECT pg_advisory_xact_lock(hashtext('deposit-scan'))");
+    //
+    // ⚠️ TRY, NOT WAIT. This transaction stays open across every RPC round trip
+    // in the scan, so it holds a pooled connection for the whole network
+    // duration. A blocking lock meant a second tick (or a second Railway
+    // instance) queued behind it holding a connection of its own, on a timer
+    // that keeps firing — audit 2026-09-04, finding B8. The scan is
+    // cursor-based, so declining a tick re-scans the same range next time and
+    // cannot lose a block.
+    const lock = await t.get<{ locked: boolean }>(
+      "SELECT pg_try_advisory_xact_lock(hashtext('deposit-scan')) AS locked");
+    if (!lock?.locked) return [];
 
     const results: { chain: string; scanned: boolean }[] = [];
     for (const chain of EVM_CHAINS) {

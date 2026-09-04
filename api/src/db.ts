@@ -41,10 +41,43 @@ function makePgDriver(connectionString: string): Driver {
   // Railway's private network (*.railway.internal) speaks plain TCP. The public
   // proxy requires TLS but presents a cert for a different host.
   const internal = /\.railway\.internal|localhost|127\.0\.0\.1/.test(connectionString);
+  // ⚠️ THE TWO TIMEOUTS BELOW ARE HOW THIS API SHEDS LOAD. WITHOUT THEM IT DOES NOT.
+  //
+  // With `max` alone, `pool.connect()` (sql.tx, below) waits with NO deadline once
+  // every connection is busy. The measured behaviour past that point was not errors
+  // — it was an unbounded queue: offered load 100 -> 150 -> 220 screen-loads/second
+  // moved throughput not at all (426 / 407 / 438 req/s) while p95 went 38 ms -> 22 s
+  // -> 41 s, each waiting request still holding a live HTTP connection, until the
+  // process ran out of sockets. A user staring at a 22-second screen has already
+  // left; the request is pure cost by then. Audit 2026-09-04, finding A-07.
+  //
+  // `connectionTimeoutMillis` converts that queue into a fast 5xx the client can
+  // retry, and `statement_timeout` stops any single pathological query from holding
+  // 1/max of total capacity indefinitely. 10s is far above every real query here
+  // (the slowest measured request path is well under a second) and far below the
+  // point at which a caller still cares.
+  //
+  // `max` is env-tunable because the ceiling is not ours alone: `replicas × max`
+  // must stay under Postgres's own `max_connections` (Railway's smaller plans sit
+  // near 100). Past 2-3 replicas this wants PgBouncer in transaction mode, which
+  // this codebase is compatible with as written — no session state, no SET, no
+  // named prepared statements, no LISTEN.
   const pool = new Pool({
     connectionString,
     ssl: internal ? undefined : { rejectUnauthorized: false },
-    max: 10,
+    max: Math.max(1, Number(process.env.PG_POOL_MAX ?? 20)),
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS ?? 5_000),
+    idleTimeoutMillis: 30_000,
+    statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS ?? 10_000),
+    application_name: "rozipay-api",
+  });
+  // A pool error on an IDLE client is emitted on the pool, not on any request. With
+  // no listener, Node treats it as an unhandled 'error' event and kills the process
+  // — so a single dropped idle connection (a Postgres restart, a network blip) would
+  // take the API down rather than being replaced silently, which is what `pg` does
+  // on its own once someone is listening.
+  pool.on("error", (err) => {
+    console.error("pg pool error on an idle client:", err instanceof Error ? err.message : err);
   });
   const norm = (r: { rows: unknown[]; rowCount: number | null }): QueryResult => ({
     rows: r.rows as Record<string, unknown>[],
@@ -52,7 +85,25 @@ function makePgDriver(connectionString: string): Driver {
   });
   return {
     query: async (text, params) => norm(await pool.query(toPg(text), params)),
-    exec: async (text) => void (await pool.query(text)),
+    // ⚠️ BOOT DDL IS DELIBERATELY EXEMPT FROM `statement_timeout`. This runs the
+    // schema and migration blocks, and `CREATE INDEX` on a table that already has
+    // millions of rows can legitimately outlast any request deadline. Leaving the
+    // request timeout in force here would mean the bigger the database gets, the
+    // more likely the API is to fail to boot at all — the worst possible place for
+    // a deadline. Restored before the connection goes back to the pool; on failure
+    // the connection is destroyed rather than returned with the override still set.
+    exec: async (text) => {
+      const client = await pool.connect();
+      try {
+        await client.query("SET statement_timeout = 0");
+        await client.query(text);
+        await client.query("SET statement_timeout = DEFAULT");
+        client.release();
+      } catch (err) {
+        client.release(true);
+        throw err;
+      }
+    },
     begin: async () => {
       const client = await pool.connect();
       await client.query("BEGIN");
@@ -811,6 +862,28 @@ const MIGRATIONS = `
   -- completions today, plus the first-task-since-KYC-approval count.
   CREATE INDEX IF NOT EXISTS idx_completions_user_created
     ON task_completions(user_id, created_at);
+  -- ⚠️ THE REFERRAL EDGE. users.referred_by had NO index, and mining walks it
+  -- twice per hashrate calculation (referralHashrateOf: level 1, then level 2)
+  -- while /mining/state computed the hashrate THREE times — six sequential
+  -- scans of the whole users table on the app's most-visited endpoint, plus
+  -- two more on every accrual. That is the single worst scaling defect the
+  -- 2026-09-04 audit found in a read path (finding B3): its cost grows with the
+  -- total number of accounts ever created, so it gets worse fastest precisely
+  -- when growth is working. Partial, because the overwhelming majority of rows
+  -- are NULL (nobody invited them) and those are never the ones being looked up.
+  CREATE INDEX IF NOT EXISTS idx_users_referred_by
+    ON users(referred_by) WHERE referred_by IS NOT NULL;
+  -- Its companion index lives in MINING_SCHEMA, next to the table it covers, and
+  -- NOT here: MIGRATIONS runs before MINING_SCHEMA, so an index on
+  -- mining_sessions in this block fails initDb outright on a genuinely fresh
+  -- database. That exact mistake shipped once already (base_cost_usdt on rigs).
+  -- Campaign budget (taskBudget.ts): campaignSpend() aggregates every credited
+  -- completion for one task, and it runs INSIDE the advisory lock that
+  -- serialises crediting for that campaign — so an unindexed aggregate does not
+  -- just cost one slow query, it makes every concurrent postback on a popular
+  -- campaign queue behind a table scan (finding B9).
+  CREATE INDEX IF NOT EXISTS idx_completions_task_credited
+    ON task_completions(task_id) WHERE status = 'credited';
   -- flagOnce dedupe (fraud.ts): looked up on every login and every flag check.
   CREATE INDEX IF NOT EXISTS idx_fraud_scope
     ON fraud_flags(flag_type, device_id) WHERE resolved_by IS NULL;
@@ -1725,6 +1798,14 @@ const MINING_SCHEMA = `
     ended_at          TEXT,
     status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended'))
   );
+  -- Referral mining (mining/engine.ts referralHashrateOf): "is this invitee
+  -- active?" joins here by user and filters on started_at, twice per hashrate
+  -- calculation. Paired with idx_users_referred_by in MIGRATIONS — see the note
+  -- there for why the two are in different blocks (this table does not exist yet
+  -- when that block runs).
+  CREATE INDEX IF NOT EXISTS idx_mining_sessions_user_started
+    ON mining_sessions(user_id, started_at);
+
   CREATE INDEX IF NOT EXISTS idx_mining_sessions_user ON mining_sessions(user_id);
   -- One live session per user, enforced by the database rather than by a check
   -- that a concurrent request could race past.

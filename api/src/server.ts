@@ -173,6 +173,70 @@ await app.register(staffKycRoutes);
 await app.register(pushRoutes);
 await app.register(profileRoutes);
 
+// ---- Background timers: never let one overlap itself ----------------------
+// ⚠️ EVERY `setInterval` BELOW GOES THROUGH THIS. IT IS NOT OPTIONAL PLUMBING.
+//
+// `setInterval` fires on a fixed clock with no idea whether the previous tick has
+// finished. Each of these ticks opens a transaction, and a transaction holds one
+// pooled connection for its whole duration — so a tick that runs longer than its
+// interval used to be joined by a second one holding a second connection, then a
+// third, until the pool was gone and the API stopped answering requests that had
+// nothing to do with mining or deposits. That is not a hypothetical shape: the
+// mining accrual sweep was measured at 6 minutes for 100,000 sessions against a
+// 15-minute interval, and it is the tick most likely to grow past its own window
+// first. Audit 2026-09-04, finding B8.
+//
+// A skipped tick is always safe here and that is what makes this the right fix
+// rather than a bigger interval: settlement is idempotent on the `mining_epochs`
+// primary key, the deposit scan is cursor-based, the relay re-reads its jobs, the
+// reconciliation snapshot is a periodic sample, and the ticket sweep is a plain
+// re-query. Every one of them simply does the same work on the next tick.
+//
+// The duration log is deliberate too — the audit's closing note was that nothing
+// in this codebase would tell you which bottleneck you were approaching, and a
+// tick quietly taking longer than its interval is the first symptom of most of
+// them. `slowMs` is the line past which that stops being noise and starts being
+// the warning.
+function everyNoOverlap(
+  name: string, intervalMs: number, fn: () => Promise<unknown>,
+): () => Promise<void> {
+  let running = false;
+  let skipped = 0;
+  const slowMs = Math.max(1_000, Math.floor(intervalMs * 0.5));
+  const run = async () => {
+    if (running) {
+      skipped++;
+      // Log the FIRST skip and then rarely, so a genuinely stuck tick is loud
+      // once and does not then bury every other line in the log.
+      if (skipped === 1 || skipped % 10 === 0) {
+        app.log.warn({ tick: name, skipped }, "tick still running from last time — skipping this one");
+      }
+      return;
+    }
+    running = true;
+    const started = Date.now();
+    try {
+      await fn();
+    } catch (err) {
+      // A tick must never throw out of here: an unhandled rejection in a timer
+      // takes the process down, and none of this work is worth the API for it.
+      app.log.error({ err, tick: name }, "tick failed");
+    } finally {
+      running = false;
+      const ms = Date.now() - started;
+      if (ms >= slowMs) {
+        app.log.warn({ tick: name, ms, intervalMs }, "tick is taking a large share of its interval");
+      }
+      if (skipped > 0) {
+        app.log.warn({ tick: name, skipped, ms }, "tick finished after skipping runs");
+        skipped = 0;
+      }
+    }
+  };
+  setInterval(run, intervalMs).unref();
+  return run;
+}
+
 // ---- Mining: accrual sweep + epoch settlement ------------------------------
 // Each tick does two things, IN ORDER:
 //   1. Accrue every open mining session, so a user who tapped "Start mining" and
@@ -240,7 +304,7 @@ async function tickSettlement() {
     app.log.error({ err }, "email_codes purge failed");
   }
 }
-setInterval(tickSettlement, SETTLE_INTERVAL_MS).unref();
+const runSettlement = everyNoOverlap("settlement", SETTLE_INTERVAL_MS, tickSettlement);
 
 // ---- Deposits: chain scan + sweep — CUSTODY_SPEC.md § 5, steps 2-3 --------
 // Same posture as the settlement timer above: one setInterval each, in this
@@ -268,7 +332,7 @@ async function tickDeposits() {
     app.log.error({ err }, "Sweep tick failed");
   }
 }
-setInterval(tickDeposits, config.depositScanIntervalMs).unref();
+const runDeposits = everyNoOverlap("deposits", config.depositScanIntervalMs, tickDeposits);
 
 // ---- Payout relay — payoutRelay.ts ------------------------------------------
 // Advances every in-flight withdrawal/refund relay job one phase (gas ->
@@ -288,16 +352,14 @@ async function tickPayoutRelayJob() {
     app.log.error({ err }, "BNB withdrawal tick failed");
   }
 }
-setInterval(tickPayoutRelayJob, config.depositScanIntervalMs).unref();
+const runPayoutRelayJob = everyNoOverlap("payout-relay", config.depositScanIntervalMs, tickPayoutRelayJob);
 
 // ---- Reconciliation — CUSTODY_SPEC.md § 5 step 3 / § 3.5 -------------------
 // Hourly, much slower than the deposit/sweep ticks above: this is a
 // treasury-balance-vs-ledger check, not something that needs to be fresh to
 // the second. A no-op until a treasury signer is configured (reconcile.ts).
 const RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
-setInterval(() => {
-  void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
-}, RECONCILE_INTERVAL_MS).unref();
+const runReconcile = everyNoOverlap("reconcile", RECONCILE_INTERVAL_MS, tickReconcile);
 
 // ---- Support tickets: auto-close a stale 'answered' ticket — ticketAutoClose.ts
 // ⚠️ ITS OWN, FINER cadence — NOT the hourly reconcile interval above. The
@@ -308,16 +370,18 @@ setInterval(() => {
 // the close within a small fraction of whatever the admin sets, even at the
 // lowest sane setting.
 const TICKET_AUTO_CLOSE_TICK_MS = 10 * 60 * 1000;
-setInterval(() => {
-  void tickTicketAutoClose().catch((err) => app.log.error({ err }, "Ticket auto-close tick failed"));
-}, TICKET_AUTO_CLOSE_TICK_MS).unref();
+const runTicketAutoClose = everyNoOverlap("ticket-auto-close", TICKET_AUTO_CLOSE_TICK_MS, tickTicketAutoClose);
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
-  void tickSettlement();
-  void tickDeposits();
-  void tickPayoutRelayJob();
-  void tickReconcile().catch((err) => app.log.error({ err }, "Reconciliation tick failed"));
+  // Kick each tick once at boot through its OWN guard, not by calling the raw
+  // function — a boot run and the first interval run would otherwise be able to
+  // overlap, which is the exact thing the guard exists to prevent.
+  void runSettlement();
+  void runDeposits();
+  void runPayoutRelayJob();
+  void runReconcile();
+  void runTicketAutoClose();
   // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
   // being slow or down must never delay or fail OUR boot.
   void configureTelegramMenuButton();

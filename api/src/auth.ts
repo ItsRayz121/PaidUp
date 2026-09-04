@@ -80,6 +80,26 @@ export async function issueCode(
 
 // Validate + consume an OTP for a purpose. Returns a structured result (with the
 // password bound to the code, if any) so each route can map it to a status code.
+//
+// ⚠️ BOTH WRITES BELOW ARE THE ATOMIC ACT, NOT A FOLLOW-UP TO A READ, AND THAT IS
+// LOAD-BEARING. This function used to SELECT the row, compare in JS, then blindly
+// `UPDATE ... SET consumed = 1 WHERE id = ?`. Twelve simultaneous confirmations of ONE
+// code were then ALL accepted: every caller read the same `consumed = 0` row, every one
+// matched the hash, and every one wrote over the others. Measured on real PostgreSQL,
+// 2026-09-04 (audit finding A-14) — four of twelve got a 200. It affects every purpose,
+// including `withdraw`, whose step-up code is consumed OUTSIDE the per-user advisory
+// lock that guards the debit, so one emailed code could satisfy several concurrent
+// withdrawal requests.
+//
+// The claim is now `UPDATE ... WHERE id = ? AND consumed = 0 RETURNING ...`: under
+// READ COMMITTED the second writer blocks on the row lock, re-evaluates the predicate
+// against the committed version, sees `consumed = 1` and returns zero rows. The attempts
+// counter is read from `RETURNING` for the same reason — a value read BEFORE the
+// increment lets N parallel wrong guesses each see `attempts = 0` and walk past the cap.
+//
+// Do not "simplify" either write back into a read-then-write. The existing suites cannot
+// catch it: PGlite has a single connection and serialises the exact interleaving that
+// breaks. The reproducer needs real Postgres — `tests/otp-race.e2e.ts`.
 export type CodeResult =
   | { ok: true; pendingPasswordHash: string | null }
   | { ok: false; statusCode: number; error: string };
@@ -95,16 +115,33 @@ export async function consumeCode(
     await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
     return { ok: false, statusCode: 400, error: "This code has expired. Please ask for a new code." };
   }
+  // Defensive: a row already at the cap should have been consumed by the increment
+  // below, but rows written before that fix existed can still be sitting at it.
   if (row.attempts >= config.otpMaxAttempts) {
     await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
     return { ok: false, statusCode: 429, error: "Too many tries. Please ask for a new code." };
   }
   if (hashCode(code) !== row.code_hash) {
-    await sql.run("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", row.id);
+    // Increment and read back in ONE statement, so concurrent guesses get distinct
+    // values and whichever one crosses the cap is the one that burns the code.
+    const bumped = await sql.get<{ attempts: number }>(
+      "UPDATE email_codes SET attempts = attempts + 1 WHERE id = ? AND consumed = 0 RETURNING attempts",
+      row.id,
+    );
+    if (bumped && bumped.attempts >= config.otpMaxAttempts) {
+      await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
+      return { ok: false, statusCode: 429, error: "Too many tries. Please ask for a new code." };
+    }
     return { ok: false, statusCode: 400, error: "Wrong code. Please try again." };
   }
-  await sql.run("UPDATE email_codes SET consumed = 1 WHERE id = ?", row.id);
-  return { ok: true, pendingPasswordHash: row.pending_password_hash ?? null };
+  // The claim. Zero rows back means another request already spent this code, so this
+  // caller gets the same answer as someone presenting a code that no longer exists.
+  const claimed = await sql.get<{ pending_password_hash: string | null }>(
+    "UPDATE email_codes SET consumed = 1 WHERE id = ? AND consumed = 0 RETURNING pending_password_hash",
+    row.id,
+  );
+  if (!claimed) return { ok: false, statusCode: 400, error: "No code found. Please ask for a new code." };
+  return { ok: true, pendingPasswordHash: claimed.pending_password_hash ?? null };
 }
 
 function signToken(userId: string): string {

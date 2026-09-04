@@ -147,10 +147,38 @@ async function activeBoosts(
 // /mining/state poll AND every accrual. A user with a 10,000-strong downline would
 // fire ~30,000 queries per request and take the API down: success would have been
 // the outage. So: three aggregate queries for the whole set, arithmetic in JS.
-async function ownHashrateBatch(
+// Postgres refuses a statement with more than 65,535 bound parameters, and these
+// helpers bind one per user id. A sweep over 100,000 miners therefore CANNOT be
+// one query no matter how well written — it has to be chunked, and the chunk size
+// has to leave room for the handful of other parameters each query also binds.
+const PARAM_CHUNK = 2_000;
+function chunked<T>(xs: T[], size = PARAM_CHUNK): T[][] {
+  if (xs.length <= size) return xs.length === 0 ? [] : [xs];
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
+}
+
+// The raw ingredients of a hashrate, for many users in a fixed number of queries.
+// Split out of ownHashrateBatch so the full-hashrate batch (hashrateOfBatch) can
+// reuse the SAME gathering code rather than keep a second copy of it that drifts.
+type HashrateParts = { rigPower: number; streakDays: number; pcts: number[]; flatBonus: number };
+
+async function hashratePartsBatch(
   userIds: string[], s: MiningSettings,
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, HashrateParts>> {
+  const out = new Map<string, HashrateParts>();
+  if (userIds.length === 0) return out;
+  for (const chunk of chunked(userIds)) {
+    for (const [id, parts] of await hashratePartsChunk(chunk, s)) out.set(id, parts);
+  }
+  return out;
+}
+
+async function hashratePartsChunk(
+  userIds: string[], s: MiningSettings,
+): Promise<Map<string, HashrateParts>> {
+  const out = new Map<string, HashrateParts>();
   if (userIds.length === 0) return out;
 
   const ph = userIds.map(() => "?").join(",");
@@ -192,18 +220,64 @@ async function ownHashrateBatch(
 
   for (const id of userIds) {
     const { pcts, flatBonus } = splitBoosts(cappedBy.get(id) ?? [], s);
-    out.set(id, computeHashrate({
-      base: s.baseHashrate,
+    out.set(id, {
       rigPower: rigPowerBy.get(id) ?? 0,
       streakDays: streakBy.get(id) ?? 0,
-      streakStepPct: s.streakStepPct,
-      streakCapDays: s.streakCapDays,
-      boostPcts: pcts,
+      pcts,
       flatBonus,
-      referralHashrate: 0, // the recursion break — see ownHashrate() above
-      referralCapPct: s.referralCapPct,
-      maxHashrate: s.maxHashrate,
-    }));
+    });
+  }
+  return out;
+}
+
+// Turn the parts into a hashrate AND its breakdown. The ONE place that assembles
+// either, so the single-user path, the own-hashrate batch and the full batch
+// cannot disagree — about the arithmetic or about what the /mine screen is shown.
+function hashrateFromParts(
+  parts: HashrateParts | undefined, referral: number, s: MiningSettings,
+): HashrateResult {
+  const rigs = parts?.rigPower ?? 0;
+  const streakDays = parts?.streakDays ?? 0;
+  const pcts = parts?.pcts ?? [];
+  const flatBonus = parts?.flatBonus ?? 0;
+  const hashrate = computeHashrate({
+    base: s.baseHashrate,
+    rigPower: rigs,
+    streakDays,
+    streakStepPct: s.streakStepPct,
+    streakCapDays: s.streakCapDays,
+    boostPcts: pcts,
+    flatBonus,
+    referralHashrate: referral,
+    referralCapPct: s.referralCapPct,
+    maxHashrate: s.maxHashrate,
+  });
+  return {
+    hashrate,
+    breakdown: {
+      base: s.baseHashrate,
+      rigs,
+      streakDays,
+      streakMultiplierPct: Math.round(
+        (1 + (s.streakStepPct / 100) * Math.min(streakDays, s.streakCapDays)) * 100),
+      boostPct: pcts.reduce((a, b) => a + b, 0),
+      // The flat ad bonus (founder, 2026-08-30) — shown as "+N" on the /mine
+      // breakdown, separate from the "+X%" percentage boosts above.
+      adFlatBonus: flatBonus,
+      referral,
+    },
+  };
+}
+
+async function ownHashrateBatch(
+  userIds: string[], s: MiningSettings,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (userIds.length === 0) return out;
+  const parts = await hashratePartsBatch(userIds, s);
+  for (const id of userIds) {
+    // referralHashrate: 0 is the recursion break — see ownHashrate() above.
+    out.set(id, hashrateFromParts(parts.get(id), 0, s).hashrate);
   }
   return out;
 }
@@ -249,10 +323,111 @@ async function referralHashrateOf(userId: string, s: MiningSettings): Promise<nu
   return Math.floor(total);
 }
 
+// The FULL hashrate — referral component included — for many users in a fixed
+// number of queries per chunk instead of ~8 queries per user.
+//
+// WHY THIS EXISTS: the accrual sweep calls this once per open mining session, and
+// the audit of 2026-09-04 measured the per-user version at 998,601 sequential
+// statements for 100,000 sessions (finding B4). On loopback that was 6 minutes
+// against a 15-minute interval; over a real network, where every statement costs
+// a round trip, the same statement count is roughly 11.6 minutes of pure waiting
+// — inside the window, with settlement queued behind it, and getting worse with
+// every new miner. The clock was never the problem. The statement count was.
+//
+// ⚠️ THIS MUST RETURN EXACTLY WHAT hashrateOf() RETURNS, PER USER. It is a
+// different route to the same number, not a cheaper approximation, and a
+// difference here would silently change what people are paid. Both paths now
+// share hashratePartsBatch() and hashrateFromParts(), so the arithmetic cannot
+// drift; the referral walk is the part that is genuinely re-expressed set-wise,
+// and there is a differential test (mining-batch.e2e.ts) that seeds rigs, boosts,
+// streaks and a two-level downline and asserts the two agree for every user.
+export async function hashrateOfBatch(
+  userIds: string[], s: MiningSettings,
+): Promise<Map<string, HashrateResult>> {
+  const out = new Map<string, HashrateResult>();
+  if (userIds.length === 0) return out;
+  // ⚠️ DEDUPE THE INPUT FIRST. The SQL below says DISTINCT, but DISTINCT is per
+  // STATEMENT and this runs one statement per chunk — so an id appearing in two
+  // chunks contributed its invitees twice, and a referral component was summed
+  // twice. The differential test caught exactly this (a repeated id list crossing
+  // the chunk boundary) and it is the reason that test exists: the arithmetic was
+  // right, the set handling was not, and the only visible symptom would have been
+  // some users quietly mining faster than they should.
+  const ids = [...new Set(userIds)];
+  const cutoff = new Date(Date.now() - s.referralActiveHours * 3600_000).toISOString();
+
+  // Active invitees grouped BY REFERRER, for a whole set of referrers at once.
+  // Same predicate as referralHashrateOf's `active()`: mined recently, still
+  // active, KYC-approved. Chunked, because one bound parameter per referrer —
+  // and accumulated into a Set per referrer so a chunk overlap cannot duplicate.
+  const activeBy = async (refs: string[]): Promise<Map<string, string[]>> => {
+    const m = new Map<string, Set<string>>();
+    for (const chunk of chunked([...new Set(refs)])) {
+      const ph = chunk.map(() => "?").join(",");
+      const rows = await sql.all<{ ref: string; id: string }>(
+        `SELECT DISTINCT u.referred_by AS ref, u.id FROM users u
+         JOIN mining_sessions ms ON ms.user_id = u.id
+         WHERE u.referred_by IN (${ph})
+           AND u.status = 'active'
+           AND u.kyc_status = 'approved'
+           AND ms.started_at > ?`,
+        ...chunk, cutoff,
+      );
+      for (const r of rows) {
+        const set = m.get(r.ref) ?? new Set<string>();
+        set.add(r.id);
+        m.set(r.ref, set);
+      }
+    }
+    return new Map([...m].map(([ref, set]) => [ref, [...set]]));
+  };
+
+  const l1By = await activeBy(ids);
+  const everyL1 = [...new Set([...l1By.values()].flat())];
+  // One query set for the SECOND level too: the active invitees of every level-1
+  // invitee of anyone in this batch, looked up once and shared across the batch
+  // rather than re-queried per miner.
+  const l2ByL1 = await activeBy(everyL1);
+
+  // Own hashrate for the miners themselves and for their whole two-level
+  // downline. The downline contributes only its OWN hashrate (the recursion
+  // break), which is exactly what ownHashrateBatch returns.
+  const downline = new Set<string>();
+  for (const id of everyL1) downline.add(id);
+  for (const list of l2ByL1.values()) for (const id of list) downline.add(id);
+  const [parts, downlinePower] = await Promise.all([
+    hashratePartsBatch(ids, s),
+    ownHashrateBatch([...downline], s),
+  ]);
+
+  for (const userId of ids) {
+    const l1 = l1By.get(userId) ?? [];
+    const l1Set = new Set(l1);
+    // Mirrors referralHashrateOf exactly: level 2 is the DISTINCT union of the
+    // level-1s' own active invitees, minus the user themselves and minus anyone
+    // already counted at level 1 (a referral cycle is not forbidden by the data
+    // model, so both exclusions are load-bearing, not tidiness).
+    const l2: string[] = [];
+    const seen = new Set<string>();
+    for (const mid of l1) {
+      for (const id of l2ByL1.get(mid) ?? []) {
+        if (id === userId || l1Set.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        l2.push(id);
+      }
+    }
+    let referral = 0;
+    for (const id of l1) referral += (downlinePower.get(id) ?? 0) * (s.referralL1Pct / 100);
+    for (const id of l2) referral += (downlinePower.get(id) ?? 0) * (s.referralL2Pct / 100);
+    out.set(userId, hashrateFromParts(parts.get(userId), Math.floor(referral), s));
+  }
+  return out;
+}
+
 export async function hashrateOf(
   userId: string,
   s?: MiningSettings,
-): Promise<{ hashrate: number; breakdown: Record<string, number> }> {
+): Promise<HashrateResult> {
   const cfg = s ?? (await loadMiningSettings());
   const [rigs, boosts, streak, referral] = await Promise.all([
     rigPowerOf(userId),
@@ -261,34 +436,14 @@ export async function hashrateOf(
       "SELECT current_days FROM mining_streaks WHERE user_id = ?", userId),
     referralHashrateOf(userId, cfg),
   ]);
-  const streakDays = streak?.current_days ?? 0;
-  const hashrate = computeHashrate({
-    base: cfg.baseHashrate,
-    rigPower: rigs,
-    streakDays,
-    streakStepPct: cfg.streakStepPct,
-    streakCapDays: cfg.streakCapDays,
-    boostPcts: boosts.pcts,
-    flatBonus: boosts.flatBonus,
-    referralHashrate: referral,
-    referralCapPct: cfg.referralCapPct,
-    maxHashrate: cfg.maxHashrate,
-  });
-  return {
-    hashrate,
-    breakdown: {
-      base: cfg.baseHashrate,
-      rigs,
-      streakDays,
-      streakMultiplierPct: Math.round(
-        (1 + (cfg.streakStepPct / 100) * Math.min(streakDays, cfg.streakCapDays)) * 100),
-      boostPct: boosts.pcts.reduce((a, b) => a + b, 0),
-      // The flat ad bonus (founder, 2026-08-30) — shown as "+N" on the /mine
-      // breakdown, separate from the "+X%" percentage boosts above.
-      adFlatBonus: boosts.flatBonus,
-      referral,
-    },
-  };
+  // Assembled by hashrateFromParts, the same function the batch path uses — see
+  // the note on hashrateOfBatch for why the two must be identical rather than
+  // merely similar.
+  return hashrateFromParts(
+    { rigPower: rigs, streakDays: streak?.current_days ?? 0,
+      pcts: boosts.pcts, flatBonus: boosts.flatBonus },
+    referral, cfg,
+  );
 }
 
 // ---- Boosts ---------------------------------------------------------------
@@ -335,10 +490,15 @@ async function touchStreak(userId: string, epoch: number): Promise<void> {
 
 // ---- Sessions -------------------------------------------------------------
 
+export type HashrateResult = { hashrate: number; breakdown: Record<string, number> };
+
 export type SessionState = {
   active: boolean;
   expiresAt?: string;
   hashrate: number;
+  // The same breakdown hashrateOf() returns, carried here so /mining/state does
+  // not recompute it - see the note in sessionState().
+  breakdown: Record<string, number>;
   sharesToday: number;
   estimatedRoziMicro: number;
   // False under the pi model, where estimatedRozi is what the user has actually
@@ -416,21 +576,35 @@ export async function startSession(
 // close the session if it has expired. Called on every status poll and before any
 // action that changes hashrate, so a boost that lands mid-session applies from
 // that moment forward and is never applied retroactively to seconds already paid.
-export async function accrue(userId: string): Promise<void> {
+export async function accrue(
+  userId: string, s?: MiningSettings,
+): Promise<HashrateResult | null> {
   const session = await sql.get<{
     id: string; device_id: string | null; expires_at: string; last_accrued_at: string;
   }>(
     "SELECT id, device_id, expires_at, last_accrued_at FROM mining_sessions WHERE user_id = ? AND status = 'active'",
     userId,
   );
-  if (session) await accrueSession(userId, session);
+  if (!session) return null;
+  return accrueSession(userId, session, s);
 }
 
 type SessionRow = {
   id: string; device_id: string | null; expires_at: string; last_accrued_at: string;
 };
 
-async function accrueSession(userId: string, session: SessionRow): Promise<void> {
+// Returns the hashrate it computed, so a caller that needs the same number for
+// display does not pay for it a second time (see sessionState). Returns null when
+// there was no time owing - nothing was computed, so there is nothing to reuse and
+// the caller must ask for it itself.
+async function accrueSession(
+  userId: string, session: SessionRow, s?: MiningSettings,
+  // Precomputed hashrate, when the caller has already worked it out for a whole
+  // batch of sessions (accrueAllSessions). Passing it in is what removes the ~8
+  // queries per session that dominated the sweep.
+  known?: HashrateResult,
+): Promise<HashrateResult | null> {
+  let computed: HashrateResult | null = null;
   const nowMs = Date.now();
   const expiresMs = Date.parse(session.expires_at);
   const lastMs = Date.parse(session.last_accrued_at);
@@ -443,7 +617,11 @@ async function accrueSession(userId: string, session: SessionRow): Promise<void>
     // the user tomorrow's mining on yesterday's ledger — and if yesterday is
     // already settled, that share is gone for good.
     const slices = splitByEpoch(lastMs, untilMs);
-    const { hashrate } = await hashrateOf(userId);
+    // Settings are threaded in by callers that already loaded them. Without it,
+    // every accrual re-read the whole settings table - once per session in the
+    // sweep, which is 100,000 redundant reads at 100k miners.
+    computed = known ?? (await hashrateOf(userId, s));
+    const { hashrate } = computed;
 
     for (const { epoch, seconds } of slices) {
       // Never write into a day that has already paid out. If we did, the shares
@@ -451,8 +629,19 @@ async function accrueSession(userId: string, session: SessionRow): Promise<void>
       // silently stolen from the user. It should be impossible (the sweep +
       // grace period below exist to make sure accrual always lands first), so if
       // it ever happens we want it loud in the logs rather than quiet in the DB.
-      const settled = await sql.get<{ epoch: number }>(
-        "SELECT epoch FROM mining_epochs WHERE epoch = ?", epoch);
+      //
+      // ⚠️ THE CHECK IS SKIPPED FOR THE CURRENT EPOCH, AND ONLY BECAUSE IT IS
+      // PROVABLY UNNECESSARY THERE: settleEpoch() refuses outright while
+      // `epoch >= epochOf()` (its first line), so today cannot already be
+      // settled, by construction, in this process or any other. Past epochs —
+      // the midnight-crossing case, which is the whole reason splitByEpoch
+      // exists — are still checked against the database every time. This is one
+      // query per session removed from a sweep that runs over every open session
+      // (audit 2026-09-04, finding B4); it is NOT a relaxation of the guard.
+      const settled = epoch >= epochOf()
+        ? undefined
+        : await sql.get<{ epoch: number }>(
+          "SELECT epoch FROM mining_epochs WHERE epoch = ?", epoch);
       if (settled) {
         console.error(
           `MINING: dropping ${seconds}s of accrual for user ${userId} in epoch ${epoch} — ` +
@@ -491,6 +680,7 @@ async function accrueSession(userId: string, session: SessionRow): Promise<void>
       now(), session.id,
     );
   }
+  return computed;
 }
 
 // Accrue EVERY session with time owing, not just the one belonging to whoever
@@ -508,29 +698,68 @@ export async function accrueAllSessions(): Promise<number> {
     `SELECT id, user_id, device_id, expires_at, last_accrued_at
      FROM mining_sessions WHERE status = 'active'`,
   );
-  for (const s of sessions) {
+  // ONE settings read for the whole sweep, not one per session. The values cannot
+  // change mid-sweep in a way that matters - the sweep is a catch-up over time that
+  // has already elapsed - and re-reading them per session was 100,000 redundant
+  // reads at 100k miners (audit 2026-09-04, finding B4).
+  const cfg = await loadMiningSettings();
+
+  // Hashrates for a whole chunk of sessions in a fixed number of queries, rather
+  // than ~8 queries per session. The chunk exists for two separate reasons and
+  // both matter: Postgres caps bound parameters per statement, and holding one
+  // batch's intermediate maps for 100,000 users at once is a lot of memory for a
+  // background tick to take from the request path it shares a process with.
+  //
+  // ⚠️ THE PER-SESSION WRITES ARE DELIBERATELY STILL PER-SESSION. Each one claims
+  // the device for the day (a PK conflict is how the one-device-one-account rule
+  // is enforced) and can legitimately skip a slice, and each session is wrapped in
+  // its own try/catch so one bad row cannot stop the sweep — the property that
+  // makes this loop safe to run unattended. Batching the reads is a pure win;
+  // batching the writes would trade that isolation away for less than it costs.
+  for (const group of chunked(sessions, 500)) {
+    let rates = new Map<string, HashrateResult>();
     try {
-      await accrueSession(s.user_id, s);
+      rates = await hashrateOfBatch(group.map((g) => g.user_id), cfg);
     } catch (err) {
-      // One bad session must not stop the sweep — the rest still need to be paid.
-      console.error(`MINING: accrual failed for session ${s.id}`, err);
+      // Fall back to per-session computation rather than skipping real earnings.
+      console.error("MINING: batched hashrate failed, falling back per session", err);
+    }
+    for (const s of group) {
+      try {
+        await accrueSession(s.user_id, s, cfg, rates.get(s.user_id));
+      } catch (err) {
+        // One bad session must not stop the sweep — the rest still need to be paid.
+        console.error(`MINING: accrual failed for session ${s.id}`, err);
+      }
     }
   }
   return sessions.length;
 }
 
 export async function sessionState(userId: string): Promise<SessionState> {
-  await accrue(userId);
+  // THE SETTINGS ARE READ ONCE AND THREADED THROUGH, AND THE ACCRUAL'S OWN
+  // HASHRATE IS REUSED FOR DISPLAY. This function used to load settings twice and
+  // compute the hashrate twice (once inside accrue, once here), and the
+  // /mining/state route then computed it a THIRD time for the breakdown - on the
+  // single most-requested endpoint in the app, each computation being 8 queries
+  // including two walks of the referral tree. Audit 2026-09-04, finding B2.
+  //
+  // Reusing accrual's number is correct, not a shortcut: nothing between the two
+  // points changes a multiplier. Accrual claims the device and writes shares; it
+  // touches no rig, boost, streak or referral row. When accrual had no time owing
+  // it computed nothing, and only then is it computed here.
   const s = await loadMiningSettings();
+  const accrued = await accrue(userId, s);
   const epoch = epochOf();
 
-  const [session, shares, { hashrate }] = await Promise.all([
+  const [session, shares, hr] = await Promise.all([
     sql.get<{ expires_at: string; device_id: string | null }>(
       "SELECT expires_at, device_id FROM mining_sessions WHERE user_id = ? AND status = 'active'", userId),
     sql.get<{ shares: string }>(
       "SELECT shares FROM mining_shares WHERE epoch = ? AND user_id = ?", epoch, userId),
-    hashrateOf(userId, s),
+    accrued ?? hashrateOf(userId, s),
   ]);
+  const { hashrate, breakdown } = hr;
 
   const mine = Number(shares?.shares ?? 0);
 
@@ -568,6 +797,7 @@ export async function sessionState(userId: string): Promise<SessionState> {
     active: Boolean(session),
     expiresAt: session?.expires_at,
     hashrate,
+    breakdown,
     sharesToday: mine,
     estimatedRoziMicro: earnedTodayMicro,
     // Only the pool model's number is a moving estimate. The pi model's is what
@@ -603,7 +833,21 @@ export async function settleEpoch(epoch: number): Promise<SettlementResult> {
     // cap, and together mint past it. The per-epoch primary key stops a double
     // settlement of the SAME day; it does nothing for this. The cap is the one
     // promise about ROZI that has to be literally true, so it gets a real lock.
-    await t.run("SELECT pg_advisory_xact_lock(hashtext('rozi-settlement'))");
+    //
+    // ⚠️ TRY, NOT WAIT, AND THE DIFFERENCE MATTERS UNDER LOAD. A blocking
+    // `pg_advisory_xact_lock` made a waiting tick hold one pooled connection for
+    // as long as the holder ran — measured at 17 s for 100,000 miners — and the
+    // timers fire on a fixed interval with no idea a previous one is still going,
+    // so overlapping ticks used to consume a connection each until the pool died
+    // (audit 2026-09-04, finding B8). Settlement is idempotent on the
+    // `mining_epochs` primary key and the caller retries on the next tick, so
+    // declining to wait costs nothing and cannot skip a day.
+    const lock = await t.get<{ locked: boolean }>(
+      "SELECT pg_try_advisory_xact_lock(hashtext('rozi-settlement')) AS locked");
+    if (!lock?.locked) {
+      return { epoch, emissionMicro: 0, totalShares: 0, miners: 0, emitted: 0, withheld: 0,
+               skipped: "another settlement is already running" };
+    }
 
     const already = await t.get<{ epoch: number }>(
       "SELECT epoch FROM mining_epochs WHERE epoch = ?", epoch);
