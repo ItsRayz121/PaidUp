@@ -1,0 +1,3 @@
+Command: npx tsc --noEmit
+Working directory: G:\Earning App\api
+Result: PASS (exit 0; no diagnostics)

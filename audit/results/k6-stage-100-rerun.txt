@@ -1,0 +1,205 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: g:/Earning App/audit/tests/k6-journeys.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 3000 max VUs, 1m10s max duration (incl. graceful stop):
+              * screens: 100.00 iterations/s for 40s (maxVUs: 400-3000, gracefulStop: 30s)
+
+
+running (0m00.9s), 0085/0400 VUs, 6 complete and 0 interrupted iterations
+screens   [   2% ] 0085/0400 VUs  00.9s/40s  100.00 iters/s
+
+running (0m01.9s), 0175/0400 VUs, 17 complete and 0 interrupted iterations
+screens   [   5% ] 0175/0400 VUs  01.9s/40s  100.00 iters/s
+
+running (0m02.9s), 0247/0400 VUs, 44 complete and 0 interrupted iterations
+screens   [   7% ] 0247/0400 VUs  02.9s/40s  100.00 iters/s
+
+running (0m03.9s), 0262/0400 VUs, 129 complete and 0 interrupted iterations
+screens   [  10% ] 0262/0400 VUs  03.9s/40s  100.00 iters/s
+
+running (0m04.9s), 0269/0400 VUs, 222 complete and 0 interrupted iterations
+screens   [  12% ] 0269/0400 VUs  04.9s/40s  100.00 iters/s
+
+running (0m05.9s), 0253/0400 VUs, 338 complete and 0 interrupted iterations
+screens   [  15% ] 0253/0400 VUs  05.9s/40s  100.00 iters/s
+
+running (0m06.9s), 0242/0400 VUs, 449 complete and 0 interrupted iterations
+screens   [  17% ] 0242/0400 VUs  06.9s/40s  100.00 iters/s
+
+running (0m07.9s), 0214/0400 VUs, 577 complete and 0 interrupted iterations
+screens   [  20% ] 0214/0400 VUs  07.9s/40s  100.00 iters/s
+
+running (0m08.9s), 0168/0400 VUs, 723 complete and 0 interrupted iterations
+screens   [  22% ] 0168/0400 VUs  08.9s/40s  100.00 iters/s
+
+running (0m09.9s), 0150/0400 VUs, 841 complete and 0 interrupted iterations
+screens   [  25% ] 0150/0400 VUs  09.9s/40s  100.00 iters/s
+
+running (0m10.9s), 0159/0400 VUs, 932 complete and 0 interrupted iterations
+screens   [  27% ] 0159/0400 VUs  10.9s/40s  100.00 iters/s
+
+running (0m11.9s), 0133/0400 VUs, 1058 complete and 0 interrupted iterations
+screens   [  30% ] 0133/0400 VUs  11.9s/40s  100.00 iters/s
+
+running (0m12.9s), 0111/0400 VUs, 1180 complete and 0 interrupted iterations
+screens   [  32% ] 0111/0400 VUs  12.9s/40s  100.00 iters/s
+
+running (0m13.9s), 0076/0400 VUs, 1315 complete and 0 interrupted iterations
+screens   [  35% ] 0076/0400 VUs  13.9s/40s  100.00 iters/s
+
+running (0m14.9s), 0035/0400 VUs, 1456 complete and 0 interrupted iterations
+screens   [  37% ] 0035/0400 VUs  14.9s/40s  100.00 iters/s
+
+running (0m15.9s), 0003/0400 VUs, 1588 complete and 0 interrupted iterations
+screens   [  40% ] 0003/0400 VUs  15.9s/40s  100.00 iters/s
+
+running (0m16.9s), 0000/0400 VUs, 1691 complete and 0 interrupted iterations
+screens   [  42% ] 0000/0400 VUs  16.9s/40s  100.00 iters/s
+
+running (0m17.9s), 0043/0400 VUs, 1748 complete and 0 interrupted iterations
+screens   [  45% ] 0043/0400 VUs  17.9s/40s  100.00 iters/s
+
+running (0m18.9s), 0000/0400 VUs, 1891 complete and 0 interrupted iterations
+screens   [  47% ] 0000/0400 VUs  18.9s/40s  100.00 iters/s
+
+running (0m19.9s), 0003/0400 VUs, 1988 complete and 0 interrupted iterations
+screens   [  50% ] 0003/0400 VUs  19.9s/40s  100.00 iters/s
+
+running (0m20.9s), 0001/0400 VUs, 2090 complete and 0 interrupted iterations
+screens   [  52% ] 0001/0400 VUs  20.9s/40s  100.00 iters/s
+
+running (0m21.9s), 0035/0400 VUs, 2156 complete and 0 interrupted iterations
+screens   [  55% ] 0035/0400 VUs  21.9s/40s  100.00 iters/s
+
+running (0m22.9s), 0010/0400 VUs, 2281 complete and 0 interrupted iterations
+screens   [  57% ] 0010/0400 VUs  22.9s/40s  100.00 iters/s
+
+running (0m23.9s), 0003/0400 VUs, 2388 complete and 0 interrupted iterations
+screens   [  60% ] 0003/0400 VUs  23.9s/40s  100.00 iters/s
+
+running (0m24.9s), 0003/0400 VUs, 2488 complete and 0 interrupted iterations
+screens   [  62% ] 0003/0400 VUs  24.9s/40s  100.00 iters/s
+
+running (0m25.9s), 0063/0400 VUs, 2528 complete and 0 interrupted iterations
+screens   [  65% ] 0063/0400 VUs  25.9s/40s  100.00 iters/s
+
+running (0m26.9s), 0077/0400 VUs, 2614 complete and 0 interrupted iterations
+screens   [  67% ] 0077/0400 VUs  26.9s/40s  100.00 iters/s
+
+running (0m27.9s), 0063/0400 VUs, 2728 complete and 0 interrupted iterations
+screens   [  70% ] 0063/0400 VUs  27.9s/40s  100.00 iters/s
+
+running (0m28.9s), 0038/0400 VUs, 2853 complete and 0 interrupted iterations
+screens   [  72% ] 0038/0400 VUs  28.9s/40s  100.00 iters/s
+
+running (0m29.9s), 0014/0400 VUs, 2977 complete and 0 interrupted iterations
+screens   [  75% ] 0014/0400 VUs  29.9s/40s  100.00 iters/s
+
+running (0m30.9s), 0001/0400 VUs, 3090 complete and 0 interrupted iterations
+screens   [  77% ] 0001/0400 VUs  30.9s/40s  100.00 iters/s
+
+running (0m31.9s), 0004/0400 VUs, 3187 complete and 0 interrupted iterations
+screens   [  80% ] 0004/0400 VUs  31.9s/40s  100.00 iters/s
+
+running (0m32.9s), 0001/0400 VUs, 3290 complete and 0 interrupted iterations
+screens   [  82% ] 0001/0400 VUs  32.9s/40s  100.00 iters/s
+
+running (0m33.9s), 0001/0400 VUs, 3390 complete and 0 interrupted iterations
+screens   [  85% ] 0001/0400 VUs  33.9s/40s  100.00 iters/s
+
+running (0m34.9s), 0028/0400 VUs, 3463 complete and 0 interrupted iterations
+screens   [  87% ] 0028/0400 VUs  34.9s/40s  100.00 iters/s
+
+running (0m35.9s), 0001/0400 VUs, 3590 complete and 0 interrupted iterations
+screens   [  90% ] 0001/0400 VUs  35.9s/40s  100.00 iters/s
+
+running (0m36.9s), 0003/0400 VUs, 3688 complete and 0 interrupted iterations
+screens   [  92% ] 0003/0400 VUs  36.9s/40s  100.00 iters/s
+
+running (0m37.9s), 0026/0400 VUs, 3765 complete and 0 interrupted iterations
+screens   [  95% ] 0026/0400 VUs  37.9s/40s  100.00 iters/s
+
+running (0m38.9s), 0001/0400 VUs, 3890 complete and 0 interrupted iterations
+screens   [  97% ] 0001/0400 VUs  38.9s/40s  100.00 iters/s
+
+running (0m39.9s), 0000/0400 VUs, 3991 complete and 0 interrupted iterations
+screens   [ 100% ] 0000/0400 VUs  39.9s/40s  100.00 iters/s
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations
+    ✓ 'count<1' count=0
+
+    http_req_duration
+    ✗ 'p(95)<750' p(95)=1.52s
+    ✗ 'p(99)<1500' p(99)=2.77s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 18923   473.047648/s
+    checks_succeeded...: 100.00% 18923 out of 18923
+    checks_failed......: 0.00%   0 out of 18923
+
+    ✓ 200 /tasks
+    ✓ 200 /features
+    ✓ 200 /content/home
+    ✓ 200 /mining/state
+    ✓ 200 /wallet/balance
+    ✓ 200 /notifications
+    ✓ 200 /mining/rigs
+    ✓ 200 /mining/history
+    ✓ 200 /mining/boosters
+    ✓ 200 /referrals/me
+    ✓ 200 /leaderboard
+    ✓ 200 /wallet/ledger
+    ✓ 200 /usdt
+    ✓ 200 /withdrawals
+    ✓ 200 /withdrawals/addresses
+    ✓ 200 /wallet/bnb/withdrawals
+    ✓ 200 /wallet/usdt-task-rewards
+
+    CUSTOM
+    screen_duration................: avg=753.53ms min=1ms     med=297ms    max=3.35s p(90)=2.38s    p(95)=2.77s
+    screen_home....................: avg=817.54ms min=10ms    med=352.5ms  max=3.3s  p(90)=2.59s    p(95)=2.77s
+    screen_mine....................: avg=780.63ms min=5ms     med=283.5ms  max=3.35s p(90)=2.51s    p(95)=2.78s
+    screen_refer...................: avg=448.6ms  min=3ms     med=169ms    max=1.88s p(90)=1.29s    p(95)=1.52s
+    screen_tasks...................: avg=516.12ms min=1ms     med=213ms    max=2.02s p(90)=1.5s     p(95)=1.65s
+    screen_wallet..................: avg=806.05ms min=7ms     med=335ms    max=3.34s p(90)=2.71s    p(95)=2.81s
+
+    HTTP
+    http_req_duration..............: avg=315.47ms min=0s      med=90.1ms   max=3.3s  p(90)=808.65ms p(95)=1.52s
+      { expected_response:true }...: avg=315.47ms min=0s      med=90.1ms   max=3.3s  p(90)=808.65ms p(95)=1.52s
+    http_req_failed................: 0.00%  0 out of 18923
+    http_reqs......................: 18923  473.047648/s
+
+    EXECUTION
+    dropped_iterations.............: 0      0/s
+    iteration_duration.............: avg=753.68ms min=713.3µs med=296.81ms max=3.35s p(90)=2.38s    p(95)=2.77s
+    iterations.....................: 4000   99.994218/s
+    vus............................: 0      min=0          max=269
+    vus_max........................: 400    min=400        max=400
+
+    NETWORK
+    data_received..................: 15 MB  386 kB/s
+    data_sent......................: 5.9 MB 147 kB/s
+
+
+
+
+running (0m40.0s), 0000/0400 VUs, 4000 complete and 0 interrupted iterations
+screens ✓ [ 100% ] 0000/0400 VUs  40s  100.00 iters/s
+time="2026-09-04T09:46:56+05:00" level=error msg="thresholds on metrics 'http_req_duration' have been crossed"

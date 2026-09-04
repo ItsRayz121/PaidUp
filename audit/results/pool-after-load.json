@@ -1,0 +1,19 @@
+{
+  "samples": 42,
+  "totalConns": {
+    "max": 21,
+    "avg": "19.2"
+  },
+  "activeConns": {
+    "max": 6,
+    "avg": "1.1"
+  },
+  "idleConns": {
+    "max": 20,
+    "avg": "18.0"
+  },
+  "lockWaits": {
+    "max": 0,
+    "avg": "0.0"
+  }
+}

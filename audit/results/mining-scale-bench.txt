@@ -1,0 +1,10 @@
+{"miners":10000,"seedMs":1141,"accrueMs":32345,"accrueSessions":10000,"accrueStatements":96926,"accrueMsPerUser":3.235,"settleMs":1644,"settleStatements":775,"settleMsPerUser":0.164,"settledMiners":10000,"emittedMicro":8333330000,"skipped":null}
+{"miners":100000,"seedMs":9653,"accrueMs":361129,"accrueSessions":100000,"accrueStatements":998601,"accrueMsPerUser":3.611,"settleMs":17206,"settleStatements":1594,"settleMsPerUser":0.172,"settledMiners":100000,"emittedMicro":83333300000,"skipped":null}
+
+=== SUMMARY (local Postgres, loopback, no network RTT) ===
+┌─────────┬────────┬────────┬──────────┬────────────────┬──────────────────┬─────────────────┬──────────┬──────────────────┬─────────────────┬───────────────┬──────────────┬─────────┐
+│ (index) │ miners │ seedMs │ accrueMs │ accrueSessions │ accrueStatements │ accrueMsPerUser │ settleMs │ settleStatements │ settleMsPerUser │ settledMiners │ emittedMicro │ skipped │
+├─────────┼────────┼────────┼──────────┼────────────────┼──────────────────┼─────────────────┼──────────┼──────────────────┼─────────────────┼───────────────┼──────────────┼─────────┤
+│ 0       │ 10000  │ 1141   │ 32345    │ 10000          │ 96926            │ 3.235           │ 1644     │ 775              │ 0.164           │ 10000         │ 8333330000   │ null    │
+│ 1       │ 100000 │ 9653   │ 361129   │ 100000         │ 998601           │ 3.611           │ 17206    │ 1594             │ 0.172           │ 100000        │ 83333300000  │ null    │
+└─────────┴────────┴────────┴──────────┴────────────────┴──────────────────┴─────────────────┴──────────┴──────────────────┴─────────────────┴───────────────┴──────────────┴─────────┘

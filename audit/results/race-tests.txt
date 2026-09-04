@@ -1,0 +1,21 @@
+FAIL | OTP single-use under concurrency (12 parallel confirms of ONE code)
+      expected: exactly 1 accepted
+      actual:   4 accepted (1 distinct sessions issued)
+      statuses: 200,200,400,400,400,400,400,400,400,400,200,200
+PASS | Mining claim double-credit (12 parallel claims of one parked reward)
+      expected: 5000000 micro credited, 1 success
+      actual:   5000000 micro credited, 1 success, 0 unclaimed rows left
+      statuses: 400,400,400,200,400,400,400,400,400,400,400,400
+PASS | Withdrawal double-spend (10 parallel requests for the whole balance)
+      expected: exactly 1 accepted, balance never negative
+      actual:   1 accepted, 1 requests totalling 5000 points, final balance 0
+      statuses: 200,400,400,400,400,400,400,400,400,400 | first body: {"error":"You do not have that many points yet."}
+
+=== RACE TEST SUMMARY ===
+┌─────────┬────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┬─────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ (index) │ test                                                                   │ expected                                     │ actual                                                          │ verdict │ detail                                                                                                              │
+├─────────┼────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0       │ 'OTP single-use under concurrency (12 parallel confirms of ONE code)'  │ 'exactly 1 accepted'                         │ '4 accepted (1 distinct sessions issued)'                       │ 'FAIL'  │ 'statuses: 200,200,400,400,400,400,400,400,400,400,200,200'                                                         │
+│ 1       │ 'Mining claim double-credit (12 parallel claims of one parked reward)' │ '5000000 micro credited, 1 success'          │ '5000000 micro credited, 1 success, 0 unclaimed rows left'      │ 'PASS'  │ 'statuses: 400,400,400,200,400,400,400,400,400,400,400,400'                                                         │
+│ 2       │ 'Withdrawal double-spend (10 parallel requests for the whole balance)' │ 'exactly 1 accepted, balance never negative' │ '1 accepted, 1 requests totalling 5000 points, final balance 0' │ 'PASS'  │ 'statuses: 200,400,400,400,400,400,400,400,400,400 | first body: {"error":"You do not have that many points yet."}' │
+└─────────┴────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

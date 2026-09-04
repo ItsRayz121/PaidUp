@@ -1,0 +1,2387 @@
+Each npm test script ran in its own fresh copied API directory and PGlite database. tsx could not start because Node os.userInfo() fails in this Windows sandbox, so Node 24 --experimental-transform-types executed the same TypeScript entry points.
+
+===== npm script test:admin: tsx src/tests/admin.e2e.ts =====
+(node:10724) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- manual points adjustment --
+  ok   credit lands in the ledger
+  ok   debit reduces balance
+  ok   adjustment cap is configured
+  ok   a debit past zero is refused
+  ok   ledger is append-only (2 rows, balance = their sum)
+
+-- audit trail --
+  ok   privileged action is attributed to the actor
+
+-- suspension is actually enforced --
+  ok   active user passes the guard
+  ok   SUSPENDED user is blocked from earner routes (403)
+  ok   restored user can act again
+
+-- suspension revokes STAFF access too (security review finding) --
+  ok   suspended ADMIN is refused by the staff guard's status check
+  ok   ...even though the admin_users row still exists
+
+-- last-admin lockout protection --
+  ok   rule: demoting the last admin is refused
+  ok   with a second admin, demotion is allowed
+
+-- role changes --
+  ok   role can be changed
+  ok   staff access can be removed
+
+15 passed, 0 failed
+
+===== npm script test:proxy: tsx src/tests/proxy.e2e.ts =====
+(node:2420) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+-- no trustProxy (the bug: everyone looks identical) --
+  ok   without trustProxy, req.ip ignores the real client
+
+-- trustProxy: 1 (Railway only, api on DNS-only) --
+  ok   req.ip is the real user
+  ok   a client CANNOT forge its IP by prepending X-Forwarded-For
+  ok   ...and trustProxy:true WOULD have been forgeable (why we use a hop count)
+
+-- trustProxy: 2 (Cloudflare orange-cloud in front of Railway) --
+  ok   req.ip is the real user through two hops
+
+5 passed, 0 failed
+
+===== npm script test:mining: tsx --test src/tests/mining.test.ts =====
+(node:15656) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ epochs are whole UTC days from genesis (1.5574ms)
+✔ a session crossing midnight is split across BOTH days (0.9912ms)
+✔ a session inside one day is a single slice (0.1567ms)
+✔ a session spanning several days lands on every one of them (0.475ms)
+✔ epochEndMs is the exact start of the next day (0.2765ms)
+✔ emission halves every halvingEpochs (0.4025ms)
+✔ total emission over all time converges under the supply cap (3.3484ms)
+✔ the supply cap is a hard ceiling even if an Admin fat-fingers the emission (0.3959ms)
+✔ the supply cap holds in MICRO — the unit change did not widen the ceiling (0.2404ms)
+✔ a miner's payout is a SHARE of the pot, so the pot can never be exceeded (0.5846ms)
+✔ no shares mined => nothing is emitted (0.2454ms)
+✔ adding miners dilutes everyone — difficulty self-adjusts (0.2301ms)
+✔ rig cost outruns rig power — the upgrade tree is a treadmill (0.36ms)
+✔ hashrate: boosts stack additively, not multiplicatively (2.2252ms)
+✔ hashrate: the ad boost is a FLAT add applied AFTER the multipliers (0.2964ms)
+✔ hashrate: streak maxes out at 2x and stops there (0.2307ms)
+✔ hashrate: a referral parasite cannot out-earn a real miner (0.1304ms)
+✔ hashrate: the per-user cap holds no matter what (0.1334ms)
+✔ CONVERSION: a window can never pay out more Points than its pot (0.8949ms)
+✔ CONVERSION: the rate floats — more burners means a smaller share each (0.1747ms)
+✔ CONVERSION: burning nothing pays nothing (0.0916ms)
+✔ CEILING: a fresh miner may convert the configured share of what they mined (0.1341ms)
+✔ CEILING: converting spends the allowance, and it does not come back (0.083ms)
+✔ CEILING: splitting a burn into many small ones cannot exceed the cap (0.1117ms)
+✔ CEILING: ROZI received by transfer does not raise the allowance (0.072ms)
+✔ CEILING: 100% means no ceiling, 0% means nothing converts (0.0682ms)
+✔ CEILING: a percentage over 100 is clamped, never a bonus (0.0632ms)
+✔ CEILING: never negative, even if an Admin lowers the cap after conversions (0.0767ms)
+✔ CEILING: the floor rounds in the treasury's favour (0.0639ms)
+✔ PI: a baseline miner mining a full day earns exactly the base rate (0.1443ms)
+✔ PI: multipliers multiply the rate, exactly (0.1462ms)
+✔ PI: mining a third of a day earns a third of the rate (0.1656ms)
+✔ PI: NO DILUTION — another miner joining cannot reduce your payout (0.1975ms)
+✔ PI: halving is a clean 50% cut to the PERSON, not a 20x collapse (0.1835ms)
+✔ PI: a x2 multiplier exactly offsets one halving (0.1231ms)
+✔ PI: base rate halves once per milestone the population has passed (0.3918ms)
+✔ PI: milestone list is order-insensitive and drops junk without throwing (0.56ms)
+✔ PI: the supply cap still holds — payouts scale down when the pool runs dry (0.2779ms)
+✔ PI: flooring keeps the error in the treasury's favour, never the user's (0.1633ms)
+✔ PI: THE OLD FAILURE MODE IS FIXED — a low rate still pays a partial day (0.159ms)
+✔ PI: the launch rate of 2.5/day is what the founder asked for (0.1175ms)
+✔ THE SUPPLY CAP AND THE MINING RATE ARE ONE DECISION, NOT TWO (0.1467ms)
+ℹ tests 42
+ℹ suites 0
+ℹ pass 42
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 429.7656
+
+===== npm script test:custody: tsx --test src/tests/custody.test.ts =====
+(node:22028) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ no xpub configured => custody reports disabled (1.5729ms)
+✔ deriveAddress refuses to run without an xpub (0.4954ms)
+✔ with an xpub configured, custody reports enabled (8.0577ms)
+✔ address(0) matches the standard m/44'/60'/0'/0/0 path every wallet uses (77.9699ms)
+✔ addresses are deterministic — same index, same address, every call (16.4682ms)
+✔ addresses are distinct per index (87.8574ms)
+✔ the derived address carries a valid EIP-55 checksum (mixed case, not all-lower) (4.6634ms)
+✔ out-of-range indexes are refused, not silently wrapped (0.3513ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 639.357
+
+===== npm script test:signer: tsx --test src/tests/signer.test.ts =====
+(node:20572) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ encrypt/decrypt round-trips a secret exactly (2.0111ms)
+✔ decrypting with the wrong key fails loudly, not silently (0.5551ms)
+✔ a configured, correctly-encrypted key decrypts to the exact private key (58.0656ms)
+✔ USDT transfer calldata matches the known ERC-20 encoding (2.7547ms)
+✔ BEP20 USDT's 18 decimals are used, not the 6 most USDT deployments use (0.4507ms)
+✔ canSettle refuses a chain with no RPC endpoint configured (0.2244ms)
+✔ canSettle refuses a chain with no known USDT contract (base, aptos) (0.6687ms)
+✔ canSettle allows bep20 once RPC, chain and treasury key are all present (0.6377ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2837.2696
+
+===== npm script test:custodyseeds: tsx --test src/tests/custodySeeds.test.ts =====
+(node:7676) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ no seed configured => sweep signing reports disabled (1.318ms)
+✔ deriveChildPrivateKey refuses to run without a configured seed (0.3679ms)
+✔ with a seed configured, sweep signing reports enabled (3.4101ms)
+✔ a child's private key controls the EXACT address custody.ts derives for it (80.5099ms)
+✔ derivation is deterministic — same index, same key, every call (3.2332ms)
+✔ out-of-range indexes are refused, not silently wrapped (0.3488ms)
+✔ a decrypted value with no private key (an xpub, not an xprv) is refused loudly (1.2515ms)
+✔ EVM and TRON each need their own seed — one family configured does not enable another (0.2763ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 688.8352
+
+===== npm script test:deposits: tsx src/tests/deposits.e2e.ts =====
+(node:16264) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- a brand-new deposit, block hash unchanged: credits exactly once --
+  ok   status is 'credited'
+  ok   the ledger credited exactly the observed amount
+  ok   the chain_deposits row is 'credited' with a ledger id attached
+
+-- the SAME event observed twice (poller re-run, or a webhook racing it) --
+  ok   first call credits
+  ok   second call is a no-op, not a second credit
+  ok   same chain_deposits row both times
+  ok   the user was paid EXACTLY ONCE, not twice
+  ok   exactly one ledger row exists for this deposit
+
+-- a DIFFERENT log index in the SAME transaction is a SEPARATE deposit --
+  ok   both credit, as two distinct rows
+  ok   user A was paid
+  ok   user B was paid too — the shared tx hash did not collide them
+
+-- a reorg underneath an unconfirmed deposit: NEVER credited --
+  ok   status is 'reorged_out'
+  ok   NOTHING was credited
+  ok   re-processing a reorged event stays reorged_out, forever
+  ok   still nothing credited
+
+-- the block simply no longer exists at that height (deep reorg / stub gap) --
+  ok   a missing block is treated as reorged_out, not credited on a null
+  ok   nothing credited
+
+-- native (BNB) deposit: recorded and confirmed, NO ledger touched --
+  ok   status is 'confirmed'
+  ok   native_deposits row is 'confirmed' with the observed amount
+  ok   the USDT ledger balance is untouched by a BNB deposit
+
+-- native (BNB) deposit: same tx observed twice is a no-op, not two rows --
+  ok   first call confirms
+  ok   second call is a no-op
+  ok   same native_deposits row both times
+  ok   exactly one row for this tx, not two
+
+-- native (BNB) deposit: a reorg underneath it is never shown as confirmed --
+  ok   status is 'reorged_out'
+  ok   stays reorged_out on re-processing
+
+-- scanEvmNativeChain: only a nonzero top-level transfer to a KNOWN address counts --
+  ok   exactly one deposit found
+  ok   it is tx1, for the right user and amount
+  ok   scannedTo is the block requested
+
+-- scanEvmChain: a provider's block-range limit is survived by shrinking, not by failing --
+  ok   the deposit was found despite the provider's tighter limit
+  ok   the scanned window shrank well under the original 10,000-block request
+  ok   the recovered deposit credits normally
+  ok   the user's balance reflects it
+
+-- a deposit ALREADY credited via a manual usdt_topups claim: scanner must NOT double-pay --
+  ok   scanner reports 'already_credited', not a fresh credit
+  ok   the balance did NOT move — no second payment
+  ok   exactly ONE topup ledger row exists for this user (the manual one)
+  ok   the chain_deposits row is closed as 'credited', pointed at the MANUAL ledger entry
+
+37 passed, 0 failed
+
+===== npm script test:withdrawcontrols: tsx src/tests/withdrawControls.e2e.ts =====
+(node:7704) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- below the step-up threshold: no code needed --
+  ok   request succeeds with no stepUpCode field at all
+  ok   stays pending (manual mode)
+
+-- at/above the threshold: refused without a code --
+  ok   refused with 400
+  ok   tells the client a step-up code is needed
+  ok   and NOTHING was held — no request row was created
+
+-- requesting the code, then using the WRONG one --
+
+  ✉  [DEV] Login code for stepup3-75c7310d-f63d-45a9-b7fe-dfa570c294ad@t.test: 313899  (set RESEND_API_KEY to email it)
+
+  ok   request-step-up succeeds
+  ok   the wrong code is refused
+  ok   still nothing was held
+
+-- the RIGHT code succeeds, and cannot be replayed --
+
+  ✉  [DEV] Login code for stepup4-84cbb917-9bde-4bed-9b58-eadb18ca63f3@t.test: 936926  (set RESEND_API_KEY to email it)
+
+  ok   the correct code is accepted
+  ok   and the request is created (pending, manual mode)
+  ok   replaying the SAME code a second time is refused
+
+-- security fix: splitting into sub-threshold requests does not skip step-up --
+  ok   first chunk needs no code (well under the threshold alone)
+  ok   second chunk still needs no code (2*chunk still under threshold)
+  ok   the THIRD chunk — individually still under the threshold — now requires a code, because the 24h total crossed it
+
+  ✉  [DEV] Login code for stepup5-2c9da79f-9121-424c-bb05-b1896d2ed45a@t.test: 348453  (set RESEND_API_KEY to email it)
+
+  ok   ...and succeeds once the code is supplied
+
+-- a Telegram-only account (synthetic email) cannot be asked for a large withdrawal --
+  ok   refused with a clear reason instead of a stuck stepUpRequired loop
+
+-- velocity: many small requests in 24h raise a soft flag, and never block --
+  ok   every request in the run still succeeds — this NEVER blocks
+  ok   a withdrawal_velocity flag was raised
+  ok   it is medium severity, not a hard signal
+  ok   one more request does not raise a SECOND flag (deduped)
+
+-- velocity: staying under the count raises nothing --
+  ok   no flag for a single ordinary request
+
+21 passed, 0 failed
+
+===== npm script test:autowithdraw: tsx src/tests/autoWithdraw.e2e.ts =====
+(node:8960) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- payout mode off => never auto-settles --
+  ok   request succeeds
+  ok   stays pending — manual mode never auto-settles
+  ok   and the row itself agrees
+
+-- onchain mode, but no treasury key configured => never auto-settles --
+  ok   stays pending — no signer means canSettle() is false
+
+-- onchain mode + signer configured, above the auto ceiling => stays manual --
+  ok   stays pending — above config.autoWithdrawMaxPoints falls back to manual
+
+-- under the per-request ceiling, but over the ROLLING 24H CAP => stays manual --
+  ok   stays pending — priorAmount + this request exceeds the 24h cap
+
+-- signer configured, under the ceiling, but the account is HELD => stays manual --
+  ok   stays pending — a held account is never auto-settled
+
+-- a timed hold in the past has already lifted --
+  ok   a hold whose `until` date has passed reads as not held
+  ok   a hold whose `until` date is in the future still reads as held
+  ok   a hold with no `until` date is permanent
+
+-- the withdrawal-hold endpoint itself --
+  ok   an agent cannot set a hold (manager/admin only)
+  ok   an empty reason is refused when setting a hold
+  ok   a manager can set a hold with a reason
+  ok   the reason and the acting staff member are recorded
+  ok   reason: null clears the hold
+  ok   and the row agrees it is cleared
+
+16 passed, 0 failed
+
+===== npm script test:autorefund: tsx src/tests/autoRefund.e2e.ts =====
+(node:1612) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- payout mode off => never auto-settles, exactly today's live behaviour --
+  ok   request succeeds
+  ok   stays pending — manual mode never auto-settles
+  ok   and the row itself agrees
+
+-- onchain mode, but no treasury key configured => never auto-settles --
+  ok   stays pending — no signer means canSettle() is false
+
+-- onchain mode + signer configured, above the per-request ceiling => stays manual --
+  ok   stays pending — above config.autoRefundMaxMicro falls back to manual
+
+-- under the per-request ceiling, but over the ROLLING 24H CAP => stays manual --
+  ok   stays pending — priorMicro + this request exceeds the 24h cap
+
+-- signer configured, under the ceiling, but the account is HELD => stays manual --
+  ok   stays pending — a held account is never auto-settled (same hold as withdrawals)
+  ok   the reusable hold check agrees
+
+8 passed, 0 failed
+
+===== npm script test:mining:e2e: tsx src/tests/mining.e2e.ts =====
+(node:21920) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- epoch settlement: pro-rata, and the pot is never exceeded --
+  ok   emission for the epoch is the configured base
+  ok   both miners were paid
+  ok   payout is pro-rata to shares (alice mined 3x bob)
+  ok   total emitted never exceeds the epoch emission
+  ok   epoch row records what was emitted
+
+-- settlement is idempotent (a retry must not double-pay) --
+  ok   a second settlement of the same epoch is a no-op
+  ok   balances did not move on the re-run
+
+-- the ROZI ledger is append-only, balance = SUM --
+  ok   balance is exactly the sum of the ledger rows
+
+-- a fraud flag WITHHOLDS, and does not inflate honest miners --
+  ok   the flagged miner is paid nothing
+  ok   their share is recorded as withheld, not voided
+  ok   the honest miner still gets only HER half — fraud does not enrich others
+
+-- one device, one miner, one epoch --
+  ok   the first account on the device can mine
+  ok   the second account is NOT hard-blocked (families share phones)
+  ok   but the device is claimed by the first account only
+  ok   and the second account is flagged high-severity
+
+-- unverified email cannot mine (bots are cheap, verified email is not) --
+  ok   an unverified account is refused
+
+-- rigs burn ROZI and raise hashrate --
+  ok   RIG PRICING: Old Phone seeds at 50 ROZI ($5 at $0.10/ROZI)
+  ok   RIG PRICING: ...and that is its USDT price / 0.10
+  ok   buying a rig burns ROZI
+  ok   buying a rig raises hashrate
+
+-- boosts: task % stacks, the ad boost is a flat add, both expire --
+  ok   a +25% task boost scales hashrate by that %
+  ok   an ad boost adds a flat +1 on top of the multipliers
+  ok   an expired boost no longer counts
+
+-- task boost cap: a survey farm cannot stack boosts forever --
+  ok   10 task boosts are capped at 8
+
+-- ad boost cap: an ad-watching burst cannot stack flat adds forever --
+  ok   10 ad boosts are capped at 4 (flat +4)
+  ok   ad flat add and task boost stack independently
+
+-- AD NONCE: a single ad view cannot be redeemed twice --
+  ok   exactly ONE of 10 concurrent redemptions consumes the nonce
+  ok   and the impression ends up rewarded exactly once
+
+-- CONVERSION: a window can never pay out more Points than its pot --
+  ok   THE INVARIANT: points paid never exceed the committed pot
+  ok   the window records what it actually paid
+  ok   the big burner gets the biggest share
+  ok   burned ROZI is gone from the burners' balances
+  ok   a settled window cannot be settled twice
+  ok   SUM(points_paid) over burn rows equals the points actually minted
+  ok   the window reports distinct PEOPLE, not burn rows
+
+-- ACCRUAL SWEEP: a user who closes the app still gets paid --
+  ok   before the sweep, the sleeping user has no shares
+  ok   the sweep books their 3 hours WITHOUT them opening the app
+  ok   and books roughly the right amount
+  ok   sweeping again does not double-credit the same seconds
+
+-- CLAIM: settlement parks ROZI, only claimRozi() pays it out --
+  ok   nothing claimable before the epoch settles
+  ok   settlement makes it CLAIMABLE, not credited
+  ok   but the spendable balance has not moved yet
+  ok   claiming pays exactly the claimable amount
+  ok   and it lands in the real spendable balance
+  ok   nothing left claimable after claiming
+  ok   claiming again with nothing pending pays zero, does not double-pay
+
+-- CLAIM correctness: a fresh unclaimed row is paid in full, none of it lost --
+  ok   the late-arriving row is there before any further claim
+  ok   a claim only ever pays out what is actually pending, never loses it
+  ok   and the balance actually received it — nothing was silently dropped
+
+-- DOUBLE-SPEND: concurrent debits cannot overdraw a balance --
+  skip concurrent-spend race — PGlite is single-session, so it cannot isolate transactions (5/5 spends went through, balance -4000). Set DATABASE_URL to test this for real.
+  ok   the advisory lock is present on every user-scoped spending path
+
+-- the two ledgers stay separate (guardrail #7) --
+  ok   no Points row has a source type outside the allowed set
+  ok   every Point this window minted is attributable to it, and to nothing else
+
+-- PI model: your payout comes from YOUR shares, not a shared pot --
+  ok   PI: a baseline miner mining a full day earns exactly the base rate
+  ok   PI: x2 shares earns exactly x2 — multipliers multiply the rate
+  ok   PI: a third of a day earns a third of the rate
+  ok   PI: NO DILUTION — Carol got the full rate despite two other miners
+  ok   PI: the epoch's emission is the SUM of what miners earned, not a fixed pot
+
+-- PI model: halving is a clean 50% cut to the person --
+  ok   PI: after one halving the same mining earns exactly half
+
+-- PI model: the supply cap still holds when the pool runs dry --
+  ok   PI: the supply cap is never breached, even though demand exceeded it
+  ok   PI: everyone is scaled by the SAME factor — no one is paid in full while another gets zero
+  ok   PI: the scaled payouts add up to the room that was left, not more
+
+-- THE LAUNCH CONFIG: rate 2.5/day, an 8h session, through real settlement --
+  ok   LAUNCH: one 8h session at rate 2.5 pays a real amount, not zero
+  ok   LAUNCH: and it is exactly a third of the daily rate (8h of 24h)
+  ok   LAUNCH: an 8h session at the FULLY-HALVED rate still pays, not zero
+  ok   LAUNCH: the fully-halved 8h session pays ~0.026042 ROZI
+
+65 passed, 0 failed
+
+===== npm script test:kyc: tsx src/tests/kyc.e2e.ts =====
+(node:7628) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- the photos are ENCRYPTED at rest --
+  ok   ciphertext does not contain the plaintext
+  ok   it round-trips back to the exact original bytes
+  ok   encrypting twice gives DIFFERENT ciphertext (the IV is random, never reused)
+  ok   a tampered ciphertext throws instead of returning garbage
+
+-- upload validation: what is actually in the file, not what it claims --
+  ok   a real JPEG is accepted
+  ok   an SVG payload DECLARED as image/jpeg is rejected on its magic bytes
+  ok   an HTML payload declared as image/png is rejected
+  ok   image/svg+xml is not an allowed type at all
+  ok   an oversized photo is rejected (before we allocate it)
+  ok   a non-data-URL is rejected
+
+-- one pending submission per user (the queue cannot be flooded) --
+  ok   a second PENDING submission is refused by the database
+  ok   but a resubmission after a rejection IS allowed
+
+-- GATE 1: only VALID users count toward a halving milestone --
+  ok   five unverified signups do NOT move the halving population
+  ok   one APPROVED user does move it
+  ok   a PENDING user does not count yet
+
+-- GATE 2: an unverified invitee earns their inviter NOTHING --
+  ok   five UNVERIFIED, actively-mining invitees add ZERO referral hashrate
+  ok   verifying ONE invitee starts paying the inviter referral hashrate
+  ok   an approved but INACTIVE invitee still adds nothing (both rules apply)
+
+-- GATE 3: a user cannot withdraw before they are verified --
+  ok   a new user starts unverified
+  ok   submitting moves them to pending, not approved
+  ok   the first review decision wins
+  ok   a second, concurrent decision on the same submission changes nothing
+
+-- GATE 4: the referral first-task bonus fires on the first task AFTER verifying --
+  ok   an UNVERIFIED invitee's first task pays the inviter nothing
+  ok   the first task AFTER verifying pays commission + the first-task bonus
+  ok   the one-time bonus does NOT fire again on the next task
+
+-- the master on/off switch (founder, 2026-08-01) --
+  ok   default: the feature is on
+  ok   on + approved  => satisfied
+  ok   on + none      => NOT satisfied
+  ok   on + pending   => NOT satisfied
+  ok   switched off: the feature reports off
+  ok   off + none     => satisfied (waived, never a dead end)
+  ok   off + pending  => satisfied
+  ok   off + approved => still satisfied
+  ok   switched back on: an unverified user is blocked again
+  ok   ...and an approved one still passes
+  ok   a stored 'none' user is refused while the check is on
+  ok   a stored 'approved' user is allowed while the check is on
+
+-- asking for proof is optional, CREDITING IS NOT (founder, 2026-08-01) --
+  ok   a task created without the column defaults to ASKING for proof
+  ok   a no-proof claim is filed as PENDING, not credited
+  ok   ...with a stand-in line, so the reviewer never sees an empty box
+  ok   no points moved from filing the claim
+  ok   the flag is per-task: one asks, the other does not
+  ok   both remain staff-approved tasks — neither can self-credit
+
+43 passed, 0 failed
+
+===== npm script test:telegram: tsx src/tests/telegram.e2e.ts =====
+(node:16832) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- happy path --
+  ok   a freshly signed initData logs in (200 + token)
+  ok   the account was created against the telegram id
+  ok   with a synthetic never-emailed address
+  ok   logging in AGAIN finds the same account, no duplicate
+  ok   the minted token works on GET /auth/me
+
+-- attacks --
+  ok   editing the user id AFTER signing is rejected
+  ok   a payload signed with the wrong bot token is rejected
+  ok   a captured payload replayed 2 hours later is rejected
+  ok   a signed payload with no user is rejected
+  ok   a non-string body is rejected
+
+-- referral via start_param (inside the signed set) --
+  ok   signup with start_param succeeds
+  ok   the invite edge was recorded (case-insensitive code)
+  ok   referrals row exists
+
+-- config endpoint --
+  ok   config reports telegram enabled
+  ok   config returns a string botUsername
+
+-- Login Widget route (regression guard for the helper refactor) --
+  ok   a signed widget payload logs in
+  ok   a widget payload with a bad signature is rejected
+  ok   a Mini App payload cannot log in at the widget endpoint
+  ok   ...even reshaped with an id field, the signature fails
+
+-- linking Telegram to an email account --
+  ok   linking via Mini App initData succeeds
+  ok   the telegram id landed on the email account
+  ok   linking twice is an idempotent success
+  ok   linking via a signed widget payload succeeds
+  ok   an unsigned link attempt is rejected
+  ok   an empty Telegram-only shell is absorbed by the real account
+  ok   the shell lost the telegram id, the real account holds it
+  ok   a Telegram account with points is NOT taken over (409)
+  ok   the active account keeps its telegram id
+
+-- BINDING LINK (connect from the website, no Telegram login form) --
+  ok   minting a binding code needs only a session
+  ok   the Mini App login with the code signs into the WEBSITE account
+  ok   ...and that account is now connected
+  ok   the telegram id landed on the website account
+  ok   a spent code falls back to a normal login
+  ok   ...and the website account is untouched
+  ok   an EXPIRED code falls back to a normal login
+  ok   ...and does not bind
+  ok   minting a code without a session is refused
+
+-- adding an EMAIL to a Telegram-created account --
+  ok   a Telegram account starts with hasEmail=false
+
+  ✉  [DEV] Login code for linked-788446121@t.test: 342729  (set RESEND_API_KEY to email it)
+
+  ok   link-start sends a code
+  ok   a wrong code is rejected
+  ok   the right code attaches the email
+  ok   email+password now log into the SAME account
+  ok   ...which still has its Telegram connected
+  ok   an account WITH an email cannot start again
+  ok   an email already in use is refused (409)
+
+45 passed, 0 failed
+
+===== npm script test:push: tsx src/tests/push.e2e.ts =====
+(node:15772) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- feature flag --
+  ok   push is OFF in dev (no VAPID keys)
+  ok   sending with push OFF is a quiet no-op, never a throw
+
+-- subscribe bookkeeping --
+  ok   subscribing stores the row
+  ok   re-subscribing the same browser upserts (still one row)
+  ok   ...and refreshes the keys
+  ok   same browser, new account: subscription MOVES to the new user
+  ok   a second device adds a second row
+
+-- delete is scoped to the owner --
+  ok   someone else's endpoint cannot be deleted
+  ok   the owner can delete it
+
+9 passed, 0 failed
+
+===== npm script test:referrals: tsx src/tests/referrals.e2e.ts =====
+(node:7288) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- counting friends, and friends of friends --
+  ok   endpoint answers
+  ok   counts direct friends
+  ok   counts friends of friends
+  ok   does NOT count three levels down
+  ok   each user sees their OWN tree
+  ok   someone with no invites sees zeroes
+
+-- the advertised rate is a floor we always meet --
+  ok   advertises the LOWEST active L1 rate, not the best one
+  ok   advertises the LOWEST active L2 rate
+  ok   advertises the LOWEST active first-task bonus
+  ok   a DISABLED network cannot lower the advertised rate
+
+-- mining speed from friends is advertised too --
+  ok   serves the referral mining percentages
+  ok   a friend's friend is worth less than a friend, in both currencies
+
+-- earnings still come from the ledger --
+  ok   earnedPoints starts at zero for a user with no bonuses
+  ok   earnedPoints sums the referral_bonus ledger rows
+
+-- binding a friend's code after signup --
+  ok   canBind is true for a user with no referrer
+  ok   canBind is false once someone invited you
+  ok   cannot bind your own code
+  ok   unknown code is 404
+  ok   binding a real code succeeds (case-insensitive)
+  ok   users.referred_by is set to the inviter
+  ok   a referrals edge row was written
+  ok   canBind flips to false after binding
+  ok   the inviter's friend count goes up
+  ok   cannot bind a second time
+  ok   a user who was already referred cannot bind
+  ok   a descendant's code is refused (cycle guard)
+
+26 passed, 0 failed
+
+===== npm script test:conversion: tsx src/tests/conversion.e2e.ts =====
+(node:13172) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- the ceiling is a percentage of what you MINED --
+  ok   the window is open and reported
+  ok   allowance is 30% of mined
+  ok   the ceiling percentage is reported for the copy
+  ok   nothing converted yet
+  ok   a burn inside the ceiling succeeds
+  ok   the allowance drops by what was burned
+  ok   ROZI actually left the ledger
+  ok   a burn OVER the ceiling is refused
+  ok   the refusal says how much is left
+  ok   the refused burn took nothing
+
+-- splitting a burn cannot get past the ceiling --
+  ok   exactly the ceiling got through, no more
+  ok   total converted equals the ceiling exactly
+
+-- ROZI received from other accounts cannot be converted --
+  ok   the mule holds a fortune
+  ok   but its allowance is only 30% of the 10 it MINED
+  ok   converting the received ROZI is refused
+  ok   converting its own mined share still works
+
+-- concurrent burns cannot both slip past the same ceiling --
+  ok   only the ceiling's worth of concurrent burns succeeded
+  ok   the ledger agrees — never converted past the cap
+
+-- the admin can turn the ceiling off, and back on --
+  ok   at 100% the whole mined amount is convertible
+  ok   and it can all be burned
+  ok   lowering the cap below what was already converted floors at zero
+  ok   and nothing more can be converted
+
+-- with conversion switched off, nothing converts --
+  ok   the screen reports it as closed
+  ok   but still tells the user what they have unlocked
+  ok   burning is refused outright
+
+25 passed, 0 failed
+
+===== npm script test:store: tsx src/tests/store.e2e.ts =====
+(node:12648) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- admin creates an item --
+  ok   admin can add an item
+  ok   the item is in the catalogue with its stock
+
+-- a user spends ROZI on it --
+  ok   the item is on the shelf
+  ok   the price is in micro-ROZI
+  ok   an item needing a delivery detail refuses an empty one
+  ok   the order goes through
+  ok   ROZI left the ledger AT ORDER TIME, not at fulfilment
+  ok   the user sees their order as pending
+
+-- rejecting refunds exactly what was taken --
+  ok   staff can reject an order
+  ok   the refund is the ORIGINAL price, not the new one
+  ok   the same order cannot be rejected twice
+  ok   and the double-reject refunded nothing
+
+-- fulfilling keeps the ROZI --
+  ok   staff can mark an order done
+  ok   a fulfilled order does NOT return the ROZI
+
+-- stock is a real ceiling, even under concurrency --
+  ok   exactly one racer got the last item
+  ok   and exactly one racer was charged
+
+-- a user cannot buy what they cannot afford --
+  ok   an unaffordable order is refused
+  ok   and took nothing
+
+-- a hidden item cannot be bought --
+  ok   a hidden item is off the shelf
+  ok   and cannot be bought by id
+
+-- staff routes are staff-only --
+  ok   an earner cannot create store items
+  ok   an earner cannot decide redemptions
+
+-- bulk referral rates --
+  ok   an admin can set referral rates on every network
+  ok   EVERY network moved, not just one
+  ok   rates above the margin are refused
+  ok   the refusal explains why
+  ok   and nothing was written
+  ok   a partial update is still checked against the stored L1
+  ok   an earner cannot change referral rates
+
+29 passed, 0 failed
+
+===== npm script test:profile: tsx src/tests/profile.e2e.ts =====
+(node:6760) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- a fresh account has nothing set --
+  ok   a new account has no name, no handle and no picture
+  ok   and the handle is not locked
+
+-- the display name is cosmetic and changes freely --
+  ok   the name can be set
+  ok   and changed again immediately — no cooldown on the name
+  ok   changing the name does not lock the handle
+
+-- the @handle: rules --
+  ok   "ab" is refused (too short)
+  ok   "9lives" is refused (starts with a number)
+  ok   "has space" is refused (contains a space)
+  ok   "dots.here" is refused (contains a dot)
+  ok   "waaaaaaaaaaaaaaaaaaaaytoolong" is refused (too long)
+  ok   "admin" is refused (reserved)
+  ok   "rozipay" is refused (reserved)
+  ok   "support" is refused (reserved)
+  ok   a good handle is accepted and stored lowercase
+
+-- the @handle: unique, case-insensitively --
+  ok   a second account cannot take the same handle in different case
+  ok   but a free handle is fine
+
+-- the @handle: the 30-day cooldown --
+  ok   changing the handle again straight away is refused
+  ok   and the refusal says when it opens again
+  ok   re-submitting the SAME handle is a no-op, not a refusal
+  ok   after 30 days the handle can change again
+
+-- the picture --
+  ok   a real JPEG is accepted
+  ok   and comes back as a data URL
+  ok   SVG disguised as a JPEG is refused (stored-XSS attempt)
+  ok   an oversized picture is refused
+  ok   the picture can be removed
+  ok   and it is really gone
+
+-- sending ROZI to an @handle --
+  ok   an @handle resolves to the right user (refused for balance, not identity)
+  ok   an unknown @handle is a clean not-found
+
+-- A HANDLE MUST NOT BE ABLE TO SHADOW SOMEONE'S INVITE CODE --
+  ok   taking the lowercase form of someone's invite code as a handle is refused
+  ok   sending to an invite code still resolves, even with a colliding handle
+  ok   and the invite code beats the squatted handle — the code's owner wins
+
+31 passed, 0 failed
+
+===== npm script test:usdt: tsx src/tests/usdt.e2e.ts =====
+(node:14308) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- it ships OFF, and off means off --
+  ok   the feature reports itself disabled
+  ok   and no treasury address is handed out while it is off
+  ok   a claim while disabled is refused
+
+-- the treasury address is validated before it is published --
+  ok   a junk treasury address is refused (deposits would be unrecoverable)
+  ok   an unknown chain is refused
+  ok   a base treasury is refused — deposits are BEP20 only
+  ok   a aptos treasury is refused — deposits are BEP20 only
+  ok   and bep20 is accepted
+  ok   a real address is accepted
+
+-- claiming a deposit --
+  ok   the feature is now on
+  ok   and the address is published to the user
+  ok   a claim is accepted
+  ok   but NOTHING is credited yet — a claim is not a deposit
+  ok   the same transaction cannot be claimed twice
+  ok   and not by a different account either — one transaction, one claim, ever
+  ok   the same hash in a different case, with an 0x prefix, is still the same claim
+  ok   and padding it with spaces does not make a new one either
+  ok   a claim under the minimum is refused
+  ok   a claim over the ceiling is refused
+
+-- a human confirms it, and their number is the one that counts --
+  ok   the claim is in the review queue
+  ok   confirming credits the balance
+  ok   and it credits the REVIEWER's amount, not the user's claim
+  ok   a second confirmation is refused — one deposit is never paid twice
+  ok   and the balance did not move
+
+-- a rejection credits nothing --
+  ok   a claim can be rejected
+  ok   and nothing was credited for it
+  ok   the user is told why it was rejected
+
+-- buying a machine with USDT --
+  ok   an admin can put a USDT price on a machine
+  ok   the price is shown to the user
+  ok   alongside the ROZI price — both ways to pay, side by side
+  ok   the machine can be bought with USDT
+  ok   the USDT balance went down by the price
+  ok   and the ROZI balance was NOT touched
+  ok   buying beyond the balance is refused
+  ok   and the balance never goes negative
+  ok   a machine with no USDT price cannot be bought with USDT
+  ok   and still nothing was spent
+
+-- paying with ROZI still works, and spends ROZI --
+  ok   a machine can still be bought with mined ROZI
+  ok   ROZI went down
+  ok   and the USDT credit was NOT touched
+
+-- THE ONLY WAY OUT IS A REFUND OF YOUR OWN DEPOSIT --
+  ok   POST /usdt/withdraw still does not exist
+  ok   POST /usdt/withdrawals still does not exist
+  ok   POST /usdt/transfer still does not exist
+  ok   POST /usdt/send still does not exist
+  ok   POST /usdt/convert still does not exist
+  ok   the ledger still refuses a 'withdrawal' row outright (database-level)
+  ok   a refund is refused while the ID check is on
+  ok   the user has deposit credit to refund
+  ok   dust is refused — a BEP20 send costs more gas than it returns
+  ok   you cannot refund more than you deposited
+  ok   a malformed address is refused before anything is held
+  ok   a valid refund request is accepted
+  ok   the money is held immediately (debited on request, not on approval)
+  ok   staff can reject a refund
+  ok   and rejecting puts the money back
+  ok   a handled refund cannot be handled twice
+  ok   staff can mark a refund paid with the on-chain proof
+  ok   marking paid does NOT debit a second time
+  ok   a user with ROZI but no deposit cannot refund a cent
+
+-- ONE CHAIN IN, ONE CHAIN OUT: payouts are BEP20 only --
+  ok   Base is still a chain we can label (old rows must not go blank)
+  ok   Aptos too
+  ok   but only BEP20 is offered for new requests
+  ok   and the offered list is exactly one chain
+  ok   a BEP20 payout address can be saved
+  ok   a Base payout address is refused, even though the address itself is valid
+
+-- per-user deposit addresses (CUSTODY_SPEC.md § 5 step 1) --
+  ok   no xpub configured => no personal address, shared treasury still shown
+  ok   with an xpub configured, a personal address is handed out
+  ok   the shared treasury address still rides along too — this is additive, not a replacement
+  ok   asking again returns the SAME address — it is stored, not re-derived each time
+  ok   a different user gets a different address
+  ok   exactly two rows exist for the two addresses just issued
+  ok   turning the xpub back off falls back to the shared address, address already on record or not
+
+-- wallet balance: ONE combined total, no Locked (founder, 2026-09-03) --
+  ok   nothing is ever Locked any more
+  ok   Available is deposit + earned-USDT ONLY — points are NOT folded in
+  ok   total always equals available (locked is always 0)
+  ok   points-as-USDT is still served, informationally, but separately
+  ok   the response also states the combined minimum in USDT terms
+
+-- POST /wallet/withdraw: real USDT only — deposit + task USDT, NEVER points (founder, un-blended 2026-09-03) --
+  ok   deposit alone covers it => accepted
+  ok   ...creates exactly one refund row for the full amount, no withdrawal_requests row
+  ok   the deposit ledger was actually debited
+  ok   points-only balance => refused, even though $5 of points exists
+  ok   the points ledger is untouched
+  ok   nothing was created
+  ok   task USDT alone covers it => accepted
+  ok   ...creates exactly one earned_usdt-sourced row
+  ok   the earned-USDT ledger was actually debited
+  ok   before topping up: total is $0.60 (points do not count), under the $1 floor
+  ok   ...and asking for all of it is refused: below the $1 minimum
+  ok   now deposit + earned USDT clear $1 => the FULL $1.00 is accepted in one request
+  ok   ...drawing the deposit leg in full
+  ok   ...and the remaining $0.60 from the earned-USDT leg
+  ok   both real-USDT ledgers now read zero — nothing left over, nothing double-spent
+  ok   ...and the 200 points sitting on the account were never touched
+  ok   asking for more than the combined total is refused, and refused BEFORE the $1 floor message
+  ok   nothing was held
+  ok   a request under the $1 minimum is refused even with a much bigger balance sitting there
+  ok   a request the points balance could cover but the real balance cannot is still refused
+  ok   the $2 real deposit was never touched by the refused attempt
+  ok   ...but the real $2 alone is accepted
+  ok   the 50,000 points are still sitting there, completely unaffected
+  ok   with cash-out switched off, a request covered ENTIRELY by deposit still works — same as /usdt/refunds always has
+  ok   ...but a request drawing on task USDT is refused while the switch is off
+  ok   ...and nothing was held
+
+-- BNB withdraw: zero treasury involvement, zero ledger entry --
+  ok   nothing configured => refused outright, no queued-forever request
+  ok   fully configured signing keys, but payoutMode MANUAL => still refused
+  ok   not enough BNB for the amount + its own network fee => refused, nothing held
+  ok   ...and no request row was created at all
+  ok   fully configured, onchain, enough gas => accepted
+  ok   status is 'pending' — signing is left to the background tick, never fired from the route
+  ok   a request row was created, targeting the destination the user asked for
+  ok   the amount was converted to wei (18 decimals), not micro-USDT (6)
+  ok   a second request while one is still in flight is refused (one in-flight request per user)
+
+112 passed, 0 failed
+
+===== npm script test:wallet: tsx src/tests/wallet.e2e.ts =====
+(node:8640) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- the message the user is asked to approve --
+  ok   a challenge is issued for a valid address
+  ok   it names us, so a signature farmed by another site cannot be used here
+  ok   it shows the wallet being connected, in the form the wallet app displays
+  ok   it carries a one-time code
+  ok   it says signing moves no money — the one thing every new user fears
+
+-- the happy path --
+  ok   a correct signature is accepted
+  ok   and the response says the wallet is proved
+  ok   the address is saved
+  ok   stored in the mixed-case form the user's wallet app shows them
+  ok   and marked as proved by signature
+  ok   GET /withdrawals/addresses reports it as checked
+
+-- the address comes from the signature, not from the request --
+  ok   a signature from a different wallet than the one claimed is refused
+  ok   the same wallet succeeds when it is the one being claimed
+  ok   and connecting a second wallet replaces the first
+  ok   a signature over a message we did not issue is refused
+
+-- one challenge, one use, one owner --
+  ok   first use of a challenge works
+  ok   replaying the SAME signature is refused
+  ok   another user cannot spend a challenge minted for someone else
+  ok   and nothing was written to their account
+  ok   an expired challenge is refused
+  ok   a challenge that never existed is refused
+
+-- signatures that are not signatures --
+  ok   empty is refused with a 400, not a crash
+  ok   too short is refused with a 400, not a crash
+  ok   not hex is refused with a 400, not a crash
+  ok   all zeroes is refused with a 400, not a crash
+  ok   a valid-length signature of nothing is refused with a 400, not a crash
+  ok   the challenge still works after failed attempts (a wrong wallet is not an attack)
+
+-- signature malleability is replay --
+  ok   the flipped (high-S) form of a valid signature is refused
+  ok   while the normal form of the same signature is accepted
+
+-- wallets encode v differently, and all of them are real --
+  ok   27/28, the common form is accepted
+  ok   0/1, which some wallets send is accepted
+  ok   27/28 with the other bit points at another key and is refused
+  ok   0/1 with the other bit points at another key and is refused
+
+-- a proof is about ONE address --
+  ok   re-connected
+  ok   a typed-in address saves
+  ok   and it is NOT marked as checked — nobody checked it
+  ok   saving the same address again keeps the proof (differing only in case)
+
+-- the proof reaches whoever approves the payout --
+  ok   a withdrawal to a typed-in address is allowed
+  ok   and it is recorded as NOT proved
+  ok   a withdrawal to the proved address is allowed
+  ok   and it IS recorded as proved
+  ok   withdrawing to a DIFFERENT address is allowed (we never block)
+  ok   but it is NOT proved — proving one wallet proves nothing about another
+  ok   the earlier proved request still reads as proved after the address changed
+  ok   the user's own history carries the same flag
+
+-- the same gates as the rest of the payout path --
+  ok   a challenge on base is refused — we pay out on BEP20 only
+  ok   a challenge on aptos is refused — we pay out on BEP20 only
+  ok   a challenge for a malformed address is refused before any row is written
+
+-- the recovery itself --
+  ok   recoverSigner returns the signing address, lowercased
+  ok   recoverSigner returns null on junk rather than throwing
+  ok   a message with non-ASCII characters still recovers correctly
+  ok   EIP-55 checksumming round-trips
+
+52 passed, 0 failed
+
+===== npm script test:fees: tsx src/tests/fees.e2e.ts =====
+(node:14684) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- off by default: no fee anywhere until an Admin sets a rate --
+  ok   withdrawal succeeds
+  ok   fee_points is 0 with no rate configured
+
+-- withdrawals: 5% + $0.01 fixed, the founder's own example --
+  ok   request succeeds
+  ok   fee_points matches 5% + fixed (60 points on a $1 request)
+  ok   amount held is the FULL request, not the discounted net
+  ok   balance was debited the full 1000, not the net 940
+
+-- withdrawals: a fee that would consume the whole request is refused --
+  ok   refused with 400
+  ok   no request row was created
+
+-- refunds: 5% + $0.01 fixed, same rate, same example --
+  ok   request succeeds
+  ok   feeMicro matches 5% + fixed (60,000 micro on a $1 request)
+  ok   netMicro is amount minus fee (940,000 micro)
+  ok   the row snapshots amount as the FULL request
+  ok   and fee_micro alongside it
+  ok   the user's deposit balance was debited the FULL 1,000,000, not 940,000
+
+-- refunds: rejecting returns the FULL gross amount, not the discounted net --
+  ok   reject succeeds
+  ok   the FULL 1,000,000 came back, not the 940,000 net — nothing was sent, so nothing is kept
+
+-- refunds: staff queue shows the net to actually send, alongside the gross --
+  ok   queue call succeeds
+  ok   row found in queue
+  ok   amount is the gross request (1 USDT)
+  ok   feeAmount is the gas fee (0.06 USDT)
+  ok   netAmount is what staff should actually send (0.94 USDT)
+
+-- refunds: a fee that would consume the whole request is refused up front --
+  ok   refused with 400
+  ok   no request row was created
+  ok   no money was held
+
+24 passed, 0 failed
+
+===== npm script test:payoutrelay: tsx src/tests/payoutRelay.e2e.ts =====
+(node:8724) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- relayAvailable(): gating logic, no network involved --
+  ok   nothing configured => unavailable
+  ok   only the xpub configured => still unavailable (no sweep-signing key)
+  ok   all three configured => available (first successful decrypt, cached for the rest of this process)
+  ok   a non-bep20 chain is never available (Base/Aptos are manual-only)
+
+-- createRelayJob(): idempotent, derives the user's own address --
+  ok   exactly one job row exists for this request
+  ok   the job's from_address is the user's OWN derived deposit address, not treasury
+  ok   needs_prefund is set for a withdrawal (money is not really there yet)
+
+-- withdrawal auto-settle, relay available: 'sending', not 'paid', and a job is opened --
+  ok   request succeeds
+  ok   response status is 'sending' — routed through the relay, not settled synchronously
+  ok   the row itself agrees
+  ok   a relay job was opened, targeting the user's requested destination
+  ok   the job amount matches the withdrawn points converted to USDT (1 USDT = 1000 pts by default)
+
+-- ⚠️ THE LOAD-BEARING CHECK: fully configured signing keys, but payoutMode is MANUAL --
+  ok   stays 'pending' — manual mode wins even though every signing key exists
+  ok   no relay job was ever opened
+
+-- staff 'pay' action: relay available => one-click, no pasted hash required --
+  ok   above the ceiling => stays pending for staff
+  ok   staff approves
+  ok   'pay' succeeds without a pasted hash
+  ok   status is 'sending', not 'paid' — the relay hasn't broadcast yet
+  ok   a relay job now exists, routed to the destination the user asked for
+  ok   'reject' on a 'sending' request is refused (409), not a double payment
+  ok   ...and the request is still 'sending', not 'rejected'
+  ok   'approve' on a 'sending' request is also refused (409)
+  ok   ...status still 'sending' — not knocked back to agent_approved, which would orphan the relay's completion
+
+-- staff 'pay' action, relay unavailable (manual mode): pasted hash still required --
+  ok   manual mode still requires a pasted hash — the manual path is untouched
+  ok   pasting one still works exactly as before
+
+-- refund auto-settle, relay available: THIS is the case that's actually real --
+  ok   refund request succeeds
+  ok   response status is 'sending'
+  ok   the row itself agrees
+  ok   needs_prefund is FALSE — the user's own address already holds this money
+  ok   job destination matches what the user asked for
+
+-- refund staff 'paid' action: relay available => no pasted hash needed --
+  ok   above the refund ceiling stays pending
+  ok   no hash required — the relay path handles it
+
+-- refund staff 'paid' action, relay unavailable (manual mode): pasted hash still required --
+  ok   manual mode refuses without a hash
+  ok   pasting one still works exactly as before
+  ok   no ledger row was written a second time (the debit happened at request time)
+
+-- GAS IS THE USER'S OWN RESPONSIBILITY: refused BEFORE any debit --
+  ok   withdrawal refused (400) when the user's own address has no gas
+  ok   ...and says so in plain language
+  ok   no withdrawal_requests row was created at all — nothing was held
+  ok   no points were ever debited
+  ok   refund refused (400) when the user's own address has no gas
+  ok   ...and says so in plain language
+  ok   no usdt_refund_requests row was created
+  ok   deposit balance is untouched — nothing was debited
+
+-- NO MORE FAKE USDT GAS FEE ON THE RELAY PATH --
+  ok   withdrawal still succeeds
+  ok   fee_points is 0 — the gas-fee rate was NOT applied on the relay path
+  ok   refund still succeeds
+  ok   fee_micro is 0 — the gas-fee rate was NOT applied on the relay path
+  ok   the response itself agrees (netMicro === the full requested amount)
+
+48 passed, 0 failed
+
+===== npm script test:permissions: tsx --test src/tests/permissions.test.ts =====
+(node:22172) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ THE THREE LEGACY ROLES KEEP EXACTLY THE ACCESS THEY HAD (2.3471ms)
+✔ admin is the only role that can hand out roles (0.1901ms)
+✔ only admin can mint or burn a user's balance (0.1771ms)
+✔ the brief's own role examples hold (0.1865ms)
+✔ only admin and finance can run a reward disbursement batch (0.171ms)
+✔ finance and task_manager are NOT a ladder — neither contains the other (0.1629ms)
+✔ analyst can read and cannot write anything (0.1416ms)
+✔ operations runs the platform but cannot pay itself (0.133ms)
+✔ marketing can reach users but not read or move their money (0.1478ms)
+✔ nobody but admin and finance sees a stranger's ID photos (0.229ms)
+✔ every role's permissions are real permissions (0.197ms)
+✔ every role has a human label, and every permission a legacy tier (0.3956ms)
+✔ every permission is reachable by at least one role (0.1592ms)
+✔ isRole fails closed on anything it does not know (0.1092ms)
+✔ a capped approver is defined by the missing permission, not by its name (0.1436ms)
+✔ a role that can decide a withdrawal can also see one (0.2243ms)
+✔ role ids are stable strings the database already accepts (0.1173ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 241.7746
+
+===== npm script test:flags: tsx --test src/tests/flags.test.ts =====
+(node:21680) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ no two flags write to the same place (2.1211ms)
+✔ the five pre-existing switches still delegate to their original key (1.3799ms)
+✔ every flag says what it does and where it is enforced (0.3789ms)
+✔ only flags with genuinely nothing to enforce are marked display-only (9.0788ms)
+✔ the brief's fourteen features are all present (0.3838ms)
+✔ the KYC flag's copy does not claim to make anything safer (0.255ms)
+✔ isFlagId fails closed (0.3523ms)
+✔ a flag id is safe to use as a settings key (3.8354ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 224.1361
+
+===== npm script test:analytics: tsx src/tests/analytics.e2e.ts =====
+(node:21256) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- activity: DAU / WAU / MAU --
+  ok   DAU counts only today
+  ok   WAU counts the last 7 days
+  ok   MAU counts the last 30 days
+  ok   a user active on two days is counted once
+  ok   stickiness is DAU/MAU as a percentage
+
+-- touchActivity writes at most one row per user per day --
+  ok   three calls, one row
+
+-- retention: the cohort must be old enough to have had the chance --
+  ok   D1 cohort is non-empty
+  ok   D1 counts the return
+  ok   a percentage is returned, not a raw count
+  ok   a user who signed up today is not in the D7 cohort
+  ok   ...nor in the D1 cohort
+
+-- the daily series has a row per day, including quiet ones --
+  ok   30 days requested, 30 rows returned
+  ok   the last row is today
+  ok   the first row is 29 days ago
+  ok   every day has a number, not a gap
+  ok   the window is honoured
+  ok   mining series matches the same window
+
+-- task funnel and approval rate --
+  ok   starts counts every attempt
+  ok   credited counts only what paid
+  ok   completion rate is a percentage
+  ok   a rate with no starts is 0, not NaN or Infinity
+
+-- referral conversion counts ACTIVATED invites, not signups --
+  ok   both invites count as signups
+  ok   only the one who finished a task counts as activated
+  ok   conversion is activated/signups as a percentage
+
+-- money: cost and revenue --
+  ok   reward cost includes task points
+  ok   referral cost is broken out on its own
+  ok   reward cost includes the referral spend
+  ok   revenue is never negative
+  ok   revenue per active user divides by MAU, not by every account ever
+  ok   micro-USDT totals are strings, so a big number cannot lose precision
+
+-- per-network margin --
+  ok   the network the completions were on appears
+  ok   margin is derived from the split, not invented
+  ok   margin is never negative
+
+-- the endpoint --
+  ok   admin can read it
+  ok   dashboard endpoint 200s for an admin
+  ok   attention block has every queue key
+  ok   fraud/relay/bnb/recon are { open, cleared } signals
+  ok   the seeded pending withdrawal is counted
+  ok   recentActivity is gone (moved to the Audit log)
+  ok   a non-staff caller is refused the dashboard (403)
+  ok   the window is passed through
+  ok   a huge window is clamped to 90
+  ok   a nonsense window falls back to the default
+  ok   an earner is refused (403)
+  ok   an analyst can read it
+  ok   ...and cannot mint points
+
+46 passed, 0 failed
+
+===== npm script test:stage4: tsx src/tests/stage4.e2e.ts =====
+(node:14896) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- part 34: the user detail endpoint runs at all --
+  ok   200, not a 500 from a mistyped column
+  ok   the user is the one asked for
+  ok   all three balances are present and numeric
+  ok   every new collection is an array
+  ok   both referral directions are answered
+  ok   a missing user is 404, not 500
+
+-- part 34: the three balances are the three LEDGERS, never summed --
+  ok   points read from the points ledger
+  ok   ROZI reads from the ROZI ledger, in micro
+  ok   USDT reads from the USDT ledger, in micro
+  ok   no combined total is served
+
+-- part 34: the withdrawal history joins and aliases correctly --
+  ok   the row comes back
+  ok   payout_rail is served as `chain`
+  ok   payout_address is served as `address`
+  ok   review_note is served as `note`
+  ok   the signed-address proof survives
+  ok   paid summary counts only paid rows, net of fee
+  ok   a pending request does not count as paid
+
+-- part 34: the hold is served as a decided boolean --
+  ok   an open-ended hold is held
+  ok   a hold whose end date has passed is NOT held
+  ok   a hold with a future end date is held
+  ok   no hold reason means not held
+
+-- part 36: the withdrawal queue serves the NET, not just the gross --
+  ok   the queue still reads
+  ok   the fee is on the row
+  ok   netUsdt is amount MINUS fee, not the gross
+  ok   the gross is still served too
+  ok   the queue totals its own rows
+  ok   the total to send is net of every fee
+
+-- cross-check: a 'to send' total only exists where money is OWED --
+  ok   the paid tab still lists its rows
+  ok   ...but serves NO 'to send' total
+  ok   the rejected tab still lists its rows
+  ok   ...but serves NO 'to send' total
+  ok   pending is still owed, so the total is served
+  ok   agent_approved is still owed, so the total is served
+  ok   manager_approved is still owed, so the total is served
+
+-- cross-check: the invite COUNT is not the page size --
+  ok   the list is still capped at 50
+  ok   the COUNT is the real total, not the page size
+  ok   a user with no invites counts zero, not null
+
+-- part 35: Finance can actually reach the money-in queues --
+  ok   Finance can read the deposit queue
+  ok   Finance can read the refund queue
+  ok   Finance can read the withdrawal queue
+  ok   Finance is refused the mining settings the old placement required
+  ok   ...which is why deposits/refunds cannot be gated behind mining.manage
+  ok   Operations can read the deposit queue
+  ok   Operations cannot confirm a deposit
+
+-- the detail screen stays shut to the people it was always shut to --
+  ok   an earner is refused (403)
+  ok   Support can open a user
+  ok   ...and still cannot mint points
+  ok   ...and cannot see the withdrawal queue's money
+
+48 passed, 0 failed
+
+===== npm script test:taskbudget: tsx src/tests/taskBudget.e2e.ts =====
+(node:12016) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- an uncapped campaign is unchanged: every existing row keeps today's behaviour --
+  ok   credit 1 of 5 goes through with no budget set
+  ok   credit 2 of 5 goes through with no budget set
+  ok   credit 3 of 5 goes through with no budget set
+  ok   credit 4 of 5 goes through with no budget set
+  ok   credit 5 of 5 goes through with no budget set
+  ok   an uncapped campaign never pauses itself
+
+-- the conversion cap stops exactly at the number bought --
+  ok   conversion 1 is within budget
+  ok   conversion 2 is within budget
+  ok   conversion 3 is within budget
+  ok   the 4th is refused
+  ok   ...and says which cap it hit
+  ok   the campaign paused ITSELF
+  ok   and stamped when
+  ok   exactly 3 credited completions exist, not 4
+
+-- CONCURRENCY: the cap holds when postbacks arrive together --
+  skip concurrent-budget race — PGlite is single-session, so it cannot isolate transactions (10/10 credits went through against a cap of 4). Set DATABASE_URL to test this for real.
+  ok   credit.ts takes the campaign lock
+  ok   ...BEFORE it reads what the campaign has spent
+  ok   ...inside the same transaction as the completion insert
+
+-- the points cap refuses the completion that would BREAK it, not the one after --
+  ok   40 of 100 fits
+  ok   80 of 100 fits
+  ok   120 of 100 does NOT fit — refused BEFORE it overshoots
+  ok   total points paid never exceeded the cap
+
+-- a paused campaign is invisible and unusable to earners --
+  ok   status is exhausted
+  ok   it is gone from the active set the earner feed reads
+
+-- an Admin's own 'disabled' is never relabelled by a late postback --
+  ok   a disabled campaign stays disabled
+
+-- raising the budget reopens the campaign --
+  ok   paused
+  ok   the admin can raise it
+  ok   raising the cap reactivates it
+  ok   the it-ran-out-once stamp is NOT erased
+  ok   and it credits again
+  ok   null clears the cap back to unlimited
+
+-- a dynamic survey (no task row) is untouched by any of this --
+  ok   credited normally with no task row
+
+-- part 15: revenue, cost and margin per campaign --
+  ok   conversions counted
+  ok   points paid counted
+  ok   revenue = rate x conversions
+  ok   referral commission is counted as cost
+  ok   margin = revenue - (task points + referral points)
+  ok   the staff list serves them pre-computed
+
+-- a losing campaign is reported as losing, not hidden --
+  ok   margin is negative
+
+-- budgetUsedPct is null for an uncapped campaign, never 0 --
+  ok   no cap => budgetUsedPct is null
+  ok   a cap => a real percentage
+
+-- the pure arithmetic, at its edges --
+  ok   no caps is never over budget
+  ok   exactly at the conversion cap refuses the next one
+  ok   one under the conversion cap allows it
+  ok   landing exactly ON the points cap is allowed
+  ok   one point over the points cap is refused
+  ok   a zero-point completion never breaks a points cap
+
+46 passed, 0 failed
+
+===== npm script test:stage5: tsx src/tests/stage5.e2e.ts =====
+(node:23208) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- part 38: the machine endpoints RUN, and report what was really spent --
+  ok   200, not a 500 from a mistyped column
+  ok   owners counts holders, not rows
+  ok   a level-0 row is not an owner
+  ok   levels sold is the sum of levels
+  ok   ROZI burn is a magnitude, never negative
+  ok   USDT spend is a magnitude too
+  ok   a machine nobody bought reports zero, not null
+  ok   boosters: 200, not a 500
+  ok   purchases are counted
+  ok   points spent is a magnitude, from the ledger
+
+-- part 41: the advertised rate is the MIN across ACTIVE networks --
+  ok   200, not a 500 from a mistyped column
+  ok   advertised L1 is the lowest ACTIVE rate
+  ok   advertised L2 is the lowest ACTIVE rate
+  ok   advertised first-task bonus is the lowest ACTIVE one
+  ok   a DISABLED network cannot drag the advertised rate down
+  ok   a window of 0 means lifetime, and one limited row does not become the floor
+  ok   the rows pinning the advertised rate are named
+  ok   margin and headroom are served, not left to the panel
+  ok   when every active network is limited, the floor is the SHORTEST window
+
+-- part 41: the totals are derived from the ledger, not a counter --
+  ok   referral points paid include this credit
+  ok   referred users are counted
+  ok   an invite that did a task counts as activated, one that did nothing does not
+  ok   activation rate is a whole percent, computed once
+  ok   the inviter appears in the top list with real counts
+  ok   ...and its inactive count + % (2 invites, 1 active => 1 inactive, 50%)
+  ok   open fraud flags ride along, so a ring is visible on the same row
+  ok   an invite with no credited task is not 'active'
+
+-- part 42: the leaderboard, and what an exclusion really does --
+  ok   200, not a 500 from a mistyped column
+  ok   staff see the REAL email, not a masked handle — they have to act on it
+  ok   the seeded account is at rank 1, which is the problem this screen exists for
+  ok   the on/off flag is reported next to the board
+  ok   exclusions come back with the board, not from a second call
+  ok   the earner board masks the name
+  ok   the earner board flags the caller's own row
+  ok   excluding a user works
+  ok   the staff board drops them straight away — the cache is busted, not waited out
+  ok   and they are listed as hidden, with the reason
+  ok   the EARNER board drops them too
+  ok   and off the referrer board as well
+  ok   re-hiding an already-hidden user updates the reason instead of failing
+  ok   the new reason is what is stored
+  ok   a reason is required
+  ok   an unknown user is 404, not a row against a ghost
+  ok   un-hiding works
+  ok   and they are back on the board immediately
+  ok   un-hiding someone who is not hidden is 404
+  ok   with the flag off, the staff screen says so
+  ok   but staff can still see the board to work on it
+  ok   while the earner board is empty
+
+-- the permissions these screens are gated on --
+  ok   marketing can read the referral screen
+  ok   marketing can read the leaderboard screen
+  ok   marketing can hide someone
+  ok   support cannot reach the referral rates
+  ok   support cannot reach the leaderboard controls
+  ok   an analyst cannot hide anyone
+  ok   machines stay admin-only — a marketing role cannot reprice a rig
+
+-- token allocation model + full economy history (2026-09-01) --
+  ok   allocations: 200
+  ok   allocations: seeded with 5 buckets totalling 32,300,000
+  ok   allocations: the mining bucket equals the enforced cap
+  ok   allocations: %s add to 100
+  ok   allocations: the mining bucket's 'released' is real emission, flagged live
+  ok   vesting: 12mo in, 6mo cliff + 24mo linear => ~25% released
+  ok   allocations: the mining bucket cannot be deleted
+  ok   allocations: a new bucket can be added
+  ok   allocations: ...and deleted
+  ok   allocations: a marketing role cannot edit the plan
+  ok   epochs: paginated history endpoint returns 200 + total
+
+67 passed, 0 failed
+
+===== npm script test:stage6: tsx src/tests/stage6.e2e.ts =====
+(node:12212) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- part 39: the compose screen knows who it can reach --
+  ok   200, not a 500 from a mistyped column
+  ok   every audience reports a live size
+  ok   'everyone' is the largest audience
+  ok   the active audience counts someone who used the app today
+  ok   the gone-quiet audience counts someone who has not, and not the one who has
+  ok   the can-cash-out audience finds the user with a balance
+  ok   the miner audience finds the miner
+  ok   whether a push can even be sent is stated, not assumed
+
+-- part 39: a broadcast lands in inboxes, and pushes NOTHING by default --
+  ok   sending works
+  ok   it reports how many inboxes it reached
+  ok   the message is in the right user's inbox
+  ok   and it counts as unread
+  ok   a user outside the audience gets nothing
+  ok   the send is recorded with its audience and reach
+  ok   and it did NOT push — the inbox is the channel, a push is an opt-in
+
+-- part 39: the audience is fixed at SEND time, not re-evaluated on read --
+  ok   a user who qualifies AFTER the send does not receive it
+
+-- part 39: read state, and what a message may link to --
+  ok   marking all read clears the badge
+  ok   but the messages are still there to read
+  ok   an external link is refused
+  ok   a protocol-relative link is refused too
+  ok   an internal path is fine
+  ok   an unknown audience is refused rather than silently reaching nobody
+
+-- part 39: one user, one message --
+  ok   messaging one user works
+  ok   it lands in exactly that inbox
+  ok   an unknown user is 404
+  ok   another user cannot mark my notification read
+
+-- part 40: AN INTERNAL NOTE MUST NEVER REACH THE USER --
+  ok   ⚠️ the user does NOT see the internal note
+  ok   ⚠️ and no message of role 'internal' reaches them at all
+  ok   the user still sees their own message
+  ok   staff see the internal note
+  ok   an internal note leaves the status alone — the user is still waiting
+
+-- part 40: a reply still answers, and the queue can be narrowed --
+  ok   a real reply moves it to answered
+  ok   and the user sees the reply
+  ok   counts are served per status, over ALL tickets not the current filter
+  ok   search is case-insensitive on the subject
+  ok   and on the user's email
+  ok   the staff message count ignores internal notes — it is what the USER can see
+
+-- part 40: assignment, so two agents stop answering the same person --
+  ok   an agent can pick a ticket up
+  ok   'me' resolves server-side to the caller, not to whatever the client sent
+  ok   and the other agent can see who owns it
+  ok   the queue can be filtered to one person's tickets
+  ok   a non-staff account cannot be assigned a ticket
+  ok   and handed back to the pool
+  ok   a closed ticket can be reopened
+
+-- part 43: home content, and the window it lives in --
+  ok   creating a card works
+  ok   a live card reaches the home screen
+  ok   an internal link is not marked as leaving the app
+  ok   a draft card does not
+  ok   an expired card stops showing with nothing having to run on a timer
+  ok   and one scheduled for next week does not show yet
+
+-- part 43: what a card is allowed to be --
+  ok   an https link is allowed on a card — a Telegram channel is a real case
+  ok   a javascript: link is refused
+  ok   a plain http link is refused
+  ok   an icon outside the closed list is refused
+  ok   an unpadded date is accepted and PADDED, not left to sort wrongly
+  ok   it is stored as a full ISO timestamp the string comparison can order
+  ok   something that is not a date at all is refused
+  ok   an end before the start is refused
+  ok   a card ending today is still showing today, not gone this morning
+  ok   editing only the end date is still checked against the stored start
+  ok   a card can be switched off
+  ok   and it leaves the home screen at once
+  ok   deleting works
+  ok   deleting a card that is gone is 404
+
+-- support is one chat, not a ticket form --
+  ok   a message with NO subject is accepted
+  ok   and it opened a conversation
+  ok   a second message joins the SAME conversation, it does not open a new one
+  ok   the subject staff see is the first line of what the user actually wrote
+  ok   the whole thread comes back in one list
+  ok   an internal note is NOT in it
+  ok   the staff reply IS in it
+  ok   every message says which segment it belongs to
+  ok   the segment is reported closed, with the time it closed
+  ok   a message after a close opens a NEW conversation
+  ok   and both conversations are in the one thread, oldest first
+  ok   an empty message is refused
+  ok   another user sees an empty thread, never this one
+  ok   signing out means no chat at all
+  ok   a user can close their own chat
+  ok   and it really closes
+  ok   closing again when nothing is open is refused, not a silent no-op
+  ok   typing again after closing it yourself opens a fresh conversation
+  ok   and the segment you closed can be rated
+  ok   a user cannot close someone else's chat by having no open one of their own
+
+-- the chat is cheap to poll, and a photo is a message --
+  ok   a full load says it is NOT a delta
+  ok   a poll with nothing new returns NO messages at all
+  ok   and says it is a delta, so the client appends instead of replacing
+  ok   segments still come back in full — the client needs them to draw the dividers
+  ok   a poll after a new message returns ONLY the new one
+  ok   a photo with no words is a valid message
+  ok   and it can OPEN a conversation on its own
+  ok   which staff see titled 'New chat', since there were no words to take one from
+  ok   but nothing at all is still refused
+
+-- the permissions these screens are gated on --
+  ok   marketing can send a broadcast — that is the role's whole job
+  ok   marketing can write home content
+  ok   marketing cannot message one user directly
+  ok   an agent cannot broadcast to everyone
+  ok   an analyst can write nothing here
+  ok   an agent still owns the ticket queue
+
+99 passed, 0 failed
+
+===== npm script test:stage7: tsx src/tests/stage7.e2e.ts =====
+(node:7744) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- the storage form of a country list --
+  ok   one country packs comma-wrapped
+  ok   many countries pack in one string
+  ok   duplicates collapse
+  ok   an empty list means everywhere
+  ok   ALL beside a country list wins
+  ok   a listed country matches
+  ok   case does not matter
+  ok   an unlisted country does not match
+  ok   a prefix of a listed country does not match
+  ok   ALL matches anyone
+  ok   an unset list falls back to the old single column
+  ok   ...and still refuses the wrong country
+
+-- hide vs lock: the two kinds of 'no' --
+  ok   no rules = eligible
+  ok   the wrong country is HIDDEN, not locked
+  ok   'new members only' is HIDDEN for an older account — no amount of effort reaches it
+  ok   'account too new' is LOCKED, not hidden — waiting fixes it
+  ok   ...and the reason counts the days left in plain English
+  ok   'finish more tasks' is LOCKED — it is a goal
+  ok   ...and says how many more, not how many in total
+
+-- a campaign's country targeting reaches the feed --
+  ok   created
+  ok   the list is stored comma-wrapped
+  ok   the old single column is kept as a readable summary
+  ok   the category is stored
+  ok   a targeted user sees it
+  ok   ...with its category, so the chips have something to filter on
+  ok   an untargeted user does not
+
+-- ⚠️ THE GATE IS ON THE WRITE PATH, NOT ONLY ON THE FEED --
+  ok   a user the task was hidden from cannot submit to it anyway
+  ok   ...and is told why, in plain English
+  ok   nothing was filed
+  ok   the task's own page refuses it too
+
+-- a locked task IS shown, with the reason, and still cannot be claimed --
+  ok   a gate they can still pass keeps the task on screen
+  ok   ...carrying the reason
+  ok   but submitting is still refused
+  ok   a settled account sees the same task unlocked
+
+-- configurable input fields --
+  ok   the fields save
+  ok   five come back in order
+  ok   choices are served as a list, not a blob
+  ok   a choice question with no choices is refused before a user can meet it
+  ok   the earner's task page is served the same fields
+  ok   required is carried through
+
+-- the answers are checked on the SERVER --
+  ok   a missing required answer is refused
+  ok   a bad email is refused
+  ok   a javascript: link is refused — it would be an href on an admin screen
+  ok   a data: link is refused too
+  ok   an answer that is not one of the choices is refused
+  ok   an over-long answer is refused
+  ok   an empty submission files nothing
+  ok   a complete, valid set is accepted
+
+-- ⚠️ THE LABEL IS SNAPSHOTTED ONTO THE ANSWER --
+  ok   four answers stored (the optional one was skipped, not stored blank)
+  ok   each answer carries the question it answered
+  ok   proof_text still renders the same answers
+  ok   renaming the question does NOT relabel evidence already submitted
+  ok   re-saving with ids edits in place instead of duplicating
+
+-- a task with no fields keeps the old single box --
+  ok   a tap-to-confirm task still works with no answers at all
+  ok   it files no structured answers
+  ok   ...but still a readable proof_text
+  ok   ...and it is PENDING — nothing credited itself
+
+-- the review dashboard --
+  ok   200, not a 500 from a mistyped column
+  ok   counts are served per status
+  ok   the task filter lists tasks that actually have proofs waiting
+  ok   a structured proof arrives with its answers parsed
+  ok   every row carries the user's own record
+  ok   filtering by task narrows the rows
+  ok   ...but not the counts
+  ok   search finds a user by email
+  ok   ...and still reports the whole backlog
+
+-- two-step release: approve accepts, release pays, Agent can trim --
+  ok   before review the user is 'under review'
+  ok   approve returns rewardStatus 'pending'
+  ok   an Agent cannot inflate above what was promised
+  ok   an Agent can drop a currency to zero
+  ok   approve credits no ROZI yet
+  ok   the user is now 'reward on the way'
+  ok   release credits the trimmed ROZI (40) and no USDT
+  ok   the ROZI actually landed on the ledger
+  ok   the user is now 'completed'
+  ok   re-release is refused (already sent)
+  ok   the ledger did not move on the second release
+
+-- ⚠️ A BULK DECISION IS N SEPARATE DECISIONS --
+  ok   the two still open are approved
+  ok   the one already decided is reported as NOT done, not silently counted
+  ok   ...with its own reason
+  ok   approve credits nothing — that is step two
+  ok   no credited completion before release (3184)
+  ok   no credited completion before release (0a12)
+  ok   no credited completion before release (5c64)
+  ok   all three rewards released
+  ok   the ROZI credited is reported
+  ok   each released user really got a credited completion (3184)
+  ok   each released user really got a credited completion (0a12)
+  ok   each released user really got a credited completion (5c64)
+  ok   re-releasing a sent reward does nothing
+
+-- reject is allowed on an approved, unreleased proof --
+  ok   an Agent can reject an approved proof that was never paid
+  ok   ...it goes back to rejected with no pending reward
+
+-- who may do what --
+  ok   an agent reviews but cannot write a campaign
+  ok   an agent cannot edit a task's questions
+  ok   an ordinary user cannot read the review queue
+  ok   ...nor a task's questions
+
+96 passed, 0 failed
+
+===== npm script test:taskmarketplace: tsx src/tests/taskMarketplace.e2e.ts =====
+(node:12636) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- lifecycle, reward snapshots and earned USDT --
+  ok   combined-reward task creates
+  ok   custom proof heading reaches the earner
+  ok   invalid wallet proof is rejected server-side
+  ok   valid checksummed wallet proof is filed
+  ok   both reward amounts are snapshotted
+  ok   paused task leaves Available
+  ok   approve is accepted
+  ok   approve credits nothing yet
+  ok   a proof filed before pause remains payable
+  ok   ROZI portion credited
+  ok   USDT portion credited to earned ledger
+  ok   completed work appears in History
+  ok   earnings: 403 while the earnings_view flag is off (its default)
+  ok   earnings: 200 once the flag is on
+  ok   earnings: the task's ROZI reward is counted (25 ROZI)
+  ok   earnings: the task's earned USDT is counted
+
+16 passed, 0 failed
+
+===== npm script test:usersadmin: tsx src/tests/usersAdmin.e2e.ts =====
+(node:21548) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- single-row status route still works after the setUserStatusOne refactor --
+  ok   200 on suspend
+  ok   status actually changed
+  ok   empty reason refused (400)
+
+-- bulk status: N separate decisions, not one --
+  ok   200 on a mixed batch
+  ok   two real accounts suspended
+  ok   two rows failed (self + not-found)
+  ok   the actor's OWN id in the batch fails, not the whole batch
+  ok   a not-found id fails on its own row
+  ok   a valid a is actually suspended
+  ok   a valid b is actually suspended
+  ok   the admin itself was NOT suspended by its own bad row
+  ok   duplicate ids in one batch are processed once
+  ok   an agent (no users.status) is refused (403)
+  ok   empty id list refused (400)
+
+-- CSV export gains a 'users' export type --
+  ok   200 for a known export type
+  ok   content-type is CSV
+  ok   has a header row with email
+  ok   an unknown export type is 404, not a crash
+  ok   an agent cannot export (403)
+
+-- the 'under review' state is distinct from active/suspended --
+  ok   200 on marking for review
+  ok   response says underReview: true
+  ok   status is untouched (still active)
+  ok   the reason is stored
+  ok   the list endpoint reports underReview: true
+  ok   the detail endpoint reports underReview: true
+  ok   the detail endpoint carries the raw reason too
+  ok   200 on clearing
+  ok   response says underReview: false
+  ok   the reason is actually cleared
+  ok   a too-short reason is refused (400)
+  ok   an agent (no users.review) is refused (403)
+  ok   a manager can mark for review (200)
+
+-- user list: server-side filters + sort (admin rebuild, Phase B) --
+  ok   status=suspended returns only suspended
+  ok   kyc=approved filters to approved users
+  ok   sort=created_at&dir=asc is actually ascending
+  ok   total matches the filter, not the whole table
+  ok   an unknown sort key is ignored, not injected
+
+-- user 360: the tabbed detail endpoint (admin rebuild, Phase B) --
+  ok   detail endpoint 200s
+  ok   carries an activity timeline array
+  ok   the seeded ledger row shows in the activity timeline
+  ok   carries roziLedger / usdtLedger / audit arrays
+  ok   carries a referral block
+  ok   still NO combined balance total (guardrail #7)
+
+-- console-wide record search (admin rebuild, Phase A) --
+  ok   search by email returns the user
+  ok   search by full id returns the user
+  ok   search by invite code returns the user
+  ok   a 1-char query returns nothing (no scan)
+  ok   support can search users
+  ok   support search never returns a withdrawal type
+  ok   a non-staff caller is refused (403)
+
+-- filling in missing Telegram names --
+  ok   an account with a Telegram id and no name is counted as needing one
+  ok   an account that already has a username is not counted again
+  ok   the refresh answers rather than failing when Telegram cannot be reached
+  ok   and it reports nothing updated instead of pretending
+  ok   the refresh is audited
+  ok   an agent cannot run it — it writes to user rows
+  ok   an account we already asked about is not asked again
+  ok   because the attempt itself is recorded, not just a success
+  ok   the count needs the same permission as the refresh, so the button hides for roles that cannot press it
+
+59 passed, 0 failed
+
+===== npm script test:moneyadmin: tsx src/tests/moneyAdmin.e2e.ts =====
+(node:16796) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- withdrawals: pagination, total, sort --
+  ok   200
+  ok   page 1 has 3 rows
+  ok   total is 7 (whole filtered set, not the page)
+  ok   offset/limit echoed
+  ok   pendingTotal.count is 7 (whole set, not page)
+  ok   pendingTotal.points sums all 7
+  ok   last page has the 1 remaining row
+  ok   sort=amount asc is ascending
+
+-- withdrawals: search + status filter, agent cap in SQL --
+  ok   search by address (paid tab) finds exactly 1
+  ok   pendingTotal is null on the paid tab
+  ok   agent never sees an over-cap request (filtered in SQL)
+  ok   admin total > agent total (cap really excluded rows)
+
+-- deposits + refunds: pagination + total --
+  ok   topups page = 2
+  ok   topups total >= 5
+  ok   topups still carries treasuryChain
+  ok   topups search by tx hash finds 1
+  ok   refunds total >= 5
+  ok   refunds offset past the end returns fewer than a full page
+
+-- BNB withdrawals: new read-only queue --
+  ok   200
+  ok   defaults to the failed tab
+  ok   row carries userEmail + lastError
+  ok   status=paid returns the paid row
+  ok   no token => not 200
+
+-- payout relay jobs: new read-only queue --
+  ok   200
+  ok   defaults to failed
+  ok   failed row is the withdrawal job
+  ok   status=active excludes forward_confirmed + failed
+  ok   purpose filter narrows to the refund job
+  ok   no token => not 200
+
+-- mark a failed relay job / BNB withdrawal handled --
+  ok   an earner cannot mark a job handled (403)
+  ok   unknown job id => 404
+  ok   a non-failed job cannot be marked handled (400)
+  ok   agent (holds withdrawals.decide) can mark handled
+  ok   marking handled twice => 400
+  ok   handled_at + note persisted
+  ok   the failed row still lists, now carrying handledAt
+  ok   a failed BNB withdrawal can be marked handled
+
+-- admin USDT adjustment (reconciliation fix) --
+  ok   an earner cannot adjust USDT (403)
+  ok   an agent (no users.adjust) cannot adjust USDT (403)
+  ok   zero amount => 400
+  ok   over the per-call cap => 400
+  ok   admin can post a correcting -2 USDT debit
+  ok   before was +2,000,000 micro, after is 0
+  ok   usdt_ledger now sums to 0 for this user
+  ok   a debit MAY take the balance negative (200, not blocked)
+  ok   resulting balance is -1,000,000 micro
+
+-- reconciliation history --
+  ok   200
+  ok   returns the snapshot with a negative delta
+
+-- resolve a FAILED relay job (acknowledge / credit_back / retry) --
+  ok   failed relay row carries owedBack=true
+  ok   failed relay row carries retryable=true
+  ok   failed relay row reports reqStatus='sending'
+  ok   resolve without a note => 400
+  ok   an earner cannot resolve (403)
+  ok   credit_back => 200
+  ok   underlying withdrawal is now 'rejected'
+  ok   a +1500 compensating credit was posted once
+  ok   relay job is stamped handled
+  ok   second credit_back => 409 (idempotent, not a double credit)
+  ok   still exactly one compensating credit
+  ok   retry => 200
+  ok   job is back to 'pending', attempts reset, handled cleared
+  ok   retry refused once value moved on-chain (409)
+  ok   credit_back also refused once value moved (409)
+  ok   acknowledge still works on the unsafe job (200)
+
+-- resolve a FAILED BNB withdrawal (acknowledge / retry) --
+  ok   failed BNB row: owedBack=false, retryable=true (no tx hash)
+  ok   BNB resolve rejects credit_back as an action (400)
+  ok   BNB retry => 200
+  ok   BNB job back to 'pending', attempts reset
+  ok   BNB retry refused once a tx was broadcast (409)
+  ok   BNB acknowledge => 200
+
+-- reconciliation re-check on demand --
+  ok   recheck => 200
+  ok   recheck returns ok + a fresh snapshot
+  ok   an agent without analytics.view cannot recheck (403)
+
+-- money overview (held now + inflow/outflow windows) --
+  ok   200
+  ok   all six windows present
+  ok   h1 deposits-in includes the 5 USDT just credited
+  ok   h1 withdrawals-out includes the 1000-pt payout (=1 USDT)
+  ok   net = in - out for h1
+  ok   held-now USDT deposit liability == SUM(usdt_ledger)
+  ok   latest lists are arrays
+  ok   owed.paidPoints > 0 after a paid withdrawal exists
+  ok   an earner cannot read the money overview (403)
+
+-- a paid withdrawal carries its transaction hash --
+  ok   the queue serves the tx hash of a paid row
+  ok   and a row can be found by that hash
+
+-- treasury wallet: every in and out --
+  ok   200 with no treasury address set
+  ok   it says there is no address rather than failing
+  ok   and serves no totals, which would otherwise read as a real zero
+  ok   with an address but no explorer key it still answers
+  ok   it reports the address
+  ok   and says the explorer is not set up rather than showing an empty ledger
+  ok   an agent cannot read the treasury wallet
+  ok   nor can an earner
+
+-- the treasury ledger's labels really resolve against our tables --
+  ok   the five queries run at all — every column and table name is real
+  ok   a paid withdrawal is labelled, with who it went to
+  ok   a confirmed deposit is labelled
+  ok   a refund is labelled
+  ok   a sweep is labelled
+  ok   all three relay legs are labelled separately
+  ok   a hash we do not recognise gets no label at all
+  ok   an empty hash list is not a crash
+
+100 passed, 0 failed
+
+===== npm script test:tasksadmin: tsx src/tests/tasksAdmin.e2e.ts =====
+(node:14616) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- GET /staff/tasks: pagination + total --
+  ok   200
+  ok   page 1 returns 3 rows
+  ok   total is the whole filtered set (7), not the page
+  ok   offset / limit echoed
+  ok   last page has the 1 remaining row
+
+-- GET /staff/tasks: sort whitelist + status filter --
+  ok   sort=title asc is ascending
+  ok   dir=desc reverses it
+  ok   an unknown sort key is ignored, not injected (falls back to created_at)
+  ok   status=active filters the rows
+  ok   ...and total matches the filter (4), not the whole set
+
+-- GET /staff/tasks: search by title, existing money fields intact --
+  ok   search matches the title case-insensitively
+  ok   row still carries the Phase-15/16 money fields
+  ok   row still carries effectiveStatus + unpacked countries
+
+-- no duplicate wording + soft delete (founder, 2026-09-01) --
+  ok   first create with a fresh title succeeds
+  ok   an identical title is refused with 409
+  ok   ...and so is the same title with different spacing/case
+  ok   DELETE soft-deletes the task
+  ok   a deleted task is gone from the default admin list
+  ok   ...but visible under the status=deleted filter
+  ok   the freed title can be reused after delete
+
+-- effective status: an expired campaign reads as 'ended' --
+  ok   the expired task does NOT match status=active
+  ok   ...it matches status=ended (the value the badge shows)
+  ok   ...even though its stored column is still 'active' until the sweep
+
+-- GET /staff/task-proofs: pagination + total + counts --
+  ok   proof 0 submitted
+  ok   proof 1 submitted
+  ok   proof 2 submitted
+  ok   proof 3 submitted
+  ok   proof 4 submitted
+  ok   200
+  ok   page 1 returns 2 proofs
+  ok   total is the whole filtered set (5)
+  ok   offset / limit echoed
+  ok   counts are over ALL proofs, never this page
+  ok   last page has the 1 remaining proof
+  ok   default order is created_at ascending (oldest waiting first)
+  ok   dir=desc reverses to newest-first
+  ok   search finds the one user by email
+  ok   ...total follows the search (1)
+  ok   ...but counts still report the whole backlog
+
+-- per-task metrics: the funnel adds up (founder, 2026-09-01) --
+  ok   metrics: 200
+  ok   metrics: opened counts the 3 viewers
+  ok   metrics: started counts the 2 who tapped start
+  ok   metrics: submitted counts the 2 proofs
+  ok   metrics: approved is 1
+  ok   metrics: pending is the other 1
+  ok   metrics: completed (credited) is 1
+  ok   metrics: opened->started rate is 67%
+  ok   metrics: an untouched task is all zeros
+  ok   metrics: ...and its conversion % is null, not NaN or 0
+  ok   overview: 200
+  ok   overview: opened >= 3 (this campaign's viewers included)
+  ok   overview: completed >= 1
+  ok   overview: campaign counts are present
+  ok   metrics: outsider gets 403
+
+-- permission gates unchanged --
+  ok   a non-staff user gets 403 on /staff/tasks
+  ok   a non-staff user gets 403 on /staff/task-proofs
+  ok   no token -> not 200 on /staff/tasks
+
+57 passed, 0 failed
+
+===== npm script test:messagesadmin: tsx src/tests/messagesAdmin.e2e.ts =====
+(node:13952) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- GET /staff/tickets: pagination + total + counts --
+  ok   200
+  ok   page 1 has 3 open tickets
+  ok   total is the whole OPEN filtered set (5), not the page
+  ok   offset / limit echoed
+  ok   counts report ALL tickets: 5 open, 2 closed
+  ok   last page has the 2 remaining open tickets
+  ok   default sort is updated_at ascending
+  ok   dir=desc reverses to most-recent-first
+  ok   an unknown sort key is ignored, not injected
+
+-- search narrows rows, not counts; status=all spans everything --
+  ok   status=all returns every ticket (7)
+  ok   a subject search narrows to 1 row
+  ok   ...but the counts still report the whole backlog
+
+-- permission gate unchanged --
+  ok   a non-staff user gets 403
+  ok   no token -> not 200
+
+-- edit / pause / resume / delete an already-sent broadcast --
+  ok   broadcast sent
+  ok   recipient's inbox has the original wording
+  ok   edit accepted
+  ok   recipient sees the CORRECTED wording, not the original
+  ok   the old wording is gone from their inbox
+  ok   pause accepted
+  ok   paused message is hidden from the inbox
+  ok   resume accepted
+  ok   resumed message is visible again
+  ok   delete accepted
+  ok   deleted message is gone from the inbox
+  ok   the audit trail still shows it, marked deleted
+  ok   editing a deleted message is refused
+  ok   a non-staff user gets 403 on pause
+
+-- 'How was our support?' rating, one per ticket, closed only --
+  ok   cannot rate an open ticket
+  ok   an invalid rating value is refused
+  ok   rating a closed ticket is accepted
+  ok   a second rating on the same ticket is refused (one, ever)
+  ok   the rating shown back to the user is still 'great', not 'bad'
+  ok   staff also sees the rating
+  ok   a different user cannot rate someone else's ticket
+
+-- an image attachment is magic-byte sniffed, on both sides --
+  ok   a real JPEG on the first message is accepted
+  ok   the image comes back on the user's own message
+  ok   an SVG payload dressed as a JPEG is refused, not stored
+  ok   staff can attach a photo to a reply too
+  ok   staff's own reply carries its image back too
+
+-- auto-close is admin-tunable in HOURS, not the old fixed days --
+  ok   default is config.ticketAutoCloseHours (3)
+  ok   an admin override of 1 hour is honoured
+  ok   0 is honoured as a real 'off' value, not treated as unset
+  ok   tick does nothing while the setting is 0
+  ok   a stale 'answered' ticket past the 1-hour window is closed
+  ok   its status is now closed
+
+46 passed, 0 failed
+
+===== npm script test:disbursements: tsx src/tests/disbursements.e2e.ts =====
+(node:22476) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MINING: rescaled the ROZI ledger to micro-ROZI (x1e6). This runs once.
+MINING: rescaled rig prices for the 21M supply (/20). This runs once.
+MINING: 10x ROZI rig prices + seeded USDT rig prices (2026-08-29). This runs once.
+MINING: re-based rig ROZI prices to $0.10/ROZI (2026-09-01). This runs once.
+
+-- the eligible pool --
+  ok   eligible lists both approved-unreleased proofs
+  ok   eligible carries the USDT reward amount
+  ok   a still-pending (unapproved) proof is NOT eligible
+
+-- permission gating --
+  ok   an agent (not finance/admin) gets 403 on the pool
+  ok   an agent gets 403 creating a batch
+
+-- create + run a balance batch --
+  ok   batch created with both recipients
+  ok   run releases both
+  ok   u1 earned-USDT went up by the reward
+  ok   u2 earned-USDT went up by the reward
+  ok   the proof is marked released (reward_status = sent)
+  ok   batch status is completed
+  ok   both disbursement rows are 'released'
+
+-- idempotency --
+  ok   re-running a completed batch is refused (409)
+  ok   no double credit on re-run
+  ok   a proof already released cannot join a new batch
+
+-- a proof in a live batch is spoken for --
+  ok   first batch takes it
+  ok   a second batch cannot take the same proof
+  ok   the eligible pool hides a proof already in a batch
+
+-- two admins racing the same proof cannot both win --
+  ok   exactly one of the two concurrent creates took the proof
+  ok   the proof landed in exactly one live disbursement row
+
+-- per-recipient isolation: one blocked, the rest still pay --
+  ok   one row released, one row failed
+  ok   the good recipient was paid
+  ok   the blocked recipient was NOT paid
+  ok   batch rolled up to partly_failed
+  ok   re-run of a partly_failed batch retries only the failed row
+  ok   the already-released recipient is untouched on retry
+
+-- orphan recovery: a row stuck 'sending' with no payout is retried --
+  ok   the orphaned row is recovered and released
+
+-- quick send (one recipient) --
+  ok   quick send releases immediately
+
+-- cancel a batch --
+  ok   a draft batch cancels
+  ok   cancelling frees the proof back to the pool
+  ok   a batch that already paid cannot be cancelled
+
+-- on-chain / manual mode: release + a payout request --
+  ok   a recipient with no saved address is flagged needs_address up front
+  ok   the addressed recipient goes to 'sending'
+  ok   the unaddressed recipient stays needs_address
+  ok   a withdrawal_request was created for the addressed recipient
+  ok   its status sits in the manual queue (pending)
+  ok   the addressed recipient's task-USDT is held (net 0: released then held)
+  ok   the unaddressed recipient KEEPS the released reward on balance (decision B)
+  ok   no withdrawal_request for the unaddressed recipient
+  ok   re-run picks up the now-addressed recipient
+  ok   its task-USDT is now held too
+  ok   a paid withdrawal flips its disbursement to 'paid' with the tx hash
+  ok   a rejected withdrawal flips its disbursement to 'failed'
+  ok   the batch rolls up to partly_failed (one paid, one failed)
+
+-- mark a manual disbursement paid by hand --
+  ok   a bad tx hash is rejected
+  ok   mark-paid succeeds with a real-looking hash
+  ok   the disbursement row is 'paid' with the hash
+  ok   the batch is completed
+  ok   the underlying withdrawal_request is 'paid' with the hash
+  ok   marking an already-paid row again is refused
+
+-- CSV export + reconcile round-trip --
+  ok   export is text/csv
+  ok   export has a header + one row per recipient
+  ok   export header names the id, address and amount columns
+  ok   reconcile pays the good row once
+  ok   reconcile reports the unknown id
+  ok   reconcile reports the bad hash
+  ok   the reconciled row is paid with the hash
+  ok   the bad-hash row is untouched (still sending)
+  ok   re-reconciling a paid row reports it not payable
+  ok   reconcile is audited
+
+-- payoutRelay.failJob returns the right currency (regression) --
+  ok   no points were credited for an earned_usdt relay failure
+  ok   the task USDT was returned instead
+  ok   the withdrawal is marked rejected
+
+-- scoped to one campaign, and a batch you can read the name of --
+  ok   the pool can be scoped to one campaign
+  ok   and unscoped it still shows every campaign
+  ok   'batch everything eligible' on a task page takes ONLY that task
+  ok   the batch really holds one row
+  ok   a new batch is NAMED after the campaign it pays, not left as a uuid
+  ok   and the name says how many people are in it
+  ok   a task's own batch list shows it
+  ok   and another campaign's list does not
+  ok   a batch can be renamed
+  ok   and the rename sticks
+  ok   an empty name is refused — a batch must always have something to read
+  ok   renaming is audited
+  ok   the name is searchable, so a person can find a batch by what it is called
+  ok   an agent still cannot rename a batch
+
+-- audit trail --
+  ok   create is audited
+  ok   run is audited
+  ok   quick send is audited
+  ok   cancel is audited
+
+81 passed, 0 failed
+
+===== SUMMARY =====
+Total: 36; Failed: 0; Names: 

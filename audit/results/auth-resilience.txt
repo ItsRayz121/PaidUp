@@ -1,0 +1,6 @@
+(node:17780) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+reset successes from one OTP: 1 (secure expectation: 1)
+old JWT after password reset: HTTP 200 (secure expectation: 401)
+missing email provider threw: false (secure expectation in production: true)
+plaintext OTP and recipient logged: true (secure expectation in production: false)

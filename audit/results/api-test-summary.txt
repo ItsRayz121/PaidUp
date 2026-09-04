@@ -1,0 +1,25 @@
+API isolated test roll-up
+Date: 2026-09-03
+Commit: 8bc95ac1a97780c7962694cd6ccbb3e920b93e83
+
+Scripts: 36
+Custom assertion summaries: 30
+Custom assertions passed: 1372
+Node test summaries: 6
+Node assertions passed: 91
+Total assertions passed: 1463
+Failures: 0
+
+Explicitly skipped real-concurrency claims: 2
+
+1. Mining concurrent-spend race: PGlite is single-session and cannot isolate
+   independent transactions. Its diagnostic allowed 5/5 spends and reached -4000;
+   the source-level advisory-lock placement assertion passed. Run with DATABASE_URL
+   pointing to disposable PostgreSQL before making a concurrency claim.
+2. Task-budget concurrent postback race: PGlite is single-session and cannot isolate
+   independent transactions. Its diagnostic allowed 10/10 credits against a cap of 4;
+   the source-level lock-placement assertions passed. Run on disposable PostgreSQL.
+
+The negative PGlite diagnostics are not production failures because the local driver
+cannot reproduce PostgreSQL transaction isolation/advisory-lock behavior. They are also
+not passes; both remain unverified.
