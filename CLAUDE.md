@@ -4069,3 +4069,112 @@ See `docs/` for the full spec.
     didn't lead to the button); that's fixed. The stale job itself still
     needs one click: Money & payouts → Withdrawals → Relay jobs → Failed →
     open the row → Acknowledge.
+
+- **A REAL FIX: TEXT NOT VISIBLE IN THE VAULT (DARK) THEME, ROOT-CAUSED, NOT
+  PATCHED PER SCREEN (founder, 2026-09-05).** The founder pointed at the
+  "Sign out everywhere" row on `/profile` reading as near-invisible dark text
+  on a dark card. Root cause: `.app-frame` (`globals.css`) never declared its
+  own `color` — CSS inherits `color` as an already-COMPUTED value, not a live
+  re-evaluation of `var()`, so any text with no explicit `text-*` class (this
+  row's title was plain `font-semibold`, relying on inheritance) kept
+  rendering `body`'s light-theme ink even once the vault theme redefined
+  `--color-ink` on `.app-frame`. Text using an explicit utility
+  (`text-danger`, `text-brand`, …) was already fine, because that's a fresh
+  `var()` reference evaluated at the element itself. Fixed with one line —
+  `color: var(--color-ink)` re-declared on `.app-frame` — which makes EVERY
+  unstyled text element in the earner app follow the theme, not just the one
+  reported row. No change to light mode (the redeclared value resolves
+  identically there) and no change to the staff panel (outside `.app-frame`
+  by design).
+
+- **WEEKLY/MONTHLY ROZI LEADERBOARD REWARDS, A PODIUM REDESIGN, AND A
+  BNB→USD ESTIMATE ON THE TREASURY WALLET PANEL (founder, 2026-09-05).** Two
+  small fixes plus one real feature, built to a phased plan the founder asked
+  for and approved before coding started. Verified: new `test:leaderboardrewards`
+  (**40 checks** — cap-safety, idempotent settlement, backfill of missed
+  periods, exclusions, permission gating, disabled-by-default, a structural
+  lock-key tripwire) + `test:mining:e2e` (65) + `test:stage5` (67) +
+  `test:moneyadmin` (100) + `test:permissions` (17) + `test:flags` (8), all
+  green from a fresh database; api + web typecheck, eslint, web production
+  build clean; a `code-review` pass found and this same commit fixed 3 real
+  defects (below) before it ever shipped.
+  - **Distribution shape (the founder explicitly asked for a recommendation):
+    steep top-10 tiers per track, per cadence — NOT a flat top-100 split.**
+    ROZI's whole culture is small and scarce (2.5 ROZI/day baseline, halving
+    on schedule); spreading one pool across 100 people makes rank 100 a
+    rounding error that reads as fake generosity, where a steep top-10 taper
+    makes rank 1 feel like a real prize. Every number (pool size, tier
+    split, on/off per cadence) is admin-tunable in `/staff → Growth → Reward
+    pools`, defaulting to `[150,100,70,25×7]` weekly / `[600,400,280,100×7]`
+    monthly per track — and the whole feature **ships OFF** (a master switch
+    plus a per-cadence switch) until an admin turns it on.
+  - **A fourth ROZI ledger source, folded into the cap.** `RoziSource` gains
+    `"leaderboard_reward"` (`db.ts`), and `totalEmittedMicro()`
+    (`mining/settings.ts`) now sums it as a fourth pile — skipping this would
+    have meant the 21M cap silently stopped being enforced for this source,
+    the exact `task_reward`/`mining` mistake this file has warned about
+    twice before.
+  - **New `api/src/leaderboardRewards.ts` mirrors `mining/engine.ts`'s
+    `settleEpoch()` on purpose**: idempotent on a unique
+    `(cycle_type, track, period_start)` row (new tables
+    `leaderboard_reward_cycles` + `leaderboard_reward_payouts`, the latter a
+    hard join to the exact `rozi_ledger` row it minted — the auditable "who
+    won, how much" trail), and every payout scaled by the SAME
+    `capScaleFactor()` mining already uses when a pool asks for more ROZI
+    than the cap has room for.
+    ⚠️ **`code-review` CAUGHT A REAL CAP-SAFETY BUG BEFORE IT SHIPPED**: the
+    first cut locked on a PER-CYCLE key
+    (`leaderboard-reward:{type}:{track}:{period}`), not the GLOBAL
+    `'rozi-settlement'` key `settleEpoch()` uses — so this job's own hourly
+    timer and mining's daily settlement timer could interleave, each read
+    the same stale `totalEmittedMicro()`, and both mint past the cap
+    together. Fixed to share the exact same lock key, with a structural
+    tripwire (`leaderboardRewards.e2e.ts` reads the file's own source) since
+    PGlite cannot reproduce the actual multi-connection race, same
+    limitation `otp-race.e2e.ts`/`sessions.e2e.ts` already accept for their
+    own un-reproducible races.
+    ⚠️ **ALSO CAUGHT: no backfill.** The first cut only ever settled the ONE
+    period immediately before "now" — a process down across more than one
+    boundary (or a cadence turned on well after launch) would have silently
+    skipped every older missed period forever, with nothing on the admin
+    screen distinguishing "not due yet" from "permanently missed". Fixed:
+    the tick now walks backward from the most-recent closed period until it
+    finds one already settled (proof every older one is handled too,
+    periods always settle oldest-first), capped at 8 backfilled periods per
+    tick as a safety ceiling, not a design limit.
+  - **`GET /leaderboard` gains `?window=all|week|month`** (`leaderboard.ts`'s
+    `loadLeaderboard()` now takes an optional UTC-normalized period range,
+    cache keyed per window) and a `myStanding` projection — "you're #3 this
+    week, tracking for 25 ROZI" — computed ONLY from the admin's own
+    configured tiers, never invented copy (the same "advertised rate comes
+    from the API, never the copy deck" rule referral rates already follow).
+    `/leaderboard`'s redesign: a real podium (#1 raised/center/crowned, #2
+    left, #3 right, medals unchanged) built from existing `Card`/Tailwind —
+    no new avatar system — plus the three time-window tabs and a standing
+    banner, all in `web/src/app/leaderboard/page.tsx`.
+  - **Admin screen** at `/staff → Growth → Reward pools`
+    (`LeaderboardRewardsPanel`, `growth-admin.tsx`): master switch, per-cadence
+    tiers as a comma-separated ROZI-per-rank list (position = rank), and a
+    "Recent cycles" receipt (what settled, what it paid, who won, whether the
+    cap forced a scale-down). Config is stored as ONE JSON blob
+    (`leaderboardRewardSettings.ts`) rather than mining's flat scalar keys —
+    a tier list is an array, not a scalar, and saving the whole shape at once
+    is what stops "tiers without enabled" landing half-written.
+    ⚠️ **`code-review` also caught a blank-token parsing bug**: a trailing
+    comma ("150, 100,") parsed its empty tail as `Number("") = 0`, a phantom
+    zero-ROZI extra rank — fixed to filter blank tokens before parsing, same
+    as `mining-admin.tsx`'s existing `MilestoneEditor` already does.
+  - **`api/src/bnbPrice.ts`** — Binance's public ticker (no key, unmetered),
+    cached 5 minutes and still charged through `costGuard.ts` on the "every
+    external call gets a ceiling on principle" rule, even though this one
+    isn't billed. Shows what the Treasury Wallet panel's live BNB (gas)
+    figure is actually worth in USD — display only, and explicitly **not**
+    a guardrail-#7-style fixed rate: BNB is a real, liquid, publicly-priced
+    asset, unlike ROZI.
+  - **The BscScan "Free API access is not supported for this chain" error the
+    founder hit is NOT a code bug** — `.env.example`'s own header already
+    documented it: Etherscan's free tier does not cover BSC address history
+    on the unified V2 API, a paid plan is required, and the code already
+    degrades correctly (a clear staff-facing error, not a false "nothing has
+    moved"). No code change; recorded here so it isn't re-investigated as a
+    regression.
