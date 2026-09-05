@@ -47,8 +47,7 @@ const copy: Record<string, string> = {
   // this balance is not cash while screen-reader users were told it is. The
   // accessibility path must never leak the one claim the visible copy works
   // hardest to avoid. Same words in both places, always.
-  "topbar.balanceLabel": "ROZI tokens coming soon. Tap to open your wallet.",
-  "topbar.roziComingSoon": "ROZI · Coming soon",
+  "topbar.balanceLabel": "Your ROZI balance. Tap to open your wallet.",
 
   "nav.home": "Home",
   "nav.tasks": "Tasks",
