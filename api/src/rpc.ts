@@ -28,6 +28,25 @@ export class RpcError extends Error {
 // same answer four more times, slowly. Only transport-level failures fail over.
 type JsonRpcResponse = { result?: unknown; error?: { code: number; message: string } };
 
+// ⚠️ A PROVIDER QUOTA/RATE-LIMIT REFUSAL IS NOT "THE CHAIN'S REAL ANSWER",
+// EVEN THOUGH IT ARRIVES AS A WELL-FORMED JSON-RPC ERROR OBJECT. Found
+// 2026-09-05 when NodeReal's free monthly quota ran out: it returns
+// {"code":-32005,"message":"...monthly quota limit..."} — same shape as a
+// genuine protocol error like "bad params" — and the rule above sent it
+// straight to the caller with the other five configured endpoints (Alchemy,
+// public nodes) never tried. That is not "one endpoint is briefly the wrong
+// choice", it is "every RPC-backed feature on this chain is fully broken
+// until the quota resets", with a working failover list sitting unused right
+// next to it. -32005 is NodeReal's code for this; the message-keyword check
+// covers the same shape from any other provider (Alchemy's own rate-limit
+// errors use similar wording). Genuine protocol errors ("method not found",
+// bad params) do not match this and still fail fast, unretried, as before.
+const PROVIDER_THROTTLE_CODES = new Set([-32005, -32029]);
+const PROVIDER_THROTTLE_MESSAGE = /quota|rate.?limit|too many requests|capacity|throttl/i;
+function isProviderThrottle(error: { code: number; message: string }): boolean {
+  return PROVIDER_THROTTLE_CODES.has(error.code) || PROVIDER_THROTTLE_MESSAGE.test(error.message);
+}
+
 const DEFAULT_TIMEOUT_MS = 8_000;
 
 export function endpointsFor(chain: string): string[] {
@@ -104,7 +123,14 @@ export async function rpcCall(
       }
 
       if (body.error) {
-        // The chain answered. Do not retry this on other endpoints.
+        if (isProviderThrottle(body.error)) {
+          // This provider is refusing on quota/rate-limit grounds, not
+          // answering the chain — try the next configured endpoint.
+          attempts.push({ url, reason: `provider throttled: ${body.error.message}` });
+          continue;
+        }
+        // A genuine protocol answer (bad params, unknown method). Every other
+        // endpoint would say the same thing — do not retry.
         throw new RpcError(`${method} failed: ${body.error.message}`, attempts);
       }
       return body.result ?? null;
