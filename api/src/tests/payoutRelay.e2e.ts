@@ -371,6 +371,83 @@ console.log("\n-- give up by WALL-CLOCK AGE, not just attempt count (founder, 20
     (await usdtBalanceMicroOf(u)) === 2_000_000, `${await usdtBalanceMicroOf(u)}`);
 }
 
+console.log("\n-- an admin disbursement's relay job gets a LONGER leash (founder, 2026-09-05, same day) --");
+
+// The founder, on the same call: "when the platform money is going to be
+// sent, extend this window of the retry ... to one hour" — but only for
+// PLATFORM-initiated payouts (routes/staffDisbursements.ts's runPayoutRow).
+// A user's own withdrawal keeps the ordinary ceiling, unchanged (the control
+// case at the end of this block).
+{
+  config.payoutMode = "manual"; // job must give up (or not) on age/attempts alone, never reach the network
+  const staffUser = await mkUser("relaydisbadmin", "admin");
+  const u = await mkUser("relaydisb1");
+  const dest = testAddress();
+  const reqId = newId();
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id,user_id,amount,payout_rail,payout_address,fee_points,address_verified,source_kind,earned_usdt_micro,status,reviewed_by,created_at)
+     VALUES (?,?,?, 'bep20', ?, 0, 0, 'earned_usdt', ?, 'sending', 'system:auto', ?)`,
+    reqId, u, 1000, dest, 1_000_000, now(),
+  );
+  const batchId = newId();
+  await sql.run(
+    "INSERT INTO payout_batches (id, mode, status, created_by, created_at) VALUES (?, 'onchain', 'processing', ?, ?)",
+    batchId, staffUser, now(),
+  );
+  await sql.run(
+    `INSERT INTO payout_disbursements (id, batch_id, user_id, withdrawal_request_id, status, usdt_micro, created_at)
+     VALUES (?,?,?,?, 'sending', ?, ?)`,
+    newId(), batchId, u, reqId, 1_000_000, now(),
+  );
+
+  // Old enough to have already failed under the ORDINARY ceiling, but well
+  // inside the disbursement-specific one.
+  const oldEnoughForOrdinary = new Date(Date.now() - (config.relayMaxAgeMs + 60_000)).toISOString();
+  const jobId = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,last_error,created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, 1000000, 1, 'pending', 1, 'stuck', ?)`,
+    jobId, reqId, u, dest, dest, oldEnoughForOrdinary,
+  );
+  const { tickPayoutRelay } = await import("../payoutRelay.ts");
+  await tickPayoutRelay();
+  const job = await sql.get<{ status: string }>("SELECT status FROM payout_relay_jobs WHERE id = ?", jobId);
+  check("a disbursement-sourced job SURVIVES past the ordinary relayMaxAgeMs",
+    job?.status === "pending", JSON.stringify(job));
+
+  // Now push it past the disbursement's OWN (longer) ceiling too.
+  await sql.run(
+    "UPDATE payout_relay_jobs SET created_at = ? WHERE id = ?",
+    new Date(Date.now() - (config.relayMaxAgeMsDisbursement + 60_000)).toISOString(), jobId,
+  );
+  await tickPayoutRelay();
+  const job2 = await sql.get<{ status: string }>("SELECT status FROM payout_relay_jobs WHERE id = ?", jobId);
+  check("...but still gives up once past its OWN (longer) ceiling",
+    job2?.status === "failed", JSON.stringify(job2));
+
+  // Control: an ordinary user withdrawal (no payout_disbursements row at all)
+  // with the exact same age gives up exactly as before — completely
+  // unaffected by this change.
+  const u2 = await mkUser("relaydisb2");
+  const dest2 = testAddress();
+  const reqId2 = newId();
+  await sql.run(
+    `INSERT INTO withdrawal_requests (id,user_id,amount,payout_rail,payout_address,fee_points,address_verified,source_kind,earned_usdt_micro,status,created_at)
+     VALUES (?,?,?, 'bep20', ?, 0, 0, 'earned_usdt', ?, 'sending', ?)`,
+    reqId2, u2, 1000, dest2, 1_000_000, now(),
+  );
+  const jobId2 = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,last_error,created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, 1000000, 1, 'pending', 1, 'stuck', ?)`,
+    jobId2, reqId2, u2, dest2, dest2, oldEnoughForOrdinary,
+  );
+  await tickPayoutRelay();
+  const job3 = await sql.get<{ status: string }>("SELECT status FROM payout_relay_jobs WHERE id = ?", jobId2);
+  check("a PLAIN user withdrawal (not disbursement-linked) still gives up at the ordinary ceiling, unchanged",
+    job3?.status === "failed", JSON.stringify(job3));
+}
+
 console.log("\n-- ⚠️ THE LOAD-BEARING CHECK: fully configured signing keys, but payoutMode is MANUAL --");
 
 // This is the exact bug this feature's staff.ts/staffMining.ts wiring had to

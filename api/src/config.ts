@@ -584,6 +584,18 @@ export const config = {
   // 20 minutes: comfortably inside the founder's 10-30 minute ask.
   relayMaxAgeMs: num(process.env.RELAY_MAX_AGE_MS, 20 * 60_000, 60_000),
 
+  // A LONGER leash for admin-initiated disbursements (founder, 2026-09-05: "when
+  // the platform money is going to be sent, extend this window ... to one hour").
+  // A user's OWN withdrawal keeps the pair above, unchanged — this only applies
+  // to a relay job whose withdrawal_requests row was created by
+  // routes/staffDisbursements.ts's runPayoutRow (see advanceRelayJob). Both
+  // numbers move together: `attempts` only increments on a genuine thrown error
+  // per tick (not every tick), so raising only the age ceiling would do nothing
+  // if the tighter attempts cap below fired first — 180 attempts at the default
+  // 20s tick is ~1 hour, matching relayMaxAgeMsDisbursement.
+  relayMaxAttemptsDisbursement: Number(process.env.RELAY_MAX_ATTEMPTS_DISBURSEMENT ?? 180),
+  relayMaxAgeMsDisbursement: num(process.env.RELAY_MAX_AGE_MS_DISBURSEMENT, 60 * 60_000, 60_000),
+
   // ---- Withdrawal abuse controls, now that there is no per-request human
   // approval below the auto-withdraw ceiling (docs/CUSTODY_SPEC.md § 3.3: "a
   // limit is where an attacker will aim, repeatedly, just under it"). --------

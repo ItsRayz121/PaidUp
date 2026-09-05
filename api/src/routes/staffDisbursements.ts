@@ -200,6 +200,17 @@ async function runPayoutRow(
   return { disbursementId: row.id, userId: row.userId, status: "sending" };
 }
 
+// Dispatch ONE row per the batch's mode. Shared by runBatch's loop and the
+// individual "send one recipient" route below, so the two can never drift —
+// one pipeline, not two copies of the same decision.
+async function dispatchRow(
+  app: FastifyInstance, ctx: { userId: string; role: Role }, batch: { mode: BatchMode }, row: DisbursementRow,
+): Promise<RowResult> {
+  return batch.mode === "balance"
+    ? await runBalanceRow(app, ctx, row)
+    : await runPayoutRow(app, ctx, row, batch.mode);
+}
+
 // Run a whole batch, dispatching per mode.
 async function runBatch(
   app: FastifyInstance, ctx: { userId: string; role: Role }, batchId: string,
@@ -233,11 +244,7 @@ async function runBatch(
   const results: RowResult[] = [];
   for (const row of rows) {
     try {
-      results.push(
-        batch.mode === "balance"
-          ? await runBalanceRow(app, ctx, row)
-          : await runPayoutRow(app, ctx, row, batch.mode),
-      );
+      results.push(await dispatchRow(app, ctx, batch, row));
     } catch (e) {
       // A row processor is meant to catch its own errors and return a 'failed'
       // result — but if one throws anyway (a genuine DB error), the row was
@@ -361,6 +368,64 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
   app.post("/staff/disbursements/:id/run", staffGuard("disbursements.manage", async ({ userId, role }, req) => {
     const id = (req.params as { id: string }).id;
     return runBatch(app, { userId, role }, id);
+  }));
+
+  // Send ONE recipient, not the whole batch (founder, 2026-09-05: "individual
+  // sending ... one by one"). Same pipeline as runBatch's loop
+  // (dispatchRow), same "each row is its own decision" rule — this never
+  // touches any other row in the batch.
+  app.post("/staff/disbursements/:id/rows/:rid/send", staffGuard("disbursements.manage", async ({ userId, role }, req, reply) => {
+    const { id, rid } = req.params as { id: string; rid: string };
+    const batch = await getBatch(id);
+    if (!batch) return reply.code(404).send({ error: "Batch not found." });
+    if (batch.status === "cancelled") return reply.code(409).send({ error: "This batch was cancelled." });
+    if (batch.status === "completed") return reply.code(409).send({ error: "This batch is already done." });
+
+    // Mark it processing before dispatching, same as runBatch — a 'draft'
+    // batch's status is otherwise never rolled up by recomputeBatchTotals
+    // (which deliberately leaves 'draft' alone), so without this a batch sent
+    // one row at a time, never via "Send reward to all", would stay 'draft'
+    // forever even once every row is done.
+    await sql.run(
+      "UPDATE payout_batches SET status = 'processing' WHERE id = ? AND status IN ('draft','processing','partly_failed')",
+      id,
+    );
+    // Pick up any settlement that happened since this row was last read, same
+    // as runBatch does before its own loop.
+    await syncBatchFromRequests(id);
+    // Same orphan recovery runBatch does batch-wide, scoped to this one row: a
+    // row stuck 'sending' with no withdrawal_request behind it was claimed by a
+    // crashed run and can only mean a dead attempt, never a real in-flight payout.
+    await sql.run(
+      "UPDATE payout_disbursements SET status = 'pending' WHERE id = ? AND batch_id = ? AND status = 'sending' AND withdrawal_request_id IS NULL",
+      rid, id,
+    );
+    const row = (await getDisbursements(id)).find((r) => r.id === rid);
+    if (!row) return reply.code(404).send({ error: "Row not found in this batch." });
+    if (!RUNNABLE.includes(row.status)) {
+      return reply.code(409).send({ error: `This reward is '${row.status}', not ready to send.` });
+    }
+
+    let result: RowResult;
+    try {
+      result = await dispatchRow(app, { userId, role }, batch, row);
+    } catch (e) {
+      // Same recovery runBatch's loop uses: a row processor is meant to catch
+      // its own errors, but if one throws anyway the row was already claimed
+      // to 'sending' and would be orphaned there forever otherwise.
+      await sql.run(
+        "UPDATE payout_disbursements SET status = 'failed', error = ? WHERE id = ? AND status = 'sending'",
+        (e as Error).message || "send failed", row.id,
+      ).catch(() => {});
+      result = { disbursementId: row.id, userId: row.userId, status: "failed", error: (e as Error).message };
+    }
+
+    await recomputeBatchTotals(id);
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "disbursement_row_send",
+      detail: `row ${rid} (batch ${id}): ${result.status}`,
+    });
+    return result;
   }));
 
   // Cancel a batch that has not paid anything out. Frees its proofs back into

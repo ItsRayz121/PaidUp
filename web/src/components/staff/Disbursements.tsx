@@ -26,10 +26,15 @@ import { formatUsdtMicro } from "@/lib/format";
 import { reconcileRowsFromCsv } from "@/lib/csv";
 import {
   fetchEligibleRewards, fetchDisbursementBatches, fetchDisbursementBatch,
-  createDisbursementBatch, runDisbursementBatch, cancelDisbursementBatch, renameDisbursementBatch,
+  createDisbursementBatch, runDisbursementBatch, sendDisbursementRow, cancelDisbursementBatch, renameDisbursementBatch,
   markDisbursementRowPaid, reconcileDisbursement, downloadDisbursementCsv,
   type DisbursementMode, type EligibleReward, type DisbursementBatch, type DisbursementRow,
 } from "@/lib/api";
+
+// A row still waiting to be sent — same list the backend's RUNNABLE uses
+// (routes/staffDisbursements.ts). 'sending' is deliberately excluded: it is
+// already claimed by a run/send in flight.
+const ROW_RUNNABLE = ["pending", "failed", "needs_address"];
 
 const MODE_LABEL: Record<DisbursementMode, string> = {
   balance: "Credit balance",
@@ -39,7 +44,8 @@ const MODE_LABEL: Record<DisbursementMode, string> = {
 };
 const MODE_HELP: Record<DisbursementMode, string> = {
   balance: "Puts the reward on the user's in-app balance. No address, no gas. The safe default.",
-  onchain: "Credits the balance, then sends USDT to the user's saved address automatically.",
+  onchain: "Credits the balance, then sends USDT to the user's saved address automatically. "
+    + "\"Manual reward send\" stays available per recipient as a manual override if a payout gets stuck.",
   manual: "Credits the balance, then queues a payout you send by hand and mark paid with the tx hash.",
   csv: "Like 'by hand', but export the list, pay externally, and upload a tx-hash file to reconcile.",
 };
@@ -311,6 +317,15 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
     catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
   }
+  async function sendRow(r: DisbursementRow) {
+    setBusy(true);
+    try {
+      const res = await sendDisbursementRow(id, r.id);
+      toast.ok(res.status === "failed" ? `Could not send: ${res.error ?? "unknown error"}` : `Reward ${res.status}.`);
+      data.reload();
+    } catch (e) { toast.err((e as Error).message); }
+    finally { setBusy(false); }
+  }
   async function markPaid(r: DisbursementRow) {
     const hash = window.prompt(
       `Send ${usdt(r.usdtMicro)} to:\n\n${r.destAddress}\n\nDo that first, then paste the transaction hash here.`,
@@ -373,11 +388,25 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
                     : "—")}
               </td>
               <td className="py-2 text-right">
-                {canManage && r.status === "sending" && r.withdrawalRequestId && r.destAddress && (
-                  <button onClick={() => markPaid(r)}
-                    className="rounded-md bg-success px-2.5 py-1 text-xs font-semibold text-white">
-                    Mark paid
+                {canManage && ROW_RUNNABLE.includes(r.status) && (
+                  <button disabled={busy} onClick={() => sendRow(r)}
+                    className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
+                    Send reward
                   </button>
+                )}
+                {canManage && r.status === "sending" && r.withdrawalRequestId && r.destAddress && (
+                  <div className="inline-block text-left">
+                    <button onClick={() => markPaid(r)}
+                      className="rounded-md bg-success px-2.5 py-1 text-xs font-semibold text-white">
+                      Manual reward send
+                    </button>
+                    {r.relayInFlight && (
+                      <p className="mt-1 max-w-[16rem] text-[11px] leading-snug text-muted">
+                        Sending automatically right now — only use this if it&apos;s stuck.
+                        Sending it twice is blocked automatically.
+                      </p>
+                    )}
+                  </div>
                 )}
               </td>
             </tr>
@@ -417,7 +446,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
           <div className="flex flex-wrap gap-1.5">
             <button disabled={busy || !canRun} onClick={run}
               className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-              Run
+              Send reward to all
             </button>
             {batch.mode === "csv" && (
               <>

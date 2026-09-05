@@ -348,6 +348,78 @@ const reqFor = (userId: string) =>
     db1.batch.status === "partly_failed");
 }
 
+console.log("\n-- send ONE recipient, not the whole batch --");
+{
+  const t = await mkTask("Individual");
+  const ui1 = await mkUser("ind1");
+  const ui2 = await mkUser("ind2");
+  const pi1 = await approvedProof(t, ui1);
+  const pi2 = await approvedProof(t, ui2);
+  const c = await post("/staff/disbursements", admin, { mode: "balance", proofIds: [pi1, pi2] });
+  const bid = (c.json() as { batchId: string }).batchId;
+  const rows0 = (await get(`/staff/disbursements/${bid}`, admin).then((r) => r.json())) as
+    { rows: { id: string; userId: string; status: string }[] };
+  const row1 = rows0.rows.find((r) => r.userId === ui1)!;
+  const row2 = rows0.rows.find((r) => r.userId === ui2)!;
+
+  const sent = await post(`/staff/disbursements/${bid}/rows/${row1.id}/send`, admin);
+  check("sending one row succeeds", (sent.json() as { status: string }).status === "released", sent.body);
+  check("the sent recipient's reward landed", (await earnedUsdt(ui1)) === 1_000_000);
+  check("the OTHER recipient in the same batch is untouched", (await earnedUsdt(ui2)) === 0);
+
+  const det = await get(`/staff/disbursements/${bid}`, admin);
+  const detBody = det.json() as { batch: { status: string }; rows: { id: string; status: string }[] };
+  check("the sent row is 'released'", detBody.rows.find((r) => r.id === row1.id)?.status === "released");
+  check("the untouched row stays 'pending'", detBody.rows.find((r) => r.id === row2.id)?.status === "pending");
+  check("the batch as a whole rolled to 'processing' (one row still pending)",
+    detBody.batch.status === "processing", detBody.batch.status);
+
+  const again = await post(`/staff/disbursements/${bid}/rows/${row1.id}/send`, admin);
+  check("sending an already-released row again is refused (409)", again.statusCode === 409);
+
+  check("an unknown batch id 404s",
+    (await post(`/staff/disbursements/ghost-batch/rows/${row1.id}/send`, admin)).statusCode === 404);
+  check("an unknown row id 404s",
+    (await post(`/staff/disbursements/${bid}/rows/ghost-row/send`, admin)).statusCode === 404);
+  check("an agent (not finance/admin) gets 403 sending a row",
+    (await post(`/staff/disbursements/${bid}/rows/${row2.id}/send`, agent)).statusCode === 403);
+
+  check("the individual send is audited",
+    Boolean(await sql.get("SELECT 1 AS x FROM admin_audit_log WHERE action = 'disbursement_row_send'")));
+}
+
+console.log("\n-- a row mid-relay is flagged relayInFlight; a stopped one is not --");
+{
+  const t = await mkTask("RelayFlag");
+  const ur = await mkUser("relayflag");
+  await saveAddr(ur);
+  const pr = await approvedProof(t, ur);
+  const c = await post("/staff/disbursements", admin, { mode: "manual", proofIds: [pr] });
+  const bid = (c.json() as { batchId: string }).batchId;
+  await post(`/staff/disbursements/${bid}/run`, admin);
+  const withdrawalRequestId = ((await get(`/staff/disbursements/${bid}`, admin).then((r) => r.json())) as
+    { rows: { withdrawalRequestId: string | null }[] }).rows[0].withdrawalRequestId!;
+
+  const before = await get(`/staff/disbursements/${bid}`, admin);
+  check("no relay job yet -> relayInFlight is false",
+    (before.json() as { rows: { relayInFlight: boolean }[] }).rows[0].relayInFlight === false);
+
+  // Simulate a live relay job actually working this request.
+  await sql.run(
+    `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, ?, 1, 'prefund_sent', 0, ?)`,
+    newId(), withdrawalRequestId, ur, ADDR, ADDR, 1_000_000, now(),
+  );
+  const mid = await get(`/staff/disbursements/${bid}`, admin);
+  check("a live (non-terminal) relay job -> relayInFlight is true",
+    (mid.json() as { rows: { relayInFlight: boolean }[] }).rows[0].relayInFlight === true);
+
+  await sql.run("UPDATE payout_relay_jobs SET status = 'failed' WHERE request_id = ?", withdrawalRequestId);
+  const after = await get(`/staff/disbursements/${bid}`, admin);
+  check("once the relay job is terminal (failed) -> relayInFlight goes back to false",
+    (after.json() as { rows: { relayInFlight: boolean }[] }).rows[0].relayInFlight === false);
+}
+
 console.log("\n-- mark a manual disbursement paid by hand --");
 const HASH = "0x" + "a".repeat(64);
 {
@@ -543,6 +615,7 @@ console.log("\n-- audit trail --");
   const kinds = new Set(rows.map((r) => r.action));
   check("create is audited", kinds.has("disbursement_batch_create"));
   check("run is audited", kinds.has("disbursement_batch_run"));
+  check("an individual row send is audited", kinds.has("disbursement_row_send"));
   check("quick send is audited", kinds.has("disbursement_quick_send"));
   check("cancel is audited", kinds.has("disbursement_batch_cancel"));
 }

@@ -3778,3 +3778,67 @@ See `docs/` for the full spec.
     money anywhere. Reordering it behind the payoutMode check would have
     broken that existing test and contradicted the founder's own explicit
     ask that a stuck job resolve on its own — so it was left alone.
+
+- **THE DISBURSEMENT QUEUE STOPS LOOKING LIKE IT COULD DOUBLE-PAY, PLATFORM
+  PAYOUTS GET A LONGER LEASH, AND ONE RECIPIENT CAN BE SENT AT A TIME
+  (founder, 2026-09-05, later the same day).** A voice-memo review of the
+  live `/staff#tasks/p-task-rewards` screen: seeing **"Mark paid"** sitting
+  right next to a batch already set to **"Send on-chain"** read as if the app
+  might let staff pay the same reward twice — once by the automatic relay,
+  once by a human. The backend already refused that exact double-send
+  (`markRowPaid` already checked for a live relay job first) — the UI just
+  never said so. Verified: `npm run test:disbursements` (96, was 81) +
+  `npm run test:payoutrelay` (69, was 66) + `npm run test:moneyadmin` (100)
+  all green from a fresh database; api + web `tsc --noEmit`, `next build`
+  (38 routes) clean.
+  - **Platform-initiated payouts (this disbursement feature) now get a
+    longer give-up window than a user's own withdrawal** — the founder's own
+    ask: "extend this window of the retry ... to one hour" for platform
+    money, while a user's own withdrawal keeps its existing ceiling
+    unchanged. New `relayMaxAttemptsDisbursement` (180) /
+    `relayMaxAgeMsDisbursement` (1 hour) in `config.ts`, checked in
+    `payoutRelay.ts`'s `advanceRelayJob` — BOTH numbers move together,
+    deliberately: `attempts` only increments on a genuine thrown error per
+    tick (not every tick), so raising only the age ceiling would have done
+    nothing if the tighter, unchanged attempts cap (15 ≈ 5 min) fired first.
+    ⚠️ **Which relay job is "a disbursement" can't be read off
+    `withdrawal_requests.reviewed_by`** — `autoWithdraw.ts`'s `tryAutoSettle`
+    overwrites that column to `'system:auto'` in the very same transaction
+    that creates the relay job, so the `'system:disbursement'` marker
+    `runPayoutRow` sets at creation is already gone by the time any tick
+    runs. The check instead joins through the existing
+    `payout_disbursements.withdrawal_request_id` link, which survives the
+    whole job's life untouched.
+  - **One recipient can be sent at a time** — `POST
+    /staff/disbursements/:id/rows/:rid/send` (`sendDisbursementRow` in
+    `web/src/lib/api.ts`, a **"Send reward"** button per row for any row
+    still `pending`/`failed`/`needs_address`), instead of only ever running
+    the whole batch. `staffDisbursements.ts`'s `dispatchRow()` is the ONE
+    pipeline both this route and `runBatch`'s loop now call — never two
+    copies of the same per-row decision. Same "each row is its own decision"
+    rule Stage 7's bulk-proof-decide already established: a batch stays
+    untouched apart from the one row sent.
+    ⚠️ **A batch sent one row at a time, never via "Send reward to all",
+    needed its own fix to leave `draft` at all** — `recomputeBatchTotals`
+    deliberately never rolls up a `draft` batch's status, so without
+    explicitly flipping it to `processing` first (same line `runBatch`
+    already had), a batch's status field would sit at `draft` forever even
+    once every row had been sent individually. The same orphan-recovery
+    `runBatch` does batch-wide (a row stuck `sending` with no
+    `withdrawal_request_id` behind it can only be a crashed prior attempt)
+    is applied here scoped to the one row being sent.
+  - **The screen says plainly when a payout is already sending itself.** A
+    new derived, read-only `DisbursementRow.relayInFlight` field
+    (`disbursements.ts`'s `getDisbursements` — an `EXISTS` against
+    `payout_relay_jobs` in a non-terminal status, naturally `false` for
+    every `manual`/`csv` row since those never get a relay job at all) drives
+    one small muted line under the **"Manual reward send"** button — renamed
+    from **"Mark paid"** — whenever it's true: *"Sending automatically right
+    now — only use this if it's stuck. Sending it twice is blocked
+    automatically."* The button itself still shows either way, deliberately
+    — the founder's own call: the existing backend refusal stays the real
+    safety net, this is presentation on top of it, not a new gate. The
+    batch-level **"Run"** button is renamed **"Send reward to all"**.
+  - **Not changed**: any batch mode's actual behaviour (`balance` / `onchain`
+    / `manual` / `csv`), the eligible pool, CSV export/reconcile, cancel,
+    rename, or `markRowPaid`'s existing double-send guard.

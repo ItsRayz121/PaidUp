@@ -86,6 +86,15 @@ export type DisbursementRow = {
   withdrawalRequestId: string | null;
   createdAt: string;
   settledAt: string | null;
+  /**
+   * True while a live payout_relay_jobs row is actually working this row's
+   * withdrawal request right now (founder, 2026-09-05: the screen must say
+   * plainly when a payout is already being sent automatically, since that is
+   * exactly when "Manual reward send" showing up reads as a double-payment
+   * risk). Only ever true for 'onchain'-mode rows — 'manual'/'csv' never
+   * create a relay job at all.
+   */
+  relayInFlight: boolean;
 };
 
 const EMPTY_TALLY: Record<DisbursementStatus, number> = {
@@ -515,7 +524,12 @@ async function talliesFor(batchIds: string[]): Promise<Record<string, Record<Dis
 
 export async function getDisbursements(batchId: string): Promise<DisbursementRow[]> {
   const rows = await sql.all<Record<string, unknown>>(
-    `SELECT d.*, u.email AS user_email, t.title AS task_title
+    `SELECT d.*, u.email AS user_email, t.title AS task_title,
+            EXISTS (
+              SELECT 1 FROM payout_relay_jobs j
+              WHERE j.request_id = d.withdrawal_request_id
+                AND j.status NOT IN ('failed','forward_confirmed')
+            ) AS relay_in_flight
      FROM payout_disbursements d
      LEFT JOIN users u ON u.id = d.user_id
      LEFT JOIN task_proofs p ON p.id = d.proof_id
@@ -542,5 +556,6 @@ export async function getDisbursements(batchId: string): Promise<DisbursementRow
     withdrawalRequestId: (r.withdrawal_request_id as string) ?? null,
     createdAt: String(r.created_at),
     settledAt: (r.settled_at as string) ?? null,
+    relayInFlight: Boolean(r.relay_in_flight),
   }));
 }

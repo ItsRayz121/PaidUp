@@ -482,8 +482,21 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
     // shared with cost-tuning knobs elsewhere (payoutRelayIntervalMs's own
     // comment) — a job should give up in a bounded, known amount of TIME
     // regardless of what the tick cadence happens to be set to.
+    //
+    // An admin-initiated disbursement gets a LONGER leash than a user's own
+    // withdrawal (founder, 2026-09-05, later the same day) — a
+    // payout_disbursements row referencing this request is proof of that,
+    // independent of withdrawal_requests.reviewed_by (tryAutoSettle overwrites
+    // that to 'system:auto' the moment it creates the relay job, so the
+    // 'system:disbursement' marker runPayoutRow sets at creation is already
+    // gone by the time any tick runs this check).
+    const isDisbursementJob = job.purpose === "withdrawal" && !!(await t.get<{ x: number }>(
+      "SELECT 1 AS x FROM payout_disbursements WHERE withdrawal_request_id = ?", job.request_id,
+    ));
+    const maxAttempts = isDisbursementJob ? config.relayMaxAttemptsDisbursement : config.relayMaxAttempts;
+    const maxAgeMs = isDisbursementJob ? config.relayMaxAgeMsDisbursement : config.relayMaxAgeMs;
     const ageMs = Date.now() - new Date(job.created_at).getTime();
-    if (job.attempts >= config.relayMaxAttempts || ageMs >= config.relayMaxAgeMs) {
+    if (job.attempts >= maxAttempts || ageMs >= maxAgeMs) {
       // Safe to auto-refund only if this job never got past 'pending' — see
       // failJob's header comment for why that specific line is what matters,
       // not the attempt count. This is exactly the shape the production bug

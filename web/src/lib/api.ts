@@ -751,6 +751,8 @@ export type DisbursementRow = {
   destChain: string | null; destAddress: string | null;
   status: DisbursementStatus; txHash: string | null; error: string | null;
   withdrawalRequestId: string | null; createdAt: string; settledAt: string | null;
+  /** True while a relay job is actively sending this row's payout right now. */
+  relayInFlight: boolean;
 };
 
 export const fetchEligibleRewards = (
@@ -788,6 +790,11 @@ export const createDisbursementBatch = (body: {
 export const runDisbursementBatch = (id: string) =>
   apiFetch<{ processed: number; released: number; failed: number; results: { disbursementId: string; userId: string; status: string; error?: string }[] }>(
     `/staff/disbursements/${id}/run`, { method: "POST" });
+
+// Send ONE recipient's reward now, instead of running the whole batch.
+export const sendDisbursementRow = (batchId: string, rowId: string) =>
+  apiFetch<{ disbursementId: string; userId: string; status: string; error?: string }>(
+    `/staff/disbursements/${batchId}/rows/${rowId}/send`, { method: "POST" });
 
 // Cosmetic only — the id is unchanged and is still what the audit log quotes.
 export const renameDisbursementBatch = (id: string, name: string) =>
