@@ -2129,7 +2129,7 @@ export async function staffRoutes(app: FastifyInstance) {
     ]);
     if (!address) {
       return {
-        chain: "bep20", address: "", explorerReady: bscscanReady(), rows: [], totals: null,
+        chain: "bep20", address: "", explorerReady: bscscanReady(), explorerError: null, rows: [], totals: null,
         signerAddress, signerMismatch: false,
         signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
         configuredUsdtMicro: null, configuredBnbWei: null,
@@ -2140,14 +2140,14 @@ export async function staffRoutes(app: FastifyInstance) {
       // nothing to show here, and saying so beats an empty table that reads as
       // "no money has ever moved".
       return {
-        chain: "bep20", address, explorerReady: false, rows: [], totals: null,
+        chain: "bep20", address, explorerReady: false, explorerError: null, rows: [], totals: null,
         signerAddress, signerMismatch,
         signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
         configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
       };
     }
 
-    const txs = await fetchTreasuryLedger(address, q.limit);
+    const { rows: txs, error: explorerError } = await fetchTreasuryLedger(address, q.limit);
     const hashes = txs.map((t) => t.hash.toLowerCase());
     const labels = hashes.length === 0 ? new Map<string, string>() : await labelTreasuryHashes(hashes);
 
@@ -2166,11 +2166,14 @@ export async function staffRoutes(app: FastifyInstance) {
       chain: "bep20",
       address,
       explorerReady: true,
+      // Distinct from "genuinely no transactions" — see fetchTreasuryLedger's
+      // own header for why this file used to conflate the two.
+      explorerError,
       signerAddress,
       signerMismatch,
       signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
       configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
-      totals: { inMicro: Number(inMicro), outMicro: Number(outMicro), rows: txs.length },
+      totals: explorerError ? null : { inMicro: Number(inMicro), outMicro: Number(outMicro), rows: txs.length },
       rows: txs.map((t) => ({
         hash: t.hash,
         at: t.at,

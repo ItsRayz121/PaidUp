@@ -3966,3 +3966,106 @@ See `docs/` for the full spec.
   - **`manual`/`csv` mode disbursements are unaffected in behaviour** (still
     land in the staff queue / CSV export for a human to send by hand) — only
     the destination address changed, for all three non-`balance` modes alike.
+
+- **CROSS-CHECK ON THE ABOVE COMMIT, LIVE: A REAL EXPLORER-ERROR BUG FOUND, A
+  DASHBOARD NAVIGATION GAP FIXED, AND FOUR SMALLER FOUNDER ASKS (2026-09-05,
+  later the same day).** The founder tested the disbursement/treasury-wallet
+  fix live in production and reported the Treasury → Wallet panel showing
+  "nothing has moved through this wallet" for an address that visibly held a
+  live balance and had just sent two real payouts. Verified:
+  `npm run test:bscscan` (new, 5 unit checks) + `npm run test:moneyadmin`
+  (100) + `npm run test:analytics` (46), all green; api + web typecheck,
+  eslint 0 errors, web production build (38 routes) all clean.
+  - ⚠️ **REAL BUG FOUND: `bscscan.ts` COULD NOT TELL "GENUINELY NO
+    TRANSACTIONS" APART FROM "THE EXPLORER REFUSED TO ANSWER".** Etherscan/
+    BscScan answers BOTH with `status: "0"` — the only thing that actually
+    differs is what `result` holds: a real empty history still comes back as
+    an ARRAY (`[]`); a real error (bad key, rate limit) comes back with
+    `result` as a STRING describing what went wrong. The old code treated
+    `status !== "1"` as the only signal and folded both cases into the same
+    `return []`, so an invalid/incompatible explorer key read EXACTLY like a
+    wallet that had never moved — which is what happened live. New
+    `parseExplorerResult()` (exported, unit-tested in `bscscan.test.ts`)
+    distinguishes them; `queryList`/`queryTokenList` now THROW on a real
+    error instead of swallowing it. `fetchTreasuryLedger` — staff-only, so
+    unlike every other function in this file it is allowed to surface a
+    failure — now returns `{ rows, error }` instead of a bare array;
+    `GET /staff/treasury/wallet` serves `explorerError` and the panel shows a
+    distinct red "could not read this wallet's history" banner instead of
+    silently claiming emptiness. **`fetchBnbAddressHistory` (the user-facing
+    `/wallet/bnb` screen) keeps its "never throws" contract untouched** — the
+    same underlying `queryList` now throws more often internally, but that
+    function's own existing try/catch absorbs it exactly as before; only the
+    treasury path, which has nothing to protect by staying silent, surfaces
+    the distinction.
+  - ⚠️ **DASHBOARD/SEARCH NAVIGATION GAP FIXED: clicking "Payout relay jobs
+    failed" landed on Withdrawals → USDT, not → Relay jobs.** The 2026-09-02
+    IA regroup folded 8 flat sub-panels into 3 `GroupTabs` (Withdrawals /
+    Deposits / Treasury) whose inner tab is plain `useState`, defaulting to
+    `items[0]` on every mount — CLAUDE.md's own note at the time called this
+    "an accepted trade for fewer top-level tabs." For a tile or search entry
+    with an exact, unambiguous inner destination (the relay-jobs tile is
+    the textbook case — its whole job is to point at ONE specific queue),
+    that trade cost real discoverability: a founder looking for the exact
+    failed job it named could not find it without knowing to click a second,
+    undocumented inner tab. New `staffNav.tsx` `setPendingGroupSubTab` /
+    `consumePendingGroupSubTab` — a tiny module-scoped handoff keyed by panel
+    id (not React context; the tile and the `GroupTabs` it targets are far
+    apart in the tree and both already agree on the panel id in the URL
+    hash) — lets `goToSection`'s callers name the exact inner tab.
+    `WithdrawalsGroupPanel`/`DepositsGroupPanel`/`TreasuryGroupPanel` each
+    pass their own `groupId` to `GroupTabs`, which reads-and-clears the
+    pending value once on mount. Wired for both the dashboard tiles
+    (BNB/relay-failed → their own tab, treasury shortfall → Reconciliation)
+    and all matching command-palette search entries.
+  - **Tasks: "My activity" gets clearer wording and a Completed peek**
+    (`web/src/app/tasks/page.tsx`). "In progress" → **"Pending"** — from the
+    person doing the task, tapping Start and confirming IS finishing their
+    part; what is actually in progress from there is OUR review, not their
+    work, and "in progress" read as if the app had forgotten they were done.
+    A new **"Completed"** group (capped at 5) now also shows on this tab —
+    via a small SEPARATE fetch of the existing History view
+    (`fetchTasks("history", 0, 5)`), not a change to what `view=mine` itself
+    returns. ⚠️ **`routes/app.ts`'s `view=mine` query still deliberately
+    excludes done tasks** (`isDone` tasks are dropped) — that contract is
+    untouched; reusing the tested History query for a quick glance keeps
+    History as the one real, complete Completed list rather than growing two
+    slightly-different definitions of "done."
+  - **Withdrawals queue: USDT only, no points figure** (`MoneyQueues.tsx`'s
+    `WithdrawalsPanel`). The Amount column and its detail view showed the raw
+    points number ("100") stacked above the USDT figure — the founder's
+    explicit call: `1000 points = 1 USDT` is an internal ledger fact, not a
+    rate this app should ask a person reading a payout to convert themselves.
+    ⚠️ **THIS IS A NARROWER CALL THAN `format.ts`'s STANDING "staff panel is
+    exempt, it's where the ledger is reconciled" RULE** — that rule stays
+    true for CSV exports (`csv: r.amount` is untouched, still raw points —
+    an accountant opening the file wants the ledger unit) and for any screen
+    that edits/adjusts points directly. It does not apply to a plain payout
+    amount a person is glancing at to answer "how much are we sending" —
+    `formatMoney` (already USDT-only) replaces `formatPoints` at both
+    display sites, and the `pendingTotal` summary line above the queue lost
+    its own redundant points figure the same way.
+  - **Treasury → Wallet panel restructured into three labelled rows** (Total/
+    USDT/BNB — the founder's own ask, "make it more professional") replacing
+    the previous run-on sentence, mismatch handling unchanged.
+  - **Not a bug, explained rather than changed**: the "not checked — typed
+    in" address rows the founder pointed at (three withdrawal requests, all
+    predating this deploy) are pre-fix disbursement rows created before the
+    custody-wallet targeting fix above went live — the architecture the
+    founder described ("treasury → the user's own RoziPay wallet → external,
+    never treasury straight to an external address") is exactly what the
+    fix above now does for every NEW disbursement, and is also exactly how a
+    REGULAR user-initiated withdrawal already worked before any of today's
+    changes (`payoutRelay.ts`'s prefund pass-through, 2026-08-08). No code
+    change was needed for the historical rows themselves.
+  - **Not a bug, existing deliberate design**: the "Payout relay jobs failed"
+    dashboard tile staying red after the underlying money was already
+    auto-returned is the documented "Mark as handled" flow (2026-08-30 —
+    "a staff acknowledgement, NOT a retry... records that a human checked
+    which case it was") working as designed, not a defect — a failure is
+    never silently swept off the board without a human having looked at it
+    once, even when it's obvious in hindsight that nothing further needs
+    doing. The real, fixable problem was the navigation gap above (the tile
+    didn't lead to the button); that's fixed. The stale job itself still
+    needs one click: Money & payouts → Withdrawals → Relay jobs → Failed →
+    open the row → Acknowledge.

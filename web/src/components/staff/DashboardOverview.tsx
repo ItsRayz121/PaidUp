@@ -23,10 +23,18 @@ import { useStaffNav, type SectionId } from "@/lib/staffNav";
 import { TimeCell, Spinner, ErrorRow } from "./primitives";
 import { useToast } from "./toast";
 
+// `groupSubTab`: some anchors land on a panel that is itself a group of
+// further tabs (Withdrawals -> USDT/BNB/Relay jobs/All money out). Set this
+// when a tile counts exactly ONE of those inner tabs, so clicking it lands
+// there directly instead of the group's own default first tab.
 // A plain queue size (leaves the queue when done — a muted 0 is fine).
-type CountTile = { kind: "count"; label: string; value: number; section: SectionId; anchor?: string };
+type CountTile = {
+  kind: "count"; label: string; value: number; section: SectionId; anchor?: string; groupSubTab?: string;
+};
 // A problem signal. Rendered only while `open > 0`.
-type SignalTile = { kind: "signal"; label: string; open: number; section: SectionId; anchor?: string };
+type SignalTile = {
+  kind: "signal"; label: string; open: number; section: SectionId; anchor?: string; groupSubTab?: string;
+};
 type Tile = CountTile | SignalTile;
 
 export function DashboardOverview() {
@@ -81,9 +89,9 @@ export function DashboardOverview() {
     { kind: "count", label: "Withdrawals — ready to pay", value: a.withdrawalsReady, section: "money", anchor: "p-withdrawals-group" },
     { kind: "count", label: "USDT deposits waiting", value: a.depositsPending, section: "money", anchor: "p-deposits-group" },
     { kind: "count", label: "USDT refunds waiting", value: a.refundsPending, section: "money", anchor: "p-deposits-group" },
-    { kind: "signal", label: "BNB withdrawals failed", open: a.bnbFailed.open, section: "money", anchor: "p-withdrawals-group" },
-    { kind: "signal", label: "Payout relay jobs failed", open: a.relayFailed.open, section: "money", anchor: "p-withdrawals-group" },
-    { kind: "signal", label: "Treasury shortfall (chains)", open: a.reconciliationShortfall.open, section: "money", anchor: "p-treasury-group" },
+    { kind: "signal", label: "BNB withdrawals failed", open: a.bnbFailed.open, section: "money", anchor: "p-withdrawals-group", groupSubTab: "bnb" },
+    { kind: "signal", label: "Payout relay jobs failed", open: a.relayFailed.open, section: "money", anchor: "p-withdrawals-group", groupSubTab: "relay" },
+    { kind: "signal", label: "Treasury shortfall (chains)", open: a.reconciliationShortfall.open, section: "money", anchor: "p-treasury-group", groupSubTab: "reconciliation" },
     { kind: "signal", label: "Open fraud flags", open: a.fraudOpen.open, section: "users", anchor: "p-fraud" },
     { kind: "count", label: "IDs waiting for review", value: a.kycWaiting, section: "users", anchor: "p-kyc" },
     { kind: "count", label: "Open support tickets", value: a.ticketsOpen, section: "support" },
@@ -115,7 +123,7 @@ export function DashboardOverview() {
           return (
             <button
               key={t.label}
-              onClick={() => goToSection(t.section, t.anchor)}
+              onClick={() => goToSection(t.section, t.anchor, t.groupSubTab)}
               className={`rounded-lg border-2 p-3 text-left transition-colors hover:brightness-95 ${tone}`}
             >
               <p className={`num text-2xl font-bold ${numTone}`}>{headline}</p>

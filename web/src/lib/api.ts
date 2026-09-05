@@ -713,6 +713,13 @@ export type TreasuryLedgerRow = {
 export const fetchTreasuryLedger = (limit = 50) =>
   apiFetch<{
     chain: string; address: string; explorerReady: boolean;
+    // Distinct from "genuinely no transactions" (rows: [], explorerError:
+    // null) — an invalid/incompatible explorer key answers every request with
+    // the same shape a real "no transactions" answer has, and conflating the
+    // two once silently showed "nothing has ever moved through this wallet"
+    // for a wallet that visibly held a live balance and had just sent two
+    // real payouts (2026-09-05).
+    explorerError: string | null;
     // The address that ACTUALLY signs every payout (derived from the treasury
     // private key) — a SEPARATE value from `address` above (a plain typed
     // app_settings field). signerMismatch is true only when both are known and

@@ -21,6 +21,14 @@ export type SearchDest = {
   section: SectionId;
   /** Panel id (the sub-tab, e.g. "p-withdrawals-group") to open after switching section. */
   anchor?: string;
+  /**
+   * When `anchor` is itself a GROUP of further inner tabs (Withdrawals ->
+   * USDT/BNB/Relay jobs/All money out), name the inner tab this destination
+   * actually means, so picking it lands there directly rather than the
+   * group's own default first tab (2026-09-05 — the same fix as the dashboard
+   * tiles use; see staffNav.tsx's setPendingGroupSubTab).
+   */
+  groupSubTab?: string;
   /** Short label kept for a future compact display. Falls back to `label`. */
   short?: string;
   /** Small grey text on the right — which section it lives in. */
@@ -51,30 +59,30 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Money overview", short: "Overview", section: "money", anchor: "p-overview", hint: "Money & payouts",
     keywords: "money overview held treasury inflow outflow deposits withdrawals net flow balance", needs: ["withdrawals.view"] },
   // 2026-09-02: the 8 flat sub-panel anchors below were folded into 3 grouped
-  // tabs (Withdrawals / Deposits / Treasury) — each search entry now points
-  // at its group's anchor. Landing on the group's first internal tab rather
-  // than the exact one is the accepted trade for fewer top-level tabs.
-  { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
+  // tabs (Withdrawals / Deposits / Treasury) — each search entry now points at
+  // its group's anchor AND names its inner tab (groupSubTab, 2026-09-05), so
+  // picking it lands exactly where it says, not the group's default first tab.
+  { label: "Withdrawals queue", short: "Withdrawals", section: "money", anchor: "p-withdrawals-group", groupSubTab: "usdt", hint: "Money & payouts",
     keywords: "withdraw payout cash out pay approve reject mark paid", needs: ["withdrawals.view"] },
-  { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
+  { label: "USDT deposits", short: "Deposits", section: "money", anchor: "p-deposits-group", groupSubTab: "deposits", hint: "Money & payouts",
     keywords: "topup top up deposit confirm tx hash credit", needs: ["deposits.view"] },
-  { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
+  { label: "USDT refunds", short: "Refunds", section: "money", anchor: "p-deposits-group", groupSubTab: "refunds", hint: "Money & payouts",
     keywords: "refund get money back return deposit", needs: ["refunds.view"] },
   { label: "Reward disbursements", short: "Disbursements", section: "money", anchor: "p-disbursements", hint: "Money & payouts",
     keywords: "disbursement batch pay rewards send all release bulk csv payout", needs: ["disbursements.manage"] },
-  { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
+  { label: "BNB withdrawals", short: "BNB out", section: "money", anchor: "p-withdrawals-group", groupSubTab: "bnb", hint: "Money & payouts",
     keywords: "bnb gas withdraw native failed", needs: ["withdrawals.view"] },
-  { label: "USDT top-up config", short: "USDT top-up", section: "money", anchor: "p-deposits-group", hint: "Money & payouts",
+  { label: "USDT top-up config", short: "USDT top-up", section: "money", anchor: "p-deposits-group", groupSubTab: "topup", hint: "Money & payouts",
     keywords: "usdt topup top up deposit treasury address enable buy rigs machines", needs: ["mining.manage"] },
-  { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
+  { label: "Payout relay jobs", short: "Relay jobs", section: "money", anchor: "p-withdrawals-group", groupSubTab: "relay", hint: "Money & payouts",
     keywords: "relay job payout sign broadcast gas prefund forward failed stuck", needs: ["withdrawals.view"] },
-  { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
+  { label: "Treasury wallet", short: "Treasury", section: "money", anchor: "p-treasury-group", groupSubTab: "treasury", hint: "Money & payouts",
     keywords: "hot wallet balance gas fund bnb address", needs: ["treasury.view"] },
-  { label: "Reconciliation history", short: "Reconciliation", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
+  { label: "Reconciliation history", short: "Reconciliation", section: "money", anchor: "p-treasury-group", groupSubTab: "reconciliation", hint: "Money & payouts",
     keywords: "reconcile treasury shortfall snapshot ledger owed delta", needs: ["analytics.view"] },
-  { label: "Treasury wallet — money in and out", short: "Wallet", section: "money", anchor: "p-treasury-group", hint: "Money & payouts",
+  { label: "Treasury wallet — money in and out", short: "Wallet", section: "money", anchor: "p-treasury-group", groupSubTab: "wallet", hint: "Money & payouts",
     keywords: "wallet in out transactions hash bscscan explorer chain treasury history movement", needs: ["treasury.view"] },
-  { label: "All money out", short: "All money out", section: "money", anchor: "p-withdrawals-group", hint: "Money & payouts",
+  { label: "All money out", short: "All money out", section: "money", anchor: "p-withdrawals-group", groupSubTab: "all", hint: "Money & payouts",
     keywords: "all money out every transaction outgoing withdraw refund bnb combined list", needs: ["withdrawals.view"] },
   { label: "Withdrawal fee & auto-approve limits", short: "Fees & limits", section: "money", anchor: "p-withdrawal-fee", hint: "Money & payouts",
     keywords: "fee fees gas ceiling auto withdraw refund limit approval 100 usdt step up charge", needs: ["settings.manage"] },
@@ -148,7 +156,7 @@ export function StaffSearch({
 }: {
   visibleSections: SectionId[];
   has: (p: UiPermission) => boolean;
-  onGo: (section: SectionId, anchor?: string) => void;
+  onGo: (section: SectionId, anchor?: string, groupSubTab?: string) => void;
   onRecord?: (hit: StaffSearchHit) => void;
 }) {
   const [q, setQ] = useState("");
@@ -225,7 +233,7 @@ export function StaffSearch({
 
   function reset() { setQ(""); setRecords([]); setOpen(false); inputRef.current?.blur(); }
   function pick(it: Item) {
-    if (it.kind === "dest") onGo(it.dest.section, it.dest.anchor);
+    if (it.kind === "dest") onGo(it.dest.section, it.dest.anchor, it.dest.groupSubTab);
     else onRecord?.(it.hit);
     reset();
   }

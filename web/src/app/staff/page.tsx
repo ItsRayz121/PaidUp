@@ -27,7 +27,7 @@ import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/comp
 import { AnalyticsDashboard } from "@/components/analytics-admin";
 import { ReferralPanel, LeaderboardPanel, PerNetworkPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
-import { StaffNavContext, useStaffNav, type SectionId } from "@/lib/staffNav";
+import { StaffNavContext, useStaffNav, setPendingGroupSubTab, type SectionId } from "@/lib/staffNav";
 import { StaffSearch } from "@/components/staff-search";
 import { ToastProvider } from "@/components/staff/toast";
 import { UserLookupScreen } from "@/components/staff/UserDetail";
@@ -197,7 +197,8 @@ export default function StaffPage() {
   // Search result / stat tile picked: switch to that section and sub-tab, then
   // scroll to the top — there is only one panel per screen now, nothing to
   // scroll *to* within it.
-  function goToDest(id: SectionId, pid?: string) {
+  function goToDest(id: SectionId, pid?: string, groupSubTab?: string) {
+    if (pid && groupSubTab) setPendingGroupSubTab(pid, groupSubTab);
     go(id, pid);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }

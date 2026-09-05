@@ -18,7 +18,7 @@ import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash, statusLabel } from "./primitives";
 import { useToast } from "./toast";
-import { useStaffNav } from "@/lib/staffNav";
+import { useStaffNav, consumePendingGroupSubTab } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
 import { UsdtTopupConfigPanel } from "@/components/mining-admin";
 import type { UiPermission } from "@/lib/permissions";
@@ -30,7 +30,7 @@ import {
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
-import { formatPoints, formatMoney, formatUsdtMicro, formatBnbWei, displayIdentity } from "@/lib/format";
+import { formatMoney, formatUsdtMicro, formatBnbWei, displayIdentity } from "@/lib/format";
 import { ArrowUpIcon, ArrowDownIcon, BoltIcon, ChartIcon } from "@/components/icons";
 
 // ---- shared bits --------------------------------------------------------
@@ -352,18 +352,21 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       ),
     },
     {
+      // ⚠️ USDT ONLY — NO POINTS FIGURE HERE (founder, 2026-09-05). Points is
+      // the ledger's internal unit and 1000pts=1USDT is not a rate this app
+      // publishes anywhere a user or an admin glancing at a payout should have
+      // to do the conversion themselves. `csv: r.amount` still exports the raw
+      // ledger points — that column is for reconciliation, not for reading.
       key: "amount", header: "Amount", align: "right", sortable: true, csv: (r) => r.amount,
       render: (r) => (
         <div>
-          <div className="num font-semibold text-brand-ink">{formatPoints(r.amount)}</div>
+          <div className="num font-semibold text-brand-ink">{formatMoney(r.amount)}</div>
           {r.feePoints ? (
             <>
-              <div className="text-xs text-muted">− {formatPoints(r.feePoints)} fee</div>
+              <div className="text-xs text-muted">− {formatMoney(r.feePoints)} fee</div>
               <div className="num text-xs font-semibold text-brand">send {r.netUsdt} USDT</div>
             </>
-          ) : (
-            <div className="text-xs text-muted">{formatMoney(r.amount)}</div>
-          )}
+          ) : null}
         </div>
       ),
     },
@@ -395,8 +398,8 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
         badges={<StatusBadge status={open.status} />}
         userId={canOpenLedger ? open.userId : undefined}
         fields={[
-          F("Amount", <span className="num">{formatPoints(open.amount)} pts</span>),
-          F("Fee", open.feePoints ? <span className="num">− {formatPoints(open.feePoints)} pts</span> : "—"),
+          F("Amount", <span className="num">{formatMoney(open.amount)}</span>),
+          F("Fee", open.feePoints ? <span className="num">− {formatMoney(open.feePoints)}</span> : "—"),
           F("Net to send", <span className="num font-semibold text-brand">{open.netUsdt ?? "—"} USDT</span>),
           F("Source", open.sourceKind === "mixed" ? "Deposit + task USDT (one combined payout)"
             : open.sourceKind === "earned_usdt" ? "Task USDT" : "Points"),
@@ -424,7 +427,6 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       {pendingTotal && pendingTotal.count > 0 && (
         <p className="mb-2 rounded-lg border border-line bg-card p-2 text-xs text-muted">
           <span className="num font-semibold text-brand-ink">{pendingTotal.count}</span> request{pendingTotal.count === 1 ? "" : "s"} ·{" "}
-          <span className="num font-semibold text-brand-ink">{formatPoints(pendingTotal.points)}</span> pts ·{" "}
           to send <span className="num font-semibold text-brand">{pendingTotal.usdt} USDT</span>
         </p>
       )}
@@ -1130,37 +1132,50 @@ export function TreasuryWalletPanel() {
 
       {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
 
-      {/* The address shown to admins (a typed app_settings field) is NOT
-          derived from the treasury signing key — nothing keeps them in sync.
-          Funding the wrong one is exactly why a payout can revert for
-          "insufficient balance" while this screen shows real money at a
-          different address (2026-09-05). */}
+      {/* Live balance, as three rows — not a run-on sentence — per the
+          founder's ask (2026-09-05): a total balance line, then USDT and BNB
+          broken out separately so each is its own number to read at a glance. */}
       {d?.signerAddress && (
-        <p className={`mb-2 rounded-lg border-2 p-3 text-xs ${
-          d.signerMismatch ? "border-danger bg-danger/10 text-danger" : "border-line-strong bg-card text-muted"
+        <div className={`mb-2 overflow-hidden rounded-lg border-2 text-xs ${
+          d.signerMismatch ? "border-danger" : "border-line-strong"
         }`}>
-          <span className="font-semibold">The address that actually sends payouts:</span>{" "}
-          <Addr value={d.signerAddress} />
-          {" — right now it holds "}
-          <b>{d.signerUsdtMicro == null ? "(could not check)" : formatUsdtMicro(d.signerUsdtMicro)}</b>
-          {" and "}
-          <b>{d.signerBnbWei == null ? "(could not check)" : formatBnbWei(d.signerBnbWei)}</b>
-          {" gas. "}
-          {d.signerMismatch ? (
-            <>
-              <b>This is DIFFERENT from the treasury address shown below.</b> Funding
-              that address does nothing — every automatic payout signs from THIS
-              address. Fund this one instead, or update the treasury address setting
-              to match it.{" "}
-              {d.configuredUsdtMicro != null && (
-                <>The address below currently holds {formatUsdtMicro(d.configuredUsdtMicro)} and{" "}
-                  {formatBnbWei(d.configuredBnbWei ?? "0")} gas.</>
-              )}
-            </>
-          ) : (
-            "This matches the treasury address below — it is the one and only address that needs funding."
-          )}
-        </p>
+          <div className={`flex items-center justify-between p-2.5 ${
+            d.signerMismatch ? "bg-danger/10 text-danger" : "bg-brand-tint/40 text-brand-ink"
+          }`}>
+            <span className="font-semibold">Live balance — the address that actually sends payouts</span>
+            <Addr value={d.signerAddress} />
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-line/60 bg-card">
+            <div className="p-2.5">
+              <div className="text-muted">USDT</div>
+              <div className="num text-base font-bold text-brand-ink">
+                {d.signerUsdtMicro == null ? "could not check" : formatUsdtMicro(d.signerUsdtMicro)}
+              </div>
+            </div>
+            <div className="p-2.5">
+              <div className="text-muted">BNB (gas)</div>
+              <div className="num text-base font-bold text-brand-ink">
+                {d.signerBnbWei == null ? "could not check" : formatBnbWei(d.signerBnbWei)}
+              </div>
+            </div>
+          </div>
+          <div className={`p-2.5 ${d.signerMismatch ? "bg-danger/10 text-danger" : "bg-card text-muted"}`}>
+            {d.signerMismatch ? (
+              <>
+                <b>This is DIFFERENT from the treasury address shown below.</b> Funding
+                that address does nothing — every automatic payout signs from THIS
+                address. Fund this one instead, or update the treasury address setting
+                to match it.{" "}
+                {d.configuredUsdtMicro != null && (
+                  <>The address below currently holds {formatUsdtMicro(d.configuredUsdtMicro)} and{" "}
+                    {formatBnbWei(d.configuredBnbWei ?? "0")} gas.</>
+                )}
+              </>
+            ) : (
+              "This matches the treasury address below — it is the one and only address that needs funding."
+            )}
+          </div>
+        </div>
       )}
       {d && !d.address && (
         <p className="rounded-lg border-2 border-line-strong bg-card p-4 text-sm text-muted">
@@ -1174,7 +1189,23 @@ export function TreasuryWalletPanel() {
         </p>
       )}
 
-      {d?.explorerReady && (
+      {/* Distinct from "genuinely no transactions" — a bad or incompatible
+          explorer key answers with the same shape a real empty history has,
+          and this screen once quietly reported "nothing has moved through
+          this wallet" for a wallet that visibly held a live balance and had
+          just sent two real payouts (2026-09-05). */}
+      {d?.explorerReady && d.explorerError && (
+        <p className="rounded-lg border-2 border-danger bg-danger/10 p-4 text-sm text-danger">
+          <b>Could not read this wallet&apos;s history from the chain explorer.</b>{" "}
+          This is NOT the same as &quot;nothing has moved&quot; — the explorer itself
+          refused or failed to answer ({d.explorerError}). The live balance above still
+          comes straight from the chain and can be trusted; only the transaction list
+          below could not be read this time. Try Refresh, or check{" "}
+          <span className="num">BSCSCAN_API_KEY</span> if this keeps happening.
+        </p>
+      )}
+
+      {d?.explorerReady && !d.explorerError && (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border-2 border-line-strong bg-card p-3 text-xs">
             <span><span className="text-muted">Wallet:</span> <Addr value={d.address} /></span>
@@ -1354,8 +1385,12 @@ export function ReconciliationPanel({ canRecheck = false }: { canRecheck?: boole
 // top-level SubTabs/SECTION_PANELS mechanism to nest. Every child panel below
 // keeps the exact same props, permission checks and data-fetching it had as
 // its own flat tab — this only changes which parent mounts it.
-function GroupTabs({ items }: { items: { id: string; label: string; node: ReactNode }[] }) {
-  const [tab, setTab] = useState(items[0]?.id ?? "");
+function GroupTabs({ items, groupId }: { items: { id: string; label: string; node: ReactNode }[]; groupId?: string }) {
+  // A dashboard tile (or the command palette) can request a specific INNER
+  // tab directly — e.g. "Payout relay jobs failed" should land on Relay jobs,
+  // not this group's own default first tab. Read once, lazily, so a stale
+  // request from an earlier navigation is never replayed on a later remount.
+  const [tab, setTab] = useState(() => (groupId && consumePendingGroupSubTab(groupId)) || items[0]?.id || "");
   const active = items.find((t) => t.id === tab) ?? items[0];
   if (!active) return <p className="text-sm text-muted">You don&apos;t have permission to view any of this.</p>;
   return (
@@ -1382,7 +1417,7 @@ function GroupTabs({ items }: { items: { id: string; label: string; node: ReactN
 // (withdrawals.view) and one job.
 export function WithdrawalsGroupPanel({ has }: { has: (p: UiPermission) => boolean }) {
   return (
-    <GroupTabs items={[
+    <GroupTabs groupId="p-withdrawals-group" items={[
       { id: "usdt", label: "USDT", node: <WithdrawalsPanel canOpenLedger={has("users.view")} /> },
       { id: "bnb", label: "BNB", node: <BnbWithdrawalsPanel canHandle={has("withdrawals.decide")} /> },
       { id: "relay", label: "Relay jobs", node: <RelayJobsPanel canHandle={has("withdrawals.decide")} /> },
@@ -1420,7 +1455,7 @@ export function DepositsGroupPanel({ has, canDecideDeposits, canDecideRefunds }:
       ),
     },
   ].filter(Boolean) as { id: string; label: string; node: ReactNode }[];
-  return <GroupTabs items={items} />;
+  return <GroupTabs groupId="p-deposits-group" items={items} />;
 }
 
 // Treasury balance and the automated hourly check that compares it against
@@ -1439,5 +1474,5 @@ export function TreasuryGroupPanel({ has, canRecheck }: {
     has("treasury.view") && { id: "wallet", label: "Wallet", node: <TreasuryWalletPanel /> },
     has("analytics.view") && { id: "reconciliation", label: "Reconciliation", node: <ReconciliationPanel canRecheck={canRecheck} /> },
   ].filter(Boolean) as { id: string; label: string; node: ReactNode }[];
-  return <GroupTabs items={items} />;
+  return <GroupTabs groupId="p-treasury-group" items={items} />;
 }

@@ -10,15 +10,32 @@ import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView, type Task } from "@/li
 
 // "My tasks" and "History" show their cards under a heading for where each one
 // stands. Order matters: what is waiting on the USER comes before what is
-// waiting on us.
-function groupsFor(view: TaskView, list: Task[]): { label: string; items: Task[] }[] {
+// waiting on us; a task that needs nothing further from anyone comes last.
+//
+// ⚠️ "In progress" -> "Pending" (founder, 2026-09-05): from the person doing
+// the task, tapping Start and confirming IS finishing their part — what is
+// actually "in progress" from here is our own review, not their work, so
+// "in progress" read as if the app had forgotten they were done. "Pending"
+// says the same thing without implying the ball is still in their court.
+//
+// ⚠️ "Completed" here is a SEPARATE, SMALL fetch from the History view
+// (recentCompleted, capped at 5) — the "mine" view's own API response
+// deliberately EXCLUDES done tasks (routes/app.ts: `isDone` tasks are dropped
+// from `view=mine`, since that view's whole job used to be "what is still
+// unfinished"). Reusing the tested History query for a quick glance here,
+// rather than changing what `view=mine` itself returns, keeps that existing
+// contract untouched — History remains the real, complete Completed list.
+function groupsFor(
+  view: TaskView, list: Task[], recentCompleted: Task[] = [],
+): { label: string; items: Task[] }[] {
   const pick = (...states: string[]) => list.filter((x) => states.includes(x.userState ?? ""));
   if (view === "mine") {
     return [
       { label: "Needs another try", items: pick("rejected_retryable") },
-      { label: "In progress", items: pick("started", "not_started") },
+      { label: "Pending", items: pick("started", "not_started") },
       { label: "Under review", items: pick("pending_review") },
       { label: "Reward on the way", items: pick("reward_pending") },
+      { label: "Completed", items: recentCompleted.slice(0, 5) },
     ].filter((g) => g.items.length > 0);
   }
   // history
@@ -39,9 +56,20 @@ export default function TasksPage() {
   const [limit, setLimit] = useState(12);
   const tasks = useApi(() => fetchTasks(view, 0, limit), [view, limit]);
   const [category, setCategory] = useState("");
+  // A small, separate fetch — just enough for "My activity"'s Completed
+  // group to show something without duplicating the History screen. See
+  // groupsFor's own comment for why this is a second call, not a bigger
+  // change to what `view=mine` returns.
+  const recentDone = useApi(
+    () => (view === "mine"
+      ? fetchTasks("history", 0, 5)
+      : Promise.resolve({ tasks: [] as Task[], nextCursor: null, total: 0, view: "history" as TaskView })),
+    [view],
+  );
 
   if (!ready) return <div className="p-4 pt-6"><Loading /></div>;
   const all = tasks.data?.tasks ?? [];
+  const recentlyCompleted = (recentDone.data?.tasks ?? []).filter((x) => x.userState === "completed");
   // ⚠️ THE CHIPS ARE BUILT FROM WHAT IS ACTUALLY IN THE LIST, never from the
   // full category list. A chip that filters to nothing is a screen telling a
   // user there is work in a category that is empty today — and on a quiet day
@@ -104,7 +132,7 @@ export default function TasksPage() {
         <Loading />
       ) : tasks.error ? (
         <ErrorState message={tasks.error} onRetry={tasks.reload} />
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && !(view === "mine" && recentlyCompleted.length > 0) ? (
         <EmptyState title={empty.title} body={empty.body} />
       ) : (
         <>
@@ -114,7 +142,7 @@ export default function TasksPage() {
           {view === "available" ? (
             <TaskFlow tasks={list} />
           ) : (
-            groupsFor(view, list).map((g) => (
+            groupsFor(view, list, recentlyCompleted).map((g) => (
               <section key={g.label} className="space-y-2">
                 <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{g.label}</h2>
                 <TaskFlow tasks={g.items} />

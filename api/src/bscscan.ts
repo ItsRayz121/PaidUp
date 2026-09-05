@@ -91,6 +91,24 @@ export async function fetchBnbAddressHistory(address: string): Promise<BnbAddres
   }
 }
 
+// Etherscan/BscScan answers EVERY call with {status, result} — including a
+// real failure (a bad API key, an unsupported chain, a rate limit) — using the
+// SAME shape as a genuine "no transactions found". The two look identical at a
+// glance: `status: "0"`. The only thing that tells them apart is what `result`
+// actually holds: a genuinely empty history still comes back as an ARRAY
+// (empty); an error comes back with `result` as a STRING describing what went
+// wrong (e.g. "Invalid API Key", "Max rate limit reached", "Missing/Invalid
+// API Key"). Treating both alike is exactly the bug that let an invalid key
+// masquerade as a treasury wallet with "nothing has ever moved through it"
+// while it visibly held a live balance and had just sent two real payouts
+// (2026-09-05) — found live, not in a test, because this path is deliberately
+// untested (see this file's own throwing convention below: proving the real
+// API answer needs a real key, not a stub).
+export function parseExplorerResult(body: { status?: string; result?: unknown }): { rows: unknown[] } | { error: string } {
+  if (Array.isArray(body.result)) return { rows: body.result };
+  return { error: typeof body.result === "string" ? body.result : "unrecognised explorer response" };
+}
+
 async function queryList(action: string, address: string, key: string): Promise<RawTx[]> {
   const url =
     `${API}?chainid=${CHAIN_ID}&module=account&action=${action}&address=${address}` +
@@ -113,14 +131,11 @@ async function queryList(action: string, address: string, key: string): Promise<
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);
     const body = (await res.json()) as { status?: string; result?: unknown };
-    // status "0" with an empty result is BscScan's "no transactions" — not an
-    // error, just nothing to show.
-    if (body.status !== "1" || !Array.isArray(body.result)) return [];
-    return body.result as RawTx[];
-  } catch {
-    return [];
+    const parsed = parseExplorerResult(body);
+    if ("error" in parsed) throw new Error(`explorer error: ${parsed.error}`);
+    return parsed.rows as RawTx[];
   } finally {
     clearTimeout(timer);
   }
@@ -174,14 +189,24 @@ const tokenCache = new Map<string, { at: number; rows: TreasuryTx[] }>();
 // only ever speaks to chainid 56.
 const BSC_USDT = "0x55d398326f99059ff775485246999027b3197955";
 
-export async function fetchTreasuryLedger(address: string, limit = 50): Promise<TreasuryTx[]> {
+// Returns the error message too, unlike every other function in this file —
+// deliberately. Everywhere else (fetchBnbAddressHistory, and this same file's
+// own header) a failed explorer read should degrade silently on a money
+// screen a user is looking at; the TREASURY panel is staff-only, and hiding a
+// real API failure behind "nothing has moved through this wallet" is exactly
+// the bug that let an invalid/incompatible key go unnoticed while the wallet
+// visibly held a live balance and had just sent two real payouts (2026-09-05).
+// Staff need to be able to tell "genuinely empty" from "could not ask" apart.
+export async function fetchTreasuryLedger(
+  address: string, limit = 50,
+): Promise<{ rows: TreasuryTx[]; error: string | null }> {
   const key = config.bscscanApiKey;
-  if (!key || !/^0x[0-9a-fA-F]{40}$/.test(address)) return [];
+  if (!key || !/^0x[0-9a-fA-F]{40}$/.test(address)) return { rows: [], error: null };
   const addr = address.toLowerCase();
   const cacheKey = `treasury:${addr}:${limit}`;
 
   const hit = tokenCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
+  if (hit && Date.now() - hit.at < TTL_MS) return { rows: hit.rows, error: null };
 
   try {
     const [tokens, native] = await Promise.all([
@@ -215,9 +240,13 @@ export async function fetchTreasuryLedger(address: string, limit = 50): Promise<
       // is spotting movement we did not start. Two capped rails, both kept.
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
     remember(tokenCache, cacheKey, { at: Date.now(), rows });
-    return rows;
-  } catch {
-    return hit?.rows ?? [];
+    return { rows, error: null };
+  } catch (e) {
+    // A cached hit (even a stale one) is a better answer than an error banner
+    // — same reasoning as every other explorer read in this file. Only surface
+    // the error when there is nothing at all to fall back on.
+    if (hit) return { rows: hit.rows, error: null };
+    return { rows: [], error: (e as Error)?.message || "could not read the chain" };
   }
 }
 
@@ -235,12 +264,11 @@ async function queryTokenList(address: string, key: string, limit: number): Prom
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);
     const body = (await res.json()) as { status?: string; result?: unknown };
-    if (body.status !== "1" || !Array.isArray(body.result)) return [];
-    return body.result as RawTokenTx[];
-  } catch {
-    return [];
+    const parsed = parseExplorerResult(body);
+    if ("error" in parsed) throw new Error(`explorer error: ${parsed.error}`);
+    return parsed.rows as RawTokenTx[];
   } finally {
     clearTimeout(timer);
   }
