@@ -20,7 +20,7 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { HDKey } from "@scure/bip32";
-import { initDb, sql, now, newId, postLedger, postUsdt, usdtBalanceMicroOf, setSetting } from "../db.ts";
+import { initDb, sql, now, newId, postLedger, postUsdt, postEarnedUsdt, usdtBalanceMicroOf, earnedUsdtBalanceMicroOf, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { withdrawalRoutes } from "../routes/withdrawals.ts";
 import { staffRoutes } from "../routes/staff.ts";
@@ -193,6 +193,56 @@ console.log("\n-- createRelayJob(): idempotent, derives the user's own address -
   clearGate();
 }
 
+console.log("\n-- createRelayJob(): partial prefund for a MIXED withdrawal (2026-09-05) --");
+
+// A 'mixed' withdrawal_requests row (routes/withdrawals.ts's /wallet/withdraw,
+// drawing on both a real deposit and task earnings) prefunds only the earned
+// PORTION from treasury but forwards the FULL combined amount in one job —
+// this is the whole point of the change: one on-chain send instead of two.
+{
+  fullyConfigureSigning();
+  const u = await mkUser("relaymixed1");
+  const requestId = newId();
+  await createRelayJob("withdrawal", requestId, {
+    chain: "bep20", userId: u, toAddress: testAddress(),
+    amountMicro: 1_000_000, needsPrefund: true, prefundMicro: 600_000,
+  });
+  const job = await sql.get<{ amount_micro: string; needs_prefund: number; prefund_micro: string | null }>(
+    "SELECT amount_micro, needs_prefund, prefund_micro FROM payout_relay_jobs WHERE purpose = 'withdrawal' AND request_id = ?",
+    requestId,
+  );
+  check("the forward amount is the FULL combined total", Number(job?.amount_micro) === 1_000_000, JSON.stringify(job));
+  check("only the earned portion is marked to be prefunded from treasury",
+    Number(job?.prefund_micro) === 600_000, JSON.stringify(job));
+
+  const legacyRequestId = newId();
+  await createRelayJob("withdrawal", legacyRequestId, {
+    chain: "bep20", userId: u, toAddress: testAddress(), amountMicro: 500_000, needsPrefund: true,
+  });
+  const legacyJob = await sql.get<{ prefund_micro: string | null }>(
+    "SELECT prefund_micro FROM payout_relay_jobs WHERE purpose = 'withdrawal' AND request_id = ?", legacyRequestId,
+  );
+  check("...confirmed: a legacy-shaped call stores NULL, not 0 or the amount",
+    legacyJob?.prefund_micro === null, JSON.stringify(legacyJob));
+
+  let threw = false;
+  try {
+    await createRelayJob("withdrawal", newId(), {
+      chain: "bep20", userId: u, toAddress: testAddress(), amountMicro: 500_000, needsPrefund: true, prefundMicro: 900_000,
+    });
+  } catch { threw = true; }
+  check("prefundMicro greater than the total amount is refused", threw);
+
+  threw = false;
+  try {
+    await createRelayJob("withdrawal", newId(), {
+      chain: "bep20", userId: u, toAddress: testAddress(), amountMicro: 500_000, needsPrefund: false, prefundMicro: 100_000,
+    });
+  } catch { threw = true; }
+  check("prefundMicro set alongside needsPrefund:false is refused — a refund never prefunds anything", threw);
+  clearGate();
+}
+
 console.log("\n-- withdrawal auto-settle, relay available: 'sending', not 'paid', and a job is opened --");
 
 {
@@ -219,6 +269,106 @@ console.log("\n-- withdrawal auto-settle, relay available: 'sending', not 'paid'
   check("the job amount matches the withdrawn points converted to USDT (1 USDT = 1000 pts by default)",
     Number(job?.amount_micro) === 2_000_000, `${job?.amount_micro}`);
   clearGate();
+}
+
+console.log("\n-- ONE WITHDRAWAL, ONE TRANSACTION: /wallet/withdraw draws on both a deposit and task USDT (2026-09-05) --");
+
+// This is the actual complaint the change fixes: a founder-reported live
+// withdrawal that drew on both a real deposit and task earnings produced TWO
+// separate on-chain sends (a refund job AND a withdrawal job) for one user
+// action. Now it is a single relay job that prefunds only the earned portion
+// and forwards the FULL combined amount.
+{
+  fullyConfigureSigning();
+  config.payoutMode = "onchain";
+  const u = await mkUser("relaymixed2");
+  await fundUsdt(u, 400_000); // $0.40 real deposit
+  await postEarnedUsdt({
+    userId: u, micro: 600_000, direction: "credit", sourceType: "task_reward", sourceRefId: newId(), note: "e2e",
+  }); // $0.60 task USDT
+  const dest = testAddress();
+  const r = await app.inject({
+    method: "POST", url: "/wallet/withdraw", headers: tok(u),
+    payload: { amountUsdtMicro: 1_000_000, chain: "bep20", address: dest },
+  });
+  check("the combined $1.00 request succeeds", r.statusCode === 200, r.body);
+  check("response status is 'sending' — routed through the relay", r.json().status === "sending", r.body);
+
+  const refundCount = await sql.get<{ n: string }>("SELECT COUNT(*) AS n FROM usdt_refund_requests WHERE user_id = ?", u);
+  check("no separate usdt_refund_requests row exists", Number(refundCount?.n) === 0, JSON.stringify(refundCount));
+
+  const row = await sql.get<{ id: string; source_kind: string }>(
+    "SELECT id, source_kind FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", u,
+  );
+  check("exactly one 'mixed' withdrawal_requests row", row?.source_kind === "mixed", JSON.stringify(row));
+
+  const job = await sql.get<{ amount_micro: string; prefund_micro: string | null; to_address: string }>(
+    "SELECT amount_micro, prefund_micro, to_address FROM payout_relay_jobs WHERE purpose = 'withdrawal' AND request_id = ?",
+    row!.id,
+  );
+  check("ONE relay job targets the requested destination",
+    !!job && job.to_address.toLowerCase() === dest.toLowerCase(), JSON.stringify(job));
+  check("the job forwards the FULL combined $1.00 in one transaction",
+    Number(job?.amount_micro) === 1_000_000, JSON.stringify(job));
+  check("...but only prefunds the $0.60 earned portion from treasury — the $0.40 deposit already sits at this address",
+    Number(job?.prefund_micro) === 600_000, JSON.stringify(job));
+
+  // Now prove a give-up credits BOTH components back — the founder's own
+  // required test case ("no money disappears"), extended to the mixed shape.
+  // Same pattern as disbursements.e2e.ts's "failJob returns the right
+  // currency" regression: push attempts past the cap so tickPayoutRelay()
+  // hits the give-up branch immediately, before any network call — the job
+  // never left 'pending', so it is safe to credit back.
+  await sql.run("UPDATE payout_relay_jobs SET attempts = ? WHERE purpose = 'withdrawal' AND request_id = ?",
+    config.relayMaxAttempts, row!.id);
+  const { tickPayoutRelay } = await import("../payoutRelay.ts");
+  await tickPayoutRelay();
+  check("the request is now 'rejected'", (await withdrawalStatus(u)) === "rejected");
+  check("the deposit component was credited back to the real deposit balance",
+    (await usdtBalanceMicroOf(u)) === 400_000, `${await usdtBalanceMicroOf(u)}`);
+  check("the earned component was credited back to the task-USDT balance",
+    (await earnedUsdtBalanceMicroOf(u)) === 600_000, `${await earnedUsdtBalanceMicroOf(u)}`);
+  clearGate();
+}
+
+console.log("\n-- give up by WALL-CLOCK AGE, not just attempt count (founder, 2026-09-05) --");
+
+// The founder's own ask: "it should get rejected after ten, twenty, or thirty
+// minutes instead of wasting the platform's API credits" — a SECOND,
+// independent give-up condition alongside relayMaxAttempts, so a job gives up
+// in a bounded amount of TIME even if the tick interval (shared with
+// unrelated cost-tuning knobs — payoutRelayIntervalMs's own comment) were
+// ever slowed down. A job with very FEW attempts but an old created_at must
+// still give up and credit back.
+{
+  const u = await mkUser("relayage1");
+  await fundUsdt(u, 2_000_000);
+  const dest = testAddress();
+  const r = await app.inject({
+    method: "POST", url: "/usdt/refunds", headers: tok(u),
+    payload: { amount: 2, address: dest },
+  });
+  check("refund request succeeds", r.statusCode === 200, r.body);
+  const refundId = r.json().id as string;
+  // No relay job exists yet (payoutMode is manual by default here / clearGate
+  // ran last, so the request stayed 'pending') — insert one directly, old and
+  // barely-attempted, exactly the shape a real stuck job has: created long
+  // ago, only 1 attempt logged.
+  const oldCreatedAt = new Date(Date.now() - (config.relayMaxAgeMs + 60_000)).toISOString();
+  const jobId = newId();
+  await sql.run(
+    `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,last_error,created_at)
+     VALUES (?, 'refund', ?, 'bep20', ?, ?, 0, ?, 2000000, 0, 'pending', 1, 'stuck', ?)`,
+    jobId, refundId, u, dest, dest, oldCreatedAt,
+  );
+  await sql.run("UPDATE usdt_refund_requests SET status = 'sending' WHERE id = ?", refundId);
+  const { tickPayoutRelay } = await import("../payoutRelay.ts");
+  await tickPayoutRelay();
+  const job = await sql.get<{ status: string }>("SELECT status FROM payout_relay_jobs WHERE id = ?", jobId);
+  check("the job gave up on AGE alone — attempts (1) never reached relayMaxAttempts (15)",
+    job?.status === "failed", JSON.stringify(job));
+  check("the refund request was rejected and the deposit credited back — nothing left stuck",
+    (await usdtBalanceMicroOf(u)) === 2_000_000, `${await usdtBalanceMicroOf(u)}`);
 }
 
 console.log("\n-- ⚠️ THE LOAD-BEARING CHECK: fully configured signing keys, but payoutMode is MANUAL --");

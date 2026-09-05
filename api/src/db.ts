@@ -1389,12 +1389,17 @@ const MIGRATIONS = `
   --               just gas + forward.
   --   withdrawal (needs_prefund = true):  the money has never been at this
   --               address (task/referral earnings only ever existed as a
-  --               treasury balance) — treasury funds gas AND the exact net
-  --               USDT amount into the user's address first, which then
-  --               forwards it on. This is the founder's informed "pass
+  --               treasury balance) — treasury funds gas AND the amount named
+  --               by prefund_micro (NULL = the full amount_micro) into the
+  --               user's address first, which then forwards the FULL
+  --               amount_micro on. This is the founder's informed "pass
   --               through the user's own wallet anyway" choice — see
   --               payoutRelay.ts's header for why it costs 2-3x the gas of a
   --               direct treasury send and does not reduce custody exposure.
+  --               prefund_micro < amount_micro is a MIXED withdrawal
+  --               (2026-09-05): only the earned portion needs prefunding,
+  --               the deposit portion already sits at this address, so both
+  --               forward together in ONE transaction.
   --
   -- Phases (needs_prefund=false): pending -> gas_sent -> gas_confirmed ->
   --   forward_sent -> forward_confirmed.
@@ -1687,9 +1692,30 @@ const MIGRATIONS = `
 
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'points';
   ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS earned_usdt_micro BIGINT NOT NULL DEFAULT 0;
+
+  -- ONE WITHDRAWAL, ONE TRANSACTION (founder, 2026-09-05). A /wallet/withdraw
+  -- request that draws on BOTH a real deposit and real task earnings used to
+  -- create TWO separate rows (a usdt_refund_requests row + this table's own
+  -- earned_usdt row) — two relay jobs, two on-chain sends, two history lines
+  -- for what the user experienced as one action. 'mixed' is a single row that
+  -- carries both components, settled as ONE relay job (payoutRelay.ts's
+  -- prefund_micro, below) and ONE forward transaction. deposit_fee_micro
+  -- mirrors usdt_refund_requests.fee_micro — the deposit leg's own gas-cost
+  -- fee, snapshotted at request time for the same reason every other fee
+  -- here is. See routes/withdrawals.ts's /wallet/withdraw and
+  -- payoutRelay.ts's failJob for how both components are credited back
+  -- together on a failure.
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS deposit_component_micro BIGINT NOT NULL DEFAULT 0;
+  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS deposit_fee_micro BIGINT NOT NULL DEFAULT 0;
   ALTER TABLE withdrawal_requests DROP CONSTRAINT IF EXISTS withdrawal_requests_source_kind_check;
   ALTER TABLE withdrawal_requests ADD CONSTRAINT withdrawal_requests_source_kind_check
-    CHECK (source_kind IN ('points','earned_usdt'));
+    CHECK (source_kind IN ('points','earned_usdt','mixed'));
+
+  -- payoutRelay.ts — how much of a job's amount_micro must be prefunded from
+  -- treasury before the forward leg (NULL = the whole amount, i.e. every job
+  -- created before 2026-09-05, unchanged). Only a 'mixed' withdrawal sets
+  -- this to LESS than amount_micro — see createRelayJob's own comment.
+  ALTER TABLE payout_relay_jobs ADD COLUMN IF NOT EXISTS prefund_micro BIGINT;
 
   -- ---- DASHBOARD "NEEDS ATTENTION": CLEARED vs OPEN (founder, 2026-08-30) ---
   -- A resolved fraud flag / a handled failed payout job should stop reading as

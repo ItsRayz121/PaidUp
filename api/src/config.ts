@@ -548,13 +548,32 @@ export const config = {
   // with buffer" rather than two that could drift apart.
   evmSweepGasAmountWei: process.env.EVM_SWEEP_GAS_AMOUNT_WEI ?? "300000000000000", // 0.0003 BNB
 
+  // How often payoutRelay.ts's tick advances every in-flight relay job. Used
+  // to share depositScanIntervalMs (a value tuned purely for RPC-call COST on
+  // the deposit scanner — see the 2026-08-13/08-27 Alchemy billing entries in
+  // CLAUDE.md) — which meant the two features' timing was coupled by
+  // accident: raising the deposit scanner's interval to save money silently
+  // slowed down how fast a stuck withdrawal gives up and refunds a user. Its
+  // own dedicated variable, same 20s default so nothing changes unless it is
+  // explicitly set (founder, 2026-09-05).
+  payoutRelayIntervalMs: num(process.env.PAYOUT_RELAY_INTERVAL_MS, 20_000, 5_000),
+
   // How many times payoutRelay.ts retries ONE job phase before giving up and
-  // marking it 'failed' instead of retrying forever. Ticks run every
-  // depositScanIntervalMs (20s default), so 15 surfaces a stuck job to staff
-  // within ~5 minutes — long enough to ride out a transient RPC blip, short
-  // enough that a genuinely unfundable job (e.g. an empty treasury) doesn't
-  // spin silently for hours the way it did before this existed.
+  // marking it 'failed' instead of retrying forever. At the default 20s tick,
+  // 15 attempts is ~5 minutes — long enough to ride out a transient RPC blip,
+  // short enough that a genuinely unfundable job (e.g. an empty treasury)
+  // doesn't spin silently for hours the way it did before this existed.
   relayMaxAttempts: Number(process.env.RELAY_MAX_ATTEMPTS ?? 15),
+
+  // A SECOND, independent give-up condition, in wall-clock time rather than
+  // attempt count (founder, 2026-09-05: "it should get rejected after ten,
+  // twenty, or thirty minutes instead of wasting the platform's API
+  // credits"). Whichever of relayMaxAttempts or relayMaxAgeMs is hit FIRST
+  // wins — belt and suspenders, since raising the tick interval for cost
+  // reasons (above) would otherwise silently stretch out how long a doomed
+  // job is retried, purely as a side effect of an unrelated setting.
+  // 20 minutes: comfortably inside the founder's 10-30 minute ask.
+  relayMaxAgeMs: num(process.env.RELAY_MAX_AGE_MS, 20 * 60_000, 60_000),
 
   // ---- Withdrawal abuse controls, now that there is no per-request human
   // approval below the auto-withdraw ceiling (docs/CUSTODY_SPEC.md § 3.3: "a

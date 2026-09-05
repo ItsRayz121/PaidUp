@@ -647,13 +647,21 @@ console.log("\n-- POST /wallet/withdraw: real USDT only — deposit + task USDT,
     check("now deposit + earned USDT clear $1 => the FULL $1.00 is accepted in one request",
       r.statusCode === 200, r.body);
 
-    const refund = await sql.get<{ amount: string }>("SELECT amount FROM usdt_refund_requests WHERE user_id = ?", u);
-    const wd = await sql.get<{ amount: number; source_kind: string; earned_usdt_micro: number }>(
-      "SELECT amount, source_kind, earned_usdt_micro FROM withdrawal_requests WHERE user_id = ?", u);
-    check("...drawing the deposit leg in full",
-      Number(refund?.amount) === 400_000, JSON.stringify(refund));
-    check("...and the remaining $0.60 from the earned-USDT leg",
-      wd?.source_kind === "earned_usdt" && Number(wd?.earned_usdt_micro) === 600_000, JSON.stringify(wd));
+    // ONE WITHDRAWAL, ONE TRANSACTION (founder, 2026-09-05): a request that
+    // draws on both real deposit and task earnings is now a SINGLE combined
+    // withdrawal_requests row (source_kind='mixed'), not a separate
+    // usdt_refund_requests row plus a separate earned_usdt row — the user
+    // used to see two "transactions" in their history for one action.
+    const refundCount = await sql.get<{ n: string }>("SELECT COUNT(*) AS n FROM usdt_refund_requests WHERE user_id = ?", u);
+    const wd = await sql.get<{
+      amount: number; source_kind: string; earned_usdt_micro: number; deposit_component_micro: number;
+    }>(
+      "SELECT amount, source_kind, earned_usdt_micro, deposit_component_micro FROM withdrawal_requests WHERE user_id = ?", u);
+    check("...no separate usdt_refund_requests row is created at all",
+      Number(refundCount?.n) === 0, JSON.stringify(refundCount));
+    check("...exactly one combined 'mixed' withdrawal_requests row carries both components",
+      wd?.source_kind === "mixed" && Number(wd?.deposit_component_micro) === 400_000 && Number(wd?.earned_usdt_micro) === 600_000,
+      JSON.stringify(wd));
     check("both real-USDT ledgers now read zero — nothing left over, nothing double-spent",
       await usdtBalanceMicroOf(u) === 0 && await earnedUsdtBalanceMicroOf(u) === 0, "");
     check("...and the 200 points sitting on the account were never touched",

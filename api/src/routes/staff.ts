@@ -49,6 +49,29 @@ const decisionSchema = z.object({
   txHash: z.string().max(120).optional(),
 });
 
+// The exact USDT figure a withdrawal_requests row is actually owed, net of
+// its fee(s) — shared by the queue listing and the "pay" decision below, so
+// the two can never disagree about what to send. A 'mixed' row (2026-09-05:
+// one request drawing on both a real deposit and task earnings) sums BOTH
+// components' own net; `fee_points` only ever covers the earned component,
+// `deposit_fee_micro` the deposit component — see routes/withdrawals.ts's
+// /wallet/withdraw for where both are snapshotted.
+function netUsdtOfRequest(r: {
+  source_kind?: unknown; amount?: unknown; fee_points?: unknown;
+  earned_usdt_micro?: unknown; deposit_component_micro?: unknown; deposit_fee_micro?: unknown;
+}): string {
+  const earnedFeeMicro = Math.round((Number(r.fee_points ?? 0) * 1_000_000) / config.pointsPerUsdt);
+  const netEarnedMicro = Math.max(0, Number(r.earned_usdt_micro ?? 0) - earnedFeeMicro);
+  const netDepositMicro = Math.max(0, Number(r.deposit_component_micro ?? 0) - Number(r.deposit_fee_micro ?? 0));
+  if (r.source_kind === "mixed") {
+    return ((netEarnedMicro + netDepositMicro) / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  if (r.source_kind === "earned_usdt") {
+    return (netEarnedMicro / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  return pointsToUsdt(Number(r.amount) - Number(r.fee_points ?? 0));
+}
+
 // ---------------------------------------------------------------------------
 // ⚠️ MODULE SCOPE, AND EXPORTED, SO A TEST CAN ACTUALLY RUN IT. Every column
 // and table name below is hand-written SQL over five tables, and TypeScript
@@ -220,9 +243,12 @@ export async function staffRoutes(app: FastifyInstance) {
         feePoints: Number(r.fee_points ?? 0),
         sourceKind: r.source_kind ?? "points",
         earnedUsdtMicro: Number(r.earned_usdt_micro ?? 0),
-        netUsdt: r.source_kind === "earned_usdt"
-          ? ((Math.max(0, Number(r.earned_usdt_micro) - Math.round(Number(r.fee_points ?? 0) * 1_000_000 / config.pointsPerUsdt))) / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
-          : pointsToUsdt(Number(r.amount) - Number(r.fee_points ?? 0)),
+        // A 'mixed' request (2026-09-05) draws on both a real deposit AND
+        // task earnings in one row — shown so staff can see there are two
+        // components behind the single payout.
+        depositComponentMicro: Number(r.deposit_component_micro ?? 0),
+        depositFeeMicro: Number(r.deposit_fee_micro ?? 0),
+        netUsdt: netUsdtOfRequest(r),
         chain: r.payout_rail, address: r.payout_address ?? null,
         // Did the user PROVE this exact address is theirs, by signing for it
         // with the wallet? Snapshotted at request time (see routes/withdrawals
@@ -275,7 +301,11 @@ export async function staffRoutes(app: FastifyInstance) {
     const notify: { job: { userId: string; note: Parameters<typeof sendPushToUser>[1] } | null } = { job: null };
 
     const outcome = await sql.tx(async (t) => {
-      const w = await t.get<{ id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string; fee_points: number; source_kind: "points" | "earned_usdt"; earned_usdt_micro: string | number }>(
+      const w = await t.get<{
+        id: string; user_id: string; amount: number; status: string; payout_rail: string; payout_address: string;
+        fee_points: number; source_kind: "points" | "earned_usdt" | "mixed"; earned_usdt_micro: string | number;
+        deposit_component_micro: string | number; deposit_fee_micro: string | number;
+      }>(
         "SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE", id,
       );
       if (!w) throw { statusCode: 404, message: "Request not found." };
@@ -311,9 +341,20 @@ export async function staffRoutes(app: FastifyInstance) {
       }
 
       if (action === "reject") {
-        // Return the held points to the user (compensating credit — the ledger
-        // stays append-only; we never delete the original debit).
-        if (w.source_kind === "earned_usdt") {
+        // Return the held points/USDT to the user (compensating credit — the
+        // ledger stays append-only; we never delete the original debit). A
+        // 'mixed' row (2026-09-05) holds BOTH a task-USDT component and a
+        // deposit component — both are credited back together.
+        if (w.source_kind === "mixed") {
+          if (Number(w.earned_usdt_micro) > 0) {
+            await postEarnedUsdt({ userId: w.user_id, micro: Number(w.earned_usdt_micro), direction: "credit",
+              sourceType: "withdrawal_return", sourceRefId: id, note: "Withdrawal not approved — task USDT returned" }, t);
+          }
+          if (Number(w.deposit_component_micro) > 0) {
+            await postUsdt({ userId: w.user_id, micro: Number(w.deposit_component_micro), direction: "credit",
+              sourceType: "refund", sourceRefId: id, note: "Withdrawal not approved — deposit returned", chain: w.payout_rail }, t);
+          }
+        } else if (w.source_kind === "earned_usdt") {
           await postEarnedUsdt({ userId: w.user_id, micro: Number(w.earned_usdt_micro), direction: "credit",
             sourceType: "withdrawal_return", sourceRefId: id, note: "Withdrawal not approved — task USDT returned" }, t);
         } else await postLedger({
@@ -327,9 +368,9 @@ export async function staffRoutes(app: FastifyInstance) {
           userId: w.user_id,
           note: {
             title: "About your withdrawal",
-            body: w.source_kind === "earned_usdt"
-              ? "We could not send this one. Your task USDT is back in your wallet."
-              : "We could not send this one. Your points are back in your wallet.",
+            body: w.source_kind === "points"
+              ? "We could not send this one. Your points are back in your wallet."
+              : "We could not send this one. Your money is back in your wallet.",
             url: "/wallet",
           },
         };
@@ -344,13 +385,13 @@ export async function staffRoutes(app: FastifyInstance) {
         throw { statusCode: 403, message: "This is above your limit. A Manager must pay it." };
       }
       // The USDT amount is on the NET (amount minus the fee snapshotted at
-      // request time), derived from one conversion rule.
+      // request time), derived from one conversion rule shared with the
+      // queue listing above (netUsdtOfRequest) so the two can never disagree.
       const net = Math.max(0, w.amount - (w.fee_points ?? 0));
       const earnedFeeMicro = Math.round((w.fee_points ?? 0) * 1_000_000 / config.pointsPerUsdt);
       const netEarnedMicro = Math.max(0, Number(w.earned_usdt_micro ?? 0) - earnedFeeMicro);
-      const usdt = w.source_kind === "earned_usdt"
-        ? (netEarnedMicro / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
-        : pointsToUsdt(net);
+      const netDepositMicro = Math.max(0, Number(w.deposit_component_micro ?? 0) - Number(w.deposit_fee_micro ?? 0));
+      const usdt = netUsdtOfRequest(w);
 
       // Only in onchain mode — payoutMode is the founder's manual/automatic
       // switch, and relayAvailable() alone does NOT respect it (it only
@@ -360,10 +401,15 @@ export async function staffRoutes(app: FastifyInstance) {
       if (config.payoutMode === "onchain" && relayAvailable(w.payout_rail)) {
         // "Approve & Send" -> the backend does the rest automatically, THROUGH
         // the user's own derived address (payoutRelay.ts), not a manual wallet
-        // operation and not a pasted hash.
+        // operation and not a pasted hash. A 'mixed' row prefunds only the
+        // earned portion (the deposit portion already sits at this address)
+        // but forwards the FULL combined amount in one transaction.
         await createRelayJob("withdrawal", w.id, {
           chain: "bep20", userId: w.user_id, toAddress: w.payout_address,
-          amountMicro: w.source_kind === "earned_usdt" ? netEarnedMicro : Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+          amountMicro: w.source_kind === "mixed" ? netEarnedMicro + netDepositMicro
+            : w.source_kind === "earned_usdt" ? netEarnedMicro : Math.round(Number(usdt) * 1_000_000),
+          needsPrefund: true,
+          ...(w.source_kind === "mixed" ? { prefundMicro: netEarnedMicro } : {}),
         }, t);
         const s = stampSql("sending");
         await t.run(s.text, ...s.vals);

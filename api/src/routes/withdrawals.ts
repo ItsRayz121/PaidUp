@@ -628,6 +628,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
 
     let depositId: string | null = null;
     let earnedId: string | null = null;
+    let mixedId: string | null = null;
 
     try {
       await sql.tx(async (t) => {
@@ -683,7 +684,43 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         // /usdt/refunds.
         const flatFeeHolder: "earned" | "none" = earnedTake > 0 ? "earned" : "none";
 
-        // ---- Leg 1: money the user added (deposit) --------------------------
+        if (depositTake > 0 && earnedTake > 0) {
+          // ---- ONE WITHDRAWAL, ONE TRANSACTION (founder, 2026-09-05) --------
+          // Both legs are needed to cover the request — a single combined
+          // withdrawal_requests row instead of a deposit-shaped row AND an
+          // earned-shaped row, so the user sees (and the relay sends) exactly
+          // ONE payout instead of two. See payoutRelay.ts's prefund_micro for
+          // how the on-chain side does this in one forward transaction.
+          const depositFeeMicro = relayReady ? 0 : gasFeeMicro(depositTake, gasRate);
+          const gasInPoints = relayReady ? 0 : gasFeePoints(earnedPoints, gasRate);
+          const feePoints = gasInPoints + (flatFeeHolder === "earned" ? flatFeePoints : 0);
+          if (feePoints >= earnedPoints || depositFeeMicro >= depositTake) {
+            throw { statusCode: 400, message: "The withdrawal fee is too large for this amount. Ask for more." };
+          }
+          mixedId = newId();
+          await t.run(
+            `INSERT INTO withdrawal_requests (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
+               source_kind, earned_usdt_micro, deposit_component_micro, deposit_fee_micro, status, created_at)
+             VALUES (?,?,?,?,?,?,?, 'mixed', ?,?,?, 'pending', ?)`,
+            // `amount` (points) reuses equivPoints — the SAME combined-total
+            // points-equivalent already computed above for the step-up check —
+            // rather than a second, possibly slightly different rounding of
+            // the two legs summed separately.
+            mixedId, userId, equivPoints, chain, address, feePoints, addressVerified,
+            earnedTake, depositTake, depositFeeMicro, now(),
+          );
+          await postEarnedUsdt({
+            userId, micro: earnedTake, direction: "debit",
+            sourceType: "withdrawal", sourceRefId: mixedId, note: `Task USDT withdrawal (${chain})`,
+          }, t);
+          await postUsdt({
+            userId, micro: depositTake, direction: "debit", sourceType: "refund",
+            sourceRefId: mixedId, note: "Money sent back", chain,
+          }, t);
+          return;
+        }
+
+        // ---- Leg: money the user added (deposit) alone -----------------------
         if (depositTake > 0) {
           const feeMicro = relayReady ? 0 : gasFeeMicro(depositTake, gasRate);
           if (feeMicro >= depositTake) {
@@ -701,7 +738,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
           }, t);
         }
 
-        // ---- Leg 2: task USDT already earned ---------------------------------
+        // ---- Leg: task USDT already earned, alone -----------------------------
         if (earnedTake > 0) {
           const gasInPoints = relayReady ? 0 : gasFeePoints(earnedPoints, gasRate);
           const feePoints = gasInPoints + (flatFeeHolder === "earned" ? flatFeePoints : 0);
@@ -727,22 +764,24 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       throw e;
     }
 
-    if (earnedId) {
+    if (earnedId || mixedId) {
       await saveAddress(userId, chain, address);
       await checkPayoutAddressReuse(userId, address);
       await checkWithdrawalVelocity(userId);
     }
 
-    // Try to settle every leg that was created. Never throws (see the
-    // guarantee on tryAutoSettle / tryAutoSettleRefund) — a leg that can't
-    // auto-settle just falls into its own existing manual queue.
+    // Try to settle every request that was created. Never throws (see the
+    // guarantee on tryAutoSettle / tryAutoSettleRefund) — a request that
+    // can't auto-settle just falls into its own existing manual queue.
+    // At most ONE of these three is ever set — mixed handles both legs at
+    // once, so it is never combined with depositId/earnedId in the same call.
     const legStatuses: ("paid" | "sending" | "pending")[] = [];
     if (depositId) {
       const r = await tryAutoSettleRefund(depositId);
       legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
     }
-    if (earnedId) {
-      const r = await tryAutoSettle(earnedId);
+    if (earnedId || mixedId) {
+      const r = await tryAutoSettle((earnedId ?? mixedId)!);
       legStatuses.push(r.settled === true ? "paid" : r.settled === "processing" ? "sending" : "pending");
     }
 

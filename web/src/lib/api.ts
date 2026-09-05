@@ -572,8 +572,12 @@ export type StaffWithdrawal = {
   // fee it just charged. Optional for the same mid-deploy reason as above.
   feePoints?: number;
   netUsdt?: string;
-  sourceKind?: "points" | "earned_usdt";
+  // 'mixed' (2026-09-05): one request drawing on both a real deposit AND
+  // task earnings — settled as a single combined payout instead of two.
+  sourceKind?: "points" | "earned_usdt" | "mixed";
   earnedUsdtMicro?: number;
+  depositComponentMicro?: number;
+  depositFeeMicro?: number;
   // The on-chain proof, once paid. Optional: an older API build (mid-deploy)
   // simply omits it and the cell renders a dash.
   txHash?: string | null;

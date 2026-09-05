@@ -398,7 +398,12 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
           F("Amount", <span className="num">{formatPoints(open.amount)} pts</span>),
           F("Fee", open.feePoints ? <span className="num">− {formatPoints(open.feePoints)} pts</span> : "—"),
           F("Net to send", <span className="num font-semibold text-brand">{open.netUsdt ?? "—"} USDT</span>),
-          F("Source", String(open.sourceKind ?? "points")),
+          F("Source", open.sourceKind === "mixed" ? "Deposit + task USDT (one combined payout)"
+            : open.sourceKind === "earned_usdt" ? "Task USDT" : "Points"),
+          ...(open.sourceKind === "mixed" ? [
+            F("— from deposit", <span className="num">{((open.depositComponentMicro ?? 0) / 1_000_000).toFixed(2)} USDT</span>),
+            F("— from task earnings", <span className="num">{((open.earnedUsdtMicro ?? 0) / 1_000_000).toFixed(2)} USDT</span>),
+          ] : []),
           F("Network", <span className="uppercase">{open.chain}</span>),
           F("Address", open.address ? <CopyId value={open.address} /> : "—"),
           F("Address checked", open.addressVerified ? "✓ signed by the user's wallet" : "not checked — typed in"),

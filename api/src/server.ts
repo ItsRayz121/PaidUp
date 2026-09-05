@@ -402,10 +402,12 @@ const runDeposits = everyNoOverlap("deposits", config.depositScanIntervalMs, tic
 
 // ---- Payout relay — payoutRelay.ts ------------------------------------------
 // Advances every in-flight withdrawal/refund relay job one phase (gas ->
-// prefund -> forward, per-phase confirmation waits). Same cadence as the
-// deposit scan above — a user is actively watching this one, unlike the
-// hourly reconciliation below. A no-op per job until the RPC receipt it's
-// waiting on lands; a no-op entirely when no jobs are open.
+// prefund -> forward, per-phase confirmation waits). Its own dedicated
+// interval (payoutRelayIntervalMs, config.ts) — a user is actively watching
+// this one, unlike the hourly reconciliation below, and it must not silently
+// slow down whenever the deposit scanner's interval is raised for cost
+// reasons. A no-op per job until the RPC receipt it's waiting on lands; a
+// no-op entirely when no jobs are open.
 async function tickPayoutRelayJob() {
   try {
     await tickPayoutRelay();
@@ -418,7 +420,7 @@ async function tickPayoutRelayJob() {
     app.log.error({ err }, "BNB withdrawal tick failed");
   }
 }
-const runPayoutRelayJob = everyNoOverlap("payout-relay", config.depositScanIntervalMs, tickPayoutRelayJob);
+const runPayoutRelayJob = everyNoOverlap("payout-relay", config.payoutRelayIntervalMs, tickPayoutRelayJob);
 
 // ---- Reconciliation — CUSTODY_SPEC.md § 5 step 3 / § 3.5 -------------------
 // Hourly, much slower than the deposit/sweep ticks above: this is a

@@ -45,6 +45,7 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
       id: string; user_id: string; amount: number; payout_rail: string;
       payout_address: string; fee_points: number; status: string;
       source_kind: string; earned_usdt_micro: number;
+      deposit_component_micro: number; deposit_fee_micro: number;
     }>("SELECT * FROM withdrawal_requests WHERE id = ?", requestId);
     if (!req || req.status !== "pending") return { settled: false, reason: "not pending" };
 
@@ -63,7 +64,16 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
     const net = Math.max(0, req.amount - (req.fee_points ?? 0));
     const earnedFeeMicro = Math.round(((req.fee_points ?? 0) * 1_000_000) / config.pointsPerUsdt);
     const exactMicro = Math.max(0, Number(req.earned_usdt_micro ?? 0) - earnedFeeMicro);
-    const usdt = req.source_kind === "earned_usdt"
+    // A MIXED request (2026-09-05: routes/withdrawals.ts's /wallet/withdraw
+    // drawing on both a real deposit and task earnings) settles as ONE
+    // combined forward amount — the deposit component's own fee was already
+    // snapshotted separately (deposit_fee_micro), since it never goes through
+    // the points-denominated fee_points column.
+    const netDepositMicro = Math.max(0, Number(req.deposit_component_micro ?? 0) - Number(req.deposit_fee_micro ?? 0));
+    const mixedMicro = exactMicro + netDepositMicro;
+    const usdt = req.source_kind === "mixed"
+      ? (mixedMicro / 1_000_000).toFixed(6).replace(/\.?0+$/, "")
+      : req.source_kind === "earned_usdt"
       ? (exactMicro / 1_000_000).toFixed(6).replace(/\.?0+$/, "")
       : pointsToUsdt(net);
 
@@ -99,10 +109,15 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
 
       if (relay) {
         // Route the destination send THROUGH the user's own derived address
-        // instead of settling synchronously here — see payoutRelay.ts.
+        // instead of settling synchronously here — see payoutRelay.ts. A
+        // 'mixed' request prefunds only the EARNED portion (the deposit
+        // portion already sits at this address) but forwards the FULL
+        // combined amount in one transaction — payoutRelay.ts's prefundMicro.
         await createRelayJob("withdrawal", req.id, {
           chain: "bep20", userId: req.user_id, toAddress: req.payout_address,
-          amountMicro: req.source_kind === "earned_usdt" ? exactMicro : Math.round(Number(usdt) * 1_000_000), needsPrefund: true,
+          amountMicro: req.source_kind === "mixed" ? mixedMicro : req.source_kind === "earned_usdt" ? exactMicro : Math.round(Number(usdt) * 1_000_000),
+          needsPrefund: true,
+          ...(req.source_kind === "mixed" ? { prefundMicro: exactMicro } : {}),
         }, t);
         await t.run(
           `UPDATE withdrawal_requests

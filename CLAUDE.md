@@ -3430,6 +3430,62 @@ Everything else on the old checklist is done, deferred by decision, or declined.
     25 s after boot reported p95 941 ms where the same stage warm reported
     22 ms — the accrual sweep was still running).
 
+- **A STUCK WITHDRAWAL, A CLEAR TIMEOUT, AND ONE WITHDRAWAL = ONE TRANSACTION
+  (founder, 2026-09-05).** Traced from a live stuck payout: a user's $0.20
+  task-USDT reward and $2.09 deposit refund both showed "Processing"; the
+  refund (paid from the user's OWN on-chain wallet) went through fine, the
+  task-USDT withdrawal did not, because it needs a "prefund" leg from
+  **treasury**, and treasury holds $0 / 0 BNB — confirmed again, unchanged
+  from the 2026-08-08 entries above. Three fixes shipped; treasury funding is
+  still the founder's own action, not a code fix. Verified: 603 e2e checks
+  across every money-path suite (usdt 112, payoutrelay 66, moneyadmin 100,
+  disbursements 81, wallet 52, stage4 48, withdrawcontrols 21, autowithdraw
+  16, autorefund 8, fees 24, admin 15, usersadmin 59), all from a fresh DB;
+  api + web typecheck, eslint, web production build (38 routes) all clean.
+  - **ONE WITHDRAWAL, ONE TRANSACTION.** `POST /wallet/withdraw` used to
+    split a request spanning both a real deposit and task earnings into TWO
+    rows — a `usdt_refund_requests` row and a `withdrawal_requests` row —
+    each its own relay job, each its own on-chain send, each its own history
+    line for what the user did as ONE action. It is now a single
+    `withdrawal_requests` row (`source_kind='mixed'`, new
+    `deposit_component_micro` / `deposit_fee_micro` columns) settled as ONE
+    relay job that forwards the FULL combined amount in a single
+    transaction. `payoutRelay.ts`'s `createRelayJob` gained an optional
+    `prefundMicro` — how much of the job's total must be moved from
+    treasury first (the deposit portion never needs this: it already sits at
+    the user's own derived address). ⚠️ **Omitting `prefundMicro` (every call
+    site before this) means "prefund the whole thing" — the exact old
+    behaviour, unchanged**, which is what let every existing test pass with
+    zero changes to any other call site. `failJob` and the staff reject/pay
+    paths both learned the `'mixed'` branch: a failure credits BOTH
+    components back, in their own ledgers, together.
+  - **A wall-clock give-up, alongside the existing attempt-count one.** A
+    stuck relay job already gave up after `relayMaxAttempts` (15) — but that
+    was ~22 minutes only because `payoutRelayIntervalMs` happened to share
+    `depositScanIntervalMs` (90s, tuned purely for the Alchemy billing
+    incidents above), so raising THAT for cost reasons would have silently
+    stretched out how long a doomed withdrawal sits stuck. The relay tick now
+    has its own `payoutRelayIntervalMs` (config.ts, same 20s default), and a
+    new `relayMaxAgeMs` (20 minutes, inside the founder's own "ten, twenty,
+    or thirty" ask) gives up on AGE alone even when attempts are still low —
+    closing the exact shape the original production bug had (few attempts,
+    old job, never surfaced).
+  - ⚠️ **STILL BLOCKED ON THE SAME THING AS 2026-08-08: THE TREASURY HOLDS
+    $0 AND 0 BNB.** Nothing above changes that — a task-USDT withdrawal will
+    keep failing-and-refunding (safely, with nothing lost) until the
+    treasury wallet is actually funded. That is the founder's own action,
+    not a code fix.
+  - **Two architecture questions the founder answered, recorded so they are
+    not re-litigated:** (1) ad-network (CPX-style) task-USDT rewards stay
+    balance-only until withdrawal — sending real USDT the instant a reward
+    is credited would remove the ability to claw it back if the network
+    reports it as fraud up to 60 days later. (2) our own RoziPay task
+    rewards ARE meant to go on-chain, but only when staff deliberately runs
+    a disbursement batch ("Send") — never automatically the instant a proof
+    is approved. That admin-triggered on-chain send already exists (the
+    2026-09-02 disbursements feature, `mode: "onchain"`) and needed no new
+    code; it is unused today only because the treasury has nothing to send.
+
 See `docs/` for the full spec.
 
 - **COST CEILINGS FIRST, THEN FOUR OF THE FIVE REMAINING HIGH AUDIT FINDINGS
