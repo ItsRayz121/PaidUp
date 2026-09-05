@@ -388,7 +388,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
                     : "—")}
               </td>
               <td className="py-2 text-right">
-                {canManage && ROW_RUNNABLE.includes(r.status) && (
+                {canManage && canRun && ROW_RUNNABLE.includes(r.status) && (
                   <button disabled={busy} onClick={() => sendRow(r)}
                     className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
                     Send reward

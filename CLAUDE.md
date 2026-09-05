@@ -3842,3 +3842,47 @@ See `docs/` for the full spec.
   - **Not changed**: any batch mode's actual behaviour (`balance` / `onchain`
     / `manual` / `csv`), the eligible pool, CSV export/reconcile, cancel,
     rename, or `markRowPaid`'s existing double-send guard.
+
+- **CROSS-CHECK ON THE DISBURSEMENT-QUEUE COMMIT ABOVE: THREE REAL DEFECTS
+  CAUGHT AND FIXED (2026-09-05, same day).** An independent review pass over
+  the commit found three issues, all fixed here. Verified: `test:disbursements`
+  (96) + `test:payoutrelay` (69) + `test:moneyadmin` (100) all re-run green
+  (identical counts — none of these are new checks, they prove the fixes
+  didn't change behaviour for anything already covered); api + web
+  `tsc --noEmit`, `next build` (38 routes) clean.
+  - ⚠️ **FIXED: `relayMaxAttemptsDisbursement` was parsed with a raw
+    `Number()`, not this file's own `num()` helper — the EXACT bug class
+    `config.ts`'s header already names as a repeat offender.** `Number("")`
+    is `0`, and clearing (not deleting) a Railway env var routinely leaves
+    exactly that; a cleared `RELAY_MAX_ATTEMPTS_DISBURSEMENT` would have made
+    `job.attempts >= maxAttempts` true (`0 >= 0`) on every admin disbursement
+    payout's very first tick — every one would "give up" and refund before
+    ever signing, silently defeating the whole longer-leash feature two
+    entries above. Fixed to `num(process.env.RELAY_MAX_ATTEMPTS_DISBURSEMENT,
+    180, 1)`. ⚠️ **The pre-existing `relayMaxAttempts` line right above it
+    carried the identical bug and was NOT part of that commit's diff** — same
+    review pass fixed it too (`num(process.env.RELAY_MAX_ATTEMPTS, 15, 1)`)
+    rather than leave a known-live footgun sitting one line above a freshly
+    fixed one. `num()`'s own empty-string behaviour is already unit-tested
+    (`costGuard.test.ts`), so no new dedicated test was needed for either line
+    — same as every other `num(...)` call in this file.
+  - ⚠️ **FIXED: the new per-row "Send reward" button was gated only on the
+    row's own status, not the batch's** — `Disbursements.tsx` already has a
+    `canRun` (`!!batch && ["draft","processing","partly_failed"].includes(
+    batch.status)`) guarding the batch-level "Send reward to all" button, and
+    the per-row button needed the same check. Without it: a batch can be
+    cancelled while its rows still sit `pending`/`failed`/`needs_address`
+    (`cancel` only refuses when a row is already released/sending/paid, and
+    never touches the surviving rows' own status) — so a cancelled batch kept
+    showing an active "Send reward" button that always 409'd on click. Fixed
+    by adding `canRun` to the same condition.
+  - **FIXED (efficiency, not correctness): the new send-one-row route pulled
+    every row in the batch — including the `payout_relay_jobs` EXISTS check
+    added for `relayInFlight` — just to `.find()` one id.** At
+    `disbursementMaxRecipients`'s default cap of 500, a single click could
+    scan 500 rows with a per-row subquery to locate one. New
+    `getDisbursementRow(batchId, rowId)` in `disbursements.ts` (a targeted
+    single-row query sharing the same `DISBURSEMENT_SELECT` SQL and
+    `mapDisbursement()` mapper `getDisbursements()` now also uses — one query
+    shape, not two copies) replaces the full-batch fetch at the one call site
+    that only ever needed one row.

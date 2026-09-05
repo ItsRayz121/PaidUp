@@ -22,7 +22,7 @@ import { looksLikeTxHash, pointsToUsdt } from "../payout.ts";
 import { sendPushToUser } from "../push.ts";
 import {
   listEligible, createBatch, recomputeBatchTotals, listBatches, getBatch,
-  getDisbursements, syncBatchFromRequests, renameBatch, DISBURSE_CHAIN,
+  getDisbursements, getDisbursementRow, syncBatchFromRequests, renameBatch, DISBURSE_CHAIN,
   type BatchMode, type DisbursementRow,
 } from "../disbursements.ts";
 
@@ -400,7 +400,7 @@ export async function staffDisbursementRoutes(app: FastifyInstance) {
       "UPDATE payout_disbursements SET status = 'pending' WHERE id = ? AND batch_id = ? AND status = 'sending' AND withdrawal_request_id IS NULL",
       rid, id,
     );
-    const row = (await getDisbursements(id)).find((r) => r.id === rid);
+    const row = await getDisbursementRow(id, rid);
     if (!row) return reply.code(404).send({ error: "Row not found in this batch." });
     if (!RUNNABLE.includes(row.status)) {
       return reply.code(409).send({ error: `This reward is '${row.status}', not ready to send.` });

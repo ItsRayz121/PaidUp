@@ -522,22 +522,21 @@ async function talliesFor(batchIds: string[]): Promise<Record<string, Record<Dis
   return out;
 }
 
-export async function getDisbursements(batchId: string): Promise<DisbursementRow[]> {
-  const rows = await sql.all<Record<string, unknown>>(
-    `SELECT d.*, u.email AS user_email, t.title AS task_title,
-            EXISTS (
-              SELECT 1 FROM payout_relay_jobs j
-              WHERE j.request_id = d.withdrawal_request_id
-                AND j.status NOT IN ('failed','forward_confirmed')
-            ) AS relay_in_flight
-     FROM payout_disbursements d
-     LEFT JOIN users u ON u.id = d.user_id
-     LEFT JOIN task_proofs p ON p.id = d.proof_id
-     LEFT JOIN tasks t ON t.id = p.task_id
-     WHERE d.batch_id = ? ORDER BY d.created_at ASC`,
-    batchId,
-  );
-  return rows.map((r) => ({
+const DISBURSEMENT_SELECT = `
+  SELECT d.*, u.email AS user_email, t.title AS task_title,
+         EXISTS (
+           SELECT 1 FROM payout_relay_jobs j
+           WHERE j.request_id = d.withdrawal_request_id
+             AND j.status NOT IN ('failed','forward_confirmed')
+         ) AS relay_in_flight
+  FROM payout_disbursements d
+  LEFT JOIN users u ON u.id = d.user_id
+  LEFT JOIN task_proofs p ON p.id = d.proof_id
+  LEFT JOIN tasks t ON t.id = p.task_id
+`;
+
+function mapDisbursement(r: Record<string, unknown>): DisbursementRow {
+  return {
     id: String(r.id),
     batchId: String(r.batch_id),
     userId: String(r.user_id),
@@ -557,5 +556,24 @@ export async function getDisbursements(batchId: string): Promise<DisbursementRow
     createdAt: String(r.created_at),
     settledAt: (r.settled_at as string) ?? null,
     relayInFlight: Boolean(r.relay_in_flight),
-  }));
+  };
+}
+
+export async function getDisbursements(batchId: string): Promise<DisbursementRow[]> {
+  const rows = await sql.all<Record<string, unknown>>(
+    `${DISBURSEMENT_SELECT} WHERE d.batch_id = ? ORDER BY d.created_at ASC`,
+    batchId,
+  );
+  return rows.map(mapDisbursement);
+}
+
+// A targeted single-row lookup (founder, 2026-09-05: sending ONE recipient
+// should not have to pull and re-derive every row in the batch — including
+// the payout_relay_jobs EXISTS check above — just to find the one being sent).
+export async function getDisbursementRow(batchId: string, rowId: string): Promise<DisbursementRow | null> {
+  const r = await sql.get<Record<string, unknown>>(
+    `${DISBURSEMENT_SELECT} WHERE d.batch_id = ? AND d.id = ?`,
+    batchId, rowId,
+  );
+  return r ? mapDisbursement(r) : null;
 }

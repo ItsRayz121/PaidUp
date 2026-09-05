@@ -572,7 +572,12 @@ export const config = {
   // 15 attempts is ~5 minutes — long enough to ride out a transient RPC blip,
   // short enough that a genuinely unfundable job (e.g. an empty treasury)
   // doesn't spin silently for hours the way it did before this existed.
-  relayMaxAttempts: Number(process.env.RELAY_MAX_ATTEMPTS ?? 15),
+  // ⚠️ num(), not a raw Number() — see num()'s own header above: `Number("")`
+  // is 0, and clearing (not deleting) a Railway env var routinely leaves
+  // exactly that. A raw Number() here would mean an accidentally-cleared
+  // value makes EVERY relay job give up on its very first tick. Caught in
+  // review, 2026-09-05, alongside the same bug in the new pair below.
+  relayMaxAttempts: num(process.env.RELAY_MAX_ATTEMPTS, 15, 1),
 
   // A SECOND, independent give-up condition, in wall-clock time rather than
   // attempt count (founder, 2026-09-05: "it should get rejected after ten,
@@ -593,7 +598,7 @@ export const config = {
   // per tick (not every tick), so raising only the age ceiling would do nothing
   // if the tighter attempts cap below fired first — 180 attempts at the default
   // 20s tick is ~1 hour, matching relayMaxAgeMsDisbursement.
-  relayMaxAttemptsDisbursement: Number(process.env.RELAY_MAX_ATTEMPTS_DISBURSEMENT ?? 180),
+  relayMaxAttemptsDisbursement: num(process.env.RELAY_MAX_ATTEMPTS_DISBURSEMENT, 180, 1),
   relayMaxAgeMsDisbursement: num(process.env.RELAY_MAX_AGE_MS_DISBURSEMENT, 60 * 60_000, 60_000),
 
   // ---- Withdrawal abuse controls, now that there is no per-request human
