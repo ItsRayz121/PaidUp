@@ -602,6 +602,15 @@ export async function appRoutes(app: FastifyInstance) {
   app.get("/referrals/me", guard(async (userId) => {
     const user = (await sql.get<{ referral_code: string; referred_by: string | null }>(
       "SELECT referral_code, referred_by FROM users WHERE id = ?", userId))!;
+    // The inviter's own code, so the earner screen can show "Invited by X" once
+    // bound instead of showing nothing at all (founder, 2026-09-05) — canBind
+    // going false used to make the whole invite-box disappear with no trace of
+    // who it was.
+    const inviter = user.referred_by
+      ? await sql.get<{ referral_code: string }>(
+          "SELECT referral_code FROM users WHERE id = ?", user.referred_by,
+        )
+      : null;
     // ::int — Postgres returns COUNT()/SUM() of integers as bigint, i.e. a string.
     const joined = await sql.get<{ n: number }>(
       "SELECT COUNT(*)::int AS n FROM referrals WHERE referrer_user_id = ?", userId,
@@ -645,6 +654,7 @@ export async function appRoutes(app: FastifyInstance) {
       canBind: !user.referred_by && !(await sql.get(
         "SELECT 1 FROM referrals WHERE referred_user_id = ?", userId,
       )),
+      referredByCode: inviter?.referral_code ?? null,
       joined: joined?.n ?? 0,
       joined2: joined2?.n ?? 0,
       earnedPoints: earned?.s ?? 0,

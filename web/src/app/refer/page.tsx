@@ -133,41 +133,46 @@ export default function ReferPage() {
       {/* "Add a friend's code" — only for a user nobody invited yet. Sits in the
           invite area on purpose: it is the other half of the same relationship,
           and a user who was invited by WhatsApp screenshot never got to enter a
-          code at signup. One-time and permanent, so the copy says so. */}
-      {ref.data?.canBind && (
+          code at signup. One-time and permanent, so the copy says so.
+          Once a code IS bound — from signup's own ?ref=CODE link, or from this
+          form — the full box is replaced by one small line naming whose code it
+          is, rather than either the whole form staying up (an already-answered
+          question) or the box vanishing with no trace of it (founder,
+          2026-09-05). */}
+      {ref.data?.canBind && !bound && (
         <Card className="p-4">
-          {bound ? (
-            <p className="flex items-center gap-2 text-sm font-semibold text-success">
-              <CheckIcon size={18} /> {t("refer.bind.done")}
-            </p>
-          ) : (
-            <>
-              <p className="font-semibold text-brand-ink">{t("refer.bind.title")}</p>
-              <p className="mt-0.5 text-sm text-muted">{t("refer.bind.body")}</p>
-              <div className="mt-3 flex gap-2.5">
-                <input
-                  value={bindCode}
-                  onChange={(e) => setBindCode(e.target.value)}
-                  placeholder={t("refer.bind.placeholder")}
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  className="num min-w-0 flex-1 rounded-xl border border-line bg-card p-3 uppercase text-brand-ink outline-none focus:border-brand"
-                />
-                <Button
-                  variant="primary"
-                  size="md"
-                  full={false}
-                  onClick={bind}
-                  disabled={binding || bindCode.trim() === ""}
-                >
-                  {binding ? t("refer.bind.saving") : t("refer.bind.cta")}
-                </Button>
-              </div>
-              {bindErr && <p className="mt-2 text-sm text-danger">{bindErr}</p>}
-              <p className="mt-2 text-xs text-muted">{t("refer.bind.note")}</p>
-            </>
-          )}
+          <p className="font-semibold text-brand-ink">{t("refer.bind.title")}</p>
+          <p className="mt-0.5 text-sm text-muted">{t("refer.bind.body")}</p>
+          <div className="mt-3 flex gap-2.5">
+            <input
+              value={bindCode}
+              onChange={(e) => setBindCode(e.target.value)}
+              placeholder={t("refer.bind.placeholder")}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              className="num min-w-0 flex-1 rounded-xl border border-line bg-card p-3 uppercase text-brand-ink outline-none focus:border-brand"
+            />
+            <Button
+              variant="primary"
+              size="md"
+              full={false}
+              onClick={bind}
+              disabled={binding || bindCode.trim() === ""}
+            >
+              {binding ? t("refer.bind.saving") : t("refer.bind.cta")}
+            </Button>
+          </div>
+          {bindErr && <p className="mt-2 text-sm text-danger">{bindErr}</p>}
+          <p className="mt-2 text-xs text-muted">{t("refer.bind.note")}</p>
+        </Card>
+      )}
+      {(bound || ref.data?.referredByCode) && (
+        <Card className="flex items-center gap-2 p-3">
+          <CheckIcon size={16} className="shrink-0 text-success" />
+          <p className="text-sm text-muted">
+            {t("refer.bind.invitedBy", { code: ref.data?.referredByCode ?? bindCode.trim().toUpperCase() })}
+          </p>
         </Card>
       )}
 

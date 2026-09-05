@@ -453,6 +453,7 @@ export const submitTaskProof = (
 export type Referrals = {
   code: string;
   canBind: boolean; // true if nobody invited this user yet — show the "add a code" box
+  referredByCode: string | null; // the inviter's code, once bound (null if canBind)
   joined: number;   // friends you invited
   joined2: number;  // friends THEY invited
   earnedPoints: number;

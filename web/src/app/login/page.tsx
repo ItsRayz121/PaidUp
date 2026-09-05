@@ -90,7 +90,13 @@ function LoginForm() {
   // email + a code), so a logged-in user running through them is harmless —
   // finishing just refreshes their session token, same as any other login.
   const requestedMode = useSearchParams().get("mode");
-  const [mode, setMode] = useState<Mode>(requestedMode === "forgot" ? "forgot" : "login");
+  // An invite link (?ref=CODE) should open straight on "Create an account" —
+  // the whole point of the referral code is to bind it at signup, and a
+  // link that lands on Login first makes an invited friend hunt for the
+  // right screen before their code is ever attached (founder, 2026-09-05).
+  const [mode, setMode] = useState<Mode>(
+    requestedMode === "forgot" ? "forgot" : ref ? "register" : "login",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");

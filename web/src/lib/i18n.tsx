@@ -361,9 +361,9 @@ const copy: Record<string, string> = {
   "refer.copyLink": "Copy link",
   "refer.copied": "Copied",
   "refer.share": "Share",
-  "refer.friendsJoined": "Friends joined",
-  "refer.friends2Joined": "Their friends",
-  "refer.pointsEarned": "You earned",
+  "refer.friendsJoined": "L1 friends",
+  "refer.friends2Joined": "L2 friends",
+  "refer.pointsEarned": "ROZI from friends",
   "refer.howItWorks": "How it works",
   "refer.step1": "Share your code with friends.",
   "refer.step2": "They join and start earning.",
@@ -392,6 +392,10 @@ const copy: Record<string, string> = {
   "refer.bind.saving": "Adding…",
   "refer.bind.done": "Code added. Your friend now earns a share when you do.",
   "refer.bind.note": "You can only add a code once.",
+  // The compact, permanent version of the box above — shown once a code IS
+  // bound (from signup or from the form above), instead of the full form
+  // disappearing with no trace of who gets the share.
+  "refer.bind.invitedBy": "Invited by {code}",
   // inbox — messages from us to the user (brief part 39).
   //
   // ⚠️ THE COPY HERE CANNOT PROMISE ANYTHING, because it wraps text a staff
