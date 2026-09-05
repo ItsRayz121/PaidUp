@@ -3723,3 +3723,58 @@ See `docs/` for the full spec.
     connected in a future session, this is a five-step job at that point:
     read the Resend-issued records, write them via that MCP, then the two new
     TXT records once DKIM/SPF are confirmed passing.
+
+- **A CROSS-CHECK ON THE "ONE WITHDRAWAL, ONE TRANSACTION" COMMIT FOUND AND
+  FIXED THREE REAL GAPS (founder, 2026-09-05, same day).** An independent
+  review pass (`code-review` at high effort) over the previous commit found
+  four issues; three were real and are fixed here, one was considered and
+  deliberately left as-is. Verified: 528 e2e checks across every affected
+  suite (payoutrelay 66, usdt 112, moneyadmin 100, disbursements 81,
+  withdrawcontrols 21, autowithdraw 16, autorefund 8, fees 24, wallet 52,
+  stage4 48), api + web typecheck, all clean.
+  - ⚠️ **FIXED: a 'mixed' withdrawal's forward leg signed the FULL combined
+    amount with no on-chain balance check, unlike the refund path a few lines
+    above it which explicitly re-verifies `balanceOf` before ever signing
+    ("never trust the row").** The deposit portion of a mixed job is money
+    that's sat at the user's derived address since their original deposit —
+    exactly the kind of balance that could drift from the ledger (a sweep,
+    a prior partial send) if unchecked. `payoutRelay.ts`'s `prefund_confirmed`
+    branch now reads the address's real on-chain balance and refuses to sign
+    if it's short, mirroring the refund path's own discipline. Deliberately
+    `safe: false` on failure — the prefund already confirmed, so treasury's
+    USDT genuinely sits at this address for real; auto-refunding the row on
+    top of that would double-pay the earned portion. Staff must check the
+    chain if a job gets stuck here, same as every other `NOT safe` case in
+    this file.
+  - ⚠️ **FIXED: the withdrawal queue's `pendingTotal` (the "fund the treasury
+    with this much" figure) never subtracted a mixed row's `deposit_fee_micro`
+    — only its per-row `netUsdt` did.** Currently unreachable in production
+    (relay-available mixed rows always carry a $0 deposit fee — see
+    `routes/withdrawals.ts`'s `relayReady ? 0 : gasFeeMicro(...)`), but a real
+    aggregate-vs-per-row disagreement waiting for the day relay is
+    unavailable AND a gas fee rate is set. Fixed by computing the whole total
+    in one micro-USDT unit (no round-trip through `pointsToUsdt`'s string),
+    same "one division, no accumulation" discipline `microToDecimalString`
+    already documents.
+  - ⚠️ **FIXED: `payoutRelayIntervalMs`'s new default (20s) would have
+    silently reintroduced a 4.5x jump in relay-tick RPC calls on deploy** —
+    production has `DEPOSIT_SCAN_INTERVAL_MS=90000` (raised for the exact
+    billing reasons in the two Alchemy entries above), and the whole point of
+    giving the relay tick its own variable was to stop the two from being
+    coupled BY ACCIDENT, not to silently drop back to a hardcoded default the
+    moment nobody remembers to set the new one. It now falls back to
+    `DEPOSIT_SCAN_INTERVAL_MS`'s own value when unset, so deploying this
+    changes NOTHING until an operator deliberately sets
+    `PAYOUT_RELAY_INTERVAL_MS` to decouple it on purpose.
+  - **Considered and NOT changed**: the review also flagged that the new
+    wall-clock give-up (like the pre-existing attempt-count one) can fire
+    even while `payoutMode` is set to `"manual"` — an operator's "emergency
+    stop." Checked against `disbursements.e2e.ts`'s own regression test
+    ("payoutRelay.failJob returns the right currency"), which already
+    exercises and relies on give-up firing without onchain mode configured —
+    this is existing, intentional, tested behaviour, not something this
+    commit introduced. It is also directionally safe: give-up only ever
+    CREDITS a held balance back to the user (undoes a hold); it never sends
+    money anywhere. Reordering it behind the payoutMode check would have
+    broken that existing test and contradicted the founder's own explicit
+    ask that a stuck job resolve on its own — so it was left alone.

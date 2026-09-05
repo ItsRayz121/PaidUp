@@ -554,9 +554,18 @@ export const config = {
   // CLAUDE.md) — which meant the two features' timing was coupled by
   // accident: raising the deposit scanner's interval to save money silently
   // slowed down how fast a stuck withdrawal gives up and refunds a user. Its
-  // own dedicated variable, same 20s default so nothing changes unless it is
-  // explicitly set (founder, 2026-09-05).
-  payoutRelayIntervalMs: num(process.env.PAYOUT_RELAY_INTERVAL_MS, 20_000, 5_000),
+  // own dedicated variable now (founder, 2026-09-05) — but the FALLBACK, when
+  // this new variable is unset, is DEPOSIT_SCAN_INTERVAL_MS's own value, not
+  // a fresh hardcoded default. Production already has that raised to 90s for
+  // real RPC-cost reasons; a plain 20s default here would silently reintroduce
+  // a 4.5x jump in relay-tick RPC calls on deploy, unless the operator also
+  // remembers to set the new variable — exactly the class of silent-cost
+  // regression those two billing incidents were about. Falling back to
+  // DEPOSIT_SCAN_INTERVAL_MS means deploying this changes NOTHING until an
+  // operator deliberately sets PAYOUT_RELAY_INTERVAL_MS to decouple it.
+  payoutRelayIntervalMs: num(
+    process.env.PAYOUT_RELAY_INTERVAL_MS ?? process.env.DEPOSIT_SCAN_INTERVAL_MS, 20_000, 5_000,
+  ),
 
   // How many times payoutRelay.ts retries ONE job phase before giving up and
   // marking it 'failed' instead of retrying forever. At the default 20s tick,

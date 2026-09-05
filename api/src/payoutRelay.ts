@@ -611,13 +611,39 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
       }
 
       if (job.status === "prefund_confirmed") {
+        // ⚠️ VERIFY THE FULL FORWARD AMOUNT IS REALLY THERE BEFORE SIGNING —
+        // same discipline as the refund path above ("never trust the row").
+        // For a plain earned-only job this trivially holds (the prefund we
+        // just confirmed WAS the whole amount). For a MIXED job (2026-09-05:
+        // one relay job forwarding a real deposit + the just-prefunded earned
+        // portion together) the deposit portion is money that has sat at this
+        // address since it was originally deposited — exactly the kind of
+        // balance that could have drifted from the ledger (a sweep, a prior
+        // partial send) if this check were skipped. Checked BEFORE signing;
+        // NOT safe on failure — the prefund already confirmed, so treasury's
+        // USDT genuinely sits at this address for real, and auto-refunding
+        // the whole row would double-pay that portion. Staff must look at
+        // the chain, not this code, if this is where a job gets stuck.
+        const rawBalance = (await publicClient.readContract({
+          address: token.usdt, abi: erc20Abi, functionName: "balanceOf", args: [childAccount.address],
+        })) as bigint;
+        const neededTotal = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
+        if (rawBalance < neededTotal) {
+          box.push = await failJob(
+            t, job,
+            `Address ${childAccount.address} holds less than the full forward amount even after the prefund confirmed — cannot sign.`,
+            false,
+          );
+          return;
+        }
+
         // NOT safe: the prefund tx already confirmed — treasury's USDT
         // genuinely sits at the user's own derived address right now. Do not
         // auto-refund points here; that would double-pay. Staff must look at
         // the chain, not this code, if this is where a job gets stuck.
         if (!(await requireGasOrFail(false))) return;
 
-        const amount = parseUnits(microToDecimalString(Number(job.amount_micro)), token.decimals);
+        const amount = neededTotal;
         const childClient = createWalletClient({ account: childAccount, chain: token.viemChain, transport });
         const forwardTx = await childClient.writeContract({
           address: token.usdt, abi: erc20Abi, functionName: "transfer",

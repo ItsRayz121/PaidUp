@@ -194,10 +194,17 @@ export async function staffRoutes(app: FastifyInstance) {
         `SELECT COUNT(*) AS n FROM withdrawal_requests w JOIN users u ON u.id = w.user_id ${whereSql}`, ...wp,
       ),
       // pendingTotal is over the WHOLE filtered set, not the current page.
+      // ⚠️ mixedDepositFeeMicro is real, separate money (micro-USDT, never
+      // folded into fee_points — a 'mixed' row's deposit component has its
+      // OWN gas-cost fee, deposit_fee_micro, exactly like /usdt/refunds).
+      // Missing it here would let this total overstate what a mixed row
+      // actually costs to pay, disagreeing with the per-row netUsdt below
+      // (netUsdtOfRequest), which already nets both fees correctly.
       OWED_STATUSES.includes(status)
-        ? sql.get<{ c: string | number; pts: string | number; net: string | number }>(
+        ? sql.get<{ c: string | number; pts: string | number; net: string | number; mixed_deposit_fee_micro: string | number }>(
             `SELECT COUNT(*) AS c, COALESCE(SUM(w.amount), 0) AS pts,
-                    COALESCE(SUM(w.amount - COALESCE(w.fee_points, 0)), 0) AS net
+                    COALESCE(SUM(w.amount - COALESCE(w.fee_points, 0)), 0) AS net,
+                    COALESCE(SUM(CASE WHEN w.source_kind = 'mixed' THEN COALESCE(w.deposit_fee_micro, 0) ELSE 0 END), 0) AS mixed_deposit_fee_micro
              FROM withdrawal_requests w JOIN users u ON u.id = w.user_id ${whereSql}`, ...wp,
           )
         : Promise.resolve(null),
@@ -227,7 +234,12 @@ export async function staffRoutes(app: FastifyInstance) {
       pendingTotal: owed ? {
         count: Number(owed.c),
         points: Number(owed.pts),
-        usdt: pointsToUsdt(Number(owed.net)),
+        // Same unit throughout (micro-USDT) rather than round-tripping through
+        // pointsToUsdt's string, so the mixed-row deposit fee (a real
+        // micro-USDT amount, never expressible in points) can be subtracted
+        // without a second, lossy conversion.
+        usdt: (Math.max(0, Math.floor((Number(owed.net) / config.pointsPerUsdt) * 1_000_000)
+          - Number(owed.mixed_deposit_fee_micro ?? 0)) / 1_000_000).toFixed(6),
       } : null,
       requests: rows.map((r) => ({
         id: r.id, userId: r.user_id, userEmail: r.user_email,
