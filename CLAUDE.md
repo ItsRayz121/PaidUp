@@ -4279,3 +4279,75 @@ See `docs/` for the full spec.
     (the one new query's `ANY(?)` list is the caller's own already-scoped row
     ids) and every new push body is a static string — no injection surface,
     no auth/authorization change.
+
+- **CROSS-CHECKED `63b0620`, THEN: A REWARD DISBURSEMENT STOPS SHOWING AS
+  UP TO THREE WALLET-HISTORY ROWS (founder, 2026-09-05, same-day follow-up).**
+  The founder's own live screenshot of `/wallet`: ONE task reward ("wdada")
+  showed as four rows — USDT deposit, USDT withdrawal, Task reward, USDT
+  deposit — and he asked for exactly one: "the only thing that need to be
+  showed up here was task reward. Nothing else."
+  - **Cross-check of `63b0620` first, as asked**: read the actual diff (not
+    just its CLAUDE.md claims) for `isRewardPayout` (`routes/withdrawals.ts`),
+    the task-group reorder (`tasks/page.tsx`), and all three new
+    `sendPushToUser` call sites. All confirmed sound: `isRewardPayout` really
+    is `EXISTS` against `payout_disbursements.withdrawal_request_id`; the
+    mining-session-ended push fires exactly once per session because both of
+    `accrueSession()`'s callers (`accrue()`, `accrueAllSessions()`) only ever
+    pass in a row already filtered to `status = 'active'`, and the function
+    itself flips that same row to `'ended'` in the branch that pushes, so it
+    can never match either caller's filter again; the task-reward push sits
+    after `creditCompletion()`'s transaction has already committed, matching
+    `push.ts`'s "never inside the transaction" rule. No defects found in that
+    commit — the label fix (`isRewardPayout` → "Reward payout") was real and
+    correct, it just did not go far enough for what the founder actually
+    wanted.
+  - ⚠️ **THE LABEL FIX ALONE COULD NOT BE ENOUGH, BECAUSE ONE REWARD GENUINELY
+    TOUCHES THREE LEDGER ROWS.** `runPayoutRow` (`staffDisbursements.ts`)
+    releases the reward (`+micro` to `earned_usdt_ledger`, the "Task reward"
+    row) and IMMEDIATELY holds it for payout (`-micro`, a withdrawal row) —
+    net zero on that ledger. The relay then sends the real on-chain USDT to
+    the recipient's OWN custody wallet (2026-09-05, "disbursements now pay
+    the recipient's own RoziPay wallet"), and because destination equals
+    source it short-circuits to done, reusing the prefund leg's own tx hash.
+    The BEP20 deposit scanner has no way to tell that arrival apart from an
+    external deposit, so it credits `usdt_ledger` `+micro` too (a real,
+    separate ledger row, `deposits/credit.ts`). Three real, correctly-written
+    ledger rows — and CLAUDE.md's own 2026-09-05 entry on this had already
+    named the cost ("the reward briefly does not show… don't fix this by
+    having the relay credit `usdt_ledger` itself") but had not connected it to
+    what the WALLET HISTORY would look like once a real payout actually
+    cleared. This is that other half.
+  - **Fixed as a pure display merge, in the one place all four wallet screens
+    already agree on how a row looks** (`walletHistory.ts`'s `unifyHistory()`,
+    used by `/wallet`, `/wallet/usdt`, `/wallet/bnb`, `/wallet/rozi` —
+    guardrail #7's own "display merge, nothing here writes anything" pattern
+    extended, not broken). No ledger, route, or backend behaviour changed.
+    - A reward-payout withdrawal (`w.isRewardPayout`) is dropped from
+      `withdrawalRows` entirely, regardless of status — it always pays the
+      user's OWN wallet by construction (never external), so it is never a
+      withdrawal the user asked for or should have to interpret.
+    - Any deposit row (`topups`, which already merges manual claims and
+      scanner-detected `chain_deposits` rows into one array) whose `txHash`
+      matches a reward-payout withdrawal's `txHash` (case-insensitive) is
+      dropped from `topupRows` too — that is the SAME on-chain transfer seen
+      from the receiving side, not a second, real deposit; showing both would
+      double-count the reward.
+    - A reward-payout withdrawal with no `txHash` yet (still pending/sending,
+      e.g. sitting in the manual `csv`/`manual`-mode queue) is still hidden —
+      there is nothing yet to match against, and hiding it unconditionally is
+      what the founder actually asked for ("nothing else" should show).
+    - The now-dead `wallet.tx.rewardPayout` i18n string (added by `63b0620`,
+      no longer referenced by anything) was deleted rather than left as an
+      unused label.
+  - ⚠️ **THIS DOES NOT HIDE A REAL PROBLEM — IT WAS ALWAYS AN INTERNAL
+    TRANSFER.** `runPayoutRow`'s destination is unconditionally the
+    recipient's own custody-derived wallet (2026-09-05); there is no code
+    path where a reward-payout withdrawal sends money anywhere external. If
+    that ever changes, this filter would start hiding a real external send —
+    keep it scoped to `isRewardPayout`, never widened to "any withdrawal with
+    a matching deposit hash."
+  - Verified: web + api `tsc --noEmit` clean, `eslint` 0 new errors (touched
+    files clean), `next build` clean (38 routes, unchanged). No backend files
+    touched, so the existing 40+ e2e suites are unaffected by construction —
+    this is presentation-only, on the frontend, over data those suites
+    already exercise.

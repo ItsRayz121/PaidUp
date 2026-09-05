@@ -606,7 +606,6 @@ const copy: Record<string, string> = {
   "wallet.filter.reward": "Rewards",
   "wallet.filter.mining": "Mining",
   "wallet.tx.usdtWithdrawal": "USDT withdrawal",
-  "wallet.tx.rewardPayout": "Reward payout",
   "wallet.tx.usdtDeposit": "USDT deposit",
   "wallet.tx.usdtRefund": "USDT sent back",
   "wallet.tx.bnbWithdrawal": "BNB withdrawal",

@@ -145,28 +145,47 @@ export function unifyHistory(args: {
     .filter((e) => WALLET_ROZI_SOURCES.has(e.source_type))
     .map((e) => buildRoziRow(e, t));
 
-  const withdrawalRows: Row[] = withdrawals.map((w) => {
+  // A reward disbursement (isRewardPayout) always pays out to the recipient's
+  // OWN custody wallet, never externally (staffDisbursements.ts) — so from the
+  // user's side nothing actually left the platform. The real credit is already
+  // shown by taskUsdtRows below ("Task reward"); showing the internal
+  // hold-then-release AS WELL, plus the on-chain arrival the deposit scanner
+  // then detects at that same wallet as a second "deposit", turns one event
+  // into up to three rows and reads as unexplained automatic withdrawals and
+  // deposits (founder, 2026-09-05: "the only thing that need to be showed
+  // was task reward"). So a reward-payout withdrawal is dropped from history
+  // entirely, and any deposit row sharing its tx hash (the same on-chain
+  // transfer, seen from the receiving side) is dropped with it.
+  const rewardPayoutHashes = new Set(
+    withdrawals
+      .filter((w) => w.isRewardPayout && w.txHash)
+      .map((w) => w.txHash!.toLowerCase()),
+  );
+
+  const withdrawalRows: Row[] = withdrawals.filter((w) => !w.isRewardPayout).map((w) => {
     const usdt = w.usdtAmount ? Number(w.usdtAmount) : pointsToUsdt(w.amount);
     // A rejected withdrawal credits the held points straight back
     // (api/src/routes/staff.ts's reject branch) — "refunded", not "rejected".
     const statusKey = (w.status === "paid" ? "paid" : w.status === "rejected" ? "refunded"
       : w.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
     const amountText = `−${usdt.toFixed(2)} USDT`;
-    // A row an ADMIN created (a reward disbursement, routes/staffDisbursements.ts)
-    // must never look like a withdrawal the user asked for — see the backend's
-    // own comment on GET /withdrawals (founder, 2026-09-05).
+    // Reward-payout rows (an ADMIN disbursement, routes/staffDisbursements.ts)
+    // never reach this map — filtered out above — so every row here is a
+    // withdrawal the user actually asked for.
     return {
       key: `w:${w.id}`,
-      label: t(w.isRewardPayout ? "wallet.tx.rewardPayout" : "wallet.tx.usdtWithdrawal"),
+      label: t("wallet.tx.usdtWithdrawal"),
       at: w.at, token: "USDT" as const, kind: "sent" as const,
-      amountText, credit: false, status: statusKey, Icon: w.isRewardPayout ? StarIcon : SendIcon,
+      amountText, credit: false, status: statusKey, Icon: SendIcon,
       detail: {
         amountText, statusText: STATUS_TEXT[statusKey] ?? w.status, network: w.chain, to: w.address, txHash: w.txHash,
       },
     };
   });
 
-  const topupRows: Row[] = topups.map((u) => {
+  const topupRows: Row[] = topups
+    .filter((u) => !(u.txHash && rewardPayoutHashes.has(u.txHash.toLowerCase())))
+    .map((u) => {
     const statusKey = (u.status === "confirmed" ? "paid" : u.status === "rejected" ? "rejected" : "pending") as LedgerEntry["status"];
     const amountText = `+${usdtFromMicro(u.amountMicro).toFixed(2)} USDT`;
     return {
