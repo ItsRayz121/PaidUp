@@ -18,6 +18,7 @@
 // so custodySeeds.ts can back further secret classes with the SAME pattern
 // but their OWN keys — see that file's header for why they must not share one).
 import { encryptSecret as encrypt, decryptSecret as decrypt, parseAesKeyHex } from "./crypto/aesSecret.ts";
+import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.ts";
 
 function encryptionKey(): Buffer {
@@ -51,4 +52,17 @@ export function treasurySignerKey(): `0x${string}` | null {
   }
   cached = withPrefix;
   return cached;
+}
+
+// The PUBLIC address this key actually signs from — safe to show to staff
+// (it is what every block explorer already shows for any tx it sends), unlike
+// the key itself. Exists because `treasury_address_bep20` (app_settings) is a
+// SEPARATE, plain admin-typed field used only for display/deposit copy — it is
+// never derived from this key, so nothing keeps the two in sync. Funding the
+// address configured there is not the same as funding this one; a mismatch
+// between them is a real, silent way for "I sent the treasury money" to still
+// leave every payout unable to send (2026-09-05 — see GET /staff/treasury/wallet).
+export function treasurySignerAddress(): string | null {
+  const pk = treasurySignerKey();
+  return pk ? privateKeyToAccount(pk).address : null;
 }

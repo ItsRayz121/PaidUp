@@ -1129,6 +1129,39 @@ export function TreasuryWalletPanel() {
       </p>
 
       {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
+
+      {/* The address shown to admins (a typed app_settings field) is NOT
+          derived from the treasury signing key — nothing keeps them in sync.
+          Funding the wrong one is exactly why a payout can revert for
+          "insufficient balance" while this screen shows real money at a
+          different address (2026-09-05). */}
+      {d?.signerAddress && (
+        <p className={`mb-2 rounded-lg border-2 p-3 text-xs ${
+          d.signerMismatch ? "border-danger bg-danger/10 text-danger" : "border-line-strong bg-card text-muted"
+        }`}>
+          <span className="font-semibold">The address that actually sends payouts:</span>{" "}
+          <Addr value={d.signerAddress} />
+          {" — right now it holds "}
+          <b>{d.signerUsdtMicro == null ? "(could not check)" : formatUsdtMicro(d.signerUsdtMicro)}</b>
+          {" and "}
+          <b>{d.signerBnbWei == null ? "(could not check)" : formatBnbWei(d.signerBnbWei)}</b>
+          {" gas. "}
+          {d.signerMismatch ? (
+            <>
+              <b>This is DIFFERENT from the treasury address shown below.</b> Funding
+              that address does nothing — every automatic payout signs from THIS
+              address. Fund this one instead, or update the treasury address setting
+              to match it.{" "}
+              {d.configuredUsdtMicro != null && (
+                <>The address below currently holds {formatUsdtMicro(d.configuredUsdtMicro)} and{" "}
+                  {formatBnbWei(d.configuredBnbWei ?? "0")} gas.</>
+              )}
+            </>
+          ) : (
+            "This matches the treasury address below — it is the one and only address that needs funding."
+          )}
+        </p>
+      )}
       {d && !d.address && (
         <p className="rounded-lg border-2 border-line-strong bg-card p-4 text-sm text-muted">
           No treasury address is set yet. Add it on the <b>Treasury</b> tab.

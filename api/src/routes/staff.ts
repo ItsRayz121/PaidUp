@@ -18,6 +18,9 @@ import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } 
 import { loadAnalytics } from "../analytics.ts";
 import { fetchTelegramChatIdentity } from "../telegram.ts";
 import { fetchTreasuryLedger, bscscanReady } from "../bscscan.ts";
+import { treasurySignerAddress } from "../signer.ts";
+import { createPublicClient, http, fallback, erc20Abi } from "viem";
+import { ONCHAIN_CHAINS } from "../payout.ts";
 
 // Gate a route on ONE named permission (see permissions.ts). The old form took
 // a list of roles; a permission is the same gate stated as what it protects
@@ -2076,18 +2079,72 @@ export async function staffRoutes(app: FastifyInstance) {
   //
   // ⚠️ ON DEMAND, NEVER POLLED. See bscscan.ts's header, and the two real
   // billing incidents in CLAUDE.md that rule comes from.
+  // A LIVE on-chain read of what a BEP20 address actually holds right now —
+  // USDT + native BNB — used below for the signer address specifically. This
+  // is what "does the address that signs payouts actually have money" means,
+  // as opposed to the tx-history totals further down (a derived flow over
+  // whatever window was fetched, which reads "0 in / 0 out" for an address
+  // that has always held a balance and simply never moved it). On demand
+  // only, never throws (a display read must not break the page) — same
+  // posture as hasEnoughGasForDisplay.
+  async function readLiveBalances(address: string | null): Promise<{ usdtMicro: number | null; bnbWei: string | null }> {
+    if (!address) return { usdtMicro: null, bnbWei: null };
+    try {
+      const def = ONCHAIN_CHAINS.bep20!;
+      const transport = fallback(config.payoutRpc.bep20.map((url) => http(url)));
+      const client = createPublicClient({ chain: def.viemChain, transport });
+      const [usdtRaw, bnbWei] = await Promise.all([
+        client.readContract({ address: def.usdt, abi: erc20Abi, functionName: "balanceOf", args: [address as `0x${string}`] }),
+        client.getBalance({ address: address as `0x${string}` }),
+      ]);
+      // 18 decimals on BSC USDT, not the 6 most deployments use — same
+      // conversion the totals below and payout.ts's ONCHAIN_CHAINS map use.
+      const usdtMicro = Number((usdtRaw as bigint) / 10n ** BigInt(Math.max(0, def.decimals - 6)));
+      return { usdtMicro, bnbWei: bnbWei.toString() };
+    } catch {
+      return { usdtMicro: null, bnbWei: null };
+    }
+  }
+
   app.get("/staff/treasury/wallet", staffGuard("treasury.view", async (_ctx, req) => {
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) })
       .parse((req.query as Record<string, unknown>) ?? {});
     const address = await getSetting("treasury_address_bep20", "");
+    // ⚠️ THE REAL SIGNING ADDRESS AND THIS CONFIGURED ADDRESS ARE TWO
+    // INDEPENDENT VALUES (2026-09-05). `treasury_address_bep20` is a plain
+    // admin-typed app_settings field (used for deposit/display copy); the
+    // address that actually SIGNS every prefund/payout transaction is derived
+    // from TREASURY_KEY_ENCRYPTED. Nothing keeps them in sync — funding the
+    // address shown here does nothing if it is not also the signer's address,
+    // and every payout would keep reverting for "insufficient balance" with no
+    // visible reason why. Surfaced so that mismatch can never be silent again.
+    const signerAddress = treasurySignerAddress();
+    const signerMismatch = !!signerAddress && !!address && signerAddress.toLowerCase() !== address.toLowerCase();
+    // LIVE balances (not the tx-history totals below) — read for the signer
+    // address always, and for the configured address too only when it
+    // actually differs (no point paying for the same read twice).
+    const [signerLive, configuredLive] = await Promise.all([
+      readLiveBalances(signerAddress),
+      signerMismatch ? readLiveBalances(address) : Promise.resolve({ usdtMicro: null, bnbWei: null }),
+    ]);
     if (!address) {
-      return { chain: "bep20", address: "", explorerReady: bscscanReady(), rows: [], totals: null };
+      return {
+        chain: "bep20", address: "", explorerReady: bscscanReady(), rows: [], totals: null,
+        signerAddress, signerMismatch: false,
+        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
+        configuredUsdtMicro: null, configuredBnbWei: null,
+      };
     }
     if (!bscscanReady()) {
       // Not an error — a deployment without the free explorer key simply has
       // nothing to show here, and saying so beats an empty table that reads as
       // "no money has ever moved".
-      return { chain: "bep20", address, explorerReady: false, rows: [], totals: null };
+      return {
+        chain: "bep20", address, explorerReady: false, rows: [], totals: null,
+        signerAddress, signerMismatch,
+        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
+        configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
+      };
     }
 
     const txs = await fetchTreasuryLedger(address, q.limit);
@@ -2109,6 +2166,10 @@ export async function staffRoutes(app: FastifyInstance) {
       chain: "bep20",
       address,
       explorerReady: true,
+      signerAddress,
+      signerMismatch,
+      signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
+      configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
       totals: { inMicro: Number(inMicro), outMicro: Number(outMicro), rows: txs.length },
       rows: txs.map((t) => ({
         hash: t.hash,

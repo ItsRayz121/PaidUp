@@ -16,7 +16,7 @@
 //   npm run test:disbursements
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import { initDb, sql, now, newId } from "../db.ts";
+import { initDb, sql, now, newId, getOrCreateDepositWallet } from "../db.ts";
 import { config } from "../config.ts";
 import { appRoutes } from "../routes/app.ts";
 import { staffTaskRoutes } from "../routes/staffTasks.ts";
@@ -27,6 +27,15 @@ function check(name: string, ok: boolean, extra = "") {
   if (ok) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name} ${extra}`); }
 }
+
+// The recipient of an on-chain/manual/csv disbursement is now always the
+// user's OWN derived custody wallet (2026-09-05), so this suite exercises
+// getOrCreateDepositWallet for real — needs an xpub configured. Same public
+// BIP39 test-vector xpub custody.test.ts uses (mnemonic "abandon x11 about"),
+// which holds no funds and is the industry-standard test vector for exactly
+// this reason.
+config.custodyXpub.bep20 =
+  "xpub6DCoCpSuQZB2jawqnGMEPS63ePKWkwWPH4TU45Q7LPXWuNd8TMtVxRrgjtEshuqpK3mdhaWHPFsBngh5GFZaM6si3yZdUsT8ddYM3PwnATt";
 
 await initDb();
 const app = Fastify();
@@ -278,59 +287,68 @@ console.log("\n-- cancel a batch --");
 }
 
 console.log("\n-- on-chain / manual mode: release + a payout request --");
-const ADDR = "0x1111111111111111111111111111111111111111";
-async function saveAddr(userId: string) {
+// The founder's external "saved payout address" is a red herring here on
+// purpose (2026-09-05): an admin reward disbursement must NEVER pay out to a
+// user-typed external address. It always targets the recipient's OWN RoziPay
+// custody wallet (custody.ts's per-user derived deposit address) — the same
+// address the user sees on /wallet/usdt — regardless of whether they have
+// also saved an external one for their OWN withdrawals.
+const EXTERNAL_ADDR = "0x1111111111111111111111111111111111111111";
+async function saveExternalAddr(userId: string) {
   await sql.run(
     "INSERT INTO payout_addresses (user_id, chain, address, updated_at) VALUES (?, 'bep20', ?, ?) ON CONFLICT (user_id, chain) DO UPDATE SET address = EXCLUDED.address",
-    userId, ADDR, now(),
+    userId, EXTERNAL_ADDR, now(),
   );
 }
 const reqFor = (userId: string) =>
-  sql.get<{ id: string; status: string; source_kind: string; earned_usdt_micro: string | number; payout_address: string }>(
-    "SELECT id, status, source_kind, earned_usdt_micro, payout_address FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+  sql.get<{ id: string; status: string; source_kind: string; earned_usdt_micro: string | number; payout_address: string; address_verified: number }>(
+    "SELECT id, status, source_kind, earned_usdt_micro, payout_address, address_verified FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
     userId,
   );
 {
   const t = await mkTask("Onchain");
   const uWith = await mkUser("uWith");
   const uNo = await mkUser("uNo");
-  await saveAddr(uWith);
+  await saveExternalAddr(uWith); // uWith HAS an external saved address; uNo does not.
   const pWith = await approvedProof(t, uWith);
   const pNo = await approvedProof(t, uNo);
+  const walletWith = await getOrCreateDepositWallet(uWith, "bep20");
+  const walletNo = await getOrCreateDepositWallet(uNo, "bep20");
 
   const c = await post("/staff/disbursements", admin, { mode: "manual", proofIds: [pWith, pNo] });
   const cb = c.json() as { batchId: string; added: number };
   const bid = cb.batchId;
-  // The row for the user with no address is pre-marked needs_address at create.
+  // Both rows target their OWN custody wallet up front, at create time —
+  // 'needs_address' is unreachable now, since every account has one.
   const d0 = await get(`/staff/disbursements/${bid}`, admin);
-  const rows0 = (d0.json() as { rows: { userId: string; status: string }[] }).rows;
-  check("a recipient with no saved address is flagged needs_address up front",
-    rows0.find((r) => r.userId === uNo)?.status === "needs_address");
+  const rows0 = (d0.json() as { rows: { userId: string; status: string; destAddress: string | null }[] }).rows;
+  check("the recipient WITH a saved external address still targets their own custody wallet",
+    rows0.find((r) => r.userId === uWith)?.destAddress?.toLowerCase() === walletWith.address.toLowerCase());
+  check("the recipient with NO saved address also gets a destination (their own custody wallet)",
+    rows0.find((r) => r.userId === uNo)?.status === "pending" &&
+    rows0.find((r) => r.userId === uNo)?.destAddress?.toLowerCase() === walletNo.address.toLowerCase());
 
   const run = await post(`/staff/disbursements/${bid}/run`, admin);
   const rb = run.json() as { results: { userId: string; status: string }[] };
-  check("the addressed recipient goes to 'sending'",
+  check("the recipient WITH a saved external address goes to 'sending'",
     rb.results.find((r) => r.userId === uWith)?.status === "sending");
-  check("the unaddressed recipient stays needs_address",
-    rb.results.find((r) => r.userId === uNo)?.status === "needs_address");
+  check("the recipient with NO saved external address ALSO goes to 'sending' (no address needed)",
+    rb.results.find((r) => r.userId === uNo)?.status === "sending");
 
-  const w = await reqFor(uWith);
-  check("a withdrawal_request was created for the addressed recipient",
-    !!w && w.source_kind === "earned_usdt" && Number(w.earned_usdt_micro) === 1_000_000 && w.payout_address === ADDR);
-  check("its status sits in the manual queue (pending)", w?.status === "pending");
-  check("the addressed recipient's task-USDT is held (net 0: released then held)",
-    (await earnedUsdt(uWith)) === 0);
-  check("the unaddressed recipient KEEPS the released reward on balance (decision B)",
-    (await earnedUsdt(uNo)) === 1_000_000);
-  check("no withdrawal_request for the unaddressed recipient", !(await reqFor(uNo)));
+  const wWith0 = await reqFor(uWith);
+  check("uWith's withdrawal_request pays their OWN custody wallet, NOT their saved external address",
+    !!wWith0 && wWith0.source_kind === "earned_usdt" && Number(wWith0.earned_usdt_micro) === 1_000_000 &&
+    wWith0.payout_address.toLowerCase() === walletWith.address.toLowerCase() &&
+    wWith0.payout_address.toLowerCase() !== EXTERNAL_ADDR.toLowerCase());
+  check("its status sits in the manual queue (pending)", wWith0?.status === "pending");
+  check("the address is recorded as verified (it is the platform's own derived wallet)",
+    wWith0?.address_verified === 1);
+  check("uWith's task-USDT is held (net 0: released then held)", (await earnedUsdt(uWith)) === 0);
 
-  // Add an address and re-run -> the needs_address row is picked up.
-  await saveAddr(uNo);
-  const run2 = await post(`/staff/disbursements/${bid}/run`, admin);
-  check("re-run picks up the now-addressed recipient",
-    (run2.json() as { results: { userId: string; status: string }[] })
-      .results.find((r) => r.userId === uNo)?.status === "sending");
-  check("its task-USDT is now held too", (await earnedUsdt(uNo)) === 0);
+  const wNo0 = await reqFor(uNo);
+  check("uNo (no saved external address) STILL gets a real withdrawal_request, to their own custody wallet",
+    !!wNo0 && wNo0.payout_address.toLowerCase() === walletNo.address.toLowerCase());
+  check("uNo's task-USDT is held too", (await earnedUsdt(uNo)) === 0);
 
   // Sync: the withdrawal queue marks one paid, one rejected.
   const wWith = await reqFor(uWith);
@@ -392,7 +410,7 @@ console.log("\n-- a row mid-relay is flagged relayInFlight; a stopped one is not
 {
   const t = await mkTask("RelayFlag");
   const ur = await mkUser("relayflag");
-  await saveAddr(ur);
+  await saveExternalAddr(ur);
   const pr = await approvedProof(t, ur);
   const c = await post("/staff/disbursements", admin, { mode: "manual", proofIds: [pr] });
   const bid = (c.json() as { batchId: string }).batchId;
@@ -408,7 +426,7 @@ console.log("\n-- a row mid-relay is flagged relayInFlight; a stopped one is not
   await sql.run(
     `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,created_at)
      VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, ?, 1, 'prefund_sent', 0, ?)`,
-    newId(), withdrawalRequestId, ur, ADDR, ADDR, 1_000_000, now(),
+    newId(), withdrawalRequestId, ur, EXTERNAL_ADDR, EXTERNAL_ADDR, 1_000_000, now(),
   );
   const mid = await get(`/staff/disbursements/${bid}`, admin);
   check("a live (non-terminal) relay job -> relayInFlight is true",
@@ -425,7 +443,7 @@ const HASH = "0x" + "a".repeat(64);
 {
   const t = await mkTask("Manualpay");
   const um = await mkUser("um");
-  await saveAddr(um);
+  await saveExternalAddr(um);
   const pm = await approvedProof(t, um);
   const c = await post("/staff/disbursements", admin, { mode: "manual", proofIds: [pm] });
   const bid = (c.json() as { batchId: string }).batchId;
@@ -455,7 +473,7 @@ console.log("\n-- CSV export + reconcile round-trip --");
 {
   const t = await mkTask("CsvRound");
   const users = await Promise.all(["c1", "c2", "c3"].map((l) => mkUser(l)));
-  for (const u of users) await saveAddr(u);
+  for (const u of users) await saveExternalAddr(u);
   const proofs = await Promise.all(users.map((u) => approvedProof(t, u)));
   const c = await post("/staff/disbursements", admin, { mode: "csv", proofIds: proofs });
   const bid = (c.json() as { batchId: string }).batchId;
@@ -513,12 +531,12 @@ console.log("\n-- payoutRelay.failJob returns the right currency (regression) --
   await sql.run(
     `INSERT INTO withdrawal_requests (id,user_id,amount,payout_rail,payout_address,fee_points,address_verified,source_kind,earned_usdt_micro,status,created_at)
      VALUES (?,?,?, 'bep20', ?, 0, 0, 'earned_usdt', ?, 'sending', ?)`,
-    reqId, u, 2000, ADDR, 2_000_000, now(),
+    reqId, u, 2000, EXTERNAL_ADDR, 2_000_000, now(),
   );
   await sql.run(
     `INSERT INTO payout_relay_jobs (id,purpose,request_id,chain,user_id,from_address,addr_index,to_address,amount_micro,needs_prefund,status,attempts,last_error,created_at)
      VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, ?, 1, 'pending', 99, 'gave up', ?)`,
-    newId(), reqId, u, ADDR, ADDR, 2_000_000, now(),
+    newId(), reqId, u, EXTERNAL_ADDR, EXTERNAL_ADDR, 2_000_000, now(),
   );
   const { tickPayoutRelay } = await import("../payoutRelay.ts");
   await tickPayoutRelay();

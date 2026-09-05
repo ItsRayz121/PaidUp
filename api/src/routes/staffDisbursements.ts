@@ -13,7 +13,7 @@
 // carries on. Never one big transaction — the Stage-7 bulk-proof-decide rule.
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { sql, now, newId, logAudit, postEarnedUsdt, earnedUsdtBalanceMicroOf } from "../db.ts";
+import { sql, now, newId, logAudit, postEarnedUsdt, earnedUsdtBalanceMicroOf, getOrCreateDepositWallet } from "../db.ts";
 import { config } from "../config.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { releaseProof } from "./staffTasks.ts";
@@ -134,19 +134,17 @@ async function runPayoutRow(
     return { disbursementId: row.id, userId: row.userId, status: "released" };
   }
 
-  // 3. Saved address only — re-read now (one may have been added since the
-  // batch was built).
-  const addr = await sql.get<{ address: string; verified_at: string | null }>(
-    "SELECT address, verified_at FROM payout_addresses WHERE user_id = ? AND chain = ?",
-    row.userId, DISBURSE_CHAIN,
-  );
-  if (!addr?.address) {
-    await sql.run(
-      "UPDATE payout_disbursements SET status = 'needs_address', error = ? WHERE id = ?",
-      "the user has no saved payout address", row.id,
-    );
-    return { disbursementId: row.id, userId: row.userId, status: "needs_address", error: "no saved payout address" };
-  }
+  // 3. Destination is the recipient's OWN RoziPay wallet — the per-user
+  // custody-derived deposit address (custody.ts), the exact same address the
+  // user themselves sees on /wallet/usdt — NEVER their saved EXTERNAL payout
+  // address (founder, 2026-09-05: a reward must land where the platform
+  // itself can vouch for the address, not at whatever string a user typed
+  // into their own withdraw screen for their own separate purpose). Every
+  // account always has a derivable custody wallet, so this can never fail —
+  // 'needs_address' is kept in the status enum for historical rows and the
+  // manual/csv display path, but a fresh run can no longer produce it.
+  const wallet = await getOrCreateDepositWallet(row.userId, DISBURSE_CHAIN);
+  const destAddress = wallet.address;
 
   // 4. Create the payout request + hold the USDT, under the user advisory lock
   // (guardrail #8 — a concurrent user-filed withdrawal must serialize with this).
@@ -162,9 +160,9 @@ async function runPayoutRow(
         `INSERT INTO withdrawal_requests
            (id, user_id, amount, payout_rail, payout_address, fee_points, address_verified,
             source_kind, earned_usdt_micro, status, reviewed_by, review_note, created_at)
-         VALUES (?,?,?,?,?, 0, ?, 'earned_usdt', ?, 'pending', 'system:disbursement', ?, ?)`,
-        reqId, row.userId, amountPoints, DISBURSE_CHAIN, addr.address,
-        addr.verified_at ? 1 : 0, usdtMicro, `Admin reward disbursement (batch ${row.batchId})`, now(),
+         VALUES (?,?,?,?,?, 0, 1, 'earned_usdt', ?, 'pending', 'system:disbursement', ?, ?)`,
+        reqId, row.userId, amountPoints, DISBURSE_CHAIN, destAddress,
+        usdtMicro, `Admin reward disbursement (batch ${row.batchId})`, now(),
       );
       await postEarnedUsdt({
         userId: row.userId, micro: usdtMicro, direction: "debit",
@@ -173,7 +171,7 @@ async function runPayoutRow(
       }, t);
       await t.run(
         "UPDATE payout_disbursements SET withdrawal_request_id = ?, dest_address = ?, status = 'sending', error = NULL WHERE id = ?",
-        reqId, addr.address, row.id,
+        reqId, destAddress, row.id,
       );
     });
   } catch (e) {

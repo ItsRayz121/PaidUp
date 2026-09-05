@@ -3886,3 +3886,83 @@ See `docs/` for the full spec.
     `mapDisbursement()` mapper `getDisbursements()` now also uses — one query
     shape, not two copies) replaces the full-batch fetch at the one call site
     that only ever needed one row.
+
+- **DISBURSEMENTS NOW PAY THE RECIPIENT'S OWN ROZIPAY WALLET, NEVER THEIR
+  SAVED EXTERNAL ADDRESS — AND THE RELAY CUTS OUT A NEEDLESS HOP (founder,
+  2026-09-05, traced from a live stuck "Follow X Account" reward).** Two real
+  findings from one stuck job: (1) the prefund tx had reverted because the
+  address the founder had funded (`treasury_address_bep20`, a plain
+  admin-typed `app_settings` field shown on the Treasury tab) is a SEPARATE
+  value from the address that actually SIGNS every payout (derived from
+  `TREASURY_KEY_ENCRYPTED`) — nothing ever kept them in sync, so "I funded
+  the treasury wallet" and "the signer has money" were silently two different
+  claims. (2) the disbursement was paying out to the recipient's SAVED
+  EXTERNAL payout address (`payout_addresses`, whatever the user typed for
+  their own withdrawals) — an admin-initiated reward has no business trusting
+  a string the recipient typed for an unrelated purpose. Verified:
+  `test:disbursements` 96 (rewritten "on-chain / manual mode" block to prove
+  the new targeting, including a recipient with NO saved address, which used
+  to be `needs_address` and now just works) + `test:payoutrelay` 69 +
+  `test:moneyadmin` 100, all green from a fresh database; api + web
+  typecheck, eslint, web production build (38 routes) all clean.
+  - **Fix 1 — the signer/configured-address mismatch is now visible.** New
+    `treasurySignerAddress()` (`signer.ts`) derives the real signing address
+    from the key; `GET /staff/treasury/wallet` now also does a LIVE on-chain
+    read (USDT + BNB) of both the signer address and the configured one, and
+    flags a mismatch in bold red on the Treasury → Wallet panel — the exact
+    question "which address do I actually need to fund" now has a direct
+    on-screen answer instead of requiring a support session to work out.
+  - **Fix 2 — an admin reward disbursement (`onchain`/`manual`/`csv` mode)
+    now ALWAYS targets the recipient's own custody-derived deposit wallet**
+    (`custody.ts`'s `getOrCreateDepositWallet` — the exact address the user
+    themselves sees on `/wallet/usdt`), in both `disbursements.ts`'s
+    `createBatch` and `staffDisbursements.ts`'s `runPayoutRow`. Every account
+    always has a derivable custody wallet, so `needs_address` is now
+    unreachable for a fresh disbursement (kept in the status enum only for
+    historical rows). `address_verified` is set to `1` on the resulting
+    `withdrawal_requests` row — the address is guaranteed correct by
+    construction, more so than a typed or even a signed one.
+  - ⚠️ **THIS COLLAPSES THE RELAY'S TWO-HOP PASS-THROUGH INTO ONE HOP FOR
+    DISBURSEMENTS, AND THAT IS WHAT MAKES THEM FASTER TOO.** The relay's
+    prefund leg already sends treasury's USDT into the recipient's own
+    derived address (payoutRelay.ts, 2026-08-08) — since that address is now
+    ALSO the disbursement's final destination, `advanceRelayJob` (in the
+    `prefund_confirmed` phase) short-circuits straight to done the instant
+    `job.to_address === job.from_address`, reusing the prefund's own tx hash
+    as the record of what moved the money. This means a disbursement no
+    longer needs a second signed transaction, and — because there is no
+    forward leg — **no longer needs the recipient to already hold any BNB
+    gas at all**, which a brand-new reward recipient almost never does. A
+    REGULAR user-initiated withdrawal to an external address is completely
+    unaffected — this path is only reachable when destination equals the
+    user's own derived address, which only a disbursement (never a normal
+    withdrawal) sets up.
+  - **The money nets out correctly through the EXISTING deposit scanner, not
+    a new credit path.** The reward is released to `earned_usdt_ledger`
+    (credit) then immediately held for the payout (debit) — net zero — and
+    the real on-chain USDT that lands at the recipient's custody address is
+    picked up by the already-running, already-idempotent BEP20 deposit
+    scanner (`deposits/credit.ts`, keyed on `(chain, tx_hash, log_index)`,
+    same as any other deposit) a scan tick or two later, crediting
+    `usdt_ledger` for the same amount. **Nothing new was written to credit
+    this money directly** — deliberately, to avoid inventing a second,
+    unproven idempotency key that could double-pay against the scanner's own
+    later detection of the exact same on-chain transfer. ⚠️ **The accepted
+    cost: for roughly the scan interval + confirmation depth (order of a
+    couple of minutes), the reward briefly does not show in the recipient's
+    Total Balance even though the withdrawal already reads "paid"** — it is
+    not lost, it lands the moment the scanner's next tick confirms it. Don't
+    "fix" this by having the relay credit `usdt_ledger` itself unless a real
+    log-index-safe idempotency key is worked out first; done carelessly that
+    is a genuine double-credit, not a UX nicety.
+  - **Speed, the other half of the ask**: `PAYOUT_RELAY_INTERVAL_MS` already
+    exists as its own env var, independent of `DEPOSIT_SCAN_INTERVAL_MS`
+    (which stays at 90s for the Alchemy-cost reasons recorded above) —
+    lowering it (e.g. to 20s) is safe to do on Railway and, combined with the
+    one-hop collapse above, cuts a disbursement's total time from up to four
+    ticks down to about two. Not changed here — it's a live Railway env var,
+    a production config change, left for the founder to set (or ask for)
+    rather than done unilaterally in the same pass as a money-path fix.
+  - **`manual`/`csv` mode disbursements are unaffected in behaviour** (still
+    land in the staff queue / CSV export for a human to send by hand) — only
+    the destination address changed, for all three non-`balance` modes alike.

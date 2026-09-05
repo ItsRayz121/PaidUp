@@ -21,7 +21,7 @@
 // withdrawal_request) lives in routes/staffDisbursements.ts because it needs
 // the request-scoped logger. Here: build the pool, create the batch rows, read
 // them back, roll up the totals.
-import { sql, now, newId } from "./db.ts";
+import { sql, now, newId, getOrCreateDepositWallet } from "./db.ts";
 import { config } from "./config.ts";
 
 export type BatchMode = "balance" | "onchain" | "manual" | "csv";
@@ -276,22 +276,22 @@ export async function createBatch(params: {
       const usdtMicro = Number(p.reward_usdt_micro ?? p.task_usdt ?? 0);
       const roziMicro = Number(p.reward_rozi_micro ?? p.task_rozi ?? 0);
 
-      // For a non-balance mode, look up the user's saved payout address on the
-      // one offered chain. Missing -> the row is created 'needs_address' and
-      // the run skips it (decision B: no new forced address-collection step).
+      // For a non-balance mode, the destination is the recipient's OWN RoziPay
+      // wallet — the custody-derived per-user deposit address (custody.ts),
+      // the same address the user themselves sees on /wallet/usdt — NEVER
+      // their saved EXTERNAL payout address (founder, 2026-09-05). A saved
+      // payout address is whatever the user typed for their OWN withdrawals;
+      // an admin-initiated reward is a different trust boundary, and taking
+      // that string as a blind destination is exactly the "typed-in address"
+      // risk this product fences off everywhere else. Every account always
+      // has a derivable custody wallet, so 'needs_address' can no longer be
+      // produced here — kept in the status enum for historical rows only.
       let destAddress: string | null = null;
       if (params.mode !== "balance") {
-        const addr = await t.get<{ address: string }>(
-          "SELECT address FROM payout_addresses WHERE user_id = ? AND chain = ?",
-          p.user_id, DISBURSE_CHAIN,
-        );
-        destAddress = addr?.address ?? null;
+        const wallet = await getOrCreateDepositWallet(p.user_id, DISBURSE_CHAIN);
+        destAddress = wallet.address;
       }
-      // needs_address only matters when there is USDT to send on-chain. A
-      // points/ROZI-only reward in a non-balance batch still just releases to
-      // balance (there is nothing to put on a chain).
-      const status: DisbursementStatus =
-        params.mode !== "balance" && usdtMicro > 0 && !destAddress ? "needs_address" : "pending";
+      const status: DisbursementStatus = "pending";
 
       await t.run(
         `INSERT INTO payout_disbursements

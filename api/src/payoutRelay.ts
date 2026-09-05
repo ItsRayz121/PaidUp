@@ -623,6 +623,23 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
         } else return;
       }
 
+      if (job.status === "prefund_confirmed" && job.to_address.toLowerCase() === job.from_address.toLowerCase()) {
+        // The destination IS the user's own derived custody address (an admin
+        // reward disbursement now always pays into the recipient's own RoziPay
+        // wallet, never an external saved address — 2026-09-05). The prefund
+        // leg already put the money exactly where it needs to be; a "forward"
+        // from this address to itself would be a pointless self-transfer that
+        // could only fail (it would need the recipient to already hold BNB gas
+        // for nothing) or waste it. Skip straight to done, reusing the prefund
+        // hash as the record of the transaction that actually moved the money.
+        if (await transition(t, job.id, "prefund_confirmed", "forward_confirmed", {
+          forward_tx_hash: job.prefund_tx_hash!, completed_at: now(),
+        })) {
+          box.push = await completeRequest(t, { ...job, status: "forward_confirmed", forward_tx_hash: job.prefund_tx_hash });
+        }
+        return;
+      }
+
       if (job.status === "prefund_confirmed") {
         // ⚠️ VERIFY THE FULL FORWARD AMOUNT IS REALLY THERE BEFORE SIGNING —
         // same discipline as the refund path above ("never trust the row").

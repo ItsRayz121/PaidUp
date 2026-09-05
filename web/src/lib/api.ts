@@ -713,6 +713,16 @@ export type TreasuryLedgerRow = {
 export const fetchTreasuryLedger = (limit = 50) =>
   apiFetch<{
     chain: string; address: string; explorerReady: boolean;
+    // The address that ACTUALLY signs every payout (derived from the treasury
+    // private key) — a SEPARATE value from `address` above (a plain typed
+    // app_settings field). signerMismatch is true only when both are known and
+    // differ: funding `address` does nothing for a payout if it is not also
+    // the signer's address (2026-09-05).
+    signerAddress: string | null; signerMismatch: boolean;
+    // LIVE on-chain reads (right now, not a tx-history total) — null when the
+    // address is unknown or the chain could not be reached.
+    signerUsdtMicro: number | null; signerBnbWei: string | null;
+    configuredUsdtMicro: number | null; configuredBnbWei: string | null;
     totals: { inMicro: number; outMicro: number; rows: number } | null;
     rows: TreasuryLedgerRow[];
   }>(`/staff/treasury/wallet?limit=${limit}`);
