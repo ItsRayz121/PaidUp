@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { sql, now, newId } from "./db.ts";
 import { config } from "./config.ts";
-import { sendLoginCode, emailConfigured } from "./email.ts";
+import { sendLoginCode, emailConfigured, type CodePurpose } from "./email.ts";
 import { recordDevice } from "./fraud.ts";
 // permissions.ts imports nothing, so pulling it in here cannot create the cycle
 // that roles.ts would (roles.ts imports from this file).
@@ -62,7 +62,7 @@ async function verifyPassword(password: string, stored: string | null): Promise<
 // set by anyone who doesn't control the inbox. Throws if the email can't be sent.
 export async function issueCode(
   email: string,
-  purpose: "verify" | "reset" | "link" | "withdraw",
+  purpose: CodePurpose,
   pendingPasswordHash: string | null = null,
 ): Promise<void> {
   const code = makeCode();
@@ -104,7 +104,7 @@ export type CodeResult =
   | { ok: true; pendingPasswordHash: string | null }
   | { ok: false; statusCode: number; error: string };
 export async function consumeCode(
-  email: string, code: string, purpose: "verify" | "reset" | "link" | "withdraw",
+  email: string, code: string, purpose: CodePurpose,
 ): Promise<CodeResult> {
   const row = await sql.get<{ id: string; code_hash: string; expires_at: string; attempts: number; pending_password_hash: string | null }>(
     "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1",

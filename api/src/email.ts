@@ -45,9 +45,9 @@ const COPY: Record<CodePurpose, { subject: string; heading: string; body: string
     body: "Enter this code in RoziPay to choose a new password.",
   },
   link: {
-    subject: "Confirm it's you",
-    heading: "Confirm it's you",
-    body: "Enter this code in RoziPay to confirm this change to your account.",
+    subject: "Add your email",
+    heading: "Add your email",
+    body: "Enter this code in RoziPay to add this email address to your account.",
   },
   withdraw: {
     subject: "Confirm your withdrawal",

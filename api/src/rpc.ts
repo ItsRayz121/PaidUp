@@ -37,11 +37,20 @@ type JsonRpcResponse = { result?: unknown; error?: { code: number; message: stri
 // public nodes) never tried. That is not "one endpoint is briefly the wrong
 // choice", it is "every RPC-backed feature on this chain is fully broken
 // until the quota resets", with a working failover list sitting unused right
-// next to it. -32005 is NodeReal's code for this; the message-keyword check
-// covers the same shape from any other provider (Alchemy's own rate-limit
-// errors use similar wording). Genuine protocol errors ("method not found",
-// bad params) do not match this and still fail fast, unretried, as before.
-const PROVIDER_THROTTLE_CODES = new Set([-32005, -32029]);
+// next to it. -32005 is "Limit exceeded" per EIP-1474 (the Ethereum JSON-RPC
+// spec) and is what NodeReal, Alchemy and Infura all use for this; the
+// message-keyword check covers the same shape from a provider that doesn't
+// follow that convention. Genuine protocol errors ("method not found", bad
+// params) do not match either check and still fail fast, unretried, as before.
+//
+// ⚠️ AN EARLIER VERSION OF THIS ALSO LISTED -32029 AS A "THROTTLE" CODE. IT IS
+// NOT ONE — that code is an MCP (Model Context Protocol) tool-rate-limit
+// convention, a completely different protocol, included here on an unverified
+// guess. Removed after checking; don't add a numeric code back without a real
+// source. An unverified code here is worse than none: it would silently
+// reclassify some future genuine chain error as "just try the next endpoint"
+// instead of surfacing it.
+const PROVIDER_THROTTLE_CODES = new Set([-32005]);
 const PROVIDER_THROTTLE_MESSAGE = /quota|rate.?limit|too many requests|capacity|throttl/i;
 function isProviderThrottle(error: { code: number; message: string }): boolean {
   return PROVIDER_THROTTLE_CODES.has(error.code) || PROVIDER_THROTTLE_MESSAGE.test(error.message);
@@ -56,9 +65,10 @@ export function endpointsFor(chain: string): string[] {
 /**
  * Call a JSON-RPC method, trying each configured endpoint in order.
  *
- * Fails over on: network error, timeout, HTTP 429, HTTP 5xx, unparseable body.
- * Does NOT fail over on: a well-formed JSON-RPC error object — that is the
- * chain's answer and every other endpoint will give the same one.
+ * Fails over on: network error, timeout, HTTP 429, HTTP 5xx, unparseable body,
+ * and a provider quota/rate-limit refusal (see isProviderThrottle above).
+ * Does NOT fail over on any other well-formed JSON-RPC error object — that is
+ * the chain's real answer and every other endpoint will give the same one.
  */
 export async function rpcCall(
   chain: string,
