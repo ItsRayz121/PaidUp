@@ -111,6 +111,19 @@ body {
   background: linear-gradient(180deg, #eff5f5 0%, #e6f0ef 58%, #ddebe9 100%);
   position: relative;
   z-index: 0;
+  /* Re-declare `color` here, don't rely on inheriting it from `body`. `color`
+     is inherited as a COMPUTED value, not re-evaluated per element — body's
+     `color: var(--color-ink)` resolves once, against the :root (light)
+     value, and every descendant inherits that fixed result. The vault (dark)
+     theme redefines --color-ink only on `.app-frame`, so without this line
+     any text with no explicit text-* class (relying on inheritance) kept
+     rendering light-mode dark ink on a dark card in vault mode — nearly
+     invisible — while text using an explicit `text-ink`/`text-brand`/etc.
+     utility (a fresh var() reference scoped to the element) picked up the
+     override correctly. This makes plain, unstyled text follow the theme
+     too. Founder-reported (2026-09-05): "Sign out everywhere" row unreadable
+     in dark mode. */
+  color: var(--color-ink);
 }
 
 /* Restrained "earned" pop — used on confirmation screens only */
