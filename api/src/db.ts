@@ -1772,10 +1772,15 @@ const MIGRATIONS = `
   --                     the safe one (append-only credits, idempotent on the
   --                     completion's (network, external_id) index).
   --   'onchain' / 'manual' / 'csv' — release to balance, THEN create a
-  --                     withdrawal_request to the user's SAVED payout address
-  --                     and let the existing settle / relay / manual-queue
-  --                     machinery run. A recipient with no saved address is
-  --                     'needs_address' and skipped; it never blocks the batch.
+  --                     withdrawal_request to the recipient's OWN RoziPay
+  --                     wallet address — their custody-derived deposit address,
+  --                     never any external address they may have saved for
+  --                     their own withdrawals (founder, 2026-09-05; see
+  --                     routes/staffDisbursements.ts) — and let the existing
+  --                     settle / relay / manual-queue machinery run.
+  --                     'needs_address' is kept in the CHECK below only for
+  --                     historical rows predating that fix; every account can
+  --                     derive a wallet, so a fresh row can no longer land there.
   --
   -- ⚠️ Every per-recipient action is its OWN decision, never one transaction —
   -- one blocked user (velocity cap, exhausted campaign budget, no address)

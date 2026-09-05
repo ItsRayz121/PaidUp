@@ -62,7 +62,7 @@ function isIosSafari(): boolean {
   return ios && webkit;
 }
 
-export function InstallPrompt() {
+export function InstallPrompt({ onVisibilityChange }: { onVisibilityChange?: (visible: boolean) => void } = {}) {
   const { t } = useI18n();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [ready, setReady] = useState(false); // 5 minutes reached, not snoozed
@@ -137,7 +137,16 @@ export function InstallPrompt() {
   }, [deferred]);
 
   // Nothing to offer: not installable here (or already installed), or too early.
-  if (gone || !ready || (!deferred && !ios)) return null;
+  const visible = !gone && ready && (Boolean(deferred) || ios);
+
+  // Lets a sibling prompt (PushPrompt) hold off while this one is on screen —
+  // two floating cards stacked above the tab bar at once would be a mess, and
+  // this one was here first.
+  useEffect(() => {
+    onVisibilityChange?.(visible);
+  }, [visible, onVisibilityChange]);
+
+  if (!visible) return null;
 
   return (
     <div

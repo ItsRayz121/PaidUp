@@ -4,13 +4,16 @@
 // per-recipient RUN: for every disbursement row, release the approved reward
 // through the SAME releaseProof() the manual two-step release already uses
 // (routes/staffTasks.ts), and — for on-chain / manual / csv batches — create a
-// withdrawal_request to the user's saved address so the existing settle / relay
-// / manual-queue machinery carries it the rest of the way.
+// withdrawal_request to the recipient's OWN RoziPay wallet address (their
+// custody-derived deposit address, NOT any external address they may have
+// saved for their own withdrawals — see runPayoutRow's own comment below and
+// the 2026-09-05 CLAUDE.md entry) so the existing settle / relay / manual-queue
+// machinery carries it the rest of the way.
 //
 // ⚠️ EACH ROW IS ITS OWN DECISION. The run loops rows and processes each in its
 // own transaction; one blocked recipient (velocity cap, exhausted campaign
-// budget, no saved address) is recorded 'failed'/'needs_address' and the loop
-// carries on. Never one big transaction — the Stage-7 bulk-proof-decide rule.
+// budget) is recorded 'failed' and the loop carries on. Never one big
+// transaction — the Stage-7 bulk-proof-decide rule.
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { sql, now, newId, logAudit, postEarnedUsdt, earnedUsdtBalanceMicroOf, getOrCreateDepositWallet } from "../db.ts";
@@ -41,9 +44,11 @@ function staffGuard(
 }
 
 // The disbursement statuses a run will (re)process. 'released'/'paid'/'skipped'
-// are terminal-good; 'sending' is in flight (relay). 'failed' and
-// 'needs_address' are retried — an admin who saved an address / raised a budget
-// wants the next run to pick the row up.
+// are terminal-good; 'sending' is in flight (relay). 'failed' is retried — an
+// admin who raised a budget wants the next run to pick the row up.
+// 'needs_address' is included only for historical rows predating the
+// 2026-09-05 fix below (every fresh disbursement targets the recipient's own
+// custody-derived wallet, which always exists, so a new row can never land here).
 const RUNNABLE = ["pending", "failed", "needs_address"];
 
 type RowResult = { disbursementId: string; userId: string; status: string; error?: string };
@@ -96,9 +101,10 @@ async function runBalanceRow(
 //      money must exist as an earned_usdt_ledger credit before we can debit it
 //      for a payout.
 //   2. Points/ROZI-only reward -> nothing to send on a chain, row = 'released'.
-//   3. No saved payout address -> row = 'needs_address', skipped (decision B:
-//      an admin push never collects an address; the user sets one when they
-//      first withdraw). A later run picks it up once one is saved.
+//   3. Resolve the recipient's OWN RoziPay wallet address (their custody-derived
+//      deposit address — see the comment at that line below). Every account can
+//      derive one, so this never fails on a fresh row; 'needs_address' only
+//      ever appears on rows created before this existed.
 //   4. Create a withdrawal_request (source_kind='earned_usdt') to that address
 //      and hold the USDT — reusing the EXACT machinery a user-filed withdrawal
 //      uses, minus the user-facing gates (min amount, step-up, KYC): a staff

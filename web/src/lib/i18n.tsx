@@ -606,6 +606,7 @@ const copy: Record<string, string> = {
   "wallet.filter.reward": "Rewards",
   "wallet.filter.mining": "Mining",
   "wallet.tx.usdtWithdrawal": "USDT withdrawal",
+  "wallet.tx.rewardPayout": "Reward payout",
   "wallet.tx.usdtDeposit": "USDT deposit",
   "wallet.tx.usdtRefund": "USDT sent back",
   "wallet.tx.bnbWithdrawal": "BNB withdrawal",
@@ -1298,19 +1299,28 @@ const copy: Record<string, string> = {
   // ---- Notifications ----------------------------------------------------------
   // The user turns these on themselves (Help screen, or after a withdrawal).
   // Honest about what they get: money news and replies — not marketing spam.
-  "notify.title": "Get told when your money moves",
+  "notify.title": "Get told when something happens",
   "notify.body":
-    "We send a message to your phone when your money is sent, when we reply to you, and when your ID check is done — even when the app is closed.",
+    "We send a message to your phone when your money is sent, when you get a reward, when a friend joins with your invite, when your mining ends, and when we reply to you — even when the app is closed.",
   "notify.enable": "Turn on notifications",
   "notify.enabling": "Turning on…",
   "notify.on": "Notifications are on",
-  "notify.onBody": "We will tell you when your money is sent or we reply to you.",
+  "notify.onBody": "We will tell you about your money, your rewards, your referrals and your mining.",
   "notify.disable": "Turn off",
   "notify.denied":
     "Your phone is blocking notifications for this app. Allow them in your browser settings, then try again.",
   "notify.error": "That did not work. Please try again.",
   // Shown on the withdraw success screen — the moment they most want to know.
   "notify.withdraw.hook": "Want to know the moment your money is sent?",
+
+  // ---- Push permission prompt (founder, 2026-09-05) ----------------------------
+  // A one-time, small nudge (never a full-screen ask) after real time on site —
+  // see components/PushPrompt.tsx for the exact timing rules.
+  "push.prompt.title": "Never miss your rewards",
+  "push.prompt.body":
+    "Turn on notifications and we will tell you the moment you get paid, get a reward, or a friend joins with your invite.",
+  "push.prompt.later": "Not now",
+  "push.prompt.cta": "Turn on",
 
   // Shown on the mine screen when an ad may show before mining starts.
   "mine.gate.title": "An ad may show first",

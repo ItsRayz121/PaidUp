@@ -12,6 +12,7 @@ import { recordDevice } from "./fraud.ts";
 import { type Role, isRole, permissionsOf, ROLE_LABELS } from "./permissions.ts";
 import { enabled as flagEnabled } from "./flags.ts";
 import { touchActivity } from "./analytics.ts";
+import { sendPushToUser } from "./push.ts";
 
 // The frontend computes a device fingerprint (no PII) and sends it here so the
 // fraud layer can spot one device farming many accounts (guardrail #5).
@@ -415,6 +416,16 @@ export async function authRoutes(app: FastifyInstance) {
           );
         }
       });
+      // Direct (L1) invites only (founder, 2026-09-05) — a level-2 referral is
+      // someone the inviter has never met, and pushing them for it would read
+      // as noise, not news.
+      if (referredBy) {
+        void sendPushToUser(referredBy, {
+          title: "Someone joined using your invite!",
+          body: "Open the app to see your referrals.",
+          url: "/refer",
+        });
+      }
     }
 
     try {
@@ -1051,6 +1062,14 @@ async function findOrCreateTelegramUser(
         }
       });
       user = await sql.get<UserRow>("SELECT * FROM users WHERE id = ?", id);
+      // Direct (L1) invites only — same rule as the email signup path above.
+      if (referredBy) {
+        void sendPushToUser(referredBy, {
+          title: "Someone joined using your invite!",
+          body: "Open the app to see your referrals.",
+          url: "/refer",
+        });
+      }
     }
   }
   return user;

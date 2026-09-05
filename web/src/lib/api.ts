@@ -280,6 +280,10 @@ export type LedgerEntry = {
 export type Withdrawal = {
   id: string; amount: number; chain: string; address?: string;
   status: string; at: string; reviewNote?: string; paidAt?: string; txHash?: string; usdtAmount?: string; feePoints?: number;
+  // True when this row was created by an admin-run reward disbursement
+  // (routes/staffDisbursements.ts), never by the user's own withdraw screen —
+  // see walletHistory.ts for why this changes the row's label.
+  isRewardPayout?: boolean;
 };
 
 // ---- Auth -----------------------------------------------------------------

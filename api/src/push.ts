@@ -1,9 +1,16 @@
 // Web push — telling a user something happened while the app is closed.
 //
-// The three moments that matter (and the only ones we send):
-//   • their withdrawal was paid or rejected  — money news, the #1 trust builder
-//   • support replied to their question      — so tickets don't feel like a void
-//   • their ID check was decided             — it unblocks their first payout
+// ⚠️ THIS LIST GROWS; GREP FOR sendPushToUser BEFORE ASSUMING IT IS STALE.
+// The moments this fires on today (money/trust news + the two retention hooks
+// added 2026-09-05 — task reward credited, referral joined, mining session
+// ended): a withdrawal/refund/BNB-send was submitted, paid or rejected; a USDT
+// or BNB deposit was received; an admin reward disbursement was paid; support
+// replied to a ticket; an ID check was decided; a leaderboard reward was won;
+// a task reward was credited (credit.ts, ONE call site for both custom tasks
+// and network postbacks); a direct (L1) referral joined (auth.ts); a mining
+// session ended (mining/engine.ts). Still never marketing/promotional — every
+// one of these is either money, a real decision about the user's account, or a
+// concrete reason to open the app right now.
 //
 // Design rules:
 //   • Fire-and-forget. A push failure must NEVER fail the action that caused

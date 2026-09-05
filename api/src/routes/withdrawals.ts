@@ -499,10 +499,24 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   }));
 
   // The user's own payout history.
+  //
+  // ⚠️ isRewardPayout distinguishes a row an ADMIN created (a disbursement
+  // paying out an approved task reward — routes/staffDisbursements.ts) from a
+  // withdrawal the user actually asked for. Both share this one table/queue —
+  // guardrail-simplicity, not two tables — but a user reading their own history
+  // must be able to tell "I withdrew this" from "the platform paid me a reward
+  // this way"; without the distinction a disbursement reads exactly like an
+  // unrequested cash-out (founder, 2026-09-05).
   app.get("/withdrawals", guard(async (userId) => {
     const rows = await sql.all<Record<string, unknown>>(
       "SELECT * FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC", userId,
     );
+    const ids = rows.map((r) => r.id as string);
+    const disbursed = ids.length
+      ? new Set((await sql.all<{ withdrawal_request_id: string }>(
+          "SELECT withdrawal_request_id FROM payout_disbursements WHERE withdrawal_request_id = ANY(?)", ids,
+        )).map((d) => d.withdrawal_request_id))
+      : new Set<string>();
     return {
       requests: rows.map((r) => ({
         id: r.id, amount: r.amount, chain: r.payout_rail, address: r.payout_address ?? undefined,
@@ -510,6 +524,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
         paidAt: r.paid_at ?? undefined, txHash: r.tx_hash ?? undefined,
         usdtAmount: r.usdt_amount ?? undefined, feePoints: (r.fee_points as number) ?? 0,
         addressVerified: Boolean(r.address_verified),
+        isRewardPayout: disbursed.has(r.id as string),
       })),
     };
   }));

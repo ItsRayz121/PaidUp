@@ -11,8 +11,11 @@
 //     mark a row paid by hand.
 //
 // 'balance' mode credits the in-app balance (the default, safe path). The other
-// three also create a payout to the user's SAVED address — a recipient with
-// none shows as "needs address" and is skipped, never blocking the batch.
+// three also create a payout to the user's OWN RoziPay wallet address (their
+// custody-derived deposit address — see the 2026-09-05 CLAUDE.md entry; this
+// is NOT the external address a user may have saved for their own withdrawals)
+// — a recipient with none shows as "needs address" and is skipped, never
+// blocking the batch.
 import { useMemo, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { useTableQuery } from "@/lib/staffTable";
@@ -44,7 +47,7 @@ const MODE_LABEL: Record<DisbursementMode, string> = {
 };
 const MODE_HELP: Record<DisbursementMode, string> = {
   balance: "Puts the reward on the user's in-app balance. No address, no gas. The safe default.",
-  onchain: "Credits the balance, then sends USDT to the user's saved address automatically. "
+  onchain: "Credits the balance, then sends USDT to the user's own RoziPay wallet address automatically. "
     + "\"Manual reward send\" stays available per recipient as a manual override if a payout gets stuck.",
   manual: "Credits the balance, then queues a payout you send by hand and mark paid with the tx hash.",
   csv: "Like 'by hand', but export the list, pay externally, and upload a tx-hash file to reconcile.",

@@ -22,6 +22,7 @@ import { accrue, grantBoost } from "./mining/engine.ts";
 import { loadMiningSettings, totalEmittedMicro } from "./mining/settings.ts";
 import { toMicro } from "./mining/core.ts";
 import { enabled as flagEnabled } from "./flags.ts";
+import { sendPushToUser } from "./push.ts";
 
 type Logger = { error: (obj: unknown, msg?: string) => void };
 
@@ -371,6 +372,21 @@ export async function creditCompletion(req: CreditRequest, log: Logger): Promise
   } catch (err) {
     log.error({ err, userId, completionId }, "Failed to grant mining boost for a credited task");
   }
+
+  // Tell the user their reward actually landed (founder, 2026-09-05: "if user
+  // received the rewards of the task ... there is no notification"). Fires
+  // from the ONE shared crediting path — this file's own header rule — so a
+  // custom RoziPay task and a network-postback offer are both covered by one
+  // call site, never two that could drift. Deliberately no exact amount in the
+  // copy: the reward can be points, ROZI or USDT (or a mix), and this file has
+  // no user-facing currency formatter of its own (the earner app's "no points
+  // in the copy" rule lives in web/src/lib/format.ts) — sending them to the
+  // app to see the real number is simpler than risking wrong-currency text.
+  void sendPushToUser(userId, {
+    title: "You got a reward!",
+    body: "A task you completed was approved. Open the app to see what you earned.",
+    url: "/tasks?view=mine",
+  });
 
   return { status: "credited", completionId, points, usdtMicro, roziMicro };
 }

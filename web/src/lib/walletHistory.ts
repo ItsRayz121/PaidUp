@@ -152,9 +152,14 @@ export function unifyHistory(args: {
     const statusKey = (w.status === "paid" ? "paid" : w.status === "rejected" ? "refunded"
       : w.status === "sending" ? "sending" : "pending") as LedgerEntry["status"];
     const amountText = `−${usdt.toFixed(2)} USDT`;
+    // A row an ADMIN created (a reward disbursement, routes/staffDisbursements.ts)
+    // must never look like a withdrawal the user asked for — see the backend's
+    // own comment on GET /withdrawals (founder, 2026-09-05).
     return {
-      key: `w:${w.id}`, label: t("wallet.tx.usdtWithdrawal"), at: w.at, token: "USDT" as const, kind: "sent" as const,
-      amountText, credit: false, status: statusKey, Icon: SendIcon,
+      key: `w:${w.id}`,
+      label: t(w.isRewardPayout ? "wallet.tx.rewardPayout" : "wallet.tx.usdtWithdrawal"),
+      at: w.at, token: "USDT" as const, kind: "sent" as const,
+      amountText, credit: false, status: statusKey, Icon: w.isRewardPayout ? StarIcon : SendIcon,
       detail: {
         amountText, statusText: STATUS_TEXT[statusKey] ?? w.status, network: w.chain, to: w.address, txHash: w.txHash,
       },

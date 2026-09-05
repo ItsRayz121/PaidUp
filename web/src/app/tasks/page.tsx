@@ -9,14 +9,29 @@ import { useI18n } from "@/lib/i18n";
 import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView, type Task } from "@/lib/api";
 
 // "My tasks" and "History" show their cards under a heading for where each one
-// stands. Order matters: what is waiting on the USER comes before what is
-// waiting on us; a task that needs nothing further from anyone comes last.
+// stands.
+//
+// ⚠️ ORDER (founder, 2026-09-05): "Under review" then "Pending reward" then
+// "Completed" — what is waiting on OUR review comes first, then what has been
+// approved and is waiting to be paid out, then what is fully done. On an
+// ordinary day "Needs another try" and "Pending" (below) are both empty, so
+// what the user actually SEES is exactly that three-step order; they still
+// surface, further down, on the days they have something in them — a task
+// genuinely needing the user's own action is never hidden, just not put ahead
+// of the two states the founder asked to lead.
 //
 // ⚠️ "In progress" -> "Pending" (founder, 2026-09-05): from the person doing
 // the task, tapping Start and confirming IS finishing their part — what is
 // actually "in progress" from here is our own review, not their work, so
 // "in progress" read as if the app had forgotten they were done. "Pending"
 // says the same thing without implying the ball is still in their court.
+//
+// ⚠️ "Pending reward" (renamed from "Reward on the way", founder, 2026-09-05)
+// is a task that has been APPROVED but whose reward has not been released/paid
+// out yet (userState 'reward_pending' — see docs/DISBURSEMENT_PLAN.md and the
+// staff Disbursements panel, "Waiting to be paid"). This is a different wait
+// than "Under review" (not yet decided) and a different one again from "Pending"
+// (not yet submitted) — three distinct states, never collapsed into one.
 //
 // ⚠️ "Completed" here is a SEPARATE, SMALL fetch from the History view
 // (recentCompleted, capped at 5) — the "mine" view's own API response
@@ -31,10 +46,10 @@ function groupsFor(
   const pick = (...states: string[]) => list.filter((x) => states.includes(x.userState ?? ""));
   if (view === "mine") {
     return [
+      { label: "Under review", items: pick("pending_review") },
+      { label: "Pending reward", items: pick("reward_pending") },
       { label: "Needs another try", items: pick("rejected_retryable") },
       { label: "Pending", items: pick("started", "not_started") },
-      { label: "Under review", items: pick("pending_review") },
-      { label: "Reward on the way", items: pick("reward_pending") },
       { label: "Completed", items: recentCompleted.slice(0, 5) },
     ].filter((g) => g.items.length > 0);
   }

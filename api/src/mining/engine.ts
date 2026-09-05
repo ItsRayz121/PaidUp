@@ -11,6 +11,7 @@ import {
   capScaleFactor, toMicro,
 } from "./core.ts";
 import { loadMiningSettings, totalEmittedMicro, type MiningSettings } from "./settings.ts";
+import { sendPushToUser } from "../push.ts";
 
 // ---- "pi" model helpers ----------------------------------------------------
 
@@ -679,6 +680,19 @@ async function accrueSession(
       "UPDATE mining_sessions SET status = 'ended', ended_at = ? WHERE id = ?",
       now(), session.id,
     );
+    // Fires exactly once per session: this branch only runs on the row that
+    // was still 'active' a moment ago (both callers of accrueSession() select
+    // WHERE status = 'active' first), and after this UPDATE it never matches
+    // that filter again. (founder, 2026-09-05: "if user's mining got stopped,
+    // there is no notification" — a session naturally finishing its 8h window
+    // is the ordinary, expected way mining "stops"; this is what nudges the
+    // user back in to start another one, which is the whole reason mining
+    // exists as a reason to open the app.)
+    void sendPushToUser(userId, {
+      title: "Your mining session ended",
+      body: "Open the app to start mining again.",
+      url: "/mine",
+    });
   }
   return computed;
 }

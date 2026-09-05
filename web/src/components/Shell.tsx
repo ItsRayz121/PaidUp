@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { BottomNav } from "./BottomNav";
 import { TopBar } from "./TopBar";
 import { InstallPrompt } from "./InstallPrompt";
+import { PushPrompt } from "./PushPrompt";
 import { TelegramBoot } from "./TelegramBoot";
 import { I18nProvider } from "@/lib/i18n";
 import { ThemeProvider } from "@/lib/theme";
@@ -22,6 +24,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // Don't cover the sign-in form, and don't interrupt someone mid-survey (the
   // network's iframe owns that screen — a sheet over it can cost them the reward).
   const canPromptInstall = !isAuth && !path.startsWith("/surveys") && !inTelegram;
+  // Same places the install prompt stays off (sign-in, mid-survey) — and never
+  // stacked with it: installVisible lets the install card (which was here
+  // first) hold the push card back rather than the two floating above the tab
+  // bar at once.
+  const canPromptPush = !isAuth && !path.startsWith("/surveys");
+  const [installVisible, setInstallVisible] = useState(false);
   // /offline renders with no network by definition — a bar that tries to fetch a
   // balance there would only ever show a dash.
   const chrome = !isAuth && path !== "/offline";
@@ -43,7 +51,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <TelegramBoot />
           {chrome && <TopBar />}
           <main className="flex-1">{children}</main>
-          {canPromptInstall && <InstallPrompt />}
+          {canPromptInstall && <InstallPrompt onVisibilityChange={setInstallVisible} />}
+          {canPromptPush && <PushPrompt suppressed={installVisible} />}
           {!isAuth && <BottomNav />}
         </div>
       </I18nProvider>

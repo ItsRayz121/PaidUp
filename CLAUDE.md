@@ -4178,3 +4178,104 @@ See `docs/` for the full spec.
     degrades correctly (a clear staff-facing error, not a false "nothing has
     moved"). No code change; recorded here so it isn't re-investigated as a
     regression.
+
+- **CROSS-CHECKED THE PRIOR TWO COMMITS, THEN: "PENDING REWARD" JOINS THE TASK
+  ACTIVITY GROUPS, A DISBURSEMENT NO LONGER READS LIKE A MYSTERY WITHDRAWAL,
+  AND THREE NEW PUSH EVENTS + A PROACTIVE OPT-IN PROMPT (founder, 2026-09-05,
+  a phone-review voice memo).**
+  - **Cross-check, as asked, before anything new**: re-read `9838b15`
+    (leaderboard reward pools) + `53fc3f0` (its CLAUDE.md entry) against the
+    live code, not just the commit message. Confirmed real, not just claimed:
+    the settlement lock is the exact shared `'rozi-settlement'` key mining
+    settlement uses (not a per-cycle key — the bug the commit says it fixed),
+    `totalEmittedMicro()` really does fold in `leaderboard_reward`, and
+    `test:leaderboardrewards` (40 checks) passes clean from a fresh database.
+    api + web typecheck both clean.
+  - ⚠️ **"WHY DID A WITHDRAWAL START AUTOMATICALLY?" — NOT A BUG, BUT A REAL
+    LABELLING GAP.** Traced from the founder's own live screenshots: he had
+    just clicked **Send reward** himself, as staff, on a `Send on-chain`
+    disbursement batch — that call (`routes/staffDisbursements.ts`'s
+    `runPayoutRow`) creates a real `withdrawal_requests` row and settles it
+    through the same relay machinery a user's own withdrawal uses, by design
+    (2026-09-02). The `/wallet` history then showed it as a plain **"USDT
+    withdrawal"**, indistinguishable from something the user asked for
+    themselves. Two fixes, no behaviour change:
+    1. `GET /withdrawals` now also reports `isRewardPayout` (an `= ANY(?)`
+       check against `payout_disbursements.withdrawal_request_id`, scoped to
+       rows already filtered to the caller's own `user_id`) and
+       `walletHistory.ts`'s `unifyHistory()` labels those rows **"Reward
+       payout"** with the star icon instead of **"USDT withdrawal"** with the
+       send icon — so a disbursed reward can never again read like a
+       self-initiated cash-out.
+    2. The staff Disbursements panel's own copy and code comments said the
+       payout goes to **"the user's saved address"** — stale since the
+       2026-09-05 fix that made every disbursement target the recipient's
+       OWN custody-derived RoziPay wallet, never the external address a user
+       may have saved for their own withdrawals. Fixed in
+       `Disbursements.tsx` (the on-screen mode description), the file header
+       and the `RUNNABLE`/`runPayoutRow` comments in
+       `routes/staffDisbursements.ts`, and the matching schema comment in
+       `db.ts` — `needs_address` is called out everywhere as unreachable for
+       a fresh row, historical-only.
+    - **Also confirmed, not a bug**: sending 0.10 USDT this way is not the
+      $1 user-withdrawal minimum being bypassed — `runPayoutRow`'s own
+      comment already says the user-facing gates (minimum, step-up, KYC) are
+      deliberately skipped for an admin disbursement, because a staff member
+      with `disbursements.manage` has already decided to pay this.
+  - **Task activity gets a third state, and the order the founder asked for.**
+    `groupsFor()` in `tasks/page.tsx` already had a bucket for an approved,
+    not-yet-paid-out reward (`userState 'reward_pending'`) — it was just
+    called "Reward on the way" and sat last. Renamed to **"Pending reward"**
+    and the group order is now **Under review → Pending reward → Needs
+    another try → Pending → Completed**. On an ordinary day the last two are
+    empty, so what a user actually sees is exactly the three-step sequence
+    the founder asked for; a task that genuinely needs the user's own action
+    still surfaces, just not ahead of the two states he wanted to lead.
+  - **Three new push events, and a proactive ask to turn push on** (founder:
+    "if user received the rewards of the task... if user's mining got
+    stopped... if the referrals have joined... there is no notification").
+    - **Task reward credited** — one `sendPushToUser` call inside
+      `credit.ts`'s `creditCompletion()`, the ONE shared crediting path for
+      both custom RoziPay tasks and network-postback offers (this file's own
+      header rule), so both are covered without a second call site that
+      could drift.
+    - **Mining session ended** — fires inside `mining/engine.ts`'s
+      `accrueSession()`, exactly at the `status='active' → 'ended'`
+      transition; both callers (`accrue()` and the accrual sweep) only ever
+      pass in a session already filtered to `status = 'active'`, so this
+      fires exactly once per session, whether caught by the user's own next
+      poll or by the background sweep for someone no longer in the app.
+    - **A direct (L1) referral joined** — fires right where the `referrals`
+      edge row is written, in both signup paths (email + Telegram miniapp) in
+      `auth.ts`. **Deliberately L1 only** — an L2 join is someone the inviter
+      has never met, and pushing them for it would read as noise.
+    - **`push.ts`'s own header was badly stale** — it claimed "the three
+      moments that matter and the only ones we send" while the file already
+      sent on ~12 events (deposits, disbursement paid, leaderboard reward
+      won, BNB withdrawals, …), before these three were even added. Rewritten
+      to say plainly: grep for `sendPushToUser` before assuming this list is
+      complete.
+    - **`components/PushPrompt.tsx`** — a new, small, one-time card modelled
+      directly on `InstallPrompt.tsx`'s own already-approved timing pattern:
+      shows after 25 minutes of real visible time on site (the founder's
+      "twenty or thirty minutes"), snoozes 72 hours on dismissal, renders
+      nothing if push is unsupported/unconfigured or the browser has already
+      granted or permanently denied permission. Mounted in `Shell.tsx`
+      alongside `InstallPrompt`, coordinated so the two floating cards never
+      stack above the tab bar at once — `InstallPrompt` gained an
+      `onVisibilityChange` callback, and `PushPrompt` stays hidden while it
+      reports visible. The existing manual toggle
+      (`NotificationsCard` on Help / Profile settings / the withdraw success
+      screen, built 2026-07-13) is untouched — this is the proactive ask on
+      top of it, not a replacement.
+  - Verified: `test:push` (9), `test:referrals` (26), `test:mining` (42 unit),
+    `test:mining:e2e` (65), `test:stage7` (96), `test:disbursements` (96),
+    `test:sessions` (40), `test:usdt` (112), `test:withdrawcontrols` (21) all
+    green from a fresh database; api + web typecheck, eslint (0 errors, the
+    same 7 pre-existing `<img>` warnings only), web production build
+    (38 routes) all clean. Manual review of the diff (the automated
+    `security-review` skill's git capture returned empty in this session, so
+    the diff was read directly): no new user-controlled input reaches SQL
+    (the one new query's `ANY(?)` list is the caller's own already-scoped row
+    ids) and every new push body is a static string — no injection surface,
+    no auth/authorization change.
