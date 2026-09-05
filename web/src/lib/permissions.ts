@@ -28,7 +28,7 @@ export type UiPermission =
   | "support.view" | "support.reply"
   | "leaderboard.manage" | "notifications.send" | "content.manage"
   | "analytics.view" | "audit.view" | "settings.manage" | "flags.manage"
-  | "infra.view" | "staff.manage" | "export.data";
+  | "infra.view" | "alerts.manage" | "staff.manage" | "export.data";
 
 /**
  * Does this user hold `perm`?

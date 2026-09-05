@@ -5,6 +5,8 @@ import { config, isProdSecretsMissing } from "./config.ts";
 import { authRoutes } from "./auth.ts";
 import { appRoutes } from "./routes/app.ts";
 import { webhookRoutes } from "./routes/webhooks.ts";
+import { telegramWebhookRoutes } from "./routes/telegramWebhook.ts";
+import { staffAlertsRoutes } from "./routes/staffAlerts.ts";
 import { withdrawalRoutes } from "./routes/withdrawals.ts";
 import { staffRoutes } from "./routes/staff.ts";
 import { miningRoutes } from "./routes/mining.ts";
@@ -20,7 +22,7 @@ import { profileRoutes } from "./routes/profile.ts";
 import { pushEnabled } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
-import { configureTelegramMenuButton } from "./telegram.ts";
+import { configureTelegramMenuButton, configureTelegramWebhook } from "./telegram.ts";
 import { initDb, sql, usingRealPostgres, getSetting } from "./db.ts";
 import { tickDepositScan } from "./deposits/scanner.ts";
 import { tickSweep } from "./deposits/sweep.ts";
@@ -222,6 +224,8 @@ app.addHook("onRequest", async (req, reply) => {
 await app.register(authRoutes);
 await app.register(appRoutes);
 await app.register(webhookRoutes);
+await app.register(telegramWebhookRoutes);
+await app.register(staffAlertsRoutes);
 await app.register(withdrawalRoutes);
 await app.register(staffRoutes);
 await app.register(miningRoutes);
@@ -449,6 +453,7 @@ try {
   // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
   // being slow or down must never delay or fail OUR boot.
   void configureTelegramMenuButton();
+  void configureTelegramWebhook();
   if (isProdSecretsMissing) {
     app.log.warn("Using DEV secrets. Set JWT_SECRET and OTP_PEPPER in .env before real use.");
   }

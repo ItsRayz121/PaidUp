@@ -309,12 +309,14 @@ export default function StaffPage() {
     ],
     team: [
       { id: "p-staff-roles", label: "Staff & roles", need: "staff.manage", node: <StaffRolesPanel /> },
-      { id: "p-alerts", label: "Alerts", need: "infra.view", node: <StaffAlertsPanel /> },
     ],
     // Remerged (founder, 2026-09-03) — see the SECTIONS comment above.
+    // "Staff alerts" moved here from Staff & roles (founder, 2026-09-05) —
+    // explicitly asked to sit under Feature flags.
     flags: [
       { id: "p-flags", label: "Feature flags", need: "flags.manage", node: <FeatureFlagsPanel /> },
       { id: "p-settings", label: "Global settings", need: "settings.manage", node: <GlobalSettingsPanel /> },
+      { id: "p-alerts", label: "Staff alerts", need: ["infra.view", "alerts.manage"], node: <StaffAlertsPanel /> },
     ],
   };
 

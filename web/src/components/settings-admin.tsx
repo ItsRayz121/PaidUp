@@ -6,7 +6,9 @@
 import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
-  fetchFlags, setFlag, fetchSettings, updateSettings, testStaffAlert, type FeatureFlag,
+  fetchFlags, setFlag, fetchSettings, updateSettings, testStaffAlert,
+  fetchAlertRecipients, checkAlertRecipient, addAlertRecipient, removeAlertRecipient,
+  type FeatureFlag, type AlertRecipient,
 } from "@/lib/api";
 import { StatusBadge } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
@@ -136,10 +138,147 @@ export function FeatureFlagsPanel() {
   );
 }
 
+// ---- Staff alert recipients: named Telegram DMs, not a group --------------
+// Replaces the old shared-group design (founder, 2026-09-05): a group risks
+// being (or becoming) more public than a fraud/reconciliation alert should
+// ever reach. A super admin instead picks named individuals here, the same
+// shape as the admin-email allowlist. A Telegram bot cannot be asked "has
+// this username ever started me?" on demand — there is no such API for a
+// private chat — so "Check" looks the person up in our own directory, built
+// from real messages the bot has actually received (routes/telegramWebhook.ts).
+// Only someone found there, and not currently blocking the bot, can be added.
+function AlertRecipientsCard() {
+  const list = useApi(fetchAlertRecipients, []);
+  const toast = useToast();
+  const [username, setUsername] = useState("");
+  const [label, setLabel] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState<
+    { found: boolean; note?: string; telegramId?: string; username?: string | null; name?: string | null; blocked?: boolean } | null
+  >(null);
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  async function check() {
+    if (!username.trim()) return;
+    setChecking(true);
+    setChecked(null);
+    try {
+      setChecked(await checkAlertRecipient(username));
+    } catch (e) {
+      toast.err((e as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function add() {
+    if (!checked?.found || checked.blocked) return;
+    setAdding(true);
+    try {
+      await addAlertRecipient(username, label.trim() || undefined);
+      toast.ok(`Added @${checked.username ?? username}.`);
+      setUsername(""); setLabel(""); setChecked(null);
+      list.reload();
+    } catch (e) {
+      toast.err((e as Error).message);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function remove(r: AlertRecipient) {
+    if (!window.confirm(`Stop paging @${r.username ?? r.telegramId}?`)) return;
+    setRemoving(r.telegramId);
+    try {
+      await removeAlertRecipient(r.telegramId);
+      list.reload();
+    } catch (e) {
+      toast.err((e as Error).message);
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  return (
+    <section className="mb-6 rounded-lg border-2 border-line-strong bg-card p-3">
+      <h3 className="font-bold text-brand-ink">Who gets paged</h3>
+      <p className="mt-0.5 text-xs text-muted">
+        A high-severity fraud or reconciliation flag DMs each person below on
+        Telegram, the instant it is first raised. Someone can only be added
+        once they have started the bot — ask them to open the bot in Telegram
+        and press Start, then check their username here.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <div>
+          <label className="block text-[10px] font-semibold text-muted">Telegram username</label>
+          <input value={username} onChange={(e) => { setUsername(e.target.value); setChecked(null); }}
+            placeholder="e.g. fazalelahi_1"
+            className="w-48 rounded-md border border-line bg-card p-2 text-sm outline-none" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-muted">Label (optional)</label>
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Founder"
+            className="w-40 rounded-md border border-line bg-card p-2 text-sm outline-none" />
+        </div>
+        <button onClick={check} disabled={checking || !username.trim()}
+          className="rounded-md border border-line bg-bg px-3 py-2 text-xs font-semibold text-brand-ink disabled:opacity-50">
+          {checking ? "Checking…" : "Check"}
+        </button>
+        {checked?.found && !checked.blocked && (
+          <button onClick={add} disabled={adding}
+            className="rounded-md bg-brand px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+            {adding ? "Adding…" : `Add @${checked.username ?? username}`}
+          </button>
+        )}
+      </div>
+
+      {checked && (
+        <p className={`mt-2 text-xs ${checked.found && !checked.blocked ? "text-success" : "text-danger"}`}>
+          {!checked.found && (checked.note ?? "Not found.")}
+          {checked.found && checked.blocked && `Found — @${checked.username ?? username} (${checked.name ?? "no name on file"}), but they have blocked the bot and cannot be added.`}
+          {checked.found && !checked.blocked && `Found — ${checked.name ?? "no name on file"}. Ready to add.`}
+        </p>
+      )}
+
+      <div className="mt-3">
+        {list.loading ? <p className="text-xs text-muted">Loading…</p>
+          : list.error ? <p className="text-xs text-danger">{list.error}</p>
+          : (list.data?.recipients.length ?? 0) === 0 ? (
+            <p className="text-xs text-muted">Nobody is set up yet — add someone above.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {list.data!.recipients.map((r) => (
+                <div key={r.telegramId}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-bg/40 p-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-brand-ink">
+                      @{r.username ?? r.telegramId} {r.label && <span className="font-normal text-muted">· {r.label}</span>}
+                      {r.blocked && <StatusBadge status="off" />}
+                    </p>
+                    <p className="text-[10px] text-muted">
+                      {r.name ?? "no name on file"} · added {new Date(r.addedAt).toLocaleDateString()}
+                      {r.blocked && " · has blocked the bot — will not be paged until they message it again"}
+                    </p>
+                  </div>
+                  <button onClick={() => remove(r)} disabled={removing === r.telegramId}
+                    className="shrink-0 rounded-md bg-danger px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
+                    {removing === r.telegramId ? "…" : "Remove"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+    </section>
+  );
+}
+
 // ---- Staff paging over Telegram (alerts.ts) --------------------------------
 // There is no on-call system in this codebase (Sentry declined) — a HIGH-
-// severity fraud or reconciliation flag pages a staff Telegram group instead,
-// the instant it is first raised. This button only confirms the wiring; it
+// severity fraud or reconciliation flag pages the recipients above by Telegram
+// DM the instant it is first raised. This button only confirms the wiring; it
 // does not raise a real flag.
 export function StaffAlertsPanel() {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "off">("idle");
@@ -161,31 +300,19 @@ export function StaffAlertsPanel() {
     <section className="mb-8">
       <h2 className="mb-1 font-bold text-brand-ink">Staff alerts</h2>
       <p className="mb-3 text-xs text-muted">
-        A high-severity fraud or reconciliation flag pages a staff Telegram group
-        the instant it is first raised. Reuses the same bot as Telegram login —
-        no second bot to create.
+        A high-severity fraud or reconciliation flag pages the people below by
+        Telegram DM the instant it is first raised. Reuses the same bot as
+        Telegram login — no second bot to create.
       </p>
 
-      <div className="mb-3 rounded-lg border-2 border-line-strong bg-bg/40 p-3 text-xs text-muted">
-        <p className="font-semibold text-brand-ink">How to switch it on (5 minutes)</p>
-        <ol className="mt-1 list-decimal space-y-0.5 pl-5">
-          <li>Create a Telegram group (or reuse a private staff one).</li>
-          <li>Add your existing RoziPay bot to that group.</li>
-          <li>Send any message in the group.</li>
-          <li>Open <code>https://api.telegram.org/bot&lt;YOUR_BOT_TOKEN&gt;/getUpdates</code> in a browser
-            and copy the <code>chat.id</code> — a group id is negative (e.g. <code>-1001234567890</code>).</li>
-          <li>On Railway set <code>TELEGRAM_ALERT_CHAT_ID</code> to that id
-            (<code>TELEGRAM_BOT_TOKEN</code> is already set for Telegram login), then redeploy.</li>
-          <li>Come back here and hit &ldquo;Send test alert&rdquo;.</li>
-        </ol>
-      </div>
+      <AlertRecipientsCard />
 
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={send} disabled={state === "sending"}
           className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
           {state === "sending" ? "Sending…" : "Send test alert"}
         </button>
-        {state === "sent" && <span className="text-sm text-success">Sent — check the group.</span>}
+        {state === "sent" && <span className="text-sm text-success">Sent — check Telegram.</span>}
         {state === "off" && <span className="text-sm text-danger">{note}</span>}
         {state === "idle" && <span className="text-xs text-muted">Not tested yet this session.</span>}
       </div>

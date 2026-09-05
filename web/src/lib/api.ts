@@ -1568,6 +1568,27 @@ export const fetchAnalytics = (days = 30) =>
 export const testStaffAlert = () =>
   apiFetch<{ ok: boolean; note?: string }>("/staff/alerts/test", { method: "POST" });
 
+// ---- Staff alert recipients (Telegram DM, not a group — 2026-09-05) --------
+export type AlertRecipient = {
+  telegramId: string; username: string | null; name: string | null;
+  label: string | null; addedAt: string; lastSeenAt: string; blocked: boolean;
+};
+export const fetchAlertRecipients = () =>
+  apiFetch<{ recipients: AlertRecipient[] }>("/staff/alerts/recipients");
+// Look-before-you-add: whether this @username has ever started the bot, and
+// whether they've blocked it since. Never mutates anything.
+export const checkAlertRecipient = (username: string) =>
+  apiFetch<{
+    found: boolean; note?: string; telegramId?: string; username?: string | null;
+    name?: string | null; blocked?: boolean; lastSeenAt?: string;
+  }>("/staff/alerts/recipients/check", { method: "POST", body: JSON.stringify({ username }) });
+export const addAlertRecipient = (username: string, label?: string) =>
+  apiFetch<{ ok: true; recipient: AlertRecipient }>("/staff/alerts/recipients", {
+    method: "POST", body: JSON.stringify({ username, label }),
+  });
+export const removeAlertRecipient = (telegramId: string) =>
+  apiFetch<{ ok: true }>(`/staff/alerts/recipients/${telegramId}`, { method: "DELETE" });
+
 // ---- Admin: global settings (withdrawal fee) -----------------------------
 export const fetchSettings = () =>
   apiFetch<{

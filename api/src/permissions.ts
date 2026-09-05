@@ -93,6 +93,7 @@ export const PERMISSIONS = {
   "settings.manage": W("admin"),
   "flags.manage": W("admin"),
   "infra.view": R("admin"),                // RPC health, reconciliation internals
+  "alerts.manage": W("admin"),              // pick which Telegram DMs receive staff paging
   "staff.manage": W("admin"),              // hand out roles — the keys to everything
   "export.data": R("admin"),
 } as const;

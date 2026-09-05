@@ -329,6 +329,17 @@ export const config = {
   // here. See .env.example for how to get a group's chat id.
   telegramAlertChatId: process.env.TELEGRAM_ALERT_CHAT_ID ?? "",
 
+  // Staff paging, per-recipient DM (2026-09-05): replaces the group above with
+  // named individuals an admin picks in /staff -> Feature flags -> Staff
+  // alerts. Both empty => the webhook is never registered and the whole
+  // capture mechanism (telegram_bot_contacts) stays off — same "ships OFF"
+  // pattern as everything else optional here.
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? "",
+  // Telegram POSTs every update here once configureTelegramWebhook() (in
+  // telegram.ts) registers it at boot. Defaults to the live API domain so this
+  // self-configures with no extra Railway variable in the common case.
+  telegramWebhookUrl: process.env.TELEGRAM_WEBHOOK_URL ?? "https://api.rozipay.xyz/webhooks/telegram",
+
   // Comma-separated founder/admin emails seeded as role=admin on first run.
   adminEmails: (process.env.ADMIN_EMAILS ?? "fazalelahi5577@gmail.com")
     .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),

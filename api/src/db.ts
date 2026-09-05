@@ -1807,6 +1807,47 @@ const MIGRATIONS = `
     ON payout_disbursements(batch_id, proof_id) WHERE proof_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_payout_disbursements_batch ON payout_disbursements(batch_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_payout_disbursements_status ON payout_disbursements(status);
+
+  -- ---- STAFF ALERTS OVER TELEGRAM DM, NOT A GROUP (founder, 2026-09-05) ----
+  -- The old design paged a Telegram GROUP. The founder pointed out that a
+  -- group risks being (or becoming) something more public than intended, and
+  -- asked for named individuals instead — the same shape as the admin-email
+  -- allowlist, extended to Telegram.
+  --
+  -- A bot cannot look up "has this @username ever started me?" on demand —
+  -- Telegram has no such API for private chats. The only way to know is to
+  -- have already SEEN a message from that person. So this directory is built
+  -- from the webhook (routes/telegramWebhook.ts): every /start or any other
+  -- message the bot ever receives upserts a row here. An admin can only add
+  -- someone who already appears in this table — see routes/staffAlerts.ts.
+  CREATE TABLE IF NOT EXISTS telegram_bot_contacts (
+    telegram_id   TEXT PRIMARY KEY,
+    username      TEXT,           -- lowercase, no leading @; nullable (not everyone sets one)
+    first_name    TEXT,
+    last_name     TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL,
+    -- Set the instant Telegram reports the bot was blocked/stopped (a
+    -- my_chat_member update, status='kicked'); cleared the moment they
+    -- message the bot again. alerts.ts skips any recipient with this set, on
+    -- top of the belt-and-suspenders check of the HTTP 403 Telegram itself
+    -- returns if we try anyway.
+    blocked_at    TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_telegram_contacts_username ON telegram_bot_contacts(username);
+
+  -- The admin-picked subset of the directory above that actually receives
+  -- staff alerts. username_snapshot is SNAPSHOTTED at add time (same reason
+  -- withdrawal_requests.fee_points and payout_addresses.verified_at are
+  -- snapshotted elsewhere) — a contact renaming their Telegram handle later
+  -- must not silently relabel who staff believe this row is.
+  CREATE TABLE IF NOT EXISTS staff_alert_recipients (
+    telegram_id       TEXT PRIMARY KEY REFERENCES telegram_bot_contacts(telegram_id),
+    username_snapshot TEXT,
+    label             TEXT,
+    added_by          TEXT,
+    added_at          TEXT NOT NULL
+  );
 `;
 
 // ---------------------------------------------------------------------------

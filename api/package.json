@@ -49,7 +49,8 @@
     "test:otprace": "tsx src/tests/otp-race.e2e.ts",
     "test:miningbatch": "tsx src/tests/mining-batch.e2e.ts",
     "test:costguard": "tsx --test src/tests/costGuard.test.ts",
-    "test:sessions": "tsx src/tests/sessions.e2e.ts"
+    "test:sessions": "tsx src/tests/sessions.e2e.ts",
+    "test:staffalerts": "tsx src/tests/staffAlerts.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

@@ -44,8 +44,8 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Audit log", section: "audit", keywords: "history changes who did what" },
   // Merged 2026-09-03 — Global settings is a sub-tab of this section now, not
   // its own; its keywords fold in here so the section itself still matches.
-  { label: "Feature flags", section: "flags", keywords: "flags toggles features on off settings config app name support email maintenance" },
-  { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers alerts telegram paging" },
+  { label: "Feature flags", section: "flags", keywords: "flags toggles features on off settings config app name support email maintenance alerts telegram paging" },
+  { label: "Staff & roles", section: "team", keywords: "permissions admins agents managers" },
 
   // --- deep links to individual panels -------------------------------------
   { label: "Money overview", short: "Overview", section: "money", anchor: "p-overview", hint: "Money & payouts",
@@ -114,10 +114,10 @@ const DESTINATIONS: SearchDest[] = [
     keywords: "flag toggle enable disable transfers ads deposits conversion kyc", needs: ["flags.manage"] },
   { label: "Global settings", short: "Settings", section: "flags", anchor: "p-settings", hint: "Feature flags",
     keywords: "settings minimum withdrawal points config value welcome repeat", needs: ["settings.manage"] },
+  { label: "Staff alerts (Telegram)", short: "Alerts", section: "flags", anchor: "p-alerts", hint: "Feature flags",
+    keywords: "alert telegram paging chat test notify infra recipient dm username", needs: ["alerts.manage"] },
   { label: "Staff & roles", short: "Roles", section: "team", anchor: "p-staff-roles", hint: "Staff & roles",
     keywords: "staff role permission appoint agent manager admin finance", needs: ["staff.manage"] },
-  { label: "Staff alerts (Telegram)", short: "Alerts", section: "team", anchor: "p-alerts", hint: "Staff & roles",
-    keywords: "alert telegram paging chat test notify infra", needs: ["infra.view"] },
 ];
 
 function score(d: SearchDest, words: string[]): number {

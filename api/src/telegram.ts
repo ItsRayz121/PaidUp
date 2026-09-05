@@ -34,6 +34,42 @@ export async function configureTelegramMenuButton(): Promise<void> {
   }
 }
 
+// ---- Webhook self-registration (staff alert recipients, 2026-09-05) -------
+// Telegram delivers every update (messages, blocks) to this URL instead of us
+// polling getUpdates — a webhook is push-based, so there is no timer to run
+// and no cost that scales with anything (unlike the RPC/explorer pollers this
+// app has been burned by twice already, see CLAUDE.md). Idempotent exactly
+// like the menu button above: registering the same URL + secret twice is a
+// no-op on Telegram's side, so this can run on every boot with no ill effect.
+//
+// ⚠️ Setting a webhook makes Telegram stop delivering to getUpdates. Nothing
+// in production polls getUpdates today (login/mini-app verify signed data the
+// client sends us; nothing waits on an incoming message) — the only past use
+// of getUpdates was a one-off manual lookup to find a group's chat id, which
+// this feature exists to make unnecessary.
+export async function configureTelegramWebhook(): Promise<void> {
+  const token = config.telegramBotToken;
+  const secret = config.telegramWebhookSecret;
+  if (!token || !secret) return;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: config.telegramWebhookUrl,
+        secret_token: secret,
+        allowed_updates: ["message", "my_chat_member"],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const j = (await r.json()) as { ok?: boolean; description?: string };
+    if (j.ok) console.log(`Telegram webhook -> ${config.telegramWebhookUrl}`);
+    else console.warn(`Telegram webhook not set: ${j.description ?? r.status}`);
+  } catch (e) {
+    console.warn(`Telegram webhook not set: ${(e as Error).message}`);
+  }
+}
+
 // ---- Backfilling a Telegram identity (founder, 2026-09-03) ----------------
 // Staff screens showed rows reading "Telegram user" because two things were
 // true: the website-side "Connect Telegram" path never stored a username (now

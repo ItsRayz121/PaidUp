@@ -18,7 +18,7 @@ import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
 import { usage as costUsage } from "../costGuard.ts";
 import { reconcileChain } from "../deposits/reconcile.ts";
-import { alertsEnabled, sendStaffAlert } from "../alerts.ts";
+import { alertsArmed, sendStaffAlert } from "../alerts.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { settleConversionWindow } from "./mining.ts";
 import {
@@ -779,8 +779,8 @@ export async function staffMiningRoutes(app: FastifyInstance) {
   // real high-severity flag needs it. Admin-only: it discloses whether alerting
   // is armed at all, which is itself sensitive ops information.
   app.post("/staff/alerts/test", staffGuard("infra.view", async () => {
-    if (!alertsEnabled) {
-      return { ok: false, note: "TELEGRAM_BOT_TOKEN and/or TELEGRAM_ALERT_CHAT_ID is not set — see .env.example." };
+    if (!(await alertsArmed())) {
+      return { ok: false, note: "No Telegram recipient is set up yet — add one below, or set TELEGRAM_ALERT_CHAT_ID." };
     }
     await sendStaffAlert("🔔 Test alert from RoziPay staff panel — this channel is wired correctly.");
     return { ok: true };
