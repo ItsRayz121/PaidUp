@@ -27,17 +27,22 @@ export type ReferrerRow = { id: string; email: string; username: string | null; 
 // (the personal isMe flag is applied per request, never cached). A stale
 // leaderboard is harmless; a ledger scan per view is not.
 const LEADERBOARD_TTL_MS = 60_000;
-let cache: { at: number; earners: EarnerRow[]; referrers: ReferrerRow[] } | null = null;
+type Board = { earners: EarnerRow[]; referrers: ReferrerRow[] };
+// Keyed by window ("all", or a period range) so "This Week"/"This Month"
+// (2026-09-05) cache independently of the all-time board rather than fighting
+// over one slot. Bounded by construction — there are only ever a few live
+// window keys at once (all/week/month), never one per request.
+const cache = new Map<string, { at: number } & Board>();
 
 /**
- * Drop the cached boards.
+ * Drop every cached board (all windows).
  *
  * Called after an exclusion is added or removed. Without it, an admin hides a
  * seeded test account, reloads, and still sees it at rank 1 for up to a minute
  * — which reads as "the button did nothing" and gets clicked again.
  */
 export function invalidateLeaderboard(): void {
-  cache = null;
+  cache.clear();
 }
 
 // Rows hidden from both boards. A LEFT JOIN … IS NULL rather than a NOT IN
@@ -46,39 +51,60 @@ export function invalidateLeaderboard(): void {
 const NOT_EXCLUDED =
   "LEFT JOIN leaderboard_exclusions x ON x.user_id = u.id";
 
-export async function loadLeaderboard(): Promise<{ earners: EarnerRow[]; referrers: ReferrerRow[] }> {
-  if (cache && Date.now() - cache.at < LEADERBOARD_TTL_MS) return cache;
+// A closed or in-progress period to score the boards over — the SAME bounds
+// the leaderboard-reward settlement job uses for a just-closed period
+// (leaderboardRewards.ts), so "This Week" on screen and "what the weekly
+// prize was scored against" can never quietly disagree. `untilISO` is
+// exclusive; omit it to mean "up to now" (an in-progress period on display).
+export type LeaderboardRange = { sinceISO: string; untilISO?: string };
 
-  const LIMIT = 20;
+function rangeKey(range?: LeaderboardRange): string {
+  if (!range) return "all";
+  return `${range.sinceISO}..${range.untilISO ?? ""}`;
+}
+
+export async function loadLeaderboard(
+  range?: LeaderboardRange, limit = 20,
+): Promise<Board> {
+  const key = `${rangeKey(range)}:${limit}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < LEADERBOARD_TTL_MS) return hit;
+
+  const bounds = range ? "AND le.created_at >= ?" + (range.untilISO ? " AND le.created_at < ?" : "") : "";
+  const boundParams = range ? (range.untilISO ? [range.sinceISO, range.untilISO] : [range.sinceISO]) : [];
+
   const earners = await sql.all<EarnerRow>(
     `SELECT u.id, u.email, u.username, u.telegram_username,
             COALESCE(SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                               AND le.amount > 0 THEN le.amount ELSE 0 END),0)::int AS earned
+                               AND le.amount > 0 ${bounds} THEN le.amount ELSE 0 END),0)::int AS earned
      FROM users u
      JOIN ledger_entries le ON le.user_id = u.id
      ${NOT_EXCLUDED}
      WHERE u.email_verified = 1 AND x.user_id IS NULL
      GROUP BY u.id, u.email, u.username, u.telegram_username
      HAVING SUM(CASE WHEN le.source_type IN ('task_completion','referral_bonus')
-                      AND le.amount > 0 THEN le.amount ELSE 0 END) > 0
+                      AND le.amount > 0 ${bounds} THEN le.amount ELSE 0 END) > 0
      ORDER BY earned DESC, u.created_at ASC
-     LIMIT ${LIMIT}`,
+     LIMIT ${limit}`,
+    ...boundParams, ...boundParams,
   );
   const referrers = await sql.all<ReferrerRow>(
     `SELECT u.id, u.email, u.username, u.telegram_username,
             COALESCE(SUM(le.amount),0)::int AS ref_points,
             (SELECT COUNT(*)::int FROM referrals r WHERE r.referrer_user_id = u.id) AS invites
      FROM users u
-     JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus'
+     JOIN ledger_entries le ON le.user_id = u.id AND le.source_type = 'referral_bonus' ${bounds}
      ${NOT_EXCLUDED}
      WHERE x.user_id IS NULL
      GROUP BY u.id, u.email, u.username, u.telegram_username
      HAVING SUM(le.amount) > 0
      ORDER BY ref_points DESC, u.created_at ASC
-     LIMIT ${LIMIT}`,
+     LIMIT ${limit}`,
+    ...boundParams,
   );
-  cache = { at: Date.now(), earners, referrers };
-  return cache;
+  const board = { at: Date.now(), earners, referrers };
+  cache.set(key, board);
+  return board;
 }
 
 /**

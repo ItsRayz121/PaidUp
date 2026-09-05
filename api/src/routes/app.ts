@@ -11,6 +11,8 @@ import { pointsToUsdt } from "../payout.ts";
 import { enabled as flagEnabled, requireFeature, allFlags } from "../flags.ts";
 import { minWithdrawPointsNow, welcomeRepeatDaysNow } from "../settingsRuntime.ts";
 import { loadLeaderboard, maskName } from "../leaderboard.ts";
+import { loadLeaderboardRewardSettings } from "../leaderboardRewardSettings.ts";
+import { currentPeriodBounds } from "../leaderboardRewards.ts";
 import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
 import { campaignState, unavailableMessage } from "../taskLifecycle.ts";
@@ -790,16 +792,52 @@ export async function appRoutes(app: FastifyInstance) {
   // Two boards: top EARNERS (most points earned from tasks + referrals) and top
   // REFERRERS (most points earned from their invites). Names are masked for
   // privacy; the caller's own row is flagged so the UI can highlight it.
-  app.get("/leaderboard", guard(async (userId) => {
-    if (!(await flagEnabled("leaderboard"))) return { topEarners: [], topReferrers: [] };
-    const { earners, referrers } = await loadLeaderboard();
+  app.get("/leaderboard", guard(async (userId, req) => {
+    if (!(await flagEnabled("leaderboard"))) {
+      return { window: "all", topEarners: [], topReferrers: [], myStanding: null };
+    }
+    const q = z.object({ window: z.enum(["all", "week", "month"]).default("all") })
+      .parse((req.query as Record<string, unknown>) ?? {});
+
+    // "week"/"month" score the period IN PROGRESS (start bound only, no
+    // upper bound — "up to now") using the SAME UTC boundaries the reward
+    // settlement job uses for the period once it closes (leaderboardRewards.ts)
+    // — so "This Week" on screen is always describing exactly what a weekly
+    // prize would be scored against, never a different sliding window.
+    const cycleType = q.window === "week" ? "weekly" as const : q.window === "month" ? "monthly" as const : null;
+    const range = cycleType ? { sinceISO: currentPeriodBounds(cycleType).startISO } : undefined;
+    const { earners, referrers } = await loadLeaderboard(range);
+
+    // A projected reward is only ever shown for a window that HAS a cadence
+    // (week -> weekly, month -> monthly) and only when that cadence is
+    // actually turned on — never invented copy for a pool that isn't real
+    // (the same "advertised rate comes from the API, never the copy deck"
+    // rule this app already applies to referral rates).
+    const rewardSettings = cycleType ? await loadLeaderboardRewardSettings() : null;
+    const cycleCfg = cycleType && rewardSettings ? rewardSettings[cycleType] : null;
+    const rewardsOn = !!rewardSettings?.enabled && !!cycleCfg?.enabled;
+
+    function standingFor(
+      rows: { id: string }[], tiers: number[],
+    ): { rank: number; roziReward: number } | null {
+      if (!rewardsOn || tiers.length === 0) return null;
+      const idx = rows.findIndex((r) => r.id === userId);
+      if (idx < 0 || idx >= tiers.length) return null;
+      return { rank: idx + 1, roziReward: tiers[idx] };
+    }
+
     return {
+      window: q.window,
       topEarners: earners.map((r, i) => ({
         rank: i + 1, name: maskName(r.email), points: r.earned, isMe: r.id === userId,
       })),
       topReferrers: referrers.map((r, i) => ({
         rank: i + 1, name: maskName(r.email), points: r.ref_points, invites: r.invites, isMe: r.id === userId,
       })),
+      myStanding: cycleType ? {
+        earners: standingFor(earners, cycleCfg?.tiersEarnersRozi ?? []),
+        referrers: standingFor(referrers, cycleCfg?.tiersReferrersRozi ?? []),
+      } : null,
     };
   }));
 

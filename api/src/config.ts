@@ -476,6 +476,13 @@ export const config = {
   // Block-explorer reads (bscscan.ts). A DAY window, because that is the shape
   // of the free-tier allowance this actually runs out against.
   explorerMaxCallsPerDay: num(process.env.EXPLORER_MAX_CALLS_PER_DAY, 20_000),
+  // BNB/USD price reads (bnbPrice.ts). Binance's public ticker needs no API
+  // key and isn't billed, but it still gets a ceiling — the whole point of
+  // costGuard is a floor that holds even when a specific call site has no
+  // gap yet. A DAY window: the price is cached 5 minutes, so normal usage is
+  // a few hundred calls a day at most however many staff sessions open the
+  // panel.
+  priceMaxCallsPerDay: num(process.env.PRICE_MAX_CALLS_PER_DAY, 2_000),
 
   // How long a user's on-chain BNB (gas) balance is reused before asking the
   // chain again. This read is per USER, so unlike the fixed-cadence scanners

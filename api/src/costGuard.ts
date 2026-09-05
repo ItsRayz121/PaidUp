@@ -125,6 +125,16 @@ const meters: Record<string, Meter> = {
     limit: () => config.explorerMaxCallsPerDay,
     refusedLow: 0, refusedHigh: 0, lastWarnSlot: -1,
   },
+  // BNB/USD price reads (bnbPrice.ts) — a free, unmetered public endpoint,
+  // but every external call in this file gets a ceiling on principle (see the
+  // file header): the guarantee is a floor that holds even for a call site
+  // that has no cost problem today.
+  price: {
+    window: new RollingCounter(24, 3_600_000),
+    slots: 24, slotMs: 3_600_000,
+    limit: () => config.priceMaxCallsPerDay,
+    refusedLow: 0, refusedHigh: 0, lastWarnSlot: -1,
+  },
 };
 
 // Low priority may spend up to this share of the limit; the rest is reserved

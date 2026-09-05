@@ -1157,6 +1157,12 @@ export function TreasuryWalletPanel() {
               <div className="num text-base font-bold text-brand-ink">
                 {d.signerBnbWei == null ? "could not check" : formatBnbWei(d.signerBnbWei)}
               </div>
+              {/* Display estimate only (Binance's public price, cached
+                  server-side) — never a rate anything is priced or settled
+                  against, unlike ROZI's deliberate no-fixed-rate rule. */}
+              {d.signerBnbWei != null && d.signerBnbUsdMicro != null && (
+                <div className="num text-muted">≈ {formatUsdtMicro(d.signerBnbUsdMicro)}</div>
+              )}
             </div>
           </div>
           <div className={`p-2.5 ${d.signerMismatch ? "bg-danger/10 text-danger" : "bg-card text-muted"}`}>
@@ -1168,7 +1174,8 @@ export function TreasuryWalletPanel() {
                 to match it.{" "}
                 {d.configuredUsdtMicro != null && (
                   <>The address below currently holds {formatUsdtMicro(d.configuredUsdtMicro)} and{" "}
-                    {formatBnbWei(d.configuredBnbWei ?? "0")} gas.</>
+                    {formatBnbWei(d.configuredBnbWei ?? "0")} gas
+                    {d.configuredBnbUsdMicro != null && <> (≈ {formatUsdtMicro(d.configuredBnbUsdMicro)})</>}.</>
                 )}
               </>
             ) : (

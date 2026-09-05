@@ -25,7 +25,7 @@ import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
-import { ReferralPanel, LeaderboardPanel, PerNetworkPanel } from "@/components/growth-admin";
+import { ReferralPanel, LeaderboardPanel, PerNetworkPanel, LeaderboardRewardsPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, setPendingGroupSubTab, type SectionId } from "@/lib/staffNav";
 import { StaffSearch } from "@/components/staff-search";
@@ -303,6 +303,7 @@ export default function StaffPage() {
       // part of the advertised-rate summary.
       { id: "p-referral-networks", label: "Per network", need: "referrals.manage", node: <PerNetworkPanel /> },
       { id: "p-leaderboard", label: "Leaderboard", need: "leaderboard.manage", node: <LeaderboardPanel /> },
+      { id: "p-leaderboard-rewards", label: "Reward pools", need: "leaderboard.manage", node: <LeaderboardRewardsPanel /> },
     ],
     messages: [
       { id: "p-broadcast", label: "Send a message", need: "notifications.send", node: <BroadcastPanel /> },

@@ -19,7 +19,7 @@ import { kycRoutes } from "./routes/kyc.ts";
 import { staffKycRoutes } from "./routes/staffKyc.ts";
 import { pushRoutes } from "./routes/push.ts";
 import { profileRoutes } from "./routes/profile.ts";
-import { pushEnabled } from "./push.ts";
+import { pushEnabled, sendPushToUser } from "./push.ts";
 import { usingDevKycKey } from "./kyc.ts";
 import { settleDueEpochs } from "./mining/engine.ts";
 import { configureTelegramMenuButton, configureTelegramWebhook } from "./telegram.ts";
@@ -30,6 +30,8 @@ import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
 import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
 import { tickTicketAutoClose } from "./ticketAutoClose.ts";
+import { tickLeaderboardRewards } from "./leaderboardRewards.ts";
+import { fromMicro } from "./mining/core.ts";
 import { emailConfigured } from "./email.ts";
 
 // Print boot context first so the deploy log shows how far we got and on what
@@ -442,6 +444,38 @@ const runReconcile = everyNoOverlap("reconcile", config.reconcileIntervalMs, tic
 const TICKET_AUTO_CLOSE_TICK_MS = 10 * 60 * 1000;
 const runTicketAutoClose = everyNoOverlap("ticket-auto-close", TICKET_AUTO_CLOSE_TICK_MS, tickTicketAutoClose);
 
+// ---- Leaderboard reward pools — leaderboardRewards.ts ----------------------
+// Weekly/monthly ROZI prizes for the top of each track. Coarse cadence on
+// purpose: "due" is computed from real UTC period boundaries
+// (previousPeriodBounds), not from tick timing, exactly like mining
+// settlement — an hourly check costs a handful of already-idempotent SELECTs
+// once a period is NOT yet due, and a `settled_at` cannot be more than an hour
+// late. A no-op entirely until an admin enables it in /staff (ships OFF).
+const LEADERBOARD_REWARDS_TICK_MS = 60 * 60 * 1000;
+async function tickLeaderboardRewardsJob() {
+  try {
+    await tickLeaderboardRewards(async (cycleId, cycleType, track) => {
+      // Push AFTER the settlement transaction has already committed (the
+      // caller only invokes this once settleLeaderboardCycle has returned a
+      // real cycleId) — same "never announce money a rollback could still
+      // un-pay" rule every other money-event push in this app follows.
+      const rows = await sql.all<{ user_id: string; rank: number; micro: string | number }>(
+        "SELECT user_id, rank, micro FROM leaderboard_reward_payouts WHERE cycle_id = ?", cycleId,
+      );
+      const cadence = cycleType === "weekly" ? "week" : "month";
+      const board = track === "earners" ? "top earners" : "top inviters";
+      await Promise.all(rows.map((r) => sendPushToUser(r.user_id, {
+        title: `You won this ${cadence}'s leaderboard reward!`,
+        body: `Rank #${r.rank} on ${board} — ${fromMicro(Number(r.micro)).toFixed(2)} ROZI is in your Mine balance.`,
+        url: "/leaderboard",
+      })));
+    });
+  } catch (err) {
+    app.log.error({ err }, "Leaderboard reward settlement tick failed");
+  }
+}
+const runLeaderboardRewards = everyNoOverlap("leaderboard-rewards", LEADERBOARD_REWARDS_TICK_MS, tickLeaderboardRewardsJob);
+
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   // Kick each tick once at boot through its OWN guard, not by calling the raw
@@ -452,6 +486,7 @@ try {
   void runPayoutRelayJob();
   void runReconcile();
   void runTicketAutoClose();
+  void runLeaderboardRewards();
   // Bot self-setup (menu button -> the web app). Fire-and-forget: Telegram
   // being slow or down must never delay or fail OUR boot.
   void configureTelegramMenuButton();

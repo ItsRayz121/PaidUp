@@ -553,8 +553,19 @@ export const fetchSurveyWall = () =>
 
 // ---- Leaderboard ----------------------------------------------------------
 export type LeaderRow = { rank: number; name: string; points: number; invites?: number; isMe: boolean };
-export const fetchLeaderboard = () =>
-  apiFetch<{ topEarners: LeaderRow[]; topReferrers: LeaderRow[] }>("/leaderboard");
+export type LeaderboardWindow = "all" | "week" | "month";
+// A real, admin-configured tier for the caller's CURRENT rank in a window
+// that has a reward cadence — null whenever there is nothing to project
+// (rewards off, no cadence for this window, or the caller isn't ranked
+// inside the paid tiers). Never invented copy for a pool that isn't real.
+export type LeaderboardStanding = { rank: number; roziReward: number } | null;
+export const fetchLeaderboard = (window: LeaderboardWindow = "all") =>
+  apiFetch<{
+    window: LeaderboardWindow;
+    topEarners: LeaderRow[];
+    topReferrers: LeaderRow[];
+    myStanding: { earners: LeaderboardStanding; referrers: LeaderboardStanding } | null;
+  }>(`/leaderboard?window=${window}`);
 
 // ---- Staff ----------------------------------------------------------------
 export type StaffWithdrawal = {
@@ -727,9 +738,12 @@ export const fetchTreasuryLedger = (limit = 50) =>
     // the signer's address (2026-09-05).
     signerAddress: string | null; signerMismatch: boolean;
     // LIVE on-chain reads (right now, not a tx-history total) — null when the
-    // address is unknown or the chain could not be reached.
-    signerUsdtMicro: number | null; signerBnbWei: string | null;
-    configuredUsdtMicro: number | null; configuredBnbWei: string | null;
+    // address is unknown or the chain could not be reached. The *BnbUsdMicro
+    // fields are a display-only USD estimate of the BNB figure (Binance's
+    // public price, cached server-side) — null when the price could not be
+    // fetched, never a stand-in for the real balance.
+    signerUsdtMicro: number | null; signerBnbWei: string | null; signerBnbUsdMicro: number | null;
+    configuredUsdtMicro: number | null; configuredBnbWei: string | null; configuredBnbUsdMicro: number | null;
     totals: { inMicro: number; outMicro: number; rows: number } | null;
     rows: TreasuryLedgerRow[];
   }>(`/staff/treasury/wallet?limit=${limit}`);
@@ -2177,6 +2191,37 @@ export const excludeFromLeaderboard = (userId: string, reason: string) =>
   });
 export const unexcludeFromLeaderboard = (userId: string) =>
   apiFetch<{ ok: true }>(`/staff/leaderboard/exclusions/${userId}`, { method: "DELETE" });
+
+// ---- Leaderboard reward pools (founder, 2026-09-05) -----------------------
+// Weekly/monthly ROZI prizes for the top of each track. Config is ONE JSON
+// blob server-side (leaderboardRewardSettings.ts's own header explains why),
+// so a save always sends the WHOLE object back, never a partial patch.
+export type LeaderboardRewardCycleConfig = {
+  enabled: boolean;
+  tiersEarnersRozi: number[];
+  tiersReferrersRozi: number[];
+};
+export type LeaderboardRewardSettings = {
+  enabled: boolean;
+  weekly: LeaderboardRewardCycleConfig;
+  monthly: LeaderboardRewardCycleConfig;
+};
+export const fetchLeaderboardRewardSettings = () =>
+  apiFetch<{ settings: LeaderboardRewardSettings; defaults: LeaderboardRewardSettings }>(
+    "/staff/leaderboard/rewards/settings",
+  );
+export const saveLeaderboardRewardSettings = (next: LeaderboardRewardSettings) =>
+  apiFetch<{ ok: true; settings: LeaderboardRewardSettings }>("/staff/leaderboard/rewards/settings", {
+    method: "PATCH", body: JSON.stringify(next),
+  });
+export type LeaderboardRewardCycle = {
+  id: string; cycleType: "weekly" | "monthly"; track: "earners" | "referrers";
+  periodStart: string; periodEnd: string; wantedMicro: number; paidMicro: number;
+  scaleFactor: number; settledAt: string;
+  winners: { userId: string; email: string; rank: number; score: number; micro: number }[];
+};
+export const fetchLeaderboardRewardCycles = (limit = 20) =>
+  apiFetch<{ cycles: LeaderboardRewardCycle[] }>(`/staff/leaderboard/rewards/cycles?limit=${limit}`);
 
 // ---- USDT top-up review queue (staff) ---------------------------------------
 export type AdminTopup = {

@@ -12,9 +12,11 @@ import { useApi } from "@/lib/hooks";
 import {
   fetchReferralAdmin, setReferralRatesForAll, fetchReferralInvitees,
   fetchLeaderboardAdmin, excludeFromLeaderboard, unexcludeFromLeaderboard,
+  fetchLeaderboardRewardSettings, saveLeaderboardRewardSettings, fetchLeaderboardRewardCycles,
   type ReferralAdmin, type ReferralInvitee,
+  type LeaderboardRewardSettings, type LeaderboardRewardCycleConfig,
 } from "@/lib/api";
-import { formatPoints, timeAgo, displayIdentity } from "@/lib/format";
+import { formatPoints, formatRozi, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -495,6 +497,170 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       <p className="text-[10px] uppercase text-muted">{label}</p>
       <p className="num font-semibold text-brand-ink">{value}</p>
       {sub && <p className="text-[10px] text-muted">{sub}</p>}
+    </div>
+  );
+}
+
+// ---- Leaderboard reward pools (founder, 2026-09-05) ------------------------
+//
+// Weekly/monthly ROZI prizes for the top of each track. Config is ONE JSON
+// blob server-side — Save always sends the WHOLE object back (never a
+// partial patch), so the draft state below mirrors that shape exactly.
+// Tiers are edited as a comma-separated list ("150, 100, 70, 25") — position
+// = rank, so reordering the numbers reorders which rank gets what. Simpler
+// and harder to corrupt than a dynamic add/remove row list, and just as
+// admin-editable.
+
+type CycleDraft = { enabled: boolean; tiersEarnersRozi: string; tiersReferrersRozi: string };
+type SettingsDraft = { enabled: boolean; weekly: CycleDraft; monthly: CycleDraft };
+
+function toDraft(s: LeaderboardRewardSettings): SettingsDraft {
+  const cycle = (c: LeaderboardRewardCycleConfig): CycleDraft => ({
+    enabled: c.enabled,
+    tiersEarnersRozi: c.tiersEarnersRozi.join(", "),
+    tiersReferrersRozi: c.tiersReferrersRozi.join(", "),
+  });
+  return { enabled: s.enabled, weekly: cycle(s.weekly), monthly: cycle(s.monthly) };
+}
+
+function parseTiers(raw: string): number[] {
+  // Filter blank tokens BEFORE parsing, same as mining-admin.tsx's
+  // MilestoneEditor — a trailing/doubled comma ("150, 100,") would otherwise
+  // parse the empty token as Number("") = 0, a phantom extra rank worth 0
+  // ROZI that silently inflates the rank count shown and settled against.
+  return raw.split(",").map((s) => s.trim()).filter((s) => s !== "")
+    .map((s) => Number(s)).filter((n) => Number.isFinite(n) && n >= 0);
+}
+
+function fromDraft(d: SettingsDraft): LeaderboardRewardSettings {
+  const cycle = (c: CycleDraft): LeaderboardRewardCycleConfig => ({
+    enabled: c.enabled,
+    tiersEarnersRozi: parseTiers(c.tiersEarnersRozi),
+    tiersReferrersRozi: parseTiers(c.tiersReferrersRozi),
+  });
+  return { enabled: d.enabled, weekly: cycle(d.weekly), monthly: cycle(d.monthly) };
+}
+
+export function LeaderboardRewardsPanel() {
+  const data = useApi(fetchLeaderboardRewardSettings, []);
+  const cycles = useApi(() => fetchLeaderboardRewardCycles(20), []);
+  const [draft, setDraft] = useState<SettingsDraft | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (data.loading) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (data.error || !data.data) return <p className="p-4 text-sm text-danger">{data.error}</p>;
+  const live = draft ?? toDraft(data.data.settings);
+
+  function set(patch: Partial<SettingsDraft>) { setDraft({ ...live, ...patch }); }
+  function setCycle(cadence: "weekly" | "monthly", patch: Partial<CycleDraft>) {
+    set({ [cadence]: { ...live[cadence], ...patch } } as Partial<SettingsDraft>);
+  }
+
+  async function save() {
+    setSaving(true); setMsg(null);
+    try {
+      const next = fromDraft(live);
+      await saveLeaderboardRewardSettings(next);
+      setDraft(null);
+      setMsg("Saved.");
+      data.reload();
+    } catch (e) { setMsg((e as Error).message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <p className="rounded-lg border border-line bg-card p-2.5 text-xs text-muted">
+        Real ROZI, paid automatically once a week/month closes — top earners AND top
+        inviters, each on their own tiers. Ships <strong>off</strong> until you turn it on here.
+        A user hidden from the leaderboard (the panel above) is hidden from these prizes too.
+      </p>
+
+      {msg && (
+        <p className={`rounded-md p-2 text-xs ${msg === "Saved." ? "bg-success-tint text-success" : "bg-danger-tint text-danger"}`}>
+          {msg}
+        </p>
+      )}
+
+      <label className="flex items-center gap-2 rounded-lg border-2 border-line-strong bg-card p-3">
+        <input type="checkbox" checked={live.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+        <span className="text-sm font-semibold text-brand-ink">Reward pools are ON (master switch)</span>
+      </label>
+
+      {(["weekly", "monthly"] as const).map((cadence) => {
+        const c = live[cadence];
+        const earnersSum = parseTiers(c.tiersEarnersRozi).reduce((a, n) => a + n, 0);
+        const referrersSum = parseTiers(c.tiersReferrersRozi).reduce((a, n) => a + n, 0);
+        return (
+          <div key={cadence} className="rounded-lg border-2 border-line-strong bg-card p-3 space-y-3">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={c.enabled}
+                onChange={(e) => setCycle(cadence, { enabled: e.target.checked })} />
+              <span className="font-bold capitalize text-brand-ink">{cadence}</span>
+            </label>
+            <div>
+              <p className="text-[10px] uppercase text-muted">Top earners — ROZI per rank (rank 1 first)</p>
+              <input value={c.tiersEarnersRozi} onChange={(e) => setCycle(cadence, { tiersEarnersRozi: e.target.value })}
+                placeholder="150, 100, 70, 25, 25, 25, 25, 25, 25, 25"
+                className="mt-1 w-full rounded-md border border-line px-2 py-1.5 text-xs num" />
+              <p className="mt-0.5 text-[10px] text-muted">Pool: {n(earnersSum)} ROZI across {parseTiers(c.tiersEarnersRozi).length} ranks</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-muted">Top inviters — ROZI per rank (rank 1 first)</p>
+              <input value={c.tiersReferrersRozi} onChange={(e) => setCycle(cadence, { tiersReferrersRozi: e.target.value })}
+                placeholder="150, 100, 70, 25, 25, 25, 25, 25, 25, 25"
+                className="mt-1 w-full rounded-md border border-line px-2 py-1.5 text-xs num" />
+              <p className="mt-0.5 text-[10px] text-muted">Pool: {n(referrersSum)} ROZI across {parseTiers(c.tiersReferrersRozi).length} ranks</p>
+            </div>
+          </div>
+        );
+      })}
+
+      <button onClick={save} disabled={saving}
+        className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+        {saving ? "Saving…" : "Save"}
+      </button>
+
+      <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+        <h3 className="font-bold text-brand-ink">Recent cycles</h3>
+        <p className="text-xs text-muted">Every settled week/month, what it paid, and who won — this is the receipt.</p>
+        {cycles.loading ? (
+          <p className="mt-2 text-sm text-muted">Loading…</p>
+        ) : !cycles.data || cycles.data.cycles.length === 0 ? (
+          <p className="mt-2 text-sm text-muted">Nothing has settled yet.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {cycles.data.cycles.map((c) => (
+              <details key={c.id} className="rounded-md border border-line p-2">
+                <summary className="cursor-pointer text-xs">
+                  <span className="font-semibold capitalize text-brand-ink">{c.cycleType} · {c.track}</span>{" "}
+                  <span className="text-muted">
+                    {new Date(c.periodStart).toLocaleDateString()} – {new Date(c.periodEnd).toLocaleDateString()}
+                  </span>{" "}
+                  · paid <span className="num">{formatRozi(c.paidMicro)}</span> ROZI
+                  {c.scaleFactor < 1 && (
+                    <span className="ml-1 rounded bg-pending-tint px-1 text-pending">
+                      scaled {(c.scaleFactor * 100).toFixed(0)}% — cap was tight
+                    </span>
+                  )}
+                  <span className="ml-1 text-muted">· {timeAgo(c.settledAt)}</span>
+                </summary>
+                <table className="mt-2 w-full text-xs">
+                  <tbody>
+                    {c.winners.map((w) => (
+                      <tr key={w.userId} className="border-t border-line first:border-t-0">
+                        <td className="py-1 font-mono text-muted">#{w.rank}</td>
+                        <td className="text-brand-ink">{w.email}</td>
+                        <td className="num text-right">{formatRozi(w.micro)} ROZI</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

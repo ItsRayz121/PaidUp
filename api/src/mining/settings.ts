@@ -59,12 +59,17 @@ export async function totalEmittedMicro(t: Pick<TxApi, "get"> = sql): Promise<nu
   // Custom/RoziPay task ROZI rewards (founder, 2026-08-29) are real minted
   // ROZI too — they must count against the cap or the 21M ceiling is a lie.
   // creditCompletion() checks this total before minting a task ROZI reward.
+  // Weekly/monthly leaderboard prizes (founder, 2026-09-05) are a FOURTH pile
+  // for the same reason — leaderboardRewards.ts's settlement job checks this
+  // total (via capScaleFactor) before minting a single payout.
   const r = await t.get<{ total: string }>(
     `SELECT
        COALESCE((SELECT SUM(amount) FROM rozi_ledger
                  WHERE source_type = 'mining' AND direction = 'credit'), 0)
        + COALESCE((SELECT SUM(amount) FROM rozi_ledger
                  WHERE source_type = 'task_reward' AND direction = 'credit'), 0)
+       + COALESCE((SELECT SUM(amount) FROM rozi_ledger
+                 WHERE source_type = 'leaderboard_reward' AND direction = 'credit'), 0)
        + COALESCE((SELECT SUM(micro) FROM mining_unclaimed), 0)
        AS total`,
   );

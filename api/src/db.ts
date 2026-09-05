@@ -2287,6 +2287,58 @@ const MINING_SCHEMA = `
     sort          INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL
   );
+
+  -- ---- LEADERBOARD REWARD POOLS (founder, 2026-09-05) ------------------------
+  -- Weekly + monthly ROZI prizes for the top of each leaderboard track (earners,
+  -- referrers). Ships OFF (leaderboardRewards.enabled in app_settings) until an
+  -- admin sets real pool sizes and tiers — same posture as every other reward
+  -- feature in this file. The ROZI itself mints through the ONE guarded path
+  -- (postRozi, sourceType 'leaderboard_reward', added to the CHECK below AND to
+  -- totalEmittedMicro()'s cap sum in mining/settings.ts — skipping either one
+  -- breaks guardrail #7's "the 21M cap is a hard ceiling" promise).
+  ALTER TABLE rozi_ledger DROP CONSTRAINT IF EXISTS rozi_ledger_source_type_check;
+  ALTER TABLE rozi_ledger ADD CONSTRAINT rozi_ledger_source_type_check
+    CHECK (source_type IN ('mining','rig_purchase','transfer_in','transfer_out',
+                           'transfer_fee','conversion_burn','admin_adjustment',
+                           'bonus','store_redemption','task_reward','leaderboard_reward'));
+
+  -- One row per SETTLED period per (cycle_type, track) — the unique key IS the
+  -- idempotency guard: a settlement re-run (a restart mid-tick, two replicas
+  -- ticking at once) does INSERT ... ON CONFLICT DO NOTHING here and mints
+  -- nothing further once the row exists. wanted/paid/scale_factor are kept
+  -- separately so a scaled-down cycle (the pool asked for more ROZI than the
+  -- cap had room for) is visible on the admin history screen, not silently
+  -- merged into one number.
+  CREATE TABLE IF NOT EXISTS leaderboard_reward_cycles (
+    id            TEXT PRIMARY KEY,
+    cycle_type    TEXT NOT NULL CHECK (cycle_type IN ('weekly','monthly')),
+    track         TEXT NOT NULL CHECK (track IN ('earners','referrers')),
+    period_start  TEXT NOT NULL,
+    period_end    TEXT NOT NULL,
+    wanted_micro  BIGINT NOT NULL,
+    paid_micro    BIGINT NOT NULL,
+    scale_factor  REAL NOT NULL,
+    settled_at    TEXT NOT NULL,
+    UNIQUE (cycle_type, track, period_start)
+  );
+  CREATE INDEX IF NOT EXISTS idx_leaderboard_cycles_settled ON leaderboard_reward_cycles(settled_at);
+
+  -- Per-winner detail for a settled cycle — the auditable "who won, what rank,
+  -- how much" trail. rozi_ledger_id is a hard join to the exact ledger row this
+  -- payout minted, the same "never let a payout float free of its ledger row"
+  -- rule payout_disbursements already follows for a different feature.
+  CREATE TABLE IF NOT EXISTS leaderboard_reward_payouts (
+    id             TEXT PRIMARY KEY,
+    cycle_id       TEXT NOT NULL REFERENCES leaderboard_reward_cycles(id),
+    user_id        TEXT NOT NULL REFERENCES users(id),
+    rank           INTEGER NOT NULL,
+    score          BIGINT NOT NULL,
+    micro          BIGINT NOT NULL,
+    rozi_ledger_id TEXT NOT NULL REFERENCES rozi_ledger(id),
+    created_at     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_leaderboard_payouts_cycle ON leaderboard_reward_payouts(cycle_id);
+  CREATE INDEX IF NOT EXISTS idx_leaderboard_payouts_user ON leaderboard_reward_payouts(user_id);
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
@@ -2680,7 +2732,11 @@ export type RoziSource =
   | "store_redemption"
   // Custom/RoziPay task reward (founder, 2026-08-29). Real mined-token ROZI,
   // credited by creditCompletion(); counts against the 21M cap.
-  | "task_reward";
+  | "task_reward"
+  // Weekly/monthly leaderboard prize (founder, 2026-09-05). Minted by
+  // leaderboardRewards.ts's settlement job; counts against the 21M cap (see
+  // totalEmittedMicro() in mining/settings.ts).
+  | "leaderboard_reward";
 
 // Amounts are MICRO-ROZI (millionths). The parameter is named `micro`, not
 // `rozi`, on purpose: it is the one thing that makes a unit mistake a compile

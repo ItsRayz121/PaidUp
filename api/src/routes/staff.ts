@@ -18,6 +18,7 @@ import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } 
 import { loadAnalytics } from "../analytics.ts";
 import { fetchTelegramChatIdentity } from "../telegram.ts";
 import { fetchTreasuryLedger, bscscanReady } from "../bscscan.ts";
+import { bnbUsdMicroPrice, bnbWeiToUsdMicro } from "../bnbPrice.ts";
 import { treasurySignerAddress } from "../signer.ts";
 import { createPublicClient, http, fallback, erc20Abi } from "viem";
 import { ONCHAIN_CHAINS } from "../payout.ts";
@@ -2122,17 +2123,22 @@ export async function staffRoutes(app: FastifyInstance) {
     const signerMismatch = !!signerAddress && !!address && signerAddress.toLowerCase() !== address.toLowerCase();
     // LIVE balances (not the tx-history totals below) — read for the signer
     // address always, and for the configured address too only when it
-    // actually differs (no point paying for the same read twice).
-    const [signerLive, configuredLive] = await Promise.all([
+    // actually differs (no point paying for the same read twice). The BNB/USD
+    // price is fetched alongside them — display only (bnbPrice.ts's own
+    // header: a real, liquid asset's market value, never a ROZI-style rate).
+    const [signerLive, configuredLive, bnbUsdMicroPerBnb] = await Promise.all([
       readLiveBalances(signerAddress),
       signerMismatch ? readLiveBalances(address) : Promise.resolve({ usdtMicro: null, bnbWei: null }),
+      bnbUsdMicroPrice(),
     ]);
+    const signerBnbUsdMicro = bnbWeiToUsdMicro(signerLive.bnbWei, bnbUsdMicroPerBnb);
+    const configuredBnbUsdMicro = bnbWeiToUsdMicro(configuredLive.bnbWei, bnbUsdMicroPerBnb);
     if (!address) {
       return {
         chain: "bep20", address: "", explorerReady: bscscanReady(), explorerError: null, rows: [], totals: null,
         signerAddress, signerMismatch: false,
-        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
-        configuredUsdtMicro: null, configuredBnbWei: null,
+        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei, signerBnbUsdMicro,
+        configuredUsdtMicro: null, configuredBnbWei: null, configuredBnbUsdMicro: null,
       };
     }
     if (!bscscanReady()) {
@@ -2142,8 +2148,8 @@ export async function staffRoutes(app: FastifyInstance) {
       return {
         chain: "bep20", address, explorerReady: false, explorerError: null, rows: [], totals: null,
         signerAddress, signerMismatch,
-        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
-        configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
+        signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei, signerBnbUsdMicro,
+        configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei, configuredBnbUsdMicro,
       };
     }
 
@@ -2171,8 +2177,8 @@ export async function staffRoutes(app: FastifyInstance) {
       explorerError,
       signerAddress,
       signerMismatch,
-      signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei,
-      configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei,
+      signerUsdtMicro: signerLive.usdtMicro, signerBnbWei: signerLive.bnbWei, signerBnbUsdMicro,
+      configuredUsdtMicro: configuredLive.usdtMicro, configuredBnbWei: configuredLive.bnbWei, configuredBnbUsdMicro,
       totals: explorerError ? null : { inMicro: Number(inMicro), outMicro: Number(outMicro), rows: txs.length },
       rows: txs.map((t) => ({
         hash: t.hash,

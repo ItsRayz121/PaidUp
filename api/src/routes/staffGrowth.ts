@@ -24,6 +24,10 @@ import {
   loadLeaderboard, listExclusions, addExclusion, removeExclusion,
 } from "../leaderboard.ts";
 import { enabled as flagEnabled } from "../flags.ts";
+import {
+  loadLeaderboardRewardSettings, saveLeaderboardRewardSettings, clampTiers,
+  LEADERBOARD_REWARD_DEFAULTS, type LeaderboardRewardSettings,
+} from "../leaderboardRewardSettings.ts";
 
 function staffGuard(
   perm: Permission,
@@ -260,5 +264,109 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
       targetUserId: target, actorIp: req.ip,
     });
     return { ok: true };
+  }));
+
+  // ---- Leaderboard reward pools (founder, 2026-09-05) ----------------------
+  // Weekly/monthly ROZI prizes for the top of each track. Config lives in ONE
+  // app_settings JSON blob (leaderboardRewardSettings.ts's own header explains
+  // why, vs. mining's flat scalar keys) — gated on the SAME leaderboard.manage
+  // permission as everything else on this screen: this is "config for a
+  // Growth feature the same admin already tunes", not a one-off balance
+  // adjustment (that is mining.adjust, a different concern).
+  app.get("/staff/leaderboard/rewards/settings", staffGuard("leaderboard.manage", async () => {
+    const settings = await loadLeaderboardRewardSettings();
+    return { settings, defaults: LEADERBOARD_REWARD_DEFAULTS };
+  }));
+
+  const cycleConfigSchema = z.object({
+    enabled: z.boolean(),
+    tiersEarnersRozi: z.array(z.number().finite().nonnegative()).max(20),
+    tiersReferrersRozi: z.array(z.number().finite().nonnegative()).max(20),
+  });
+  const settingsSchema = z.object({
+    enabled: z.boolean(),
+    weekly: cycleConfigSchema,
+    monthly: cycleConfigSchema,
+  });
+
+  app.patch("/staff/leaderboard/rewards/settings", staffGuard("leaderboard.manage", async ({ userId, role }, req, reply) => {
+    const parsed = settingsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Check every field — pool tiers must be numbers." });
+    const next = parsed.data as LeaderboardRewardSettings;
+
+    // A cadence switched ON with no tiers would settle every due period as a
+    // silent no-op ("no tiers configured", per leaderboardRewards.ts) — reject
+    // at save time instead of leaving an admin to wonder why a week went by
+    // with no prize paid.
+    for (const [cadence, cfg] of [["weekly", next.weekly], ["monthly", next.monthly]] as const) {
+      if (cfg.enabled && cfg.tiersEarnersRozi.length === 0 && cfg.tiersReferrersRozi.length === 0) {
+        return reply.code(400).send({ error: `${cadence} is on but has no tiers set for either track.` });
+      }
+    }
+
+    const before = await loadLeaderboardRewardSettings();
+    next.weekly.tiersEarnersRozi = clampTiers(next.weekly.tiersEarnersRozi);
+    next.weekly.tiersReferrersRozi = clampTiers(next.weekly.tiersReferrersRozi);
+    next.monthly.tiersEarnersRozi = clampTiers(next.monthly.tiersEarnersRozi);
+    next.monthly.tiersReferrersRozi = clampTiers(next.monthly.tiersReferrersRozi);
+    await saveLeaderboardRewardSettings(next);
+    await logAudit({
+      actorUserId: userId, actorRole: role, action: "leaderboard_rewards_settings",
+      detail: JSON.stringify({ before, after: next }), actorIp: req.ip,
+    });
+    return { ok: true, settings: next };
+  }));
+
+  // Read-only cycle history — the auditable "who won, what rank, how much"
+  // trail. Every payout row already carries a hard join to its own
+  // rozi_ledger row (leaderboardRewards.ts), so this is a display query, never
+  // a second source of truth for what was minted.
+  app.get("/staff/leaderboard/rewards/cycles", staffGuard("leaderboard.manage", async (_ctx, req) => {
+    const q = z.object({
+      cycleType: z.enum(["weekly", "monthly"]).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(20),
+    }).parse((req.query as Record<string, unknown>) ?? {});
+
+    const cycles = await sql.all<{
+      id: string; cycle_type: string; track: string; period_start: string; period_end: string;
+      wanted_micro: string; paid_micro: string; scale_factor: number; settled_at: string;
+    }>(
+      `SELECT id, cycle_type, track, period_start, period_end, wanted_micro, paid_micro, scale_factor, settled_at
+       FROM leaderboard_reward_cycles
+       ${q.cycleType ? "WHERE cycle_type = ?" : ""}
+       ORDER BY settled_at DESC LIMIT ${q.limit}`,
+      ...(q.cycleType ? [q.cycleType] : []),
+    );
+    if (cycles.length === 0) return { cycles: [] };
+
+    const ids = cycles.map((c) => c.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const payouts = await sql.all<{
+      cycle_id: string; user_id: string; email: string; rank: number; score: string; micro: string;
+    }>(
+      `SELECT p.cycle_id, p.user_id, u.email, p.rank, p.score, p.micro
+       FROM leaderboard_reward_payouts p JOIN users u ON u.id = p.user_id
+       WHERE p.cycle_id IN (${placeholders})
+       ORDER BY p.cycle_id, p.rank ASC`,
+      ...ids,
+    );
+    const byCycle = new Map<string, typeof payouts>();
+    for (const p of payouts) {
+      const list = byCycle.get(p.cycle_id) ?? [];
+      list.push(p);
+      byCycle.set(p.cycle_id, list);
+    }
+    return {
+      cycles: cycles.map((c) => ({
+        id: c.id, cycleType: c.cycle_type, track: c.track,
+        periodStart: c.period_start, periodEnd: c.period_end,
+        wantedMicro: Number(c.wanted_micro), paidMicro: Number(c.paid_micro),
+        scaleFactor: c.scale_factor, settledAt: c.settled_at,
+        winners: (byCycle.get(c.id) ?? []).map((p) => ({
+          userId: p.user_id, email: p.email, rank: p.rank,
+          score: Number(p.score), micro: Number(p.micro),
+        })),
+      })),
+    };
   }));
 }

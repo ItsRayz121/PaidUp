@@ -51,7 +51,8 @@
     "test:costguard": "tsx --test src/tests/costGuard.test.ts",
     "test:sessions": "tsx src/tests/sessions.e2e.ts",
     "test:staffalerts": "tsx src/tests/staffAlerts.e2e.ts",
-    "test:bscscan": "tsx --test src/tests/bscscan.test.ts"
+    "test:bscscan": "tsx --test src/tests/bscscan.test.ts",
+    "test:leaderboardrewards": "tsx src/tests/leaderboardRewards.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
