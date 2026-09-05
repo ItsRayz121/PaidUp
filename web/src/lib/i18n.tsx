@@ -390,7 +390,6 @@ const copy: Record<string, string> = {
   "refer.bind.placeholder": "Friend's code",
   "refer.bind.cta": "Add code",
   "refer.bind.saving": "Adding…",
-  "refer.bind.done": "Code added. Your friend now earns a share when you do.",
   "refer.bind.note": "You can only add a code once.",
   // The compact, permanent version of the box above — shown once a code IS
   // bound (from signup or from the form above), instead of the full form

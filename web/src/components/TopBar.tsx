@@ -24,11 +24,6 @@ export function TopBar() {
   // reason people reach for a push notification instead, and push is the thing
   // this design is protecting.
   const inbox = useApi(fetchNotifications, []);
-  // Mining state as well as the balance, because this bar shows the SAME
-  // combined figure as home and /wallet. It costs one extra request per page
-  // load, and that is the cheap side of the trade: a top bar that says 2.20
-  // while the card below it says 14.68 is a user working out which number the
-  // app is lying with. One balance means one balance everywhere it appears.
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-card/95 backdrop-blur">
@@ -60,13 +55,12 @@ export function TopBar() {
             className="flex items-center gap-1.5 rounded-full border border-brand/10 bg-brand-tint px-3 py-1.5"
             aria-label={t("topbar.balanceLabel")}
           >
-            {/* Waits for BOTH calls: showing the mined half first would let the
-                number visibly jump a moment later, which reads as a glitch on
-                every screen in the app rather than just one.
-                A failed call is NOT the same as a slow one, and used to look
-                identical — the dash simply sat there forever, on every screen,
-                with nothing saying why. Now it says so, and the pill still
-                leads to /wallet, which has the retry. */}
+            {/* No live balance here — deliberately reverted (founder,
+                2026-08-09, "Polish Rozi branding and hide token balances")
+                the day after this pill briefly showed the combined ROZI
+                figure. A static label, same words as topbar.balanceLabel's
+                own aria-label; the pill still leads to /wallet, which has
+                the real balance and its own retry. */}
             <span className="text-xs font-bold leading-none text-brand">
               {t("topbar.roziComingSoon")}
             </span>
