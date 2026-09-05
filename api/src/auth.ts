@@ -75,7 +75,7 @@ export async function issueCode(
     "INSERT INTO email_codes (id, email, code_hash, purpose, pending_password_hash, expires_at, attempts, consumed, created_at) VALUES (?,?,?,?,?,?,0,0,?)",
     newId(), email, hashCode(code), purpose, pendingPasswordHash, expires, now(),
   );
-  await sendLoginCode(email, code);
+  await sendLoginCode(email, code, purpose);
 }
 
 // Validate + consume an OTP for a purpose. Returns a structured result (with the
