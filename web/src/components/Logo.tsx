@@ -57,15 +57,25 @@ export function LogoLockup({ tagline, size = 44 }: { tagline?: string; size?: nu
   return (
     <div className="flex items-center gap-2.5">
       {/* The full-lockup image already contains the tagline, so when it loads we
-          hide the text fallback (including its separate tagline line). */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/brand/logo-full.png"
-        alt="RoziPay"
-        onLoad={() => setLoaded(true)}
-        style={{ height: size * 1.15, width: "auto", display: loaded ? "block" : "none" }}
-        className="object-contain"
-      />
+          hide the text fallback (including its separate tagline line). The
+          artwork itself is dark navy text on a transparent/white background —
+          baked into the PNG, so no CSS token can lighten it for dark mode. A
+          fixed white pill behind it (never `bg-card`, which turns near-black
+          in the vault theme) is what keeps it readable in both themes,
+          matching the same fixed-white trick LogoMark already uses. */}
+      <span
+        className="rounded-xl bg-white px-2.5 py-1.5 shadow-[0_2px_8px_rgba(7,67,164,0.14)]"
+        style={{ display: loaded ? "block" : "none" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/logo-full.png"
+          alt="RoziPay"
+          onLoad={() => setLoaded(true)}
+          style={{ height: size * 1.15, width: "auto", display: "block" }}
+          className="object-contain"
+        />
+      </span>
       {!loaded && (
         <>
           <LogoMark size={size} />
