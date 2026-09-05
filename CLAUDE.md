@@ -3626,3 +3626,44 @@ See `docs/` for the full spec.
     the sweep loop now charges an estimate and the meter's comment states
     exactly what is and is not counted; both bounded caches evict LRU rather
     than FIFO (a plain `set` on an existing key does not move it in a JS `Map`).
+
+- **BIMI — GETTING THE ROZIPAY LOGO TO SHOW NEXT TO OUR EMAILS (founder,
+  2026-09-05, request only — the DNS/provider work is still ahead of us).**
+  The founder pointed at another company's email showing a real logo icon in
+  Gmail next to the sender name, where our own emails show a generic gray
+  avatar, and asked for the same. This is **BIMI (Brand Indicators for
+  Message Identification)**, not a code fix — it needs DNS records and an
+  email-authentication policy, not an app change. Founder's choice: **do the
+  free path (DMARC + BIMI record), explicitly WITHOUT a VMC** — so this will
+  show the logo in Yahoo/AOL and similar, but **not in Gmail specifically**,
+  since Gmail requires a paid Verified Mark Certificate (~$1,300–2,500/yr,
+  usually needs a registered trademark on the mark) on top of everything
+  else. Revisit the VMC only if that's worth it later.
+  - **Shipped this pass**: `web/public/brand/bimi-logo.svg` — a square SVG
+    Tiny-PS-profile wrapper (`baseProfile="tiny-ps" version="1.2"`, a `<title>`,
+    solid white background, no scripting/external refs) embedding the existing
+    `icons/apple-touch-icon.png` brand mark as a base64 `<image>`. ~12KB, well
+    under BIMI's practical size guidance. Once deployed this is reachable at
+    `https://rozipay.xyz/brand/bimi-logo.svg`. ⚠️ **This is a raster image
+    wrapped in an SVG shell, not true vector artwork** — it satisfies the Tiny
+    PS profile (raster via `<image>` is permitted) and should pass validation,
+    but a real vector master (e.g. exported from Canva) would render crisper
+    at very small sizes if the founder wants to swap it in later.
+  - **The full ordered checklist is now in `api/.env.example`** (right after
+    the email config block, since step 1 depends on `RESEND_API_KEY` /
+    `EMAIL_FROM` actually being set): verify rozipay.xyz as a sending domain
+    in Resend (gives SPF+DKIM DNS records) → add those in GoDaddy → let real
+    mail flow and confirm SPF/DKIM pass → add a `_dmarc.rozipay.xyz` TXT
+    record at `p=quarantine` (never jump straight to `p=reject`) → validate
+    the SVG against a BIMI validator → add the `default._bimi.rozipay.xyz`
+    TXT record pointing at the SVG's URL.
+  - ⚠️ **NONE OF THE DNS/PROVIDER STEPS WERE DONE THIS PASS — THEY CAN'T BE
+    FROM HERE.** No GoDaddy MCP tool was available in this session (despite
+    it being named in this file's tech-stack list) and no Resend
+    dashboard/API access exists either — `RESEND_API_KEY` is still unset, so
+    real email isn't even flowing from rozipay.xyz yet, which is a
+    prerequisite for all of this. **Someone with GoDaddy + Resend access
+    needs to actually walk the checklist above.** If a GoDaddy MCP is
+    connected in a future session, this is a five-step job at that point:
+    read the Resend-issued records, write them via that MCP, then the two new
+    TXT records once DKIM/SPF are confirmed passing.
