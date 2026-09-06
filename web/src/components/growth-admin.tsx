@@ -13,6 +13,7 @@ import {
   fetchReferralAdmin, setReferralRatesForAll, fetchReferralInvitees,
   fetchLeaderboardAdmin, excludeFromLeaderboard, unexcludeFromLeaderboard,
   fetchLeaderboardRewardSettings, saveLeaderboardRewardSettings, fetchLeaderboardRewardCycles,
+  fetchLeaderboardMiningReserve,
   type ReferralAdmin, type ReferralInvitee,
   type LeaderboardRewardSettings, type LeaderboardRewardCycleConfig,
 } from "@/lib/api";
@@ -595,6 +596,29 @@ function DistributionCalculator({ onApply }: { onApply: (tiers: string) => void 
   );
 }
 
+// Part 5/6 — the mining-allocation summary at the top of the builder.
+function MiningReserveSummary() {
+  const reserve = useApi(fetchLeaderboardMiningReserve, []);
+  if (reserve.loading || !reserve.data) return null;
+  const r = reserve.data;
+  return (
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+      <h3 className="font-bold text-brand-ink">Mining allocation — what a new pool draws from</h3>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+        <div><p className="text-[10px] uppercase text-muted">Official cap</p><p className="num font-semibold text-brand-ink">{n(r.capRozi)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted">Already emitted</p><p className="num font-semibold text-brand-ink">{n(Math.round(r.emittedRozi))}</p></div>
+        <div><p className="text-[10px] uppercase text-muted">Available reserve</p><p className="num font-semibold text-success">{n(Math.round(r.remainingRozi))}</p></div>
+      </div>
+      <p className="mt-2 text-[11px] text-muted">
+        A reward pool never mints past the cap: if what every cadence&apos;s tiers ask for exceeds
+        what&apos;s left, every payout that week/month is scaled down proportionally at settlement —
+        the same protection mining&apos;s own daily payouts already use. There is no separate
+        up-front reservation; this figure is the live source of truth, not a snapshot that can go stale.
+      </p>
+    </div>
+  );
+}
+
 export function LeaderboardRewardsPanel() {
   const data = useApi(fetchLeaderboardRewardSettings, []);
   const cycles = useApi(() => fetchLeaderboardRewardCycles(20), []);
@@ -624,6 +648,8 @@ export function LeaderboardRewardsPanel() {
 
   return (
     <div className="space-y-5">
+      <MiningReserveSummary />
+
       <p className="rounded-lg border border-line bg-card p-2.5 text-xs text-muted">
         Real ROZI, paid automatically once a week/month closes — top earners AND top
         inviters, each on their own tiers. Ships <strong>off</strong> until you turn it on here.

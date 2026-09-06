@@ -371,6 +371,24 @@ console.log("\n-- public API: window param scopes the board, and myStanding trac
     JSON.stringify(offView.myStanding));
 }
 
+console.log("\n-- Part 5/6: the mining-reserve summary the reward-pool builder shows --");
+{
+  await setMiningSetting("supplyCap", MINING_DEFAULTS.supplyCap);
+  const res = await app.inject({ method: "GET", url: "/staff/leaderboard/rewards/mining-reserve", headers: authOf(admin) });
+  check("an admin (leaderboard.manage) can read it", res.statusCode === 200, res.body);
+  const j = res.json() as { capRozi: number; emittedRozi: number; remainingRozi: number };
+  check("the cap matches the configured supply cap", j.capRozi === MINING_DEFAULTS.supplyCap, JSON.stringify(j));
+  check("remaining is never more than the cap", j.remainingRozi <= j.capRozi, JSON.stringify(j));
+  check("emitted + remaining accounts for the whole cap (within rounding)",
+    Math.abs((j.emittedRozi + j.remainingRozi) - j.capRozi) < 1, JSON.stringify(j));
+
+  const refused = await app.inject({ method: "GET", url: "/staff/leaderboard/rewards/mining-reserve", headers: authOf(support) });
+  check("a role without leaderboard.manage is refused (403)", refused.statusCode === 403, refused.body);
+
+  const noAuth = await app.inject({ method: "GET", url: "/staff/leaderboard/rewards/mining-reserve" });
+  check("no auth at all is refused, not a 500", noAuth.statusCode === 401 || noAuth.statusCode === 403, String(noAuth.statusCode));
+}
+
 await resetSettings();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

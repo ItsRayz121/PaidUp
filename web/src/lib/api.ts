@@ -2283,6 +2283,13 @@ export type LeaderboardRewardCycle = {
 export const fetchLeaderboardRewardCycles = (limit = 20) =>
   apiFetch<{ cycles: LeaderboardRewardCycle[] }>(`/staff/leaderboard/rewards/cycles?limit=${limit}`);
 
+// Part 5/6 — the mining allocation's cap/emitted/remaining, read live so the
+// reward-pool builder can show what room actually exists before a pool is set.
+export const fetchLeaderboardMiningReserve = () =>
+  apiFetch<{ capRozi: number; emittedRozi: number; remainingRozi: number }>(
+    "/staff/leaderboard/rewards/mining-reserve",
+  );
+
 // ---- USDT top-up review queue (staff) ---------------------------------------
 export type AdminTopup = {
   id: string; user_id: string; email: string; username: string | null;

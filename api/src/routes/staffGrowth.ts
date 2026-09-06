@@ -28,6 +28,8 @@ import {
   loadLeaderboardRewardSettings, saveLeaderboardRewardSettings, clampTiers,
   LEADERBOARD_REWARD_DEFAULTS, type LeaderboardRewardSettings,
 } from "../leaderboardRewardSettings.ts";
+import { loadMiningSettings, totalEmittedMicro } from "../mining/settings.ts";
+import { toMicro, fromMicro } from "../mining/core.ts";
 
 function staffGuard(
   perm: Permission,
@@ -367,6 +369,33 @@ export async function staffGrowthRoutes(app: FastifyInstance) {
           score: Number(p.score), micro: Number(p.micro),
         })),
       })),
+    };
+  }));
+
+  // Part 5/6 — "what does the mining allocation actually have room for right
+  // now", shown at the top of the reward-pool builder before an admin commits
+  // a new pool. Reuses the SAME totals the Mining tab's own Overview already
+  // computes (mining/settings.ts) — never a second, competing accounting of
+  // the same 21M cap.
+  //
+  // ⚠️ THERE IS NO SEPARATE "reserved for active campaigns" NUMBER, AND THAT
+  // IS DELIBERATE, NOT A GAP. leaderboardRewards.ts's settleLeaderboardCycle
+  // already enforces the cap AT SETTLEMENT TIME — every payout is scaled down
+  // proportionally (capScaleFactor) if the pool asks for more than the cap has
+  // left, under the SAME global advisory lock mining settlement itself uses.
+  // A second, up-front "reservation" ledger would either duplicate that
+  // enforcement or, worse, disagree with it — two systems claiming the same
+  // finite resource is a race the existing single source of truth doesn't
+  // have. `remainingMicro` below is that one source of truth, read live.
+  app.get("/staff/leaderboard/rewards/mining-reserve", staffGuard("leaderboard.manage", async () => {
+    const settings = await loadMiningSettings();
+    const capMicro = toMicro(settings.supplyCap);
+    const emittedMicro = await totalEmittedMicro();
+    const remainingMicro = Math.max(0, capMicro - emittedMicro);
+    return {
+      capRozi: settings.supplyCap,
+      emittedRozi: fromMicro(emittedMicro),
+      remainingRozi: fromMicro(remainingMicro),
     };
   }));
 }
