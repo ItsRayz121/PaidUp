@@ -9,11 +9,13 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   sql, now, newId, postRozi, postUsdt, usdtBalanceMicroOf,
-  usdtFromMicro, usdtToMicro, logAudit,
+  usdtFromMicro, usdtToMicro, logAudit, getSetting,
 } from "../db.ts";
 import { chainById, validateAddress } from "../chains.ts";
 import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
+import { recordPlatformTx } from "../treasuryLedger.ts";
+import { treasurySignerAddress } from "../signer.ts";
 import { sendPushToUser } from "../push.ts";
 import { rpcHealth, endpointsFor } from "../rpc.ts";
 import { usage as costUsage } from "../costGuard.ts";
@@ -703,8 +705,22 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       if (!b.txHash) {
         throw { statusCode: 400, message: "Send the USDT by hand first, then paste the transaction hash." };
       }
-      // NO LEDGER ROW HERE. The debit was written when the user asked; writing
-      // another one now would take the money twice.
+      // NO POINTS/USDT LEDGER ROW HERE. The debit was written when the user
+      // asked; writing another one now would take the money twice.
+      //
+      // The TREASURY ledger row is separate and additive — this is the
+      // manual "relay unavailable, staff sent it by hand from the treasury
+      // wallet" path, a genuine treasury-initiated send.
+      const fromAddr = treasurySignerAddress() ?? (await getSetting("treasury_address_bep20", ""));
+      if (fromAddr) {
+        await recordPlatformTx({
+          chain: refund.chain, txHash: b.txHash.trim(),
+          fromAddress: fromAddr, toAddress: refund.address,
+          amountMicro: net, purpose: "refund", userId: refund.user_id,
+          relatedKind: "usdt_refund_requests", relatedId: id,
+          status: "submitted",
+        }, t);
+      }
       await t.run(
         "UPDATE usdt_refund_requests SET status = 'paid', tx_hash = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
         b.txHash.trim(), userId, now(), id,

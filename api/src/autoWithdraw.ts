@@ -27,6 +27,8 @@ import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
 import { autoWithdrawnLast24hPoints } from "./velocity.ts";
 import { getAutoWithdrawMaxPoints } from "./autoSettleSettings.ts";
+import { recordPlatformTx, purposeForWithdrawal } from "./treasuryLedger.ts";
+import { treasurySignerAddress } from "./signer.ts";
 
 export type AutoSettleResult =
   | { settled: true; txHash: string; usdt: string }
@@ -136,6 +138,21 @@ export async function tryAutoSettle(requestId: string): Promise<AutoSettleResult
         points: net,
         usdt,
       });
+      // This is the DIRECT-from-treasury fallback (relay unavailable) —
+      // record it in the Treasury ledger the same as every other
+      // treasury-initiated send (Part 4). The signer address is the address
+      // this transaction actually broadcast from.
+      const signer = treasurySignerAddress();
+      if (signer) {
+        await recordPlatformTx({
+          chain: req.payout_rail, txHash: sent.txHash,
+          fromAddress: signer, toAddress: req.payout_address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000),
+          purpose: await purposeForWithdrawal(req.id, t), userId: req.user_id,
+          relatedKind: "withdrawal_requests", relatedId: req.id,
+          status: "submitted",
+        }, t);
+      }
       await t.run(
         `UPDATE withdrawal_requests
          SET status = 'paid', reviewed_by = 'system:auto', review_note = ?,

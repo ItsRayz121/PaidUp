@@ -405,6 +405,68 @@ export const config = {
   // withdrawal rows, no error. Free key at bscscan.com/myapikey.
   bscscanApiKey: process.env.BSCSCAN_API_KEY ?? "",
 
+  // ---- Treasury transaction ledger (staff Money & payouts, Part 3/5/6) ------
+  // An internal, persistent record of every transaction touching the treasury
+  // wallet — built because the on-demand block-explorer read (bscscan.ts) can
+  // fail ("Free API access is not supported for this chain") and, even when it
+  // works, is never a reliable place to remember what THIS platform itself
+  // did. See treasuryLedger.ts for the ledger itself.
+  //
+  // Where the background scan should start from. Unset (undefined) means
+  // "start from the current safe tip" — no historical backfill — which is the
+  // safe default for a deployment that has never set this: walking the whole
+  // chain history from genesis would be an unbounded, unrequested scan. Set it
+  // to a real block number to backfill from a known point (Part 6).
+  //
+  // ⚠️ NOT a raw `Number(...)` — same bug class this file's own num() helper
+  // exists to prevent (see num()'s header). A non-empty but non-numeric value
+  // (stray whitespace, a pasted comment) would parse to NaN, and `NaN ?? x`
+  // does NOT fall back to x (nullish coalescing only catches null/undefined) —
+  // tickTreasuryLedgerScan's `fromBlock <= safeTip` check would then be false
+  // forever, silently stalling the scan on first boot with no error anywhere.
+  // Falls back to undefined (the safe "start from now" default) for anything
+  // that isn't a real, non-negative integer.
+  treasuryTrackingStartBlock: ((): number | undefined => {
+    const raw = (process.env.TREASURY_TRACKING_START_BLOCK ?? "").trim();
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+  })(),
+
+  // Confirmations required before an EXTERNALLY-DETECTED treasury transaction
+  // is marked 'confirmed' (a platform-INITIATED one is confirmed by its own
+  // existing receipt check — see payoutRelay.ts). Falls back to the same
+  // depositConfirmations.bep20 default (15) rather than inventing a second
+  // number for the same chain.
+  treasuryConfirmations: num(process.env.TREASURY_CONFIRMATIONS, 15, 0),
+
+  // Kill switch for the treasury-address NATIVE (BNB) block walker — same
+  // shape and same reasoning as nativeDepositScanEnabled just below: walking
+  // full block bodies costs one RPC call PER BLOCK, forever, once turned on.
+  // Scoped to a single treasury address (not every user's deposit address),
+  // so the cost is far smaller than the per-user scanner this mirrors, but
+  // still nonzero and still fixed-cadence rather than activity-driven —
+  // default OFF, same posture as every other "walks every block" switch in
+  // this codebase (CLAUDE.md, 2026-08-13/08-27).
+  treasuryNativeScanEnabled: (process.env.TREASURY_NATIVE_SCAN_ENABLED ?? "false") === "true",
+
+  // How far back the periodic reconciliation re-scan looks, in blocks, to
+  // recover any event a transient RPC hiccup might have caused the main
+  // forward walk to miss (Part 5.10) — re-processing is always safe: every
+  // write is idempotent on (chain, tx hash, log index).
+  treasuryReconcileLookbackBlocks: num(process.env.TREASURY_RECONCILE_LOOKBACK_BLOCKS, 2_000, 0),
+  treasuryReconcileIntervalMs: num(process.env.TREASURY_RECONCILE_INTERVAL_MS, 60 * 60 * 1000, 60_000),
+
+  // Reserved for a future real-time subscription (Part 5: "combined with
+  // persistent block-based polling"). Not subscribed to in this build — rpc.ts
+  // is a plain request/response JSON-RPC client, and a real eth_subscribe
+  // connection needs its own reconnect/resubscribe handling and is a bigger
+  // architectural change (see CLAUDE.md's 2026-08-27 entry on the same
+  // tradeoff for deposits). Stored and surfaced on the monitor status endpoint
+  // purely so "is a websocket endpoint configured" is answerable without a
+  // code change once that is built.
+  rpcBep20Ws: (process.env.RPC_BEP20_WS ?? "").trim() || null,
+
   // ---- Sweep signing (docs/CUSTODY_SPEC.md § 5, steps 2-4) -------------------
   // ⚠️ THIS IS A STRICTLY BIGGER SECRET THAN THE TREASURY KEY. Where the
   // treasury key can only move the treasury's own balance and is rotatable

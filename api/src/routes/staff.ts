@@ -22,6 +22,10 @@ import { bnbUsdMicroPrice, bnbWeiToUsdMicro } from "../bnbPrice.ts";
 import { treasurySignerAddress } from "../signer.ts";
 import { createPublicClient, http, fallback, erc20Abi } from "viem";
 import { ONCHAIN_CHAINS } from "../payout.ts";
+import {
+  recordPlatformTx, purposeForWithdrawal, listTreasuryLedger, largestConfirmedTreasuryPayouts,
+  treasuryMonitorStatus, type TreasuryLedgerFilters,
+} from "../treasuryLedger.ts";
 
 // Gate a route on ONE named permission (see permissions.ts). The old form took
 // a list of roles; a permission is the same gate stated as what it protects
@@ -444,6 +448,22 @@ export async function staffRoutes(app: FastifyInstance) {
         usdt,
         providedTxHash: txHash,
       });
+      // Treasury ledger (Part 4): whether staff pasted a manually-sent hash or
+      // the API signed it itself here, this is a real treasury-initiated
+      // send — record it. `fromAddress` falls back to the configured
+      // treasury address for the manual-paste case, where we have no signer
+      // to ask (nobody here actually signed anything).
+      const fromAddr = treasurySignerAddress() ?? (await getSetting("treasury_address_bep20", ""));
+      if (fromAddr) {
+        await recordPlatformTx({
+          chain: w.payout_rail, txHash: result.txHash,
+          fromAddress: fromAddr, toAddress: w.payout_address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000),
+          purpose: await purposeForWithdrawal(w.id, t), userId: w.user_id,
+          relatedKind: "withdrawal_requests", relatedId: w.id,
+          status: "submitted",
+        }, t);
+      }
       const s = stampSql("paid", { paid_at: now(), tx_hash: result.txHash, usdt_amount: usdt });
       await t.run(s.text, ...s.vals);
       notify.job = {
@@ -2196,6 +2216,47 @@ export async function staffRoutes(app: FastifyInstance) {
         label: labels.get(t.hash.toLowerCase()) ?? null,
       })),
     };
+  }));
+
+  // ---- Treasury transaction ledger (Money & payouts) ----------------------
+  // Internal, persistent — never depends on the explorer read above. See
+  // treasuryLedger.ts's own header for the two write paths that feed it.
+  const LEDGER_SORTS = ["created_at", "amount_micro"] as const;
+  function parseLedgerFilters(query: Record<string, string | undefined>): TreasuryLedgerFilters {
+    return {
+      category: (query.category as TreasuryLedgerFilters["category"]) ?? "all",
+      direction: (query.direction as TreasuryLedgerFilters["direction"]) ?? "all",
+      token: (query.token as TreasuryLedgerFilters["token"]) ?? "all",
+      status: (query.status as TreasuryLedgerFilters["status"]) ?? "all",
+      dateFrom: query.dateFrom || undefined,
+      dateTo: query.dateTo || undefined,
+      q: query.q || undefined,
+      limit: Math.min(Number(query.limit ?? 25) || 25, 200),
+      offset: Math.max(Number(query.offset ?? 0) || 0, 0),
+      sort: (LEDGER_SORTS as readonly string[]).includes(query.sort ?? "") ? (query.sort as "created_at" | "amount_micro") : "created_at",
+      dir: query.dir === "asc" ? "asc" : "desc",
+    };
+  }
+
+  app.get("/staff/treasury/ledger", staffGuard("treasury.view", async (_ctx, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const { rows, total } = await listTreasuryLedger(parseLedgerFilters(query));
+    return { rows, total, limit: Math.min(Number(query.limit ?? 25) || 25, 200), offset: Math.max(Number(query.offset ?? 0) || 0, 0) };
+  }));
+
+  // Part 1 — Money & payouts overview's "Largest Treasury Payouts" block.
+  // Gated on withdrawals.view, not treasury.view: this is confirmed payout
+  // data the withdrawal queue already shows these same roles, aggregated —
+  // not a new exposure of treasury address/balance detail.
+  app.get("/staff/treasury/ledger/largest-payouts", staffGuard("withdrawals.view", async (_ctx, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const limit = Math.min(Number(query.limit ?? 6) || 6, 25);
+    const rows = await largestConfirmedTreasuryPayouts(limit);
+    return { rows };
+  }));
+
+  app.get("/staff/treasury/ledger/monitor", staffGuard("treasury.view", async () => {
+    return treasuryMonitorStatus("bep20");
   }));
 
   app.get("/staff/users/telegram/pending", staffGuard("users.review", async () => {

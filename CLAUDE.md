@@ -4448,3 +4448,160 @@ See `docs/` for the full spec.
     production too, not just in the test: several of the free/public BSC
     nodes in the default `RPC_BEP20` fallback list are the exact ones
     `evm.ts`'s own comments already name as refusing wide ranges.
+
+- **AN INTERNAL, PERSISTENT TREASURY TRANSACTION LEDGER — MONEY & PAYOUTS
+  STOPS DEPENDING ON THE EXPLORER FOR ITS OWN HISTORY (2026-09-06).** The
+  Treasury → Wallet panel's on-demand explorer read (bscscan.ts, 2026-09-03)
+  can fail outright ("Free API access is not supported for this chain") and
+  even when it works has no idea WHY a transaction happened. Built the thing
+  CLAUDE.md's own Part-8-style rule keeps repeating across this file: the
+  explorer is a fallback, never the only place future history lives. New
+  `treasury_ledger_entries` table + `api/src/treasuryLedger.ts`. Verified: new
+  `npm run test:treasuryledger` (54 checks) + a 24-suite regression sweep from
+  fresh databases (payoutrelay 69, usdt 112, autowithdraw, autorefund,
+  moneyadmin 100, wallet 52, withdrawcontrols 21, stage4 48, disbursements 96,
+  admin 15, permissions 17, custody 8, deposits 43, usersadmin 59, sessions 40,
+  fees 24, mining 42 unit + 65 e2e, kyc 43, referrals 26, proxy 11, stage5 67,
+  stage6 99, stage7 96, analytics 46, leaderboardrewards 40, taskbudget 46,
+  telegram 47, tasksadmin 57, messagesadmin 46, bscscan 5) — all green; api +
+  web typecheck, eslint, web production build (38 routes) all clean.
+  - **Two write paths, one idempotent table**, exactly the shape
+    `chain_deposits` already established for per-user deposits: (1)
+    PLATFORM-INITIATED (`recordPlatformTx`) — called the instant a broadcast
+    has a real tx hash, from `payoutRelay.ts`'s withdrawal prefund leg (the
+    ONLY relay leg that actually touches treasury — a refund's relay leg and
+    every BNB withdrawal are zero-treasury-involvement by this codebase's own
+    existing architecture, so they correctly never enter this ledger),
+    `autoWithdraw.ts`/`autoRefund.ts`'s direct-provider fallback, and the
+    manual staff "mark paid" actions in `staff.ts`/`staffMining.ts`. (2)
+    EXTERNALLY OBSERVED — a new scanner,
+    `deposits/adapters/treasuryEvm.ts`, watching the treasury address(es) for
+    ANY USDT `Transfer` where it is either side (two `eth_getLogs` calls per
+    window, since a single call cannot OR across the `from`/`to` topic
+    positions), plus an optional native-BNB block walk gated OFF by default
+    (`TREASURY_NATIVE_SCAN_ENABLED`) for the same per-block-cost reason
+    `nativeDepositScanEnabled` already is. Wired into the EXISTING deposit-scan
+    tick in `server.ts` — no new timer.
+  - ⚠️ **CLASSIFICATION IS FIRST-WRITER-WINS; STATUS NEVER IS.** Whichever
+    source inserts a `(chain, tx_hash, log_index)` row first sets
+    category/purpose/user_id/related_* permanently; a later sighting of the
+    SAME transaction (the scanner independently observing a platform-initiated
+    send, or vice versa) only ever advances `status` (submitted → confirmed/
+    reverted). This is what lets code that KNOWS the real purpose win over a
+    scanner's address-matching guess, tested directly
+    (`test:treasuryledger`'s "duplicate-event prevention" block: a
+    scanner-style upsert of an already-recorded withdrawal never reclassifies
+    it, only advances its status).
+  - **Classification rule, exactly as specified**: incoming = always
+    `treasury_deposit`; outgoing to an address in `deposit_wallets` =
+    `user_payout`; outgoing to anywhere else = `external_transfer`. Purpose
+    (`withdrawal` vs `reward`) is decided by a single shared helper,
+    `purposeForWithdrawal` (checks `payout_disbursements` for a link), so the
+    four call sites that record a withdrawal can never disagree about which.
+  - **UI**: `MoneyOverview.tsx` gained a "Largest Treasury Payouts" block (top
+    6 confirmed treasury→user USDT payouts, sorted desc, "See Full History →"
+    deep-links into Treasury → Wallet). `TreasuryWalletPanel` gained a compact
+    monitor status line (last scanned block, last sync, confirmations
+    required — Part 7), three preview boxes (deposits into treasury /
+    payments & rewards to users / external money out, 6 rows each), and the
+    big red explorer-error panel became a `<details>` dropdown that never
+    hides the live balance, the internal history, or the monitor status — all
+    of which keep rendering regardless of whether the explorer answered. Each
+    box's own "See Full History" swaps in a paginated, `DataTable`-backed,
+    fully filterable view (category/direction/token/status/date range/search)
+    in place, same pattern as every other row-click detail view in this file
+    — no new top-level tab, no cross-panel navigation plumbing needed.
+  - ⚠️ **A REAL PRE-EXISTING BUG WAS FOUND AND FIXED WHILE WIRING THIS UP,
+    AND IT WOULD HAVE SILENTLY BROKEN EVERY LATER ONCHAIN TEST IN A SHARED
+    TEST PROCESS.** `signer.ts`'s `treasurySignerKey()` cached its result
+    FOREVER after the first call — including a NEGATIVE result
+    (`cached = null`) when the treasury key was not yet configured. That is
+    harmless in production (env vars never change at runtime) but is a
+    landmine for any test file that configures the signer key mid-run — and
+    this feature's new call sites (the manual "mark paid" ledger recording)
+    were the ones that finally tripped it: `test:usdt`'s "BNB withdraw, fully
+    configured" scenario started failing with "Sending BNB out is not
+    available yet." Traced with a one-off stack trace to
+    `routes/staffMining.ts`'s refund-paid handler calling
+    `treasurySignerAddress()` before `fullyConfigureSigning()` had run.
+    ⚠️ **Fixed at the root, not worked around**: `treasurySignerKey()` now
+    only ever memoizes the REAL decrypted key — "not configured yet" is a
+    cheap string-emptiness check re-run every call, never cached. Confirmed
+    with `test:signer` (8/8 still green) and `test:usdt` (112/112, was
+    107/112 before the fix).
+  - **Not built, and said so rather than guessed at**: no live
+    `eth_subscribe` WebSocket subscription (`RPC_BEP20_WS` is read and
+    surfaced on the monitor status endpoint for forward compatibility, but
+    nothing subscribes to it yet — the same "polling + reconciliation, no
+    real-time push" tradeoff `rpc.ts`'s own header already accepts for
+    deposits); the "largest payouts" ranking is scoped to USDT amounts only
+    (a BNB send and a USDT payout are not on a comparable numeric scale, and
+    in practice every real payout this app makes is USDT); historical
+    backfill (`TREASURY_TRACKING_START_BLOCK`) is supported but defaults to
+    "start from the current safe tip" — no automatic genesis-to-now scan.
+
+- **CROSS-CHECK ON THE TREASURY LEDGER COMMIT ABOVE, SAME DAY: A REAL
+  DUPLICATE-ROW BUG FOUND AND FIXED.** An independent review pass over the
+  new `treasuryLedger.ts` found a genuine correctness bug plus a
+  latent config-parsing landmine; both fixed. Verified: `test:treasuryledger`
+  now 59 checks (+5, one new dedicated regression block) + `test:payoutrelay`
+  (69) + `test:usdt` (112) + `test:autowithdraw` (16) + `test:autorefund` (8)
+  + `test:moneyadmin` (100) all re-run green; api + web typecheck, eslint, web
+  production build (38 routes) clean.
+  - ⚠️ **`recordPlatformTx` ALWAYS WRITES `log_index: null` — IT BROADCASTS
+    AND RECORDS BEFORE ANY RECEIPT TELLS IT THE REAL LOG INDEX.** The
+    background scanner later observes the SAME transaction with the real,
+    non-null index parsed off the chain. `upsertTreasuryTx`'s existence check
+    matched on the EXACT `(chain, tx, log)` triple — and `-1` (NULL coalesced)
+    never equals a real index like `0` — so the scanner's sighting inserted a
+    SECOND row instead of confirming the first: one real payout, two ledger
+    rows, the original stuck at `'submitted'` forever. The original "duplicate
+    event prevention" test only exercised same-source duplicates (both writes
+    used `log_index: null`), which is exactly why it never caught this.
+    **Fixed** by matching on `tx_hash` alone whenever either side's
+    `log_index` is unknown, and backfilling the real index onto the existing
+    row on merge — classification (category/purpose/user/related_*) still
+    only ever comes from the first writer; only `log_index` and the on-chain
+    status fields can be filled in by a later sighting. A treasury-initiated
+    send is always our own plain `transfer()` call (one Transfer log per tx),
+    so this merge rule is safe for every real case this ledger records. New
+    dedicated regression test proves the merge, the backfill, AND that
+    classification still comes from the platform writer, not the scanner's
+    address-matching guess.
+  - ⚠️ **`treasuryTrackingStartBlock` PARSED WITH A RAW `Number(...)`, THE
+    EXACT BUG CLASS `config.ts`'s OWN `num()` HELPER EXISTS TO PREVENT** (and
+    already documented twice elsewhere in this file for other fields). A
+    non-empty but non-numeric value → `NaN`, and `NaN ?? fallback` does NOT
+    fall back (nullish coalescing only catches null/undefined) — the scan's
+    `fromBlock <= safeTip` check would then be false forever, silently
+    stalling the whole treasury ledger on first boot with no error anywhere.
+    Fixed to fall back to `undefined` (the safe "start from now" default) for
+    anything that isn't a real, non-negative integer.
+  - **The collapsed explorer-error dropdown (Part 7) is intentional, per the
+    founder's own spec** — flagged in review as reading less alarming than
+    the old always-visible red banner, which is true, but the collapse itself
+    was explicitly requested. Split the difference: kept it collapsed, but
+    red/danger-toned rather than neutral amber, since this exact failure mode
+    ("Free API access is not supported for this chain") already once read as
+    "nothing has moved through this wallet" on a wallet that had just sent
+    two real payouts (2026-09-05) — collapsed must not also mean easy to miss.
+  - **Not a bug, documented instead**: the direct-provider `provider.send()`
+    fallback paths (`autoWithdraw.ts`/`autoRefund.ts`/the manual staff
+    "mark paid" actions — used only when the relay is unavailable) have no
+    receipt-check step of their own, so a row they write stays `'submitted'`
+    until the background scanner independently re-observes the same
+    transaction and confirms it — which the log_index merge fix above is what
+    actually makes reliable. `recordPlatformTx`'s own header now says this
+    plainly, so "simplifying" `upsertTreasuryTx`'s match back to an exact
+    triple is not mistaken for a safe cleanup later.
+
+### New environment variables from this work (all optional, all safe defaults — nothing needs to be set for the feature to work)
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `TREASURY_TRACKING_START_BLOCK` | unset (= start from the current safe chain tip, no backfill) | Historical backfill start block for the treasury scanner (Part 6) |
+| `TREASURY_CONFIRMATIONS` | `15` | Blocks required before an externally-observed treasury transaction is marked `confirmed` |
+| `TREASURY_NATIVE_SCAN_ENABLED` | `false` | Turns on the native BNB block-walker for the treasury address (1 RPC call per block when on — same cost shape as the existing per-user native scanner) |
+| `TREASURY_RECONCILE_LOOKBACK_BLOCKS` | `2000` | How many blocks back the periodic reconciliation re-scan looks |
+| `TREASURY_RECONCILE_INTERVAL_MS` | `3600000` (1 hour) | How often that reconciliation re-scan runs |
+| `RPC_BEP20_WS` | unset (null) | Reserved for a future real-time subscription; stored and shown on the monitor status endpoint, nothing subscribes to it yet |

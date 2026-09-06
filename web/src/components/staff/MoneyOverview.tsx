@@ -11,6 +11,7 @@ import { useState, type ReactNode } from "react";
 import { useApi } from "@/lib/hooks";
 import { fetchMoneyOverview, type MoneyOverview as TOverview } from "@/lib/api";
 import { QUEUE_POLL_MS, RefreshBar } from "@/components/staff";
+import { LargestPayoutsBlock } from "./MoneyQueues";
 import { useStaffNav } from "@/lib/staffNav";
 import { StatusBadge, TimeCell, Spinner, ErrorRow } from "./primitives";
 import { formatUsdtMicro, formatPoints, formatBnbWei } from "@/lib/format";
@@ -213,6 +214,9 @@ export function MoneyOverview() {
         <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-withdrawals-group")}
           rows={o.latest.relayFailed.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
       </div>
+
+      {/* ---- largest treasury -> user payouts, ever ---- */}
+      <LargestPayoutsBlock />
     </section>
   );
 }

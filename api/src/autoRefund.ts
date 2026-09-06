@@ -21,6 +21,8 @@
 import { sql, now, isWithdrawalHeld, type TxApi } from "./db.ts";
 import { config } from "./config.ts";
 import { getPayoutProvider } from "./payout.ts";
+import { recordPlatformTx } from "./treasuryLedger.ts";
+import { treasurySignerAddress } from "./signer.ts";
 import { relayAvailable, createRelayJob, microToDecimalString } from "./payoutRelay.ts";
 import type { ChainId } from "./chains.ts";
 import { sendPushToUser } from "./push.ts";
@@ -120,9 +122,24 @@ export async function tryAutoSettleRefund(requestId: string): Promise<AutoRefund
         points: 0, // unused by both providers' send() — a refund never touches points
         usdt,
       });
-      // NO LEDGER ROW HERE, same rule the manual staff "paid" handler follows
-      // (staffMining.ts): the debit already happened when the user asked, so
-      // writing another one now would take the money twice.
+      // NO POINTS/USDT LEDGER ROW HERE, same rule the manual staff "paid"
+      // handler follows (staffMining.ts): the debit already happened when the
+      // user asked, so writing another one now would take the money twice.
+      // The TREASURY ledger row is separate and additive — this direct-from-
+      // treasury fallback (relay unavailable) really does sign from the
+      // treasury key (payout.ts's onchainProvider), unlike the relay path
+      // where a refund has zero treasury involvement.
+      const signer = treasurySignerAddress();
+      if (signer) {
+        await recordPlatformTx({
+          chain: req.chain, txHash: sent.txHash,
+          fromAddress: signer, toAddress: req.address,
+          amountMicro: Math.round(Number(usdt) * 1_000_000),
+          purpose: "refund", userId: req.user_id,
+          relatedKind: "usdt_refund_requests", relatedId: req.id,
+          status: "submitted",
+        }, t);
+      }
       await t.run(
         `UPDATE usdt_refund_requests
          SET status = 'paid', tx_hash = ?, reviewed_by = 'system:auto', reviewed_at = ?

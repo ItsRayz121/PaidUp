@@ -752,6 +752,57 @@ export const fetchTreasuryLedger = (limit = 50) =>
     rows: TreasuryLedgerRow[];
   }>(`/staff/treasury/wallet?limit=${limit}`);
 
+// ---- Treasury transaction LEDGER (internal, persistent) --------------------
+// Distinct from TreasuryLedgerRow above, which is the on-demand explorer read
+// (bscscan.ts) — this is our OWN recorded history: written the instant a
+// platform-initiated send has a hash (never depends on the explorer), plus
+// anything a background scan observes moving through the treasury address
+// directly. See api/src/treasuryLedger.ts's header for the full design.
+export type TreasuryLedgerCategory = "treasury_deposit" | "user_payout" | "external_transfer" | "unknown";
+export type TreasuryLedgerPurpose = "withdrawal" | "reward" | "refund" | "bonus" | "mining_reward" | "other";
+export type TreasuryLedgerStatus = "detected" | "submitted" | "pending" | "confirmed" | "failed" | "replaced" | "reverted";
+export type TreasuryLedgerEntry = {
+  id: string; chain: string; txHash: string; logIndex: number | null;
+  blockNumber: number | null; fromAddress: string; toAddress: string;
+  tokenSymbol: "USDT" | "BNB"; tokenDecimals: number; amountRaw: string; amountMicro: number | null;
+  direction: "in" | "out"; category: TreasuryLedgerCategory; purpose: TreasuryLedgerPurpose | null;
+  userId: string | null; userEmail: string | null;
+  userUsername: string | null; userDisplayName: string | null;
+  userTelegramUsername: string | null; userTelegramName: string | null;
+  status: TreasuryLedgerStatus; failureReason: string | null;
+  createdAt: string; confirmedAt: string | null;
+};
+
+export const fetchTreasuryLedgerEntries = (p: {
+  category?: string; direction?: string; token?: string; status?: string;
+  dateFrom?: string; dateTo?: string; q?: string;
+  sort?: string; dir?: string; limit?: number; offset?: number;
+} = {}) =>
+  apiFetch<{ rows: TreasuryLedgerEntry[]; total: number; limit: number; offset: number }>(
+    `/staff/treasury/ledger?${new URLSearchParams(
+      Object.entries({
+        category: p.category ?? "all", direction: p.direction ?? "all", token: p.token ?? "all",
+        status: p.status ?? "all", dateFrom: p.dateFrom ?? "", dateTo: p.dateTo ?? "", q: p.q ?? "",
+        sort: p.sort ?? "created_at", dir: p.dir ?? "desc",
+        limit: String(p.limit ?? 25), offset: String(p.offset ?? 0),
+      }).filter(([, v]) => v !== ""),
+    ).toString()}`);
+
+// Part 1 — the six largest confirmed treasury -> registered-user payouts.
+export const fetchLargestTreasuryPayouts = (limit = 6) =>
+  apiFetch<{ rows: TreasuryLedgerEntry[] }>(`/staff/treasury/ledger/largest-payouts?limit=${limit}`);
+
+// Part 7 — compact "is this working" readout, drawn from our own checkpoint,
+// never the explorer.
+export type TreasuryMonitorStatus = {
+  chain: string; scanEnabled: boolean;
+  lastScannedBlock: number | null; lastSyncAt: string | null;
+  trackingStartBlock: number | null; confirmationsRequired: number;
+  nativeScanEnabled: boolean; wsConfigured: boolean;
+};
+export const fetchTreasuryMonitorStatus = () =>
+  apiFetch<TreasuryMonitorStatus>("/staff/treasury/ledger/monitor");
+
 // ---- Admin-driven reward disbursement (founder, 2026-09-02) --------------
 // Group approved-but-unreleased rewards into a batch and push them out.
 // 'balance' credits the in-app balance; 'onchain'/'manual'/'csv' also create a

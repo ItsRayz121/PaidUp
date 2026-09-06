@@ -25,6 +25,7 @@ import { settleDueEpochs } from "./mining/engine.ts";
 import { configureTelegramMenuButton, configureTelegramWebhook } from "./telegram.ts";
 import { initDb, sql, usingRealPostgres, getSetting } from "./db.ts";
 import { tickDepositScan } from "./deposits/scanner.ts";
+import { tickTreasuryLedgerScan } from "./treasuryLedger.ts";
 import { tickSweep } from "./deposits/sweep.ts";
 import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
@@ -398,6 +399,14 @@ async function tickDeposits() {
     await tickSweep();
   } catch (err) {
     app.log.error({ err }, "Sweep tick failed");
+  }
+  // Treasury transaction ledger — Staff → Money & payouts → Treasury. Shares
+  // this tick's cadence/lock discipline rather than opening a second timer;
+  // a no-op until a treasury address is actually configured (treasuryLedger.ts).
+  try {
+    await tickTreasuryLedgerScan();
+  } catch (err) {
+    app.log.error({ err }, "Treasury ledger scan tick failed");
   }
 }
 const runDeposits = everyNoOverlap("deposits", config.depositScanIntervalMs, tickDeposits);

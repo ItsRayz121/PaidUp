@@ -74,6 +74,7 @@ import { deriveChildPrivateKey, sweepSigningEnabled } from "./custodySeeds.ts";
 import { rpcCall } from "./rpc.ts";
 import { CostCeilingError } from "./costGuard.ts";
 import { sendPushToUser } from "./push.ts";
+import { recordPlatformTx, markTreasuryTxConfirmed, markTreasuryTxFailed } from "./treasuryLedger.ts";
 
 export type RelayPurpose = "withdrawal" | "refund";
 
@@ -573,6 +574,19 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
           address: token.usdt, abi: erc20Abi, functionName: "transfer",
           args: [childAccount.address, amount],
         });
+        // Treasury Money & payouts ledger (Part 4): record the moment a hash
+        // exists, never depending on the chain explorer to remember this —
+        // this IS the transaction that actually leaves the treasury wallet
+        // (the forward leg from here is FROM the user's own address, out of
+        // this ledger's scope by construction — see treasuryLedger.ts's header).
+        await recordPlatformTx({
+          chain: job.chain, txHash: prefundTx,
+          fromAddress: treasuryAccount.address, toAddress: childAccount.address,
+          amountMicro: prefundAmountMicro,
+          purpose: isDisbursementJob ? "reward" : "withdrawal",
+          userId: job.user_id, relatedKind: "payout_relay_jobs", relatedId: job.request_id,
+          status: "submitted",
+        }, t);
         if (await transition(t, job.id, "pending", "prefund_sent", { prefund_tx_hash: prefundTx })) {
           job = { ...job, status: "prefund_sent", prefund_tx_hash: prefundTx };
         } else return;
@@ -615,9 +629,11 @@ export async function advanceRelayJob(jobId: string): Promise<void> {
           // Safe: a reverted ERC-20 transfer moves zero tokens — treasury's
           // USDT never actually reached the user's address, so returning the
           // user's points cannot double-pay.
+          await markTreasuryTxFailed(job.chain, job.prefund_tx_hash!, `Prefund tx ${job.prefund_tx_hash} reverted.`, t);
           box.push = await failJob(t, job, `Prefund tx ${job.prefund_tx_hash} reverted.`, true);
           return;
         }
+        await markTreasuryTxConfirmed(job.chain, job.prefund_tx_hash!, t);
         if (await transition(t, job.id, "prefund_sent", "prefund_confirmed")) {
           job = { ...job, status: "prefund_confirmed" };
         } else return;

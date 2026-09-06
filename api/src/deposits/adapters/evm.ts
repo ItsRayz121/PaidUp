@@ -15,13 +15,15 @@ import { ONCHAIN_CHAINS } from "../../payout.ts";
 import type { ObservedDeposit } from "../types.ts";
 
 // keccak256("Transfer(address,address,uint256)") — the ERC-20 Transfer topic0,
-// identical on every EVM chain.
-const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+// identical on every EVM chain. Exported: deposits/adapters/treasuryEvm.ts
+// scans the SAME event, and a second, independently-typed copy of this
+// constant is exactly the kind of thing that could silently drift.
+export const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 // Provider limits vary; these are conservative enough for free-tier public
 // nodes AND paid ones, and only affect how many round trips a scan takes.
-const MAX_BLOCK_RANGE = 5_000;
-const MAX_ADDRESSES_PER_CALL = 200;
+export const MAX_BLOCK_RANGE = 5_000;
+export const MAX_ADDRESSES_PER_CALL = 200;
 
 // A public BSC node rejects eth_getLogs outright once the block window (or
 // the result count) crosses ITS OWN limit — which is not published and is not
@@ -41,14 +43,16 @@ const RANGE_LIMIT_PATTERN = /limit|range|too many|exceed|too large/i;
 // during a catch-up backlog — steady-state ticks (a handful of new blocks
 // every ~20s) are unaffected either way, since the requested window is
 // capped to what's actually needed, not to this floor.
-const MIN_BLOCK_RANGE = 10;
+export const MIN_BLOCK_RANGE = 10;
 
 // Remembers the last window size that actually worked, per chain, so the
 // next tick starts there instead of re-discovering it from MAX_BLOCK_RANGE
-// on every single call.
+// on every single call. Module-scoped and NOT exported — treasuryEvm.ts keeps
+// its own instance (a separate query shape/address set), which is correct:
+// the two scanners can legitimately need different window sizes.
 const lastGoodRange = new Map<string, number>();
 
-type EvmLog = {
+export type EvmLog = {
   transactionHash: string;
   logIndex: string;
   data: string;
@@ -57,18 +61,18 @@ type EvmLog = {
   blockHash: string;
 };
 
-function addressToTopic(addr: string): string {
+export function addressToTopic(addr: string): string {
   return "0x" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 }
 
-function topicToAddress(topic: string): string {
+export function topicToAddress(topic: string): string {
   return "0x" + topic.slice(-40);
 }
 
 // Raw on-chain amount (at the token's own decimals) -> our internal
 // micro-USDT (6 dp). BSC USDT is 18 decimals — the same trap payout.ts's
 // ONCHAIN_CHAINS map exists to prevent, here in the other direction.
-function toMicroUsdt(raw: bigint, decimals: number): bigint {
+export function toMicroUsdt(raw: bigint, decimals: number): bigint {
   if (decimals === 6) return raw;
   if (decimals > 6) return raw / 10n ** BigInt(decimals - 6);
   return raw * 10n ** BigInt(6 - decimals);
@@ -92,7 +96,7 @@ function toMicroUsdt(raw: bigint, decimals: number): bigint {
 // with a real, reproducible (not flaky) failure — the test's stub returns the
 // identical -32005 response for every endpoint, exactly like several public
 // BSC nodes do in production.
-function isRangeLimitError(e: unknown): boolean {
+export function isRangeLimitError(e: unknown): boolean {
   if (!(e instanceof RpcError)) return false;
   if (RANGE_LIMIT_PATTERN.test(e.message)) return true;
   return e.attempts.some((a) => RANGE_LIMIT_PATTERN.test(a.reason));

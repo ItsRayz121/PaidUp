@@ -1886,6 +1886,77 @@ const MIGRATIONS = `
     added_by          TEXT,
     added_at          TEXT NOT NULL
   );
+
+  -- ---- Treasury transaction ledger (staff Money & payouts) -----------------
+  -- One row per on-chain transaction where the TREASURY WALLET (its signer
+  -- address, or the separately-configured display address — see
+  -- routes/staff.ts's signerMismatch note) is a direct party, either side.
+  -- Written from TWO sources, both idempotent through the same unique index:
+  --   1. Platform-initiated (treasuryLedger.ts's recordPlatformTx, called from
+  --      payoutRelay.ts / autoWithdraw.ts / autoRefund.ts / the manual staff
+  --      "mark paid" actions) the instant a transaction hash exists — never
+  --      waits on, or depends on, the chain explorer to remember it.
+  --   2. Externally observed (deposits/adapters/treasuryEvm.ts's background
+  --      scan) — catches anything that moved through this address WITHOUT the
+  --      platform starting it: a manual treasury operation, or a mistake.
+  --
+  -- ⚠️ CLASSIFICATION FIELDS ARE FIRST-WRITER-WINS. See upsertTreasuryTx's own
+  -- comment in treasuryLedger.ts: whichever source (platform code, which
+  -- KNOWS the real purpose, or the scanner, which only guesses from address
+  -- matching) inserts the row first sets category/purpose/user_id/related_*;
+  -- a later sighting of the SAME transaction only ever advances its on-chain
+  -- STATUS (submitted -> confirmed/failed), never overwrites what it means.
+  CREATE TABLE IF NOT EXISTS treasury_ledger_entries (
+    id                      TEXT PRIMARY KEY,
+    chain                   TEXT NOT NULL,
+    tx_hash                 TEXT NOT NULL,
+    -- NULL for a native transfer (no log/event concept) -- COALESCE'd to -1 in
+    -- the unique index below, same idiom as chain_deposits.log_index.
+    log_index               INTEGER,
+    block_number            BIGINT,
+    block_hash              TEXT,
+    from_address            TEXT NOT NULL,
+    to_address              TEXT NOT NULL,
+    from_address_norm       TEXT NOT NULL,
+    to_address_norm         TEXT NOT NULL,
+    token_address           TEXT,           -- NULL for native BNB
+    token_symbol            TEXT NOT NULL CHECK (token_symbol IN ('USDT','BNB')),
+    token_decimals          INTEGER NOT NULL,
+    amount_raw              TEXT NOT NULL,   -- base units, as a decimal string (can exceed a safe JS integer)
+    amount_micro            BIGINT,          -- normalised micro-USDT; NULL for a BNB row (no fixed USD rate stored here)
+    direction               TEXT NOT NULL CHECK (direction IN ('in','out')),
+    category                TEXT NOT NULL DEFAULT 'unknown'
+                              CHECK (category IN ('treasury_deposit','user_payout','external_transfer','unknown')),
+    purpose                 TEXT
+                              CHECK (purpose IS NULL OR purpose IN ('withdrawal','reward','refund','bonus','mining_reward','other')),
+    user_id                 TEXT REFERENCES users(id),
+    related_kind            TEXT,   -- e.g. 'withdrawal_requests' | 'usdt_refund_requests' | 'payout_relay_jobs'
+    related_id              TEXT,
+    status                  TEXT NOT NULL DEFAULT 'detected'
+                              CHECK (status IN ('detected','submitted','pending','confirmed','failed','replaced','reverted')),
+    confirmations_required  INTEGER NOT NULL DEFAULT 1,
+    failure_reason          TEXT,
+    detected_at             TEXT,
+    submitted_at            TEXT,
+    confirmed_at            TEXT,
+    last_checked_at         TEXT,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+  );
+  -- THE idempotency guard — a token transfer is (chain, tx, log); a native
+  -- transfer has no log index (coalesced to -1, one native send per tx hash).
+  -- Both the platform-initiated writer and the external scanner upsert
+  -- through this same index, so the same real event is never stored twice no
+  -- matter which side notices it first.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_treasury_ledger_event
+    ON treasury_ledger_entries(LOWER(chain), LOWER(tx_hash), COALESCE(log_index, -1));
+  CREATE INDEX IF NOT EXISTS idx_treasury_ledger_category ON treasury_ledger_entries(category, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_treasury_ledger_user ON treasury_ledger_entries(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_treasury_ledger_status ON treasury_ledger_entries(status);
+  CREATE INDEX IF NOT EXISTS idx_treasury_ledger_created ON treasury_ledger_entries(created_at DESC);
+  -- The largest-confirmed-payouts query (Part 1) sorts exactly this slice.
+  CREATE INDEX IF NOT EXISTS idx_treasury_ledger_payouts_amount
+    ON treasury_ledger_entries(category, direction, status, amount_micro DESC);
 `;
 
 // ---------------------------------------------------------------------------

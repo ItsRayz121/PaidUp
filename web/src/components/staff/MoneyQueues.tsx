@@ -14,9 +14,9 @@
 import { useState, type ReactNode } from "react";
 import { useApi } from "@/lib/hooks";
 import { useTableQuery, type TableApi } from "@/lib/staffTable";
-import { DataTable, type Column } from "./DataTable";
+import { DataTable, type Column, type FilterDef } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
-import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash, statusLabel } from "./primitives";
+import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash, statusLabel, Spinner, ErrorRow } from "./primitives";
 import { useToast } from "./toast";
 import { useStaffNav, consumePendingGroupSubTab } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
@@ -27,6 +27,8 @@ import {
   fetchAdminRefunds, payRefund, rejectRefund, fetchStaffBnbWithdrawals, fetchRelayJobs,
   fetchReconciliation, resolveRelayJob, resolveBnbWithdrawal, recheckReconciliation,
   fetchTreasuryLedger, type TreasuryLedgerRow,
+  fetchTreasuryLedgerEntries, fetchLargestTreasuryPayouts, fetchTreasuryMonitorStatus,
+  type TreasuryLedgerEntry,
   type StaffWithdrawal, type AdminTopup, type AdminRefund,
   type StaffBnbWithdrawalRow, type RelayJobRow,
 } from "@/lib/api";
@@ -1102,6 +1104,13 @@ export function AllMoneyOutPanel({ has, canOpenLedger = false }: {
 export function TreasuryWalletPanel() {
   const data = useApi(() => fetchTreasuryLedger(50), []);
   const d = data.data;
+  // Which of the three boxes' "See Full History" was clicked, if any — shown
+  // IN PLACE of the rest of this panel (same pattern as a row-click detail
+  // view elsewhere in this file), so a category-scoped full history needs no
+  // cross-panel navigation. `null` category = the Overview block's own
+  // "See Full History", which lands here first (goToSection) and then shows
+  // everything, unfiltered.
+  const [fullHistory, setFullHistory] = useState<"none" | "treasury_deposit" | "user_payout" | "external_transfer" | "all">("none");
 
   // ⚠️ NO UNIT SUFFIX HERE. formatUsdtMicro returns "12.00 USDT" and
   // formatBnbWei returns "0.0500 BNB" — both already carry it, and appending
@@ -1109,6 +1118,15 @@ export function TreasuryWalletPanel() {
   // warning for the same reason.
   const amount = (r: TreasuryLedgerRow) =>
     r.asset === "USDT" ? formatUsdtMicro(r.micro ?? 0) : formatBnbWei(r.value);
+
+  if (fullHistory !== "none") {
+    return (
+      <TreasuryLedgerHistory
+        initialCategory={fullHistory === "all" ? undefined : fullHistory}
+        onBack={() => setFullHistory("none")}
+      />
+    );
+  }
 
   return (
     <section className={shellCls("accent")}>
@@ -1124,11 +1142,39 @@ export function TreasuryWalletPanel() {
         </button>
       </div>
 
+      <TreasuryMonitorBox />
+
       <p className="mb-2 rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
         Read straight from the BNB Chain, not from our own records - so anything that moved
         without us starting it shows up here too. A row with no description underneath is
         exactly that. Read only when you open or refresh this tab.
       </p>
+
+      {/* The three transaction boxes (Part 2) — our OWN recorded ledger,
+          never the on-demand explorer read below, so these render regardless
+          of whether that explorer call succeeds. */}
+      <div className="mb-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <LedgerPreviewBox
+          title="Deposits into treasury" category="treasury_deposit"
+          hint="Money received by the treasury wallet — from a user's own wallet or anywhere else."
+          onSeeFullHistory={() => setFullHistory("treasury_deposit")}
+        />
+        <LedgerPreviewBox
+          title="Payments & rewards sent to users" category="user_payout"
+          hint="Treasury money sent to a registered RoziPay user's own wallet."
+          onSeeFullHistory={() => setFullHistory("user_payout")}
+        />
+        <LedgerPreviewBox
+          title="External money out" category="external_transfer"
+          hint="Money leaving treasury to an address that is not a registered user."
+          onSeeFullHistory={() => setFullHistory("external_transfer")}
+        />
+      </div>
+      <div className="mb-2 flex justify-end">
+        <button onClick={() => setFullHistory("all")} className="text-xs font-semibold text-brand hover:underline">
+          See full treasury ledger →
+        </button>
+      </div>
 
       {data.error && <p className="mb-2 text-sm text-danger">{data.error}</p>}
 
@@ -1201,16 +1247,7 @@ export function TreasuryWalletPanel() {
           and this screen once quietly reported "nothing has moved through
           this wallet" for a wallet that visibly held a live balance and had
           just sent two real payouts (2026-09-05). */}
-      {d?.explorerReady && d.explorerError && (
-        <p className="rounded-lg border-2 border-danger bg-danger/10 p-4 text-sm text-danger">
-          <b>Could not read this wallet&apos;s history from the chain explorer.</b>{" "}
-          This is NOT the same as &quot;nothing has moved&quot; — the explorer itself
-          refused or failed to answer ({d.explorerError}). The live balance above still
-          comes straight from the chain and can be trusted; only the transaction list
-          below could not be read this time. Try Refresh, or check{" "}
-          <span className="num">BSCSCAN_API_KEY</span> if this keeps happening.
-        </p>
-      )}
+      {d?.explorerReady && d.explorerError && <ExplorerErrorDetails message={d.explorerError} />}
 
       {d?.explorerReady && !d.explorerError && (
         <>
@@ -1276,6 +1313,241 @@ export function TreasuryWalletPanel() {
         </>
       )}
     </section>
+  );
+}
+
+// ======================================================================
+// 5c. Treasury transaction LEDGER — internal, persistent (Money & payouts)
+// ======================================================================
+// Distinct from TreasuryWalletPanel above (the on-demand explorer read) —
+// this is OUR OWN recorded history, written the instant a platform-initiated
+// send has a hash and by a background scan of the treasury address. See
+// api/src/treasuryLedger.ts's header for the write paths.
+
+const LEDGER_CATEGORY_LABEL: Record<string, string> = {
+  treasury_deposit: "Deposit into treasury",
+  user_payout: "Payment / reward to user",
+  external_transfer: "External money out",
+  unknown: "Unknown",
+};
+
+function ledgerAmount(r: TreasuryLedgerEntry): string {
+  return r.tokenSymbol === "USDT" ? formatUsdtMicro(r.amountMicro ?? 0) : formatBnbWei(r.amountRaw);
+}
+
+function LedgerWho({ r }: { r: TreasuryLedgerEntry }) {
+  if (r.userId) {
+    return <span className="truncate">{identityOf({
+      userEmail: r.userEmail ?? "", userUsername: r.userUsername, userDisplayName: r.userDisplayName,
+      userTelegramUsername: r.userTelegramUsername, userTelegramName: r.userTelegramName,
+    })}</span>;
+  }
+  return <Addr value={r.direction === "in" ? r.fromAddress : r.toAddress} chain={r.chain} />;
+}
+
+// A 6-row preview box, shared shape for all three categories + the largest-
+// payouts block. `onSeeFullHistory` opens the paginated/filterable view.
+function LedgerPreviewBox({ title, hint, category, onSeeFullHistory }: {
+  title: string; hint: string; category: "treasury_deposit" | "user_payout" | "external_transfer";
+  onSeeFullHistory: () => void;
+}) {
+  const data = useApi(() => fetchTreasuryLedgerEntries({ category, limit: 6 }), [category]);
+  const rows = data.data?.rows ?? [];
+  return (
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h4>
+        <button onClick={onSeeFullHistory} className="shrink-0 text-xs font-semibold text-brand hover:underline">
+          See Full History →
+        </button>
+      </div>
+      <p className="mb-1.5 text-[11px] text-muted">{hint}</p>
+      {data.loading && !data.data ? <Spinner /> : data.error ? <ErrorRow message={data.error} onRetry={data.reload} /> : rows.length === 0 ? (
+        <p className="py-2 text-xs text-muted">Nothing recorded yet.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-1.5 text-sm">
+              <span className="min-w-0 flex-1 truncate text-brand-ink"><LedgerWho r={r} /></span>
+              <span className="num shrink-0 text-xs font-semibold">{ledgerAmount(r)}</span>
+              <StatusBadge status={r.status} />
+              <span className="shrink-0"><TxHash value={r.txHash} chain={r.chain} /></span>
+              <span className="w-full text-[11px] text-muted sm:w-auto"><TimeCell iso={r.createdAt} /></span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Part 1 — Money & payouts Overview's "Largest Treasury Payouts" block.
+export function LargestPayoutsBlock() {
+  const { goToSection } = useStaffNav();
+  const data = useApi(() => fetchLargestTreasuryPayouts(6), []);
+  const rows = data.data?.rows ?? [];
+  return (
+    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
+      <div className="mb-1.5 flex items-center justify-between">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Largest Treasury Payouts</h4>
+        <button onClick={() => goToSection("money", "p-treasury-group", "wallet")}
+          className="text-xs font-semibold text-brand hover:underline">
+          See Full History →
+        </button>
+      </div>
+      {data.loading && !data.data ? <Spinner /> : data.error ? <ErrorRow message={data.error} onRetry={data.reload} /> : rows.length === 0 ? (
+        <p className="py-2 text-xs text-muted">No confirmed treasury payouts yet.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-1.5 text-sm">
+              <span className="min-w-0 flex-1 truncate text-brand-ink"><LedgerWho r={r} /></span>
+              <span className="num shrink-0 text-xs">{formatUsdtMicro(r.amountMicro ?? 0)}</span>
+              <StatusBadge status={r.status} />
+              <span className="shrink-0"><TimeCell iso={r.createdAt} /></span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const LEDGER_TOKENS = [{ value: "USDT", label: "USDT" }, { value: "BNB", label: "BNB" }];
+const LEDGER_STATUSES = ["detected", "submitted", "pending", "confirmed", "failed", "replaced", "reverted"]
+  .map((v) => ({ value: v, label: v.replace(/^\w/, (c) => c.toUpperCase()) }));
+const LEDGER_CATEGORIES = Object.entries(LEDGER_CATEGORY_LABEL).map(([value, label]) => ({ value, label }));
+const LEDGER_DIRECTIONS = [{ value: "in", label: "In" }, { value: "out", label: "Out" }];
+
+// The full, paginated + filterable history — Part 1's "See Full History"
+// button and each of the three boxes' own. Rendered IN PLACE of the boxes
+// (same pattern as WithdrawalsPanel's row-click detail view) rather than a
+// separate top-level tab, so a category-scoped "back" needs no cross-panel
+// navigation plumbing.
+function TreasuryLedgerHistory({ initialCategory, onBack }: {
+  initialCategory?: "treasury_deposit" | "user_payout" | "external_transfer";
+  onBack: () => void;
+}) {
+  const q = useTableQuery(`money:treasury-ledger:${initialCategory ?? "all"}`, { pageSize: 25, sort: "created_at", dir: "desc" });
+  const [auto, setAuto] = useState(true);
+  const data = useApi(
+    () => fetchTreasuryLedgerEntries({
+      category: initialCategory ?? (q.filters.category || "all"),
+      direction: q.filters.direction || "all", token: q.filters.token || "all", status: q.filters.status || "all",
+      dateFrom: q.filters.dateFrom || undefined, dateTo: q.filters.dateTo || undefined,
+      q: q.search, sort: (q.sort as "created_at" | "amount_micro") ?? undefined, dir: q.dir,
+      limit: q.pageSize, offset: q.offset,
+    }),
+    [initialCategory, q.filters.category, q.filters.direction, q.filters.token, q.filters.status,
+      q.filters.dateFrom, q.filters.dateTo, q.search, q.sort, q.dir, q.pageSize, q.offset],
+    true, auto ? QUEUE_POLL_MS : undefined,
+  );
+  const rows = data.data?.rows ?? [];
+
+  const columns: Column<TreasuryLedgerEntry>[] = [
+    { key: "created_at", header: "When", sortable: true, csv: (r) => r.createdAt, render: (r) => <TimeCell iso={r.createdAt} /> },
+    {
+      key: "category", header: "Type", csv: (r) => LEDGER_CATEGORY_LABEL[r.category] ?? r.category,
+      render: (r) => (
+        <div>
+          <span className={`inline-flex items-center gap-1 text-xs font-semibold ${r.direction === "in" ? "text-success" : "text-danger"}`}>
+            {r.direction === "in" ? <ArrowDownIcon size={12} /> : <ArrowUpIcon size={12} />}
+            {LEDGER_CATEGORY_LABEL[r.category] ?? r.category}
+          </span>
+          {r.purpose && <div className="text-xs text-muted">{r.purpose}</div>}
+        </div>
+      ),
+    },
+    { key: "who", header: "User / address", render: (r) => <LedgerWho r={r} /> },
+    { key: "amount", header: "Amount", align: "right", sortable: true, csv: (r) => r.amountMicro ?? r.amountRaw, render: (r) => <span className="num font-semibold">{ledgerAmount(r)}</span> },
+    { key: "status", header: "Status", csv: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+    { key: "tx", header: "Transaction", csv: (r) => r.txHash, render: (r) => <TxHash value={r.txHash} chain={r.chain} /> },
+  ];
+
+  const filters: FilterDef[] = [
+    ...(initialCategory ? [] : [{ key: "category", label: "Type", type: "select" as const, options: LEDGER_CATEGORIES }]),
+    { key: "direction", label: "Direction", type: "select", options: LEDGER_DIRECTIONS },
+    { key: "token", label: "Token", type: "select", options: LEDGER_TOKENS },
+    { key: "status", label: "Status", type: "select", options: LEDGER_STATUSES },
+    { key: "dateFrom", label: "From", type: "text", placeholder: "From (YYYY-MM-DD)" },
+    { key: "dateTo", label: "To", type: "text", placeholder: "To (YYYY-MM-DD)" },
+  ];
+
+  return (
+    <section className={shellCls("accent")}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-bold text-brand-ink">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${ACCENT_DOT.accent}`} aria-hidden />
+          {initialCategory ? LEDGER_CATEGORY_LABEL[initialCategory] : "Treasury ledger — full history"}
+        </h2>
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">← Back</button>
+          <RefreshBar updatedAt={data.updatedAt} loading={data.loading} onRefresh={data.reload} auto={auto} setAuto={setAuto} />
+        </div>
+      </div>
+      <p className="mb-2 rounded-lg border-2 border-line-strong bg-brand-tint/30 p-2.5 text-xs text-muted">
+        Our own recorded history of every transaction touching the treasury wallet — written the
+        instant we broadcast a payout, and by a background scan of the wallet address itself. Never
+        depends on the block explorer above.
+      </p>
+      <DataTable<TreasuryLedgerEntry>
+        q={q} columns={columns} rows={rows}
+        total={data.data?.total ?? 0} loading={data.loading} error={data.error} onRetry={data.reload}
+        getRowId={(r) => r.id}
+        filters={filters}
+        searchPlaceholder="Search tx hash, address, or user email/username"
+        emptyTitle="Nothing recorded yet"
+        exportName={`treasury-ledger${initialCategory ? `-${initialCategory}` : ""}`}
+      />
+    </section>
+  );
+}
+
+// Part 7 — a compact "is this working" readout, drawn from our own
+// checkpoint table, never the explorer.
+function TreasuryMonitorBox() {
+  const data = useApi(fetchTreasuryMonitorStatus, []);
+  const m = data.data;
+  if (!m) return null;
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-card p-2.5 text-xs text-muted">
+      <span>
+        <b className={m.scanEnabled ? "text-success" : "text-muted"}>{m.scanEnabled ? "● Tracking" : "○ Not configured"}</b>
+      </span>
+      {m.scanEnabled && (
+        <>
+          <span>Last scanned block: <span className="num font-semibold text-brand-ink">{m.lastScannedBlock ?? "—"}</span></span>
+          <span>Last sync: {m.lastSyncAt ? <TimeCell iso={m.lastSyncAt} /> : "—"}</span>
+          <span>Confirmations required: <span className="num">{m.confirmationsRequired}</span></span>
+          {m.trackingStartBlock != null && <span>Tracking from block <span className="num">{m.trackingStartBlock}</span></span>}
+          <span>Native (BNB) scan: {m.nativeScanEnabled ? "on" : "off"}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Part 7 — replaces the big red explorer-error panel with a small collapsible
+// dropdown, without hiding any of live balances / internal history / monitor
+// status, which all render regardless of whether the explorer answered.
+function ExplorerErrorDetails({ message }: { message: string }) {
+  // Collapsed by default (Part 7's own spec), but red/danger-toned rather than
+  // a neutral amber — this exact failure mode ("Free API access is not
+  // supported for this chain") quietly read as "nothing has moved through
+  // this wallet" once already (2026-09-05), on a wallet that had just sent two
+  // real payouts. Collapsed must not also mean easy to miss.
+  return (
+    <details className="mb-2 rounded-lg border border-danger/40 bg-danger/5 text-xs">
+      <summary className="cursor-pointer select-none p-2.5 font-semibold text-danger">
+        ⚠ Wallet history temporarily unavailable — View details
+      </summary>
+      <div className="border-t border-danger/20 p-2.5 text-muted">
+        The chain explorer could not provide the treasury wallet&rsquo;s complete historical
+        transactions ({message}). Live balances are still read directly from the blockchain.
+        Transactions recorded by RoziPay remain available below, and future transactions are
+        tracked independently of the explorer.
+      </div>
+    </details>
   );
 }
 

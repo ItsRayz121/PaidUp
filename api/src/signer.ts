@@ -34,7 +34,18 @@ export function decryptSecret(stored: string): string {
   return decrypt(stored, encryptionKey());
 }
 
-let cached: `0x${string}` | null | undefined;
+// ⚠️ ONLY THE REAL, DECRYPTED KEY IS EVER CACHED — NOT "not configured yet".
+// A negative result used to be memoized too (`cached = null`), which is safe
+// in production (env vars never change at runtime) but is a landmine for
+// tests: several call sites across this codebase (relayAvailable, provider
+// .canSettle, and — as of the treasury-ledger feature — the manual
+// staff "mark paid" recording) call this BEFORE a test has finished
+// configuring TREASURY_KEY_ENCRYPTED/_SECRET, and a permanently-cached null
+// then makes every LATER test in the same process see "no signer configured"
+// even after the test explicitly sets a real key. Re-checking "is it
+// configured" is a cheap string-emptiness check — there is no reason to
+// memoize that outcome, only the actual decrypt.
+let cached: `0x${string}` | undefined;
 
 // The treasury's raw private key (0x + 64 hex), decrypted once and held in
 // memory for the life of the process. Never logged, never returned by any
@@ -42,7 +53,6 @@ let cached: `0x${string}` | null | undefined;
 export function treasurySignerKey(): `0x${string}` | null {
   if (cached !== undefined) return cached;
   if (!config.treasuryKeyEncrypted || !config.treasuryKeySecret) {
-    cached = null;
     return null;
   }
   const plain = decryptSecret(config.treasuryKeyEncrypted).trim();
