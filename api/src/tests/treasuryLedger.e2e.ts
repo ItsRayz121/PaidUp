@@ -22,6 +22,7 @@ import {
 } from "../treasuryLedger.ts";
 import { scanTreasuryUsdt } from "../deposits/adapters/treasuryEvm.ts";
 import { hasPermission } from "../permissions.ts";
+import { readFileSync } from "node:fs";
 
 let pass = 0, fail = 0;
 function check(name: string, ok: boolean, extra = "") {
@@ -412,8 +413,15 @@ console.log("\n-- scanTreasuryUsdt: both directions, checkpoint resume, reconcil
       });
       return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: matches }) };
     }
+    if (body.method === "eth_getBlockByNumber") {
+      // The reorg re-check (Part 5.9) — every fixture log above is minted
+      // with blockHash "0xaaaa", so the live chain always agrees with what
+      // was observed unless a test below deliberately changes it.
+      return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: { hash: reorgedBlockHash } }) };
+    }
     throw new Error(`Unexpected RPC method in test stub: ${body.method}`);
   };
+  let reorgedBlockHash = "0xaaaa";
 
   const treasuryAddr = testAddress();
   const userAddr = testAddress();
@@ -490,6 +498,52 @@ console.log("\n-- scanTreasuryUsdt: both directions, checkpoint resume, reconcil
   const selfScan = await scanTreasuryUsdt("bep20", [treasuryAddr], 0, 200);
   check("a treasury -> treasury self-transfer is never surfaced as a real event", selfScan.txs.length === 0, String(selfScan.txs.length));
 
+  // Part 5.9 — a chain reorg between "the scan window saw this block" and
+  // "we're about to mark it confirmed" must never be credited as confirmed.
+  const reorgLog = fixtureLog(externalAddr, treasuryAddr, 200, 2_000_000);
+  logsFixture = [reorgLog];
+  const reorgScan = await scanTreasuryUsdt("bep20", [treasuryAddr], 0, 300);
+  const reorgTx = reorgScan.txs.find((t) => t.txHash === reorgLog.transactionHash);
+  reorgedBlockHash = "0xbbbb"; // the live chain now disagrees with the observed block hash "0xaaaa"
+  await recordObservedTx(reorgTx!, addrSet, 15, sql);
+  const reorgRow = await sql.get<{ status: string; failure_reason: string | null }>(
+    "SELECT status, failure_reason FROM treasury_ledger_entries WHERE LOWER(tx_hash) = LOWER(?)", reorgLog.transactionHash);
+  check("a transaction whose block hash no longer matches the live chain is marked reverted, never confirmed",
+    reorgRow?.status === "reverted" && !!reorgRow?.failure_reason, JSON.stringify(reorgRow));
+  reorgedBlockHash = "0xaaaa"; // restore for anything else in this block
+
+  // Part 5.11 — an external-transfer row with no known counterparty must
+  // learn who it was once that address becomes a registered deposit wallet,
+  // on a later upsert of the SAME transaction (e.g. a reconciliation re-scan).
+  const laterUserAddr = testAddress();
+  const laterLog = fixtureLog(treasuryAddr, laterUserAddr, 103, 3_000_000);
+  logsFixture = [laterLog];
+  const laterScan = await scanTreasuryUsdt("bep20", [treasuryAddr], 0, 200);
+  const laterTx = laterScan.txs.find((t) => t.txHash === laterLog.transactionHash);
+  await recordObservedTx(laterTx!, addrSet, 15, sql);
+  const beforeRow = await sql.get<{ category: string; user_id: string | null }>(
+    "SELECT category, user_id FROM treasury_ledger_entries WHERE LOWER(tx_hash) = LOWER(?)", laterLog.transactionHash);
+  check("first seen with an unregistered counterparty: external money out, no user", beforeRow?.category === "external_transfer" && beforeRow?.user_id === null, JSON.stringify(beforeRow));
+  const laterUserId = await mkUserWithDeposit("bep20", laterUserAddr);
+  await recordObservedTx(laterTx!, addrSet, 15, sql); // a reconciliation re-scan of the same transaction
+  const afterRow = await sql.get<{ category: string; user_id: string | null }>(
+    "SELECT category, user_id FROM treasury_ledger_entries WHERE LOWER(tx_hash) = LOWER(?)", laterLog.transactionHash);
+  check("reclassified to a user payout once the address is registered, on a LATER sighting",
+    afterRow?.category === "user_payout" && afterRow?.user_id === laterUserId, JSON.stringify(afterRow));
+
+  // ...and this one-way upgrade must never touch a row that already carries
+  // a known user_id (first-writer-wins, still intact for anything ALREADY
+  // classified) — re-processing the earlier `outgoing` (external, unmatched)
+  // row again after it somehow gained a user_id must not un-classify a row
+  // that already has a real identity attached elsewhere in this test.
+  const alreadyKnownBefore = await sql.get<{ user_id: string | null }>(
+    "SELECT user_id FROM treasury_ledger_entries WHERE LOWER(tx_hash) = LOWER(?)", incomingLog.transactionHash);
+  await recordObservedTx(incoming!, addrSet, 15, sql);
+  const alreadyKnownAfter = await sql.get<{ user_id: string | null; category: string }>(
+    "SELECT user_id, category FROM treasury_ledger_entries WHERE LOWER(tx_hash) = LOWER(?)", incomingLog.transactionHash);
+  check("a row that already has a user_id is never touched by the one-way upgrade",
+    alreadyKnownAfter?.user_id === alreadyKnownBefore?.user_id && alreadyKnownAfter?.category === "treasury_deposit");
+
   globalThis.fetch = realFetch;
 }
 
@@ -499,6 +553,49 @@ console.log("\n-- treasuryAddresses: no address configured at all --");
   // the scanner (and everything downstream) must be a clean no-op, not throw.
   const addrs = await treasuryAddresses("aptos"); // an unsupported chain
   check("an unsupported chain returns no addresses", addrs.length === 0);
+}
+
+console.log("\n-- Part 11: independence from the block explorer --");
+{
+  // Structural tripwire, same idiom as sessions.e2e.ts / otp-race.e2e.ts: read
+  // this module's own source and assert it never even imports bscscan.ts. A
+  // behavioral test alone could pass by coincidence (e.g. the explorer call
+  // just happening not to be reached on this code path); this makes the
+  // "never depends on the explorer" claim in this file's own header a
+  // property the source itself is checked against, not just asserted in a
+  // comment.
+  const src = readFileSync(new URL("../treasuryLedger.ts", import.meta.url), "utf8");
+  // The header comment mentions "bscscan.ts" by name (to explain why this
+  // module exists at all) — so this checks for an actual import statement,
+  // not just any mention of the word.
+  check("treasuryLedger.ts never imports bscscan.ts", !/from\s+["'][^"']*bscscan[^"']*["']/i.test(src));
+
+  // Behavioral proof: even while the explorer is fully broken (every fetch
+  // call answers with the exact "Free API access is not supported for this
+  // chain"-shaped payload bscscan.ts treats as a hard error), every staff
+  // read this ledger serves must still succeed with real data — because none
+  // of them ever reach that fetch call in the first place.
+  const realFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  // @ts-expect-error test stub — narrower signature than the real fetch
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return {
+      ok: true,
+      json: async () => ({ status: "0", message: "NOTOK", result: "Free API access is not supported for this chain, please upgrade to a paid plan" }),
+    };
+  };
+  try {
+    const listed = await listTreasuryLedger({ limit: 5 });
+    check("listTreasuryLedger still returns rows while the explorer is broken", Array.isArray(listed.rows) && typeof listed.total === "number");
+    const largest = await largestConfirmedTreasuryPayouts(6);
+    check("largestConfirmedTreasuryPayouts still returns while the explorer is broken", Array.isArray(largest));
+    const monitor = await treasuryMonitorStatus("bep20");
+    check("treasuryMonitorStatus still returns while the explorer is broken", typeof monitor.chain === "string");
+    check("none of the three ever actually called fetch (the explorer)", fetchCalls === 0, String(fetchCalls));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

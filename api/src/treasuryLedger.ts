@@ -190,6 +190,15 @@ export async function upsertTreasuryTx(input: UpsertTreasuryTxInput, t: Pick<TxA
     input.chain, input.txHash, input.logIndex, input.logIndex,
   );
   if (existing) {
+    // Part 5.11 — a ONE-WAY upgrade, never an overwrite: a row first recorded
+    // with no identifiable counterparty (user_id IS NULL — an unregistered
+    // address at the time, so category landed on external_transfer/unknown)
+    // gets to learn who that was on a LATER upsert of the same transaction,
+    // if by then the address has become a registered deposit wallet or the
+    // transaction hash matches an internal record. This does not weaken
+    // first-writer-wins: a row that already carries a user_id (whichever
+    // writer supplied it first) is untouched by this CASE, in every branch,
+    // forever — only the "we genuinely didn't know" state can ever change.
     await t.run(
       `UPDATE treasury_ledger_entries SET
          status = ?,
@@ -199,11 +208,17 @@ export async function upsertTreasuryTx(input: UpsertTreasuryTxInput, t: Pick<TxA
          confirmed_at = COALESCE(confirmed_at, ?),
          submitted_at = COALESCE(submitted_at, ?),
          failure_reason = COALESCE(?, failure_reason),
+         category = CASE WHEN user_id IS NULL THEN ? ELSE category END,
+         purpose = CASE WHEN user_id IS NULL THEN ? ELSE purpose END,
+         user_id = CASE WHEN user_id IS NULL THEN ? ELSE user_id END,
+         related_kind = CASE WHEN user_id IS NULL THEN ? ELSE related_kind END,
+         related_id = CASE WHEN user_id IS NULL THEN ? ELSE related_id END,
          last_checked_at = ?,
          updated_at = ?
        WHERE id = ?`,
       input.status, input.logIndex, input.blockNumber ?? null, input.blockHash ?? null,
       input.confirmedAt ?? null, input.submittedAt ?? null, input.failureReason ?? null,
+      input.category, input.purpose, input.userId, input.relatedKind, input.relatedId,
       nowIso, nowIso, existing.id,
     );
     return existing.id;
@@ -475,6 +490,20 @@ async function latestBlock(chain: string): Promise<number> {
   return parseInt(hex, 16);
 }
 
+// Part 5.9 — the exact reorg re-check deposits/credit.ts already does before
+// crediting a per-user deposit: a block that had enough confirmations when
+// the scanner's window READ it can still be reorged away by the time this
+// function actually runs (a later log line in the same tick, or the slower
+// reconciliation pass re-visiting the same block). The from/toBlock depth
+// filter in tickTreasuryLedgerScan is a necessary condition, not a
+// sufficient one — this is what actually enforces "never mark confirmed a
+// transaction that no longer lives in the block we think it does".
+async function liveBlockHash(chain: string, blockNumber: number): Promise<string | null> {
+  const block = (await rpcCall(chain, "eth_getBlockByNumber", ["0x" + blockNumber.toString(16), false], { priority: "high" })) as
+    { hash: string } | null;
+  return block?.hash ?? null;
+}
+
 // Classify + upsert ONE observed treasury-address transaction. Shared by the
 // forward walk and the reconciliation re-scan below — both must apply the
 // exact same rule, or a transaction classified one way on first sight could
@@ -489,6 +518,29 @@ export async function recordObservedTx(
   const counterpartyAddr = direction === "in" ? tx.fromAddress : tx.toAddress;
   const counterpartyUserId = await registeredWalletUser(tx.chain, counterpartyAddr, t);
   const category = classifyCategory(direction, counterpartyUserId);
+
+  // Re-validate against the chain RIGHT NOW, not just against the depth the
+  // scan window already filtered on. A mismatch means the block this
+  // transaction lived in has been reorged away since it was first observed —
+  // record it as 'reverted' (never 'confirmed') and stop; if the payment
+  // reappears in a later block it arrives under a new tx hash and is
+  // evaluated completely fresh next time this function sees it.
+  const liveHash = await liveBlockHash(tx.chain, tx.blockNumber);
+  if (!liveHash || liveHash.toLowerCase() !== tx.blockHash.toLowerCase()) {
+    await upsertTreasuryTx({
+      chain: tx.chain, txHash: tx.txHash, logIndex: tx.logIndex,
+      blockNumber: tx.blockNumber, blockHash: tx.blockHash,
+      fromAddress: tx.fromAddress, toAddress: tx.toAddress,
+      tokenAddress: tx.tokenAddress, tokenSymbol: tx.tokenSymbol, tokenDecimals: tx.tokenDecimals,
+      amountRaw: tx.amountRaw, amountMicro: tx.amountMicro,
+      direction, category, userId: counterpartyUserId,
+      purpose: null, relatedKind: null, relatedId: null,
+      status: "reverted", confirmationsRequired,
+      failureReason: "Reorged out — the block this transaction was observed in no longer matches the live chain.",
+    }, t);
+    return;
+  }
+
   // Only worth asking for outgoing transactions — an incoming deposit was
   // never something OUR code initiated, so it can never match a withdrawal/
   // refund/relay row (those all record the FORWARD/OUTgoing leg's own hash).
@@ -507,7 +559,8 @@ export async function recordObservedTx(
     // already reached `confirmations_required` blocks deep (the fromBlock..
     // safeTip window below enforces that BEFORE a transaction is ever handed
     // to this function) — so "seen by this scan" already means "confirmed",
-    // the same convention deposits/credit.ts follows for per-user deposits.
+    // the same convention deposits/credit.ts follows for per-user deposits,
+    // ONCE the live re-check above has also passed.
     status: "confirmed", confirmationsRequired,
     confirmedAt: now(),
   }, t);

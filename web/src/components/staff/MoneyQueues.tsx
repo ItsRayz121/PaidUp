@@ -1345,8 +1345,34 @@ function LedgerWho({ r }: { r: TreasuryLedgerEntry }) {
   return <Addr value={r.direction === "in" ? r.fromAddress : r.toAddress} chain={r.chain} />;
 }
 
+// Identity AND the shortened on-chain address, stacked — a registered user
+// still has a real wallet address, and a row about money moving on a specific
+// chain should always show both, not force a pick between them (Part 1/2's
+// own spec lists them as two separate fields). Falls back to the address
+// alone for an unregistered counterparty, same as LedgerWho.
+function LedgerWhoFull({ r }: { r: TreasuryLedgerEntry }) {
+  const addr = r.direction === "in" ? r.fromAddress : r.toAddress;
+  if (r.userId) {
+    return (
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate font-medium">{identityOf({
+          userEmail: r.userEmail ?? "", userUsername: r.userUsername, userDisplayName: r.userDisplayName,
+          userTelegramUsername: r.userTelegramUsername, userTelegramName: r.userTelegramName,
+        })}</span>
+        <span className="truncate text-[11px] text-muted"><Addr value={addr} chain={r.chain} /></span>
+      </span>
+    );
+  }
+  return <Addr value={addr} chain={r.chain} />;
+}
+
 // A 6-row preview box, shared shape for all three categories + the largest-
 // payouts block. `onSeeFullHistory` opens the paginated/filterable view.
+// ⚠️ Each category shows the extra field that box actually has room to be
+// useful with: the deposit box shows the block it landed in (Part 2), the
+// user-payout box shows WHY it was sent (Part 2) and identity+address
+// together (Part 1/2) since a registered user's address is worth seeing
+// alongside their name, not instead of it.
 function LedgerPreviewBox({ title, hint, category, onSeeFullHistory }: {
   title: string; hint: string; category: "treasury_deposit" | "user_payout" | "external_transfer";
   onSeeFullHistory: () => void;
@@ -1368,11 +1394,21 @@ function LedgerPreviewBox({ title, hint, category, onSeeFullHistory }: {
         <ul className="divide-y divide-line">
           {rows.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-1.5 text-sm">
-              <span className="min-w-0 flex-1 truncate text-brand-ink"><LedgerWho r={r} /></span>
+              <span className="min-w-0 flex-1 truncate text-brand-ink">
+                {category === "user_payout" ? <LedgerWhoFull r={r} /> : <LedgerWho r={r} />}
+              </span>
               <span className="num shrink-0 text-xs font-semibold">{ledgerAmount(r)}</span>
               <StatusBadge status={r.status} />
               <span className="shrink-0"><TxHash value={r.txHash} chain={r.chain} /></span>
               <span className="w-full text-[11px] text-muted sm:w-auto"><TimeCell iso={r.createdAt} /></span>
+              {category === "treasury_deposit" && (
+                <span className="w-full text-[11px] text-muted sm:w-auto">
+                  Block: <span className="num">{r.blockNumber ?? "—"}</span>
+                </span>
+              )}
+              {category === "user_payout" && r.purpose && (
+                <span className="w-full text-[11px] capitalize text-muted sm:w-auto">{r.purpose}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -1401,10 +1437,11 @@ export function LargestPayoutsBlock() {
         <ul className="divide-y divide-line">
           {rows.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-1.5 text-sm">
-              <span className="min-w-0 flex-1 truncate text-brand-ink"><LedgerWho r={r} /></span>
+              <span className="min-w-0 flex-1 truncate text-brand-ink"><LedgerWhoFull r={r} /></span>
               <span className="num shrink-0 text-xs">{formatUsdtMicro(r.amountMicro ?? 0)}</span>
               <StatusBadge status={r.status} />
-              <span className="shrink-0"><TimeCell iso={r.createdAt} /></span>
+              <span className="shrink-0"><TxHash value={r.txHash} chain={r.chain} /></span>
+              <span className="w-full text-[11px] text-muted sm:w-auto"><TimeCell iso={r.createdAt} /></span>
             </li>
           ))}
         </ul>
@@ -1519,9 +1556,19 @@ function TreasuryMonitorBox() {
           <span>Last scanned block: <span className="num font-semibold text-brand-ink">{m.lastScannedBlock ?? "—"}</span></span>
           <span>Last sync: {m.lastSyncAt ? <TimeCell iso={m.lastSyncAt} /> : "—"}</span>
           <span>Confirmations required: <span className="num">{m.confirmationsRequired}</span></span>
-          {m.trackingStartBlock != null && <span>Tracking from block <span className="num">{m.trackingStartBlock}</span></span>}
           <span>Native (BNB) scan: {m.nativeScanEnabled ? "on" : "off"}</span>
         </>
+      )}
+      {m.scanEnabled && (
+        // Part 6 — the exact requested sentence, always rendered once tracking is
+        // on: with a configured start block it names the block; without one (the
+        // common case — no TREASURY_TRACKING_START_BLOCK set) it says so plainly,
+        // rather than silently omitting the whole line the way this used to.
+        <span className="w-full text-[11px]">
+          {m.trackingStartBlock != null
+            ? `Treasury transaction tracking started from block ${m.trackingStartBlock}. Transactions before this block may be incomplete.`
+            : "No tracking start block was configured — history is recorded only from whenever this scan first ran, and anything on-chain before that is not in this ledger."}
+        </span>
       )}
     </div>
   );

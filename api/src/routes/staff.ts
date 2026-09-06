@@ -2221,27 +2221,29 @@ export async function staffRoutes(app: FastifyInstance) {
   // ---- Treasury transaction ledger (Money & payouts) ----------------------
   // Internal, persistent — never depends on the explorer read above. See
   // treasuryLedger.ts's own header for the two write paths that feed it.
-  const LEDGER_SORTS = ["created_at", "amount_micro"] as const;
-  function parseLedgerFilters(query: Record<string, string | undefined>): TreasuryLedgerFilters {
-    return {
-      category: (query.category as TreasuryLedgerFilters["category"]) ?? "all",
-      direction: (query.direction as TreasuryLedgerFilters["direction"]) ?? "all",
-      token: (query.token as TreasuryLedgerFilters["token"]) ?? "all",
-      status: (query.status as TreasuryLedgerFilters["status"]) ?? "all",
-      dateFrom: query.dateFrom || undefined,
-      dateTo: query.dateTo || undefined,
-      q: query.q || undefined,
-      limit: Math.min(Number(query.limit ?? 25) || 25, 200),
-      offset: Math.max(Number(query.offset ?? 0) || 0, 0),
-      sort: (LEDGER_SORTS as readonly string[]).includes(query.sort ?? "") ? (query.sort as "created_at" | "amount_micro") : "created_at",
-      dir: query.dir === "asc" ? "asc" : "desc",
-    };
-  }
+  // Part 9 — zod-validated like GET /staff/treasury/wallet's own `q` schema
+  // just above, rather than the hand-rolled Number()/Math.min parsing this
+  // route used to share with GET /staff/withdrawals and GET /staff/users
+  // (SQL stayed parameterized either way — this is a strictness upgrade, not
+  // a security fix).
+  const ledgerQuerySchema = z.object({
+    category: z.enum(["treasury_deposit", "user_payout", "external_transfer", "unknown", "all"]).default("all"),
+    direction: z.enum(["in", "out", "all"]).default("all"),
+    token: z.enum(["USDT", "BNB", "all"]).default("all"),
+    status: z.enum(["detected", "submitted", "pending", "confirmed", "failed", "replaced", "reverted", "all"]).default("all"),
+    dateFrom: z.string().trim().min(1).optional(),
+    dateTo: z.string().trim().min(1).optional(),
+    q: z.string().trim().min(1).optional(),
+    sort: z.enum(["created_at", "amount_micro"]).default("created_at"),
+    dir: z.enum(["asc", "desc"]).default("desc"),
+    limit: z.coerce.number().int().min(1).max(200).default(25),
+    offset: z.coerce.number().int().min(0).default(0),
+  });
 
   app.get("/staff/treasury/ledger", staffGuard("treasury.view", async (_ctx, req) => {
-    const query = req.query as Record<string, string | undefined>;
-    const { rows, total } = await listTreasuryLedger(parseLedgerFilters(query));
-    return { rows, total, limit: Math.min(Number(query.limit ?? 25) || 25, 200), offset: Math.max(Number(query.offset ?? 0) || 0, 0) };
+    const query = ledgerQuerySchema.parse((req.query as Record<string, unknown>) ?? {});
+    const { rows, total } = await listTreasuryLedger(query as TreasuryLedgerFilters);
+    return { rows, total, limit: query.limit, offset: query.offset };
   }));
 
   // Part 1 — Money & payouts overview's "Largest Treasury Payouts" block.
@@ -2249,8 +2251,8 @@ export async function staffRoutes(app: FastifyInstance) {
   // data the withdrawal queue already shows these same roles, aggregated —
   // not a new exposure of treasury address/balance detail.
   app.get("/staff/treasury/ledger/largest-payouts", staffGuard("withdrawals.view", async (_ctx, req) => {
-    const query = req.query as Record<string, string | undefined>;
-    const limit = Math.min(Number(query.limit ?? 6) || 6, 25);
+    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(25).default(6) })
+      .parse((req.query as Record<string, unknown>) ?? {});
     const rows = await largestConfirmedTreasuryPayouts(limit);
     return { rows };
   }));
