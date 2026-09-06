@@ -4351,3 +4351,21 @@ See `docs/` for the full spec.
     touched, so the existing 40+ e2e suites are unaffected by construction —
     this is presentation-only, on the frontend, over data those suites
     already exercise.
+  - ⚠️ **A FOLLOW-UP CROSS-CHECK OF THAT SAME FIX FOUND A REAL GAP IT
+    INTRODUCED, FIXED THE SAME DAY: `/wallet/usdt` never fetched `taskUsdt` at
+    all.** Checked every one of `unifyHistory()`'s four call sites
+    (`/wallet`, `/wallet/usdt`, `/wallet/bnb`, `/wallet/rozi`) for whether
+    each still has enough data to explain a reward-payout's suppressed rows.
+    `/wallet` was fine (already passed `taskUsdt`); `/wallet/bnb` and
+    `/wallet/rozi` are unaffected (neither ever receives USDT withdrawal/topup
+    data). `/wallet/usdt` — the dedicated USDT history screen, whose headline
+    balance (`usdtTotalMicro`) DOES include the earned-USDT leg a reward
+    disbursement moves — never called `fetchUsdtTaskRewards`. Before this
+    pass's fix, that screen at least showed the deposit row explaining a
+    reward's arrival (confusingly, alongside the withdrawal); after hiding
+    both, it would have shown the balance jump with **zero** history row
+    explaining it — worse than before, not better. Fixed by wiring
+    `fetchUsdtTaskRewards` into `/wallet/usdt/page.tsx` exactly as `/wallet`
+    already does, so the "Task reward" row is always there to explain the
+    money on any screen where the echo rows are suppressed. Verified: web
+    `tsc --noEmit` clean, `eslint` clean, `next build` clean (38 routes).

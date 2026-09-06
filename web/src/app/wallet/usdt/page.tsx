@@ -11,7 +11,7 @@ import { TxDetailSheet } from "@/components/TxDetailSheet";
 import { HistoryList } from "@/components/HistoryList";
 import { useRequireAuth, useApi } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
-import { fetchBalance, fetchLedger, fetchMiningState, fetchUsdtNoGas, fetchWithdrawals } from "@/lib/api";
+import { fetchBalance, fetchLedger, fetchMiningState, fetchUsdtNoGas, fetchUsdtTaskRewards, fetchWithdrawals } from "@/lib/api";
 import { formatUsdtMicro } from "@/lib/format";
 import { chainLabel } from "@/lib/chains";
 import { unifyHistory, type Row } from "@/lib/walletHistory";
@@ -26,6 +26,7 @@ export default function UsdtWalletPage() {
   const led = useApi(fetchLedger, []);
   const mining = useApi(fetchMiningState, []);
   const withdrawals = useApi(fetchWithdrawals, []);
+  const taskUsdt = useApi(fetchUsdtTaskRewards, []);
   const usdtOn = Boolean(mining.data?.usdtTopup);
   const usdt = useApi(fetchUsdtNoGas, [usdtOn], usdtOn);
   const [copied, setCopied] = useState(false);
@@ -39,9 +40,15 @@ export default function UsdtWalletPage() {
   const address = usdt.data?.personalAddress ?? usdt.data?.treasuryAddress ?? null;
   const chain = usdt.data?.treasuryChain ?? "bep20";
 
+  // taskUsdt must be passed here, not just on /wallet: a reward-payout
+  // withdrawal and its matching on-chain deposit are both hidden by
+  // unifyHistory() (2026-09-05), and without the "Task reward" row this
+  // screen would show usdtTotalMicro increase with nothing in the history
+  // explaining why.
   const allRows = unifyHistory({
     ledger: led.data?.entries ?? [], rozi: [], withdrawals: withdrawals.data?.requests ?? [],
-    topups: usdt.data?.topups ?? [], refunds: usdt.data?.refunds ?? [], bnb: [], t,
+    topups: usdt.data?.topups ?? [], refunds: usdt.data?.refunds ?? [], bnb: [],
+    taskUsdt: taskUsdt.data?.rewards ?? [], t,
   }).filter((r) => r.token === "USDT");
   const PREVIEW = 3;
   const rows = showAll ? allRows : allRows.slice(0, PREVIEW);
