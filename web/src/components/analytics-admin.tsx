@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { fetchAnalytics, type Analytics } from "@/lib/api";
-import { formatUsdtMicro, formatPoints } from "@/lib/format";
+import { formatUsdtMicro, formatPoints, formatMoney } from "@/lib/format";
 import { TimeChart, FunnelBars, StatTile, compact } from "@/components/charts";
 import { useStaffNav } from "@/lib/staffNav";
 
@@ -25,7 +25,6 @@ export function AnalyticsDashboard() {
   if (report.error) return <p className="mb-8 text-sm text-danger">{report.error}</p>;
   const a = report.data!;
 
-  const pts = (n: number) => `${formatPoints(n)} pts`;
   const usdt = (micro: string) => formatUsdtMicro(Number(micro));
 
   return (
@@ -73,12 +72,17 @@ export function AnalyticsDashboard() {
         <StatTile label="Miners right now" value={compact(a.mining.activeMiners)}
           sub={`${compact(a.mining.sessions)} sessions in ${days} days`} onClick={() => goToSection("mining")} />
 
-        <StatTile label={`Revenue (${days}d, estimated)`} value={pts(a.money.revenuePoints)}
-          sub={`${a.money.revenuePerActiveUser} pts per active user`} onClick={() => goToSection("money")} />
-        <StatTile label={`Paid to users (${days}d)`} value={pts(a.money.rewardCostPoints)}
-          sub={`${formatPoints(a.money.referralCostPoints)} of it referrals`} onClick={() => goToSection("money")} />
-        <StatTile label="Waiting to be paid" value={pts(a.money.withdrawPendingPoints)}
-          sub={`${formatPoints(a.money.withdrawnPointsAll)} paid all time`}
+        {/* Part 11 — these are genuinely cash-denominated (task/referral
+            reward money, a documented real rate), so they're shown in that
+            real currency, USDT, rather than the internal "pts" unit. The
+            revenue estimate's own caveat below is unchanged — this only
+            changes the unit it's shown in, not what it claims to measure. */}
+        <StatTile label={`Revenue (${days}d, estimated)`} value={formatMoney(a.money.revenuePoints)}
+          sub={`${formatMoney(a.money.revenuePerActiveUser)} per active user`} onClick={() => goToSection("money")} />
+        <StatTile label={`Paid to users (${days}d)`} value={formatMoney(a.money.rewardCostPoints)}
+          sub={`${formatMoney(a.money.referralCostPoints)} of it referrals`} onClick={() => goToSection("money")} />
+        <StatTile label="Waiting to be paid" value={formatMoney(a.money.withdrawPendingPoints)}
+          sub={`${formatMoney(a.money.withdrawnPointsAll)} paid all time`}
           tone={a.money.withdrawPendingPoints > 0 ? "warn" : "normal"} onClick={() => goToSection("money")} />
         <StatTile label={`Deposits (${days}d)`} value={usdt(a.money.depositMicro30d)}
           sub={`${usdt(a.money.depositMicroAll)} all time`} onClick={() => goToSection("money")} />

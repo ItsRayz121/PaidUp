@@ -8,7 +8,7 @@ import { useApi } from "@/lib/hooks";
 import {
   fetchKpis, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, fetchSettings, updateSettings,
-  type StaffTicket, type NetworkConfig,
+  fetchReferralAdmin, type StaffTicket, type NetworkConfig, type ReferralNetwork,
 } from "@/lib/api";
 import { formatPoints, formatMoney, timeAgo } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
@@ -542,40 +542,66 @@ export function WithdrawalFeePanel() {
 // ---- Ad-network config (admin only) --------------------------------------
 export function NetworkPanel() {
   const nets = useApi(fetchNetworks, []);
+  // Founder, Part 4 (2026-09-06): the Growth → "Per network" tab was a
+  // read-only mirror of this exact per-network economics, and nothing there
+  // was editable that isn't already here — a genuine duplication, not two
+  // different jobs. Margin/headroom/the "floor" pinning badge are the three
+  // fields that tab had and this one didn't; folding GET /staff/referrals in
+  // here (same permission tier, referrals.manage — every role that can reach
+  // this screen already holds it, see permissions.ts) means there is now
+  // exactly one home for this data instead of two that could drift apart.
+  const referralAdmin = useApi(fetchReferralAdmin, []);
+  const marginById = new Map((referralAdmin.data?.networks ?? []).map((n) => [n.id, n]));
+  const pinning = new Set(referralAdmin.data?.pinning ?? []);
 
   return (
     <>
     <section className="mb-8">
       <h2 className="mb-2 font-bold text-brand-ink">Ad networks &amp; commission</h2>
-      <p className="mb-2 text-xs text-muted">Split and referral bonus are configured here — never in code. Disabling a network stops its postbacks crediting and hides its offers.</p>
+      <p className="mb-2 text-xs text-muted">
+        Split and referral bonus are configured here — never in code. Disabling a network stops its
+        postbacks crediting and hides its offers. Rows marked{" "}
+        <span className="rounded bg-pending-tint px-1 text-pending">floor</span> are the ones holding
+        the advertised referral rate down — raising anything else changes nothing users can see.
+      </p>
       {nets.loading ? <p className="p-4 text-sm text-muted">Loading…</p>
         : nets.error ? <p className="p-4 text-sm text-danger">{nets.error}</p>
         : (
           <div className="overflow-x-auto rounded-lg border-2 border-line-strong">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead className="bg-brand-tint text-left text-xs uppercase text-brand">
                 <tr>
                   <th className="p-2.5">Network</th><th className="p-2.5">Type</th>
                   <th className="p-2.5">Split % to user</th>
+                  <th className="p-2.5">Margin %</th>
                   <th className="p-2.5">Referral L1 %</th><th className="p-2.5">Referral L2 %</th>
                   <th className="p-2.5">1st-task bonus</th>
                   <th className="p-2.5">Referral days</th>
+                  <th className="p-2.5">Headroom</th>
                   <th className="p-2.5">Offers</th><th className="p-2.5">Credited</th><th className="p-2.5">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {nets.data!.networks.map((n) => <NetworkRow key={n.id} net={n} onSaved={nets.reload} />)}
+                {nets.data!.networks.map((n) => (
+                  <NetworkRow
+                    key={n.id} net={n} onSaved={nets.reload}
+                    margin={marginById.get(n.id)}
+                    isFloor={n.status === "active" && pinning.has(n.id)}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
         )}
-      {!nets.loading && !nets.error && <BulkReferralRates onSaved={nets.reload} />}
+      {!nets.loading && !nets.error && <BulkReferralRates onSaved={() => { nets.reload(); referralAdmin.reload(); }} />}
     </section>
     </>
   );
 }
 
-function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void }) {
+function NetworkRow({ net, onSaved, margin, isFloor }: {
+  net: NetworkConfig; onSaved: () => void; margin?: ReferralNetwork; isFloor: boolean;
+}) {
   const toast = useToast();
   const [split, setSplit] = useState(net.commissionSplitPct);
   const [refPct, setRefPct] = useState(net.referralBonusPct);
@@ -597,13 +623,24 @@ function NetworkRow({ net, onSaved }: { net: NetworkConfig; onSaved: () => void 
   const numInput = "num w-16 rounded border border-line bg-card p-1 text-sm outline-none";
   return (
     <tr className="border-t border-line">
-      <td className="p-2.5 font-medium text-brand-ink">{net.name}<div className="text-[11px] text-muted">{net.id}</div></td>
+      <td className="p-2.5 font-medium text-brand-ink">
+        {net.name}
+        {isFloor && <span className="ms-1.5 rounded bg-pending-tint px-1 text-[10px] font-semibold text-pending">floor</span>}
+        <div className="text-[11px] text-muted">{net.id}</div>
+      </td>
       <td className="p-2.5">{net.type === "rewarded_video" ? "Rewarded video" : "Offerwall"}</td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={split} onChange={(e) => setSplit(Number(e.target.value))} className={numInput} /></td>
+      <td className="num p-2.5">{margin ? `${margin.marginPct}%` : "—"}</td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={refPct} onChange={(e) => setRefPct(Number(e.target.value))} className={numInput} title="Direct referral %" /></td>
       <td className="p-2.5"><input type="number" min={0} max={100} value={refPctL2} onChange={(e) => setRefPctL2(Number(e.target.value))} className={numInput} title="Level-2 (indirect) referral %. 0 = off" /></td>
       <td className="p-2.5"><input type="number" min={0} max={1000000} value={firstBonus} onChange={(e) => setFirstBonus(Number(e.target.value))} className="num w-20 rounded border border-line bg-card p-1 text-sm outline-none" title="Points bonus when an invite finishes their first task. 0 = off" /></td>
       <td className="p-2.5"><input type="number" min={0} max={3650} value={refDays} onChange={(e) => setRefDays(Number(e.target.value))} className={numInput} title="0 = lifetime (no window)" /></td>
+      {/* Negative headroom means this network loses money on every referred
+          task. The API refuses to CREATE that state, but a split lowered
+          afterwards can produce it. */}
+      <td className={`num p-2.5 ${margin && margin.headroomPct < 0 ? "font-bold text-danger" : ""}`}>
+        {margin ? `${margin.headroomPct}%` : "—"}
+      </td>
       <td className="num p-2.5">{net.taskCount}</td>
       <td className="num p-2.5">{net.creditedCount}</td>
       <td className="p-2.5">

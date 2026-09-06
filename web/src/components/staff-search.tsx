@@ -104,12 +104,10 @@ const DESTINATIONS: SearchDest[] = [
   { label: "Task reward disbursements", short: "Disbursements", section: "tasks", anchor: "p-task-rewards", hint: "Tasks & networks",
     keywords: "disbursement batch pay reward release task campaign send bulk csv", needs: ["disbursements.manage"] },
   { label: "Ad networks", short: "Networks", section: "tasks", anchor: "p-networks", hint: "Tasks & networks",
-    keywords: "cpx offerwall postback commission split referral bonus", needs: ["networks.manage"] },
+    keywords: "cpx offerwall postback commission split margin headroom referral bonus per network", needs: ["networks.manage"] },
 
   { label: "Referral rates", short: "Referrals", section: "growth", anchor: "p-referrals", hint: "Growth",
     keywords: "referral bonus l1 l2 percent invite reward first task advertised top partners", needs: ["referrals.manage"] },
-  { label: "Per-network referral rates", short: "Per network", section: "growth", anchor: "p-referral-networks", hint: "Growth",
-    keywords: "network cpx offerhub surveyx split margin headroom referral per network", needs: ["referrals.manage"] },
   { label: "Leaderboard", short: "Leaderboard", section: "growth", anchor: "p-leaderboard", hint: "Growth",
     keywords: "leaderboard top earners inviters exclude hide", needs: ["leaderboard.manage"] },
 

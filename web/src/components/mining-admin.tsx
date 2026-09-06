@@ -20,7 +20,7 @@ import {
 // The staff panel deliberately still shows POINTS, not USDT. This is where the
 // ledger is reconciled, and hiding the underlying unit from the people checking
 // the numbers would make them harder to check, not easier.
-import { formatPoints, displayIdentity } from "@/lib/format";
+import { formatPoints, displayIdentity, formatRozi, pointsToRoziMicro } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString();
@@ -1358,6 +1358,15 @@ export function BoosterPanel() {
               <input type={type} value={form[key]}
                 onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                 className="mt-0.5 w-full rounded-md border border-line bg-card px-2 py-1 font-mono" />
+              {/* Points are still the precise unit this form takes — the API's
+                  pricePoints field is an integer point count — but the ROZI a
+                  buyer would actually see is worth showing live, same reason
+                  the table below shows it. */}
+              {key === "pricePoints" && form.pricePoints && (
+                <span className="mt-0.5 block text-[10px] text-muted">
+                  ≈ {formatRozi(pointsToRoziMicro(Number(form.pricePoints) || 0))} ROZI
+                </span>
+              )}
             </label>
           ))}
           <div className="sm:col-span-4">
@@ -1379,8 +1388,14 @@ export function BoosterPanel() {
           <table className="w-full min-w-[560px] text-xs">
             <thead className="text-left uppercase text-muted">
               <tr>
-                <th className="py-1">Booster</th><th>Price</th><th>Boost</th><th>Hours</th>
-                <th>Sold</th><th>Points taken</th><th></th>
+                {/* Part 13 — a buyer pays with task earnings, shown to them as
+                    ROZI (option B, unchanged); these two columns lead with the
+                    same ROZI-equivalent figure now, for the same reason, with
+                    the raw points kept as a small secondary line — the number
+                    a reconciling admin actually needs is still right there,
+                    just no longer the only thing on screen. */}
+                <th className="py-1">Booster</th><th>Price (ROZI)</th><th>Boost</th><th>Hours</th>
+                <th>Sold</th><th>ROZI spent</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -1401,10 +1416,20 @@ export function BoosterPanel() {
                           if (next !== value && next > 0) edit(b.id, { [key]: next });
                         }}
                         className="w-20 rounded border border-line bg-card px-1.5 py-0.5 font-mono" />
+                      {/* The input stays a precise points integer — that's what
+                          the API takes — but a bare "300" means nothing without
+                          the ROZI a buyer actually sees, so it's shown right
+                          under the box. */}
+                      {key === "pricePoints" && (
+                        <div className="mt-0.5 text-[10px] text-muted">≈ {formatRozi(pointsToRoziMicro(value))} ROZI</div>
+                      )}
                     </td>
                   ))}
                   <td className="font-mono text-muted">{n(b.purchases)}</td>
-                  <td className="font-mono text-brand-ink">{formatPoints(b.pointsSpent)}</td>
+                  <td className="font-mono text-brand-ink">
+                    {formatRozi(pointsToRoziMicro(b.pointsSpent))} ROZI
+                    <div className="text-[10px] text-muted">{formatPoints(b.pointsSpent)} points</div>
+                  </td>
                   <td>
                     <button onClick={() => toggle(b.id, b.status)}
                       className={`rounded px-2 py-0.5 text-[10px] font-semibold ${

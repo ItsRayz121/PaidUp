@@ -16,7 +16,7 @@ import {
   type ReferralAdmin, type ReferralInvitee,
   type LeaderboardRewardSettings, type LeaderboardRewardCycleConfig,
 } from "@/lib/api";
-import { formatPoints, formatRozi, timeAgo, displayIdentity } from "@/lib/format";
+import { formatPoints, formatRozi, formatPointsAsRozi, formatMoney, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -150,61 +150,14 @@ export function ReferralPanel() {
   );
 }
 
-// Its own Growth sub-tab now (founder, 2026-09-02) — the per-network rate
-// breakdown is a different job from the advertised-rate summary.
-export function PerNetworkPanel() {
-  const data = useApi(fetchReferralAdmin, []);
-  if (data.loading) return <p className="p-4 text-sm text-muted">Loading…</p>;
-  if (data.error || !data.data) return <p className="p-4 text-sm text-danger">{data.error}</p>;
-  return <NetworkRates d={data.data} />;
-}
-
-function NetworkRates({ d }: { d: ReferralAdmin }) {
-  return (
-    <div className="rounded-lg border-2 border-line-strong bg-card p-3">
-      <h3 className="font-bold text-brand-ink">Per network</h3>
-      <p className="mt-1 text-xs text-muted">
-        Rows marked <span className="rounded bg-pending-tint px-1 text-pending">floor</span> are the
-        ones holding the advertised rate down. Raising anything else changes nothing users can see.
-      </p>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full min-w-[620px] text-xs">
-          <thead className="text-left uppercase text-muted">
-            <tr>
-              <th className="py-1">Network</th><th>Status</th><th>Split</th><th>Margin</th>
-              <th>L1</th><th>L2</th><th>First task</th><th>Window</th><th>Headroom</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.networks.map((x) => (
-              <tr key={x.id} className="border-t border-line">
-                <td className="py-1.5 font-semibold text-brand-ink">
-                  {x.name}
-                  {x.status === "active" && d.pinning.includes(x.id) && (
-                    <span className="ms-1.5 rounded bg-pending-tint px-1 text-[10px] font-semibold text-pending">floor</span>
-                  )}
-                </td>
-                <td className={x.status === "active" ? "text-success" : "text-muted"}>{x.status}</td>
-                <td className="font-mono">{x.commissionSplitPct}%</td>
-                <td className="font-mono">{x.marginPct}%</td>
-                <td className="font-mono">{x.referralBonusPct}%</td>
-                <td className="font-mono">{x.referralBonusPctL2}%</td>
-                <td className="font-mono">{n(x.referralFirstTaskBonus)}</td>
-                <td className="font-mono">{x.referralBonusDays === 0 ? "life" : `${x.referralBonusDays}d`}</td>
-                {/* Negative headroom means this network loses money on every
-                    referred task. The API refuses to CREATE that state, but a
-                    split lowered afterwards can produce it. */}
-                <td className={`font-mono ${x.headroomPct < 0 ? "font-bold text-danger" : "text-muted"}`}>
-                  {x.headroomPct}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+// PerNetworkPanel / NetworkRates — DELETED (founder, Part 4, 2026-09-06). This
+// was a read-only mirror of exactly the per-network economics
+// (margin/headroom/the "floor" pinning badge) that web/src/components/staff.tsx's
+// NetworkPanel — Tasks & Networks → Ad networks — already showed, editable,
+// one tab over. That table now also shows margin/headroom/the floor badge
+// (it already fetched networks; it now also fetches GET /staff/referrals),
+// so this stopped being a second home for the same data rather than a
+// different job. See NetworkPanel in staff.tsx for where this data lives now.
 
 type SortKey = "points" | "invites" | "activeInvites" | "inactivePct";
 
@@ -464,7 +417,12 @@ function Board(
           <table className="w-full min-w-[440px] text-xs">
             <thead className="text-left uppercase text-muted">
               <tr>
-                <th className="py-1">#</th><th>User</th><th>Points</th>
+                {/* Part 9 — no bare "Points" column: task/referral earnings are
+                    shown the same way an earner sees their own (ROZI, option
+                    B), with the real USDT value underneath since that figure
+                    is genuinely real here too (a documented, currently-used
+                    payout rate), not invented. */}
+                <th className="py-1">#</th><th>User</th><th>Earned</th>
                 {showInvites && <th>Invites</th>}<th></th>
               </tr>
             </thead>
@@ -473,7 +431,10 @@ function Board(
                 <tr key={r.id} className="border-t border-line">
                   <td className="py-1.5 font-mono text-muted">{r.rank}</td>
                   <td><button onClick={() => openUser(r.id)} className="text-brand-ink hover:underline">{displayIdentity(r)}</button></td>
-                  <td className="font-mono">{formatPoints(r.points)}</td>
+                  <td className="font-mono">
+                    {formatPointsAsRozi(r.points)}
+                    <div className="text-[10px] text-muted">{formatMoney(r.points)}</div>
+                  </td>
                   {showInvites && <td className="font-mono">{r.invites ?? 0}</td>}
                   <td className="text-right">
                     <button onClick={() => onHide(r.id, r.email)} disabled={busy === r.id}

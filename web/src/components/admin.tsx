@@ -16,7 +16,7 @@ import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
 import { DataTable, type Column } from "@/components/staff/DataTable";
-import { StatusBadge, TimeCell, Points } from "@/components/staff/primitives";
+import { StatusBadge, TimeCell, Points, RoziMicro } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
 
 // ---- Users list — on the shared DataTable (admin rebuild, Phase A) --------
@@ -74,7 +74,19 @@ export function UsersPanel() {
         </div>
       ),
     },
-    { key: "balance", header: "Balance", align: "right", sortable: true, csv: (u) => u.balance, render: (u) => <Points value={u.balance} /> },
+    {
+      // Part 10 — no bare, unlabeled "Balance": this is the points/cash
+      // ledger (task+referral earnings, the real 1000pts=$1 rate), so it says
+      // so, distinct from the real ROZI ledger column right after it.
+      key: "balance", header: "Points balance", align: "right", sortable: true,
+      csv: (u) => u.balance, render: (u) => <Points value={u.balance} />,
+    },
+    {
+      // Part 10 — a genuinely separate ledger from the points balance above
+      // (rozi_ledger, never points converted at a display ratio).
+      key: "rozi", header: "ROZI balance", align: "right", sortable: true,
+      csv: (u) => u.roziMicro, render: (u) => <RoziMicro value={u.roziMicro} />,
+    },
     {
       // Real deposited USDT (usdt_ledger), not points/ROZI converted to a
       // USDT-equivalent — that read as money sitting somewhere when none was.

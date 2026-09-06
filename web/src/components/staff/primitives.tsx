@@ -4,7 +4,7 @@
 // One status vocabulary, one time format, one money format, one id chip — used
 // on every list and every detail page so nothing formatted two ways.
 import { useState, type ReactNode } from "react";
-import { formatPoints, formatUsdtMicro } from "@/lib/format";
+import { formatPoints, formatUsdtMicro, formatRozi } from "@/lib/format";
 
 // ---- status badges --------------------------------------------------------
 // Every state string the panel shows, mapped to one of four tones. A value not
@@ -125,6 +125,11 @@ export function Points({ value }: { value: number | null | undefined }) {
 }
 export function UsdtMicro({ value }: { value: number | null | undefined }) {
   return <span className="num tabular-nums">{formatUsdtMicro(Number(value ?? 0))}</span>;
+}
+// The real ROZI ledger balance (a completely separate table from the points
+// ledger `Points` above renders) — Part 10's own "ROZI Balance" column.
+export function RoziMicro({ value }: { value: number | null | undefined }) {
+  return <span className="num tabular-nums">{formatRozi(Number(value ?? 0))} ROZI</span>;
 }
 
 // ---- copyable id -----------------------------------------------------

@@ -1812,7 +1812,7 @@ export async function staffRoutes(app: FastifyInstance) {
 
     const SORTS: Record<string, string> = {
       created_at: "u.created_at", email: "u.email", status: "u.status", balance: "balance",
-      usdt: "\"usdtMicro\"",
+      usdt: "\"usdtMicro\"", rozi: "\"roziMicro\"",
     };
     const sortCol = SORTS[query.sort ?? ""] ?? "u.created_at";
     const dir = query.dir === "asc" ? "ASC" : "DESC";
@@ -1820,12 +1820,18 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow] = await Promise.all([
       sql.all<{
         id: string; email: string; country: string; status: string; created_at: string; balance: number;
-        usdtMicro: number;
+        usdtMicro: number; roziMicro: number;
         openFlags: number; held: boolean; underReview: boolean;
       }>(
         `SELECT u.id, u.email, u.country, u.status, u.created_at,
                 COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
                 COALESCE((SELECT SUM(amount) FROM usdt_ledger l WHERE l.user_id = u.id), 0)::bigint AS "usdtMicro",
+                -- Part 10 — the real, separate ROZI ledger balance (mined + moved to
+                -- wallet, minus anything spent/burned), never the points figure
+                -- above converted at a display ratio. Same SUM(amount) shape
+                -- db.ts's own roziBalanceMicroOf uses, inlined here (that helper is
+                -- one query per user; a list row needs it as one aggregate column).
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id), 0)::bigint AS "roziMicro",
                 COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS "openFlags",
                 (u.withdrawal_hold_reason IS NOT NULL
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held,
@@ -2701,6 +2707,7 @@ export async function staffRoutes(app: FastifyInstance) {
         `SELECT u.created_at, u.email, u.id, u.country, u.status,
                 COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
                 COALESCE((SELECT SUM(amount) FROM usdt_ledger l WHERE l.user_id = u.id), 0)::bigint AS usdt_micro,
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id), 0)::bigint AS rozi_micro,
                 COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS open_flags,
                 (u.withdrawal_hold_reason IS NOT NULL
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS payouts_held

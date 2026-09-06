@@ -1058,6 +1058,11 @@ export type AdminUserRow = {
   // converted to a USDT-equivalent — that was the old "Value" column, and it
   // read as money sitting somewhere when none of it was.
   usdtMicro: number;
+  // Part 10 — the real ROZI ledger balance (rozi_ledger), a completely
+  // separate table from `balance` below (which is the points/cash ledger).
+  // Never derived from `balance` at a display ratio — that would be showing
+  // an invented number as if it were this user's real mining/ROZI history.
+  roziMicro: number;
   // Open fraud flags on this account, and whether AUTOMATIC payouts are
   // currently held (guardrail #8 territory — a hold is not a suspension, see
   // UserHeader). Both are computed server-side so the list never needs one

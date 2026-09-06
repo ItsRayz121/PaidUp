@@ -25,7 +25,7 @@ import { KycPanel } from "@/components/kyc-admin";
 import { AuditPanel } from "@/components/audit-admin";
 import { FeatureFlagsPanel, GlobalSettingsPanel, StaffAlertsPanel } from "@/components/settings-admin";
 import { AnalyticsDashboard } from "@/components/analytics-admin";
-import { ReferralPanel, LeaderboardPanel, PerNetworkPanel, LeaderboardRewardsPanel } from "@/components/growth-admin";
+import { ReferralPanel, LeaderboardPanel, LeaderboardRewardsPanel } from "@/components/growth-admin";
 import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, setPendingGroupSubTab, type SectionId } from "@/lib/staffNav";
 import { StaffSearch } from "@/components/staff-search";
@@ -299,9 +299,9 @@ export default function StaffPage() {
     ],
     growth: [
       { id: "p-referrals", label: "Referrals", need: "referrals.manage", node: <ReferralPanel /> },
-      // Founder, 2026-09-02: the per-network rate breakdown is its own job, not
-      // part of the advertised-rate summary.
-      { id: "p-referral-networks", label: "Per network", need: "referrals.manage", node: <PerNetworkPanel /> },
+      // "Per network" was removed from here (founder, Part 4, 2026-09-06) — it
+      // was a read-only duplicate of Tasks & Networks → Ad networks, which now
+      // shows the same margin/headroom/floor-badge data, editable, in one place.
       { id: "p-leaderboard", label: "Leaderboard", need: "leaderboard.manage", node: <LeaderboardPanel /> },
       { id: "p-leaderboard-rewards", label: "Reward pools", need: "leaderboard.manage", node: <LeaderboardRewardsPanel /> },
     ],
