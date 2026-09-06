@@ -10,7 +10,9 @@ import { z } from "zod";
 import {
   sql, now, newId, postRozi, postUsdt, usdtBalanceMicroOf,
   usdtFromMicro, usdtToMicro, logAudit, getSetting,
+  roziMinedBalanceMicroOf, roziWalletBalanceMicroOf,
 } from "../db.ts";
+import { kycFeatureEnabled, kycSatisfied } from "../kyc.ts";
 import { chainById, validateAddress } from "../chains.ts";
 import { config } from "../config.ts";
 import { relayAvailable, createRelayJob } from "../payoutRelay.ts";
@@ -1070,6 +1072,101 @@ export async function staffMiningRoutes(app: FastifyInstance) {
       targetUserId: targetId, detail: `${b.rozi > 0 ? "+" : ""}${b.rozi} ROZI — ${b.note}`,
     });
     return { ok: true };
+  }));
+
+  // ---- Move Mined ROZI -> Wallet ROZI (founder, 2026-09-06) ----------------
+  // The "approved conversion process": Mined ROZI stays inside Mining, spendable
+  // and displayed exactly as before, until a staff member moves some of it into
+  // the Wallet bucket for a KYC-passed user. This is NOT the ROZI->Points
+  // conversion window above (that burns ROZI for a share of a Points pot) — it
+  // is a same-currency relabel, atomic, and it can never mint or destroy ROZI:
+  // one debit (wallet_release_out) + one credit (wallet_release_in), same user,
+  // same amount, in one transaction under the per-user advisory lock
+  // (guardrail #8 — reading a balance then debiting it without the lock is how
+  // two concurrent releases both pass the "enough Mined ROZI" check and jointly
+  // move more than the user ever had).
+  //
+  // ⚠️ There is deliberately no self-serve /mine route for this. Wallet ROZI is
+  // not officially activated for earners yet — see roziWalletBalanceMicroOf's
+  // own comment in db.ts and the earner-facing wallet/`/mine` screens, neither
+  // of which reads it. This endpoint exists so the split is real and auditable
+  // in the admin panel while staying functionally invisible to users.
+  app.post("/staff/mining/users/:id/release-to-wallet", staffGuard("mining.adjust", async ({ userId: actorId, role }, req) => {
+    const targetId = (req.params as { id: string }).id;
+    // No .positive() here — a schema-validation throw has no statusCode and
+    // would fall through staffGuard's catch as a 500. Zero/negative are
+    // rejected explicitly below instead, same as the manual adjustment above.
+    const b = z.object({
+      rozi: z.number(),
+      note: z.string().min(3).max(200),
+    }).parse(req.body);
+
+    const s = await loadMiningSettings();
+    const magnitudeMicro = toMicro(b.rozi);
+    if (b.rozi <= 0 || magnitudeMicro <= 0) {
+      throw { statusCode: 400, message: "Enter an amount greater than zero." };
+    }
+    // Same fat-finger guard the manual ROZI adjustment above uses — this moves
+    // real ROZI between buckets, not new ROZI, but a mis-typed amount is just
+    // as real a mistake either way.
+    if (b.rozi > s.adminAdjustMaxRozi) {
+      throw {
+        statusCode: 400,
+        message: `A single release is limited to ${s.adminAdjustMaxRozi} ROZI. Raise the limit deliberately if you really mean it.`,
+      };
+    }
+
+    const target = await sql.get<{ id: string; kyc_status: string | null }>(
+      "SELECT id, kyc_status FROM users WHERE id = ?", targetId,
+    );
+    if (!target) throw { statusCode: 404, message: "No such user." };
+
+    // The ID check is waived, not merely hidden, when the feature itself is
+    // off — same rule kycSatisfied already applies to withdrawals/refunds.
+    // ⚠️ kycSatisfied is ASYNC — a missing `await` here would make this whole
+    // gate a silent no-op (caught by test:roziwallet before this shipped).
+    if (await kycFeatureEnabled() && !(await kycSatisfied(target.kyc_status))) {
+      throw {
+        statusCode: 400,
+        message: "This user must pass the ID check (KYC) before ROZI can move to their wallet.",
+      };
+    }
+
+    const result = await sql.tx(async (t) => {
+      // Guardrail #8: read-then-debit a balance without a lock and two
+      // concurrent releases can both see enough Mined ROZI and both go
+      // through, moving more than the user ever had.
+      await t.run("SELECT pg_advisory_xact_lock(hashtext(?))", targetId);
+
+      const minedBefore = await roziMinedBalanceMicroOf(targetId, t);
+      if (minedBefore < magnitudeMicro) {
+        throw { statusCode: 400, message: "They do not have that much Mined ROZI." };
+      }
+
+      const releaseId = newId();
+      await postRozi({
+        userId: targetId, micro: magnitudeMicro, direction: "debit",
+        sourceType: "wallet_release_out", sourceRefId: releaseId, note: b.note,
+      }, t);
+      await postRozi({
+        userId: targetId, micro: magnitudeMicro, direction: "credit",
+        sourceType: "wallet_release_in", sourceRefId: releaseId, note: b.note,
+      }, t);
+
+      const [minedAfter, walletAfter] = await Promise.all([
+        roziMinedBalanceMicroOf(targetId, t), roziWalletBalanceMicroOf(targetId, t),
+      ]);
+      return { releaseId, minedBefore, minedAfter, walletAfter };
+    });
+
+    await logAudit({
+      actorUserId: actorId, actorRole: role, action: "rozi_wallet_release",
+      targetUserId: targetId,
+      detail: `${b.rozi} ROZI moved from Mined to Wallet — ${b.note}`,
+      previousValue: fromMicro(result.minedBefore),
+      newValue: fromMicro(result.minedAfter),
+    });
+    return { ok: true, ...result };
   }));
 
   // ---- ROZI store: the catalogue -------------------------------------------

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
+  roziMinedBalanceMicroOf, roziWalletBalanceMicroOf,
   postLedger, postEarnedUsdt, postUsdt, logAudit, getSetting, setSetting,
 } from "../db.ts";
 import { config } from "../config.ts";
@@ -885,8 +886,12 @@ export async function staffRoutes(app: FastifyInstance) {
     // support agent tells someone their money is gone while it is sitting on a
     // ledger the screen did not read. They are separate ledgers by guardrail
     // #7 — shown side by side, never summed.
-    const [balancePoints, roziMicro, usdtMicro] = await Promise.all([
-      balanceOf(id), roziBalanceMicroOf(id), usdtBalanceMicroOf(id),
+    // Mined vs Wallet (founder, 2026-09-06): NOT a fifth ledger — the same
+    // rozi_ledger split by whether a row has completed the staff-approved
+    // release-to-wallet process. roziMicro (the total) is unchanged and still
+    // equals roziMinedMicro + roziWalletMicro exactly, always.
+    const [balancePoints, roziMicro, roziMinedMicro, roziWalletMicro, usdtMicro] = await Promise.all([
+      balanceOf(id), roziBalanceMicroOf(id), roziMinedBalanceMicroOf(id), roziWalletBalanceMicroOf(id), usdtBalanceMicroOf(id),
     ]);
 
     // ⚠️ The column names here are payout_rail / payout_address / review_note,
@@ -992,6 +997,8 @@ export async function staffRoutes(app: FastifyInstance) {
         ...user,
         balancePoints,
         roziMicro,
+        roziMinedMicro,
+        roziWalletMicro,
         usdtMicro,
         // Stated as a boolean so the panel never has to re-derive "is this hold
         // still in force" from a date string and get it wrong.
@@ -1813,6 +1820,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const SORTS: Record<string, string> = {
       created_at: "u.created_at", email: "u.email", status: "u.status", balance: "balance",
       usdt: "\"usdtMicro\"", rozi: "\"roziMicro\"",
+      roziMined: "\"roziMinedMicro\"", roziWallet: "\"roziWalletMicro\"",
     };
     const sortCol = SORTS[query.sort ?? ""] ?? "u.created_at";
     const dir = query.dir === "asc" ? "ASC" : "DESC";
@@ -1820,7 +1828,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const [rows, totalRow] = await Promise.all([
       sql.all<{
         id: string; email: string; country: string; status: string; created_at: string; balance: number;
-        usdtMicro: number; roziMicro: number;
+        usdtMicro: number; roziMicro: number; roziMinedMicro: number; roziWalletMicro: number;
         openFlags: number; held: boolean; underReview: boolean;
       }>(
         `SELECT u.id, u.email, u.country, u.status, u.created_at,
@@ -1832,6 +1840,12 @@ export async function staffRoutes(app: FastifyInstance) {
                 -- db.ts's own roziBalanceMicroOf uses, inlined here (that helper is
                 -- one query per user; a list row needs it as one aggregate column).
                 COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id), 0)::bigint AS "roziMicro",
+                -- Mined vs Wallet split (founder, 2026-09-06) — same total as
+                -- above, just divided by whether it has completed the staff-approved
+                -- release-to-wallet process (source_type 'wallet_release_in'). See
+                -- roziMinedBalanceMicroOf / roziWalletBalanceMicroOf in db.ts.
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id AND l.source_type <> 'wallet_release_in'), 0)::bigint AS "roziMinedMicro",
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id AND l.source_type = 'wallet_release_in'), 0)::bigint AS "roziWalletMicro",
                 COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS "openFlags",
                 (u.withdrawal_hold_reason IS NOT NULL
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS held,
@@ -2708,6 +2722,8 @@ export async function staffRoutes(app: FastifyInstance) {
                 COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
                 COALESCE((SELECT SUM(amount) FROM usdt_ledger l WHERE l.user_id = u.id), 0)::bigint AS usdt_micro,
                 COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id), 0)::bigint AS rozi_micro,
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id AND l.source_type <> 'wallet_release_in'), 0)::bigint AS rozi_mined_micro,
+                COALESCE((SELECT SUM(amount) FROM rozi_ledger l WHERE l.user_id = u.id AND l.source_type = 'wallet_release_in'), 0)::bigint AS rozi_wallet_micro,
                 COALESCE((SELECT COUNT(*) FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL), 0)::int AS open_flags,
                 (u.withdrawal_hold_reason IS NOT NULL
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS payouts_held

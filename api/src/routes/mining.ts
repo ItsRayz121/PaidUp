@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
-  sql, now, newId, postLedger, postRozi, balanceOf, roziBalanceMicroOf,
+  sql, now, newId, postLedger, postRozi, balanceOf, roziMinedBalanceMicroOf,
   postUsdt, usdtBalanceMicroOf, usdtToMicro, getOrCreateDepositAddress, type TxApi,
 } from "../db.ts";
 import { chainById, validateAddress, type ChainId } from "../chains.ts";
@@ -225,7 +225,7 @@ export async function miningRoutes(app: FastifyInstance) {
     // sessionState had just finished computing. Audit 2026-09-04, finding B2.
     const breakdown = state.breakdown;
     const [roziMicro, claimableMicro, streak, boosts, adsToday, me, sentToday, store] = await Promise.all([
-      roziBalanceMicroOf(userId),
+      roziMinedBalanceMicroOf(userId),
       claimableRoziMicro(userId),
       sql.get<{ current_days: number; best_days: number }>(
         "SELECT current_days, best_days FROM mining_streaks WHERE user_id = ?", userId),
@@ -434,7 +434,7 @@ export async function miningRoutes(app: FastifyInstance) {
     const piRate = s.emissionModel === "pi" ? effectivePiRate(s, await minerPopulation()) : 0;
     const piReferenceSeconds = s.piReferenceHours * 3600;
     return {
-      roziMicro: await roziBalanceMicroOf(userId),
+      roziMicro: await roziMinedBalanceMicroOf(userId),
       // The second way to pay. Zero for everyone until a deposit is confirmed,
       // and the whole USDT option stays hidden while top-ups are switched off.
       usdtMicro: await usdtBalanceMicroOf(userId),
@@ -533,7 +533,7 @@ export async function miningRoutes(app: FastifyInstance) {
         }, t);
       }
 
-      const balMicro = await roziBalanceMicroOf(userId, t);
+      const balMicro = await roziMinedBalanceMicroOf(userId, t);
       if (payWith === "rozi") {
         if (balMicro < costMicro) {
           throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
@@ -944,7 +944,7 @@ export async function miningRoutes(app: FastifyInstance) {
       userId,
     );
     return {
-      roziMicro: await roziBalanceMicroOf(userId),
+      roziMicro: await roziMinedBalanceMicroOf(userId),
       items: items.map((i) => ({
         id: i.id, title: i.title, description: i.description,
         costMicro: toMicro(Number(i.cost_rozi)), inputLabel: i.input_label,
@@ -988,7 +988,7 @@ export async function miningRoutes(app: FastifyInstance) {
       }
 
       const costMicro = toMicro(Number(item.cost_rozi));
-      const balMicro = await roziBalanceMicroOf(userId, t);
+      const balMicro = await roziMinedBalanceMicroOf(userId, t);
       if (balMicro < costMicro) {
         throw { statusCode: 400, message: "You do not have enough ROZI for this yet." };
       }
@@ -1183,7 +1183,7 @@ export async function miningRoutes(app: FastifyInstance) {
     const result = await sql.tx(async (t) => {
       await lockUser(t, userId);
 
-      const balMicro = await roziBalanceMicroOf(userId, t);
+      const balMicro = await roziMinedBalanceMicroOf(userId, t);
       if (balMicro < amountMicro) {
         throw { statusCode: 400, message: "You do not have that much ROZI." };
       }
@@ -1245,7 +1245,7 @@ export async function miningRoutes(app: FastifyInstance) {
     if (!s.conversionEnabled || !w) {
       return {
         open: false, enabled: Boolean(s.conversionEnabled),
-        roziMicro: await roziBalanceMicroOf(userId),
+        roziMicro: await roziMinedBalanceMicroOf(userId),
         maxPctOfMined: s.conversionMaxPctOfMined,
         allowanceMicro: cap.allowanceMicro,
         minedMicro: cap.minedMicro,
@@ -1274,7 +1274,7 @@ export async function miningRoutes(app: FastifyInstance) {
       // What they'd get if the window closed right now. It WILL change as others
       // convert, and the UI says so in plain English.
       myPointsIfClosedNow: conversionPayout(myBurnMicro, totalBurnMicro, w.pot_points),
-      roziMicro: await roziBalanceMicroOf(userId),
+      roziMicro: await roziMinedBalanceMicroOf(userId),
       // The per-user ceiling. The burn route re-checks all of this under a lock —
       // these fields exist so the screen can show the limit before someone types
       // an amount, never so the client can decide whether the limit applies.
@@ -1310,7 +1310,7 @@ export async function miningRoutes(app: FastifyInstance) {
         throw { statusCode: 400, message: "This conversion window has closed." };
       }
 
-      const balMicro = await roziBalanceMicroOf(userId, t);
+      const balMicro = await roziMinedBalanceMicroOf(userId, t);
       if (balMicro < burnMicro) {
         throw { statusCode: 400, message: "You do not have that much ROZI." };
       }

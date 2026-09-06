@@ -2422,6 +2422,31 @@ const MINING_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_leaderboard_payouts_cycle ON leaderboard_reward_payouts(cycle_id);
   CREATE INDEX IF NOT EXISTS idx_leaderboard_payouts_user ON leaderboard_reward_payouts(user_id);
+
+  -- ---- MINED ROZI vs WALLET ROZI (founder, 2026-09-06) -----------------------
+  -- Two new source types, not a new table. A "release to wallet" is one user's
+  -- own ROZI moving from the Mining bucket to the Wallet bucket — it is NOT a
+  -- transfer between two accounts and it mints nothing, so it stays inside the
+  -- existing rozi_ledger the same way a rig purchase or a transfer already does:
+  -- one debit row (wallet_release_out, leaves Mining) + one credit row
+  -- (wallet_release_in, enters Wallet), same user, same amount, linked by
+  -- source_ref_id. Total ROZI for the user (roziBalanceMicroOf, unchanged) is
+  -- exactly conserved — nothing here can ever mint or burn a single micro-ROZI,
+  -- see roziMinedBalanceMicroOf / roziWalletBalanceMicroOf below.
+  --
+  -- ⚠️ NOT COUNTED IN totalEmittedMicro() (mining/settings.ts) ON PURPOSE — a
+  -- release does not create new ROZI against the 21M cap, it only relabels ROZI
+  -- that was already counted the day it was mined/earned/won.
+  --
+  -- ⚠️ Gated by KYC + staff approval (POST /staff/mining/users/:id/release-to-wallet,
+  -- mining.adjust) — there is no self-serve user route. Wallet ROZI is NOT shown
+  -- on any earner screen yet; see the note above roziWalletBalanceMicroOf.
+  ALTER TABLE rozi_ledger DROP CONSTRAINT IF EXISTS rozi_ledger_source_type_check;
+  ALTER TABLE rozi_ledger ADD CONSTRAINT rozi_ledger_source_type_check
+    CHECK (source_type IN ('mining','rig_purchase','transfer_in','transfer_out',
+                           'transfer_fee','conversion_burn','admin_adjustment',
+                           'bonus','store_redemption','task_reward','leaderboard_reward',
+                           'wallet_release_out','wallet_release_in'));
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin
@@ -2819,7 +2844,12 @@ export type RoziSource =
   // Weekly/monthly leaderboard prize (founder, 2026-09-05). Minted by
   // leaderboardRewards.ts's settlement job; counts against the 21M cap (see
   // totalEmittedMicro() in mining/settings.ts).
-  | "leaderboard_reward";
+  | "leaderboard_reward"
+  // Mined ROZI -> Wallet ROZI (founder, 2026-09-06). Always posted as a pair,
+  // same user, same amount, linked by sourceRefId: `_out` debits the Mining
+  // side, `_in` credits the Wallet side. Mints nothing — see the schema note
+  // above the CHECK constraint in MINING_SCHEMA.
+  | "wallet_release_out" | "wallet_release_in";
 
 // Amounts are MICRO-ROZI (millionths). The parameter is named `micro`, not
 // `rozi`, on purpose: it is the one thing that makes a unit mistake a compile
@@ -2862,6 +2892,51 @@ export async function roziBalanceMicroOf(
 ): Promise<number> {
   const row = await t.get<{ bal: string | number }>(
     "SELECT COALESCE(SUM(amount), 0) AS bal FROM rozi_ledger WHERE user_id = ?",
+    userId,
+  );
+  return Number(row?.bal ?? 0);
+}
+
+// ---- Mined ROZI vs Wallet ROZI (founder, 2026-09-06) ----------------------
+// They are NOT two separate rewards — every micro-ROZI a user ever holds is
+// counted in exactly one of the two, and the two always sum to
+// roziBalanceMicroOf() above. "Mined" is ROZI still inside Mining (from
+// mining, tasks, referrals, boosters, transfers, leaderboard prizes, minus
+// whatever has been spent, burned or released out); "Wallet" is ROZI that has
+// completed KYC + the staff-approved release process
+// (POST /staff/mining/users/:id/release-to-wallet) and moved out of Mining.
+//
+// Excluding `wallet_release_in` credits from the Mined sum — while still
+// including the matching `wallet_release_out` DEBIT — is what makes a release
+// show up as a real deduction on the Mining side: the debit row lowers the
+// Mined total by exactly the amount the credit row adds to the Wallet total,
+// and nothing else changes. See routes/mining.ts, which reads THIS function
+// (never the combined one above) for every earner-facing balance, spend and
+// transfer check, so Wallet ROZI cannot be spent or displayed through Mining
+// either.
+export async function roziMinedBalanceMicroOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: string | number }>(
+    "SELECT COALESCE(SUM(amount), 0) AS bal FROM rozi_ledger WHERE user_id = ? AND source_type <> 'wallet_release_in'",
+    userId,
+  );
+  return Number(row?.bal ?? 0);
+}
+
+// ⚠️ NOT SHOWN ANYWHERE IN THE EARNER APP YET. There is no self-serve route
+// that credits this (only the staff-approved release above does), and no
+// route that spends from it either — the whole point of a separate function
+// is that "Wallet ROZI" stays computable and auditable in the admin panel
+// while remaining functionally inert for users until the feature is
+// officially activated (see CLAUDE.md, 2026-09-06 entry).
+export async function roziWalletBalanceMicroOf(
+  userId: string,
+  t: Pick<TxApi, "get"> = sql,
+): Promise<number> {
+  const row = await t.get<{ bal: string | number }>(
+    "SELECT COALESCE(SUM(amount), 0) AS bal FROM rozi_ledger WHERE user_id = ? AND source_type = 'wallet_release_in'",
     userId,
   );
   return Number(row?.bal ?? 0);

@@ -53,7 +53,8 @@
     "test:staffalerts": "tsx src/tests/staffAlerts.e2e.ts",
     "test:bscscan": "tsx --test src/tests/bscscan.test.ts",
     "test:leaderboardrewards": "tsx src/tests/leaderboardRewards.e2e.ts",
-    "test:treasuryledger": "tsx src/tests/treasuryLedger.e2e.ts"
+    "test:treasuryledger": "tsx src/tests/treasuryLedger.e2e.ts",
+    "test:roziwallet": "tsx src/tests/roziWallet.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

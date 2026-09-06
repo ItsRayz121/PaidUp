@@ -10,7 +10,7 @@ import { StatusBadge, TimeCell, Points, UsdtMicro, Addr, TxHash } from "./primit
 import { useToast } from "./toast";
 import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
-  adjustUserPoints, adjustUserRozi, adjustUserUsdt, type StaffUserDetail,
+  adjustUserPoints, adjustUserRozi, adjustUserUsdt, releaseUserRoziToWallet, type StaffUserDetail,
   fetchEligibleRewards, quickSendReward, type EligibleReward,
   fetchUserBnbBalance,
 } from "@/lib/api";
@@ -196,6 +196,28 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
     if (!note || note.trim().length < 3) return;
     act(() => adjustUserRozi(u.id, rozi, note.trim()), "ROZI adjusted.");
   }
+  // The "approved conversion process" (2026-09-06): moves Mined ROZI into
+  // Wallet ROZI for this user, atomically, same currency — not a mint. The
+  // server re-checks KYC itself; this button just tells staff up front why it
+  // would refuse, so they are not surprised after typing an amount.
+  const kycOk = S(u.kyc_status) === "approved";
+  function doReleaseToWallet() {
+    if (!kycOk && !window.confirm(
+      "This user has not passed the ID check (KYC) yet. The server will refuse this release unless the KYC feature itself is switched off. Try anyway?",
+    )) return;
+    const raw = window.prompt(
+      `Move how much Mined ROZI into their Wallet? They currently have ${(N(u.roziMinedMicro) / 1e6).toFixed(3)} Mined ROZI.`,
+    );
+    if (raw === null) return;
+    const rozi = Number(raw.trim());
+    if (!Number.isFinite(rozi) || rozi <= 0) { toast.err("Enter an amount greater than zero."); return; }
+    const note = window.prompt("Reason (min 3 characters — lands in the audit log):");
+    if (!note || note.trim().length < 3) return;
+    act(async () => {
+      const r = await releaseUserRoziToWallet(u.id, rozi, note.trim());
+      toast.ok(`Moved. Mined ${(r.minedBefore / 1e6).toFixed(3)} → ${(r.minedAfter / 1e6).toFixed(3)}, Wallet now ${(r.walletAfter / 1e6).toFixed(3)}.`);
+    }, "");
+  }
 
   // ---- Tabs ----
   const tabs: DetailTab[] = [
@@ -278,20 +300,31 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
       id: "balances", label: "Balances",
       content: (
         <div className="space-y-4">
-          {/* ⚠️ FOUR LEDGERS/BALANCES, FOUR BOXES, NEVER A TOTAL (guardrail #7).
-              BNB is not a ledger at all — it's a live read of the user's own
-              on-chain gas wallet, labeled as such so it can't be misread as
-              money owed to them (no balance backs it on our side). */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {/* ⚠️ FIVE LEDGERS/BALANCES, FIVE BOXES, NEVER A CROSS-CURRENCY TOTAL
+              (guardrail #7 — Points and USDT are never summed with ROZI, which
+              has no fixed rate). Mined ROZI and Wallet ROZI ARE the same
+              currency and ARE allowed to be added together (see the line
+              under the grid) — they are not two rewards, just one ROZI
+              balance split by whether it has completed the staff-approved
+              release-to-wallet process (2026-09-06). BNB is not a ledger at
+              all — it's a live read of the user's own on-chain gas wallet,
+              labeled as such so it can't be misread as money owed to them (no
+              balance backs it on our side). */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">Points</p>
               <p className="num font-bold text-brand-ink"><Points value={N(u.balancePoints)} /></p>
               <p className="text-[10px] text-muted">withdrawable</p>
             </div>
             <div className="rounded-lg border-2 border-line-strong p-3">
-              <p className="text-[10px] uppercase text-muted">ROZI</p>
-              <p className="num font-bold text-brand-ink">{(N(u.roziMicro) / 1e6).toFixed(3)}</p>
-              <p className="text-[10px] text-muted">mined + received</p>
+              <p className="text-[10px] uppercase text-muted">Mined ROZI</p>
+              <p className="num font-bold text-brand-ink">{(N(u.roziMinedMicro) / 1e6).toFixed(3)}</p>
+              <p className="text-[10px] text-muted">still in Mining — mined, tasks, referrals</p>
+            </div>
+            <div className="rounded-lg border-2 border-line-strong p-3">
+              <p className="text-[10px] uppercase text-muted">Wallet ROZI</p>
+              <p className="num font-bold text-brand-ink">{(N(u.roziWalletMicro) / 1e6).toFixed(3)}</p>
+              <p className="text-[10px] text-muted">passed KYC + released — not shown to user yet</p>
             </div>
             <div className="rounded-lg border-2 border-line-strong p-3">
               <p className="text-[10px] uppercase text-muted">USDT credit</p>
@@ -309,6 +342,11 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
               <p className="text-[10px] text-muted">for network fees only — not spendable balance</p>
             </div>
           </div>
+          <p className="text-xs text-muted">
+            Total ROZI (mined + wallet): <span className="num font-semibold text-brand-ink">
+              {((N(u.roziMinedMicro) + N(u.roziWalletMicro)) / 1e6).toFixed(3)}
+            </span> — includes ROZI earned directly from tasks.
+          </p>
 
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted">Points ledger</p>
@@ -485,6 +523,11 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
           <button disabled={busy} onClick={doAdjustRozi}
             className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50">
             Adjust ROZI
+          </button>
+          <button disabled={busy} onClick={doReleaseToWallet}
+            title={kycOk ? "Move Mined ROZI into Wallet ROZI for this user" : "This user has not passed KYC yet"}
+            className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50">
+            Move Mined ROZI → Wallet
           </button>
           <button disabled={busy} onClick={doAdjustUsdt}
             className="rounded-md border border-danger/40 bg-card px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-50">

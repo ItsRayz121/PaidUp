@@ -83,9 +83,27 @@ export function UsersPanel() {
     },
     {
       // Part 10 — a genuinely separate ledger from the points balance above
-      // (rozi_ledger, never points converted at a display ratio).
-      key: "rozi", header: "ROZI balance", align: "right", sortable: true,
+      // (rozi_ledger, never points converted at a display ratio). This is the
+      // TOTAL (mined + wallet-released + task/referral-earned ROZI, minus
+      // anything spent or burned) — the two columns right after it split the
+      // same number by whether it has completed the staff-approved
+      // release-to-wallet process. They are not two rewards; this always
+      // equals their sum.
+      key: "rozi", header: "Total ROZI", align: "right", sortable: true,
       csv: (u) => u.roziMicro, render: (u) => <RoziMicro value={u.roziMicro} />,
+    },
+    {
+      // 2026-09-06 — ROZI still inside Mining: from mining, tasks, referrals,
+      // leaderboard prizes, transfers, minus spends/burns/releases-out.
+      key: "roziMined", header: "Mined ROZI", align: "right", sortable: true,
+      csv: (u) => u.roziMinedMicro, render: (u) => <RoziMicro value={u.roziMinedMicro} />,
+    },
+    {
+      // 2026-09-06 — ROZI that has passed KYC + the staff-approved release
+      // process. Not shown to the user yet (see the Danger-zone action on the
+      // User 360 page) — this column is how staff confirm it moved correctly.
+      key: "roziWallet", header: "Wallet ROZI", align: "right", sortable: true,
+      csv: (u) => u.roziWalletMicro, render: (u) => <RoziMicro value={u.roziWalletMicro} />,
     },
     {
       // Real deposited USDT (usdt_ledger), not points/ROZI converted to a

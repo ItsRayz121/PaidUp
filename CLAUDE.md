@@ -4605,3 +4605,105 @@ See `docs/` for the full spec.
 | `TREASURY_RECONCILE_LOOKBACK_BLOCKS` | `2000` | How many blocks back the periodic reconciliation re-scan looks |
 | `TREASURY_RECONCILE_INTERVAL_MS` | `3600000` (1 hour) | How often that reconciliation re-scan runs |
 | `RPC_BEP20_WS` | unset (null) | Reserved for a future real-time subscription; stored and shown on the monitor status endpoint, nothing subscribes to it yet |
+
+- **THREE UNDOCUMENTED COMMITS FOUND DURING A FULL-PHASE AUDIT, FOLDED IN HERE
+  (2026-09-06).** `4a90a3f`..`ac779c8` (treasury ledger + its cross-checks) were
+  already written up above; three commits after them — the growth-panel
+  dedup, the reward-distribution calculator, and the mining-reserve summary —
+  had landed with clean verification notes in their own commit messages but no
+  CLAUDE.md entry, so they were invisible to "read this file first." Recorded
+  here rather than re-done: Growth's "Per network" tab (a duplicate of Tasks &
+  Networks → Ad networks) is deleted; four staff screens that showed bare
+  "points"/"pts" for real money now show ROZI or USDT; the Users & IDs list
+  gained a genuinely separate "ROZI balance" column (`rozi_ledger`, never
+  points at a display ratio); Growth → Reward pools gained a fair-distribution
+  calculator (`web/src/lib/rewardDistribution.ts`, largest-remainder rounding,
+  always sums to exactly the pool) and a live mining-reserve summary
+  (`GET /staff/leaderboard/rewards/mining-reserve`) so an admin sets tiers
+  against the real cap/emitted/remaining instead of a guess.
+
+- **FULL-PHASE AUDIT + MINED ROZI vs WALLET ROZI (founder, 2026-09-06).** Two
+  asks: (1) cross-check Phase 1/2 against the latest commits and fix whatever
+  is actually broken; (2) stop showing one undifferentiated ROZI number in the
+  admin panel — split it into **Mined ROZI** (still inside Mining) and
+  **Wallet ROZI** (moved out via KYC + an approved, staff-run process), same
+  currency, atomic, never shown to earners until officially activated.
+  - **Audit result: nothing broken.** All **44 backend test scripts** (every
+    `test:*` in `api/package.json`, ~1,500+ checks) re-run from a genuinely
+    fresh PGlite database, one at a time — 0 failures. `api` + `web`
+    `tsc --noEmit` clean, `web` `eslint` (0 errors, the same 7 pre-existing
+    `<img>` warnings this file has noted for weeks), `web` production build
+    (38 routes) all clean. The only real gap found was the documentation one
+    directly above — the code itself was already in the verified state every
+    prior dated entry claims.
+  - **Mined ROZI and Wallet ROZI are NOT two rewards — one `rozi_ledger`
+    balance, split by two new source types.** `wallet_release_out` (debit,
+    leaves Mining) and `wallet_release_in` (credit, enters Wallet) are always
+    posted as a linked pair, same user, same amount, in one transaction —
+    mints and destroys nothing. `roziBalanceMicroOf()` (the existing total)
+    is untouched and still exactly equals the sum of the two new derived
+    reads: `roziMinedBalanceMicroOf()` (everything except
+    `wallet_release_in`) and `roziWalletBalanceMicroOf()` (only
+    `wallet_release_in`). Neither new source type is counted in
+    `totalEmittedMicro()` (mining/settings.ts) — a release does not mint new
+    ROZI against the 21M cap, it only relabels ROZI already counted the day
+    it was mined, earned, or won. **Total ROZI already includes ROZI earned
+    directly from tasks** (`task_reward` is a Mined-side source, never
+    excluded), so the combined figure the founder asked for needed no new
+    plumbing — only the admin display split did.
+  - **The "approved conversion process" is `POST
+    /staff/mining/users/:id/release-to-wallet`** (`mining.adjust`, admin-tier,
+    same permission the existing manual ROZI adjustment uses) — there is
+    deliberately **no self-serve `/mine` route**. It requires the target's
+    `kyc_status` to be `'approved'` (waived only if the KYC feature itself is
+    switched off, same rule every withdrawal/refund path already follows),
+    caps a single release at `adminAdjustMaxRozi` (the same fat-finger guard
+    the manual adjustment uses), and reads the Mined balance **inside**
+    `pg_advisory_xact_lock(hashtext(userId))` before debiting it — guardrail
+    #8, because two concurrent releases reading the same stale Mined balance
+    would otherwise both pass the "enough ROZI" check and jointly move more
+    than the user ever had.
+  - ⚠️ **A security-review pass over this new endpoint, before it shipped,
+    found the KYC gate was a SILENT NO-OP**: `kycSatisfied()` is `async`, and
+    the first draft wrote `!kycSatisfied(target.kyc_status)` with no `await`
+    — negating a pending Promise (always truthy) is always `false`, so the
+    whole gate never fired and every release succeeded regardless of KYC
+    status. Caught by the new `test:roziwallet` suite (its very first run
+    failed exactly this check), fixed to `!(await kycSatisfied(...))`, and the
+    suite re-run to confirm the refusal is now real. **This is the kind of bug
+    a fresh feature ships with and a happy-path test never catches** — read
+    as a reminder to test the REFUSAL, not just the success, on every new
+    KYC/permission gate.
+  - **Earner-facing routes see Mined ROZI only, not the combined total.**
+    Every earner-facing balance/spend/transfer read in `routes/mining.ts`
+    (`/mining/state`, rig purchases, store redemptions, transfers, the
+    ROZI→Points conversion burn) now reads `roziMinedBalanceMicroOf()` instead
+    of the old combined `roziBalanceMicroOf()`. Since no user has any
+    `wallet_release_in` rows before this shipped, this is a **complete no-op
+    for all existing production data** (mined = total when wallet is zero)
+    while correctly wiring the future behavior: the instant a release
+    happens, the number a user sees on `/mine`, `/wallet`, the TopBar and home
+    drops by exactly what moved out, and Wallet ROZI cannot be spent, sent, or
+    displayed anywhere in the earner app — it is not officially activated.
+  - **Admin panel**: Users & IDs list gained "Mined ROZI" / "Wallet ROZI"
+    columns (the existing "ROZI balance" column is relabeled "Total ROZI"),
+    sortable and in the CSV export. User 360's Balances tab splits the old
+    single "ROZI" box into "Mined ROZI" and "Wallet ROZI" (five boxes now,
+    never a cross-currency total per guardrail #7 — but a same-currency Mined
+    + Wallet total is safe and shown as a caption line, which is where "total
+    ROZI including task earnings" is stated explicitly). A new Danger-zone
+    button, **"Move Mined ROZI → Wallet"**, calls the release endpoint
+    directly from the page a support agent is already looking at, and warns
+    up front (before the server 400s) when the user has not passed KYC.
+  - Verified: new `npm run test:roziwallet` (**31 checks** — conservation,
+    KYC enforcement including the async bug above, insufficient-balance
+    refusal, zero/negative refusal, permission gating, the earner-facing
+    balance drop, concurrent-release atomicity, and both admin endpoints
+    agreeing that mined + wallet = total), plus `test:mining` (42),
+    `test:mining:e2e` (65), `test:conversion` (25), `test:store` (29),
+    `test:usdt` (112), `test:usersadmin` (59), `test:moneyadmin` (100),
+    `test:admin` (15), `test:permissions` (17), `test:stage4` (48),
+    `test:stage5` (67), `test:stage6` (99), `test:stage7` (96),
+    `test:referrals` (26), `test:taskbudget` (46),
+    `test:leaderboardrewards` (46) all re-run green; api + web typecheck,
+    eslint, web production build (38 routes) all clean.

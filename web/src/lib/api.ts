@@ -965,6 +965,9 @@ export type StaffUserDetail = {
     // does not, and adding them together on a staff screen is how a made-up
     // rate gets quoted to a user in a dispute.
     balancePoints: number; roziMicro: number; usdtMicro: number;
+    // Same rozi_ledger split as AdminUserRow above — not two rewards, always
+    // roziMicro = roziMinedMicro + roziWalletMicro (2026-09-06).
+    roziMinedMicro: number; roziWalletMicro: number;
     withdrawalHeld: boolean;
     underReview: boolean;
   };
@@ -1014,6 +1017,16 @@ export const adjustUserRozi = (id: string, rozi: number, note: string) =>
   apiFetch<{ ok: true }>(`/staff/mining/users/${id}/adjust`, {
     method: "POST", body: JSON.stringify({ rozi, note }),
   });
+// The "approved conversion process" (2026-09-06): moves ROZI from Mined into
+// Wallet for one user — same currency, atomic, never a mint. Requires the
+// user to already have passed KYC (the server re-checks; this is not a
+// client-side gate). `rozi` is whole ROZI, positive only.
+export const releaseUserRoziToWallet = (id: string, rozi: number, note: string) =>
+  apiFetch<{ ok: true; releaseId: string; minedBefore: number; minedAfter: number; walletAfter: number }>(
+    `/staff/mining/users/${id}/release-to-wallet`, {
+      method: "POST", body: JSON.stringify({ rozi, note }),
+    },
+  );
 // Corrects a user's USDT deposit-credit balance (usdt_ledger). Built for
 // reconciliation — a debit here MAY take the balance negative, on purpose:
 // the recorded balance was wrong. `usdt` is signed dollars; positive credits.
@@ -1063,6 +1076,11 @@ export type AdminUserRow = {
   // Never derived from `balance` at a display ratio — that would be showing
   // an invented number as if it were this user's real mining/ROZI history.
   roziMicro: number;
+  // Same total, split by whether it has completed KYC + the staff-approved
+  // release-to-wallet process (2026-09-06). Not two rewards — roziMicro
+  // always equals roziMinedMicro + roziWalletMicro.
+  roziMinedMicro: number;
+  roziWalletMicro: number;
   // Open fraud flags on this account, and whether AUTOMATIC payouts are
   // currently held (guardrail #8 territory — a hold is not a suspension, see
   // UserHeader). Both are computed server-side so the list never needs one
