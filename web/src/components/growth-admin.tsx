@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { formatPoints, formatRozi, formatPointsAsRozi, formatMoney, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+import { computeDistribution, distributionToTiersString, type DistributionMethod } from "@/lib/rewardDistribution";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -502,6 +503,98 @@ function fromDraft(d: SettingsDraft): LeaderboardRewardSettings {
   return { enabled: d.enabled, weekly: cycle(d.weekly), monthly: cycle(d.monthly) };
 }
 
+// Part 7 — a fair-distribution calculator on top of the tiers input above.
+// It computes a preview table (rank / % / ROZI) for a total pool + winner
+// count under a chosen method, then "Apply" writes the SAME comma-separated
+// string a staff member would otherwise have typed by hand into the exact
+// tiers field that already drives settlement (api/src/leaderboardRewards.ts)
+// — this never talks to the API itself and never invents a second
+// distribution engine, it only fills in the existing one's input faster and
+// more fairly than typing 100 numbers by hand.
+const POOL_PRESETS = [10, 20, 50, 100, 1000];
+
+function DistributionCalculator({ onApply }: { onApply: (tiers: string) => void }) {
+  const [pool, setPool] = useState("100");
+  const [winners, setWinners] = useState("10");
+  const [method, setMethod] = useState<DistributionMethod>("balanced");
+  const poolN = Math.max(0, Number(pool) || 0);
+  const winnersN = Math.max(0, Math.min(100, Math.floor(Number(winners) || 0)));
+  const result = computeDistribution(poolN, winnersN, method);
+
+  return (
+    <div className="rounded-lg border border-line bg-brand-tint/20 p-2.5">
+      <p className="text-xs font-semibold text-brand-ink">Distribution calculator</p>
+      <p className="mt-0.5 text-[11px] text-muted">
+        Pick a pool and a winner count (1–100) and this fills the field above for you — fairly, not
+        typed rank by rank. <strong>Balanced competitive</strong> (the default) gives higher ranks a real
+        edge without first place swallowing the pool; <strong>Equal</strong> splits it evenly.
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <label className="text-[10px] text-muted">Total pool (ROZI)<br />
+          <input type="number" min={0} value={pool} onChange={(e) => setPool(e.target.value)}
+            className="mt-0.5 w-24 rounded border border-line bg-card px-1.5 py-1 text-xs num" />
+        </label>
+        <label className="text-[10px] text-muted">Winners (1–100)<br />
+          <input type="number" min={1} max={100} value={winners} onChange={(e) => setWinners(e.target.value)}
+            className="mt-0.5 w-20 rounded border border-line bg-card px-1.5 py-1 text-xs num" />
+        </label>
+        <label className="text-[10px] text-muted">Method<br />
+          <select value={method} onChange={(e) => setMethod(e.target.value as DistributionMethod)}
+            className="mt-0.5 rounded border border-line bg-card px-1.5 py-1 text-xs">
+            <option value="balanced">Balanced competitive</option>
+            <option value="equal">Equal</option>
+          </select>
+        </label>
+        <div className="flex flex-wrap gap-1">
+          {POOL_PRESETS.map((p) => (
+            <button key={p} type="button" onClick={() => setPool(String(p))}
+              className="rounded bg-card px-1.5 py-1 text-[10px] font-semibold text-brand border border-line">
+              {p} ROZI
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {result.tooSmallForWinnerCount && (
+        <p className="mt-2 rounded bg-danger-tint p-1.5 text-[11px] text-danger">
+          This pool is too small for {winnersN} winners — some ranks would get 0 ROZI. Raise the pool
+          or lower the winner count.
+        </p>
+      )}
+      {result.firstToLastRatio != null && (
+        <p className="mt-1.5 text-[11px] text-muted">
+          Rank 1 gets <strong>{result.firstToLastRatio}×</strong> what rank {winnersN} gets.
+        </p>
+      )}
+
+      {result.rows.length > 0 && (
+        <div className="mt-2 max-h-48 overflow-y-auto rounded border border-line">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-card text-left uppercase text-muted">
+              <tr><th className="px-1.5 py-1">Rank</th><th className="px-1.5 py-1">%</th><th className="px-1.5 py-1">ROZI</th></tr>
+            </thead>
+            <tbody>
+              {result.rows.map((r) => (
+                <tr key={r.rank} className={`border-t border-line ${r.rozi === 0 ? "text-danger" : ""}`}>
+                  <td className="px-1.5 py-0.5 font-mono">{r.rank}</td>
+                  <td className="px-1.5 py-0.5 font-mono">{r.percent}%</td>
+                  <td className="px-1.5 py-0.5 font-mono">{n(r.rozi)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <button type="button" disabled={result.rows.length === 0}
+        onClick={() => onApply(distributionToTiersString(result))}
+        className="mt-2 rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">
+        Apply to the field above
+      </button>
+    </div>
+  );
+}
+
 export function LeaderboardRewardsPanel() {
   const data = useApi(fetchLeaderboardRewardSettings, []);
   const cycles = useApi(() => fetchLeaderboardRewardCycles(20), []);
@@ -565,6 +658,9 @@ export function LeaderboardRewardsPanel() {
                 placeholder="150, 100, 70, 25, 25, 25, 25, 25, 25, 25"
                 className="mt-1 w-full rounded-md border border-line px-2 py-1.5 text-xs num" />
               <p className="mt-0.5 text-[10px] text-muted">Pool: {n(earnersSum)} ROZI across {parseTiers(c.tiersEarnersRozi).length} ranks</p>
+              <div className="mt-1.5">
+                <DistributionCalculator onApply={(tiers) => setCycle(cadence, { tiersEarnersRozi: tiers })} />
+              </div>
             </div>
             <div>
               <p className="text-[10px] uppercase text-muted">Top inviters — ROZI per rank (rank 1 first)</p>
@@ -572,6 +668,9 @@ export function LeaderboardRewardsPanel() {
                 placeholder="150, 100, 70, 25, 25, 25, 25, 25, 25, 25"
                 className="mt-1 w-full rounded-md border border-line px-2 py-1.5 text-xs num" />
               <p className="mt-0.5 text-[10px] text-muted">Pool: {n(referrersSum)} ROZI across {parseTiers(c.tiersReferrersRozi).length} ranks</p>
+              <div className="mt-1.5">
+                <DistributionCalculator onApply={(tiers) => setCycle(cadence, { tiersReferrersRozi: tiers })} />
+              </div>
             </div>
           </div>
         );
