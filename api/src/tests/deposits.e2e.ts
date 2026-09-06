@@ -419,6 +419,76 @@ console.log("\n-- a deposit ALREADY credited via a manual usdt_topups claim: sca
     row?.status === "credited" && row?.credited_ledger_id === manualLedgerId, JSON.stringify(row));
 }
 
+console.log("\n-- a withdrawal's treasury prefund leg, en route to an EXTERNAL address, is NEVER credited as a deposit --");
+
+{
+  // The exact shape payoutRelay.ts's "withdrawal" pass-through creates: treasury
+  // sends the user's own earned USDT into their OWN custody address first, then
+  // forwards it on to wherever the user actually asked to be paid. The scanner
+  // has no idea who sent a transfer — without the payout_relay_jobs cross-check
+  // in credit.ts, this in-transit arrival reads exactly like a fresh deposit
+  // and would double-pay: the withdrawal already debited earned_usdt_ledger at
+  // request time, and crediting usdt_ledger here on top of that hands the user
+  // the same money twice.
+  const address = testAddress();
+  const externalAddress = testAddress(); // NOT the user's own custody address
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 7000 + Math.floor(Math.random() * 1_000_000);
+  const dep = mkDeposit({ userId, address, blockNumber, blockHash: "0xf00f" });
+  blockHashByNumber.set(blockNumber, "0xf00f");
+
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address,
+        amount_micro, needs_prefund, status, prefund_tx_hash, created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, ?, 1, 'prefund_confirmed', ?, ?)`,
+    newId(), newId(), userId, address, externalAddress, dep.amountMicro.toString(), dep.txHash, now(),
+  );
+
+  const before = await usdtBalanceMicroOf(userId);
+  const result = await recordObservedDeposit(dep, 15);
+
+  check("recognized as a relay pass-through, not a fresh credit", result.status === "already_credited", JSON.stringify(result));
+  check("the deposit balance did NOT move", (await usdtBalanceMicroOf(userId)) === before, `${before} -> ${await usdtBalanceMicroOf(userId)}`);
+
+  const ledgerRows = await sql.all("SELECT id FROM usdt_ledger WHERE source_type = 'topup' AND user_id = ?", userId);
+  check("no topup ledger row was ever created for this user", ledgerRows.length === 0, String(ledgerRows.length));
+
+  const row = await sql.get<{ status: string; credited_ledger_id: string | null }>(
+    "SELECT status, credited_ledger_id FROM chain_deposits WHERE id = ?", result.id,
+  );
+  check("chain_deposits closed as 'credited' with NO ledger id (nothing to point at)",
+    row?.status === "credited" && !row?.credited_ledger_id, JSON.stringify(row));
+}
+
+console.log("\n-- an admin reward disbursement's prefund leg, paid to the recipient's OWN wallet, IS credited normally --");
+
+{
+  // The same-address short-circuit (payoutRelay.ts, staffDisbursements.ts,
+  // 2026-09-05): advanceRelayJob never itself calls postUsdt for this case —
+  // this scanner credit is the ONLY mechanism that makes the reward spendable.
+  // The cross-check above must not swallow this one.
+  const address = testAddress();
+  const userId = await mkUserWithDeposit("bep20", address);
+  const blockNumber = 8000 + Math.floor(Math.random() * 1_000_000);
+  const dep = mkDeposit({ userId, address, blockNumber, blockHash: "0xfeed" });
+  blockHashByNumber.set(blockNumber, "0xfeed");
+
+  await sql.run(
+    `INSERT INTO payout_relay_jobs
+       (id, purpose, request_id, chain, user_id, from_address, addr_index, to_address,
+        amount_micro, needs_prefund, status, prefund_tx_hash, forward_tx_hash, created_at)
+     VALUES (?, 'withdrawal', ?, 'bep20', ?, ?, 0, ?, ?, 1, 'forward_confirmed', ?, ?, ?)`,
+    newId(), newId(), userId, address, address, dep.amountMicro.toString(), dep.txHash, dep.txHash, now(),
+  );
+
+  const before = await usdtBalanceMicroOf(userId);
+  const result = await recordObservedDeposit(dep, 15);
+
+  check("a same-address (reward payout) prefund still credits normally", result.status === "credited", JSON.stringify(result));
+  check("the balance moved by the full amount", (await usdtBalanceMicroOf(userId)) - before === 5_000_000, `${before} -> ${await usdtBalanceMicroOf(userId)}`);
+}
+
 globalThis.fetch = realFetch;
 
 console.log(`\n${pass} passed, ${fail} failed`);

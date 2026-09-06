@@ -1440,6 +1440,13 @@ const MIGRATIONS = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_relay_jobs_request
     ON payout_relay_jobs(purpose, request_id);
   CREATE INDEX IF NOT EXISTS idx_payout_relay_jobs_status ON payout_relay_jobs(status, created_at);
+  -- Looked up by deposits/credit.ts on every scanner-observed transfer, to
+  -- tell a withdrawal's own treasury-to-user pass-through apart from a real
+  -- incoming deposit (see that file's comment). Partial: most rows never get
+  -- a prefund leg at all (refunds never do; withdrawals only after the
+  -- prefund tx is actually broadcast).
+  CREATE INDEX IF NOT EXISTS idx_payout_relay_jobs_prefund_tx
+    ON payout_relay_jobs(LOWER(prefund_tx_hash)) WHERE prefund_tx_hash IS NOT NULL;
 
   -- BNB withdraw (wallet overhaul). Lets a user pull their OWN gas balance out
   -- of their derived custody address — reuses the exact signing primitive

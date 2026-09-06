@@ -4369,3 +4369,82 @@ See `docs/` for the full spec.
     already does, so the "Task reward" row is always there to explain the
     money on any screen where the echo rows are suppressed. Verified: web
     `tsc --noEmit` clean, `eslint` clean, `next build` clean (38 routes).
+
+- **A WIDER CROSS-CHECK FOUND A REAL DOUBLE-PAYMENT PATH: A WITHDRAWAL'S OWN
+  TREASURY PREFUND LEG COULD BE CREDITED BACK AS A FRESH DEPOSIT (self-directed,
+  2026-09-06, asked to hunt for "any other spot where the same address is both
+  source and destination").** Traced from first principles, not from a bug
+  report — nobody had seen this happen; the treasury has been at $0 for most
+  of the period this was reachable. Verified: new checks in
+  `npm run test:deposits` (43, was 33) + `test:payoutrelay` (69) + `test:usdt`
+  (112) + `test:withdrawcontrols` (21) + `test:autowithdraw` (16) +
+  `test:autorefund` (8) + `test:disbursements` (96) + `test:moneyadmin` (100)
+  + `test:wallet` (52) + `test:mining` (42) + `test:stage4` (48), all green
+  from a fresh database; api + web typecheck, web production build clean.
+  - ⚠️ **THE MECHANISM.** `payoutRelay.ts`'s "withdrawal" pass-through
+    (2026-08-08) routes treasury's payout THROUGH the user's own derived
+    custody address before forwarding it to wherever the user actually asked
+    to be paid — a real, first on-chain transfer landing at an address that
+    is ALSO exactly what the deposit scanner (`deposits/adapters/evm.ts`)
+    watches for ANY incoming USDT `Transfer`, with **no idea who sent it**.
+    `ObservedDeposit` (`deposits/types.ts`) never even carried a `from`
+    address to check. So for any auto-settled withdrawal whose destination is
+    an EXTERNAL address (the ordinary case — a user's own exchange/wallet
+    address, not our disbursement flow), the prefund arrival would get
+    credited into `usdt_ledger` as if it were a fresh deposit — on top of the
+    `earned_usdt_ledger` debit the withdrawal already took at request time.
+    Net effect: the user keeps the withdrawn amount in their DEPOSIT balance
+    (spendable again, via `/usdt/refunds` or `/wallet/withdraw`) *as well as*
+    having it sent out for real. A genuine double payment, per successful
+    external withdrawal, structurally guaranteed to recur — not a one-off.
+  - ⚠️ **WHY THIS WASN'T CAUGHT SOONER.** `test:payoutrelay` deliberately
+    never reaches a real chain (its own header says so) and `test:deposits`
+    never touched `payout_relay_jobs` — two well-tested subsystems, never
+    tested TOGETHER. And in production the treasury has held $0/0 BNB for
+    most of the time both features have been live (confirmed multiple times
+    in this file), so no regular external withdrawal has ever actually
+    prefunded for real — this was reachable but unexercised, waiting for the
+    day the treasury gets funded and a withdrawal to an external address
+    auto-settles. The one thing that DID succeed for real — the founder's own
+    reward-disbursement test (the "Task reward" screenshot two entries
+    above) — is the SAME-ADDRESS case, which turns out to be safe (below).
+  - **THE FIX EXCLUDES THE SAME-ADDRESS CASE ON PURPOSE, AND THAT DISTINCTION
+    IS THE WHOLE FIX.** An admin reward disbursement (`staffDisbursements.ts`,
+    2026-09-05) always pays into the recipient's OWN wallet, so
+    `to_address === from_address` and `advanceRelayJob` short-circuits
+    without ever calling `postUsdt` itself — the scanner picking up that
+    SAME prefund transaction as a "deposit" is not a bug, it is the ONLY
+    mechanism that makes a reward disbursement's money spendable (its
+    `earned_usdt_ledger` release-then-hold nets to zero by design). A
+    blanket "never credit a relay prefund" fix would have silently swallowed
+    every reward payout. `deposits/credit.ts`'s new cross-check
+    (`recordObservedDeposit`, right after the existing manual-topup
+    cross-check) looks up `payout_relay_jobs` by `LOWER(prefund_tx_hash)` and
+    skips crediting ONLY when `to_address !== from_address` — the money is
+    passing THROUGH this address on its way OUT, not landing here as its
+    final form. New partial index
+    `idx_payout_relay_jobs_prefund_tx` supports the lookup.
+  - Two new regression tests in `deposits.e2e.ts` pin both halves: an
+    external-destination prefund is recognized and NOT credited (no ledger
+    row, balance unmoved), and a same-address (reward-payout) prefund still
+    credits exactly as before.
+  - ⚠️ **A SEPARATE, UNRELATED REGRESSION WAS FOUND ALONG THE WAY AND FIXED IN
+    THE SAME PASS**, because it silently broke the very test needed to verify
+    the fix above: `rpc.ts`'s 2026-09-05 NodeReal-quota fix classifies error
+    code `-32005` as "provider throttled, try the next endpoint" — and per
+    EIP-1474, `-32005` ("Limit exceeded") is ALSO exactly the code a real BSC
+    node returns for "this `eth_getLogs` range is too wide," which is what
+    `evm.ts`'s adaptive range-shrinking (2026-08-12) exists to survive. When
+    every configured endpoint refuses the same over-wide range this way,
+    `rpc.ts` exhausts its whole list and throws ONE aggregated `RpcError`
+    whose top-level message ("All N RPC endpoints... failed") no longer
+    contains the word "range"/"limit" — even though the real per-endpoint
+    reason, containing that text, was already sitting in `RpcError.attempts`
+    and simply never inspected. `isRangeLimitError` now checks
+    `attempts[].reason` too, not just the aggregated message — a two-line fix
+    that makes the same-shaped regression (which reproduced identically and
+    deterministically via `deposits.e2e.ts`'s stub, not flakily) impossible
+    to reintroduce silently the same way twice. This was reachable in
+    production too, not just in the test: several of the free/public BSC
+    nodes in the default `RPC_BEP20` fallback list are the exact ones
+    `evm.ts`'s own comments already name as refusing wide ranges.

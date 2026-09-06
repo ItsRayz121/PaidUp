@@ -102,6 +102,41 @@ export async function recordObservedDeposit(
     return { status: "already_credited", id };
   }
 
+  // CROSS-TABLE idempotency #2: is this exact tx hash the TREASURY'S OWN
+  // prefund leg of a withdrawal relay job (payoutRelay.ts), whose FORWARD leg
+  // sends this same money on to a DIFFERENT address? The scanner watches
+  // every address in `deposit_wallets` for an incoming Transfer with no idea
+  // who sent it — and payoutRelay.ts's own "withdrawal" pass-through routes
+  // treasury's payout THROUGH the user's own custody address on its way to
+  // wherever the user actually asked to be paid (or, for a MIXED withdrawal,
+  // routes only the earned portion through it). Without this check, that
+  // in-transit arrival reads exactly like a fresh deposit and gets credited
+  // to usdt_ledger — even though the withdrawal already debited the user's
+  // own balance at request time and the forward leg is about to move this
+  // exact money on. That is a real double-payment: the user keeps the
+  // withdrawn amount in their deposit balance AND has it sent out.
+  //
+  // ⚠️ DELIBERATELY EXCLUDES THE SAME-ADDRESS CASE (`to_address ===
+  // from_address` — an admin reward disbursement, which always pays into the
+  // recipient's OWN wallet, staffDisbursements.ts, 2026-09-05).
+  // `advanceRelayJob`'s same-address short-circuit never itself calls
+  // postUsdt — crediting the arrival HERE is the only mechanism that makes a
+  // reward disbursement's money actually spendable (its `earned_usdt_ledger`
+  // release and hold net to zero by design). Skipping it there would
+  // silently swallow every reward payout.
+  const relayPrefund = await t.get<{ to_address: string; from_address: string }>(
+    `SELECT to_address, from_address FROM payout_relay_jobs
+     WHERE purpose = 'withdrawal' AND LOWER(prefund_tx_hash) = LOWER(?) LIMIT 1`,
+    observed.txHash,
+  );
+  if (relayPrefund && relayPrefund.to_address.toLowerCase() !== relayPrefund.from_address.toLowerCase()) {
+    await t.run(
+      `UPDATE chain_deposits SET status = 'credited', credited_at = ? WHERE id = ? AND status <> 'credited'`,
+      now(), id,
+    );
+    return { status: "already_credited", id };
+  }
+
   // The idempotency guard: this conditional UPDATE's rowCount is the ONLY
   // thing that decides whether we credit. A concurrent caller (a webhook
   // firing the same instant the poller processes this row, or the poller

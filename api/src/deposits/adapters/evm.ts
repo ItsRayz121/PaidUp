@@ -74,8 +74,28 @@ function toMicroUsdt(raw: bigint, decimals: number): bigint {
   return raw * 10n ** BigInt(6 - decimals);
 }
 
+// ⚠️ MUST CHECK EACH ENDPOINT'S OWN REASON, NOT JUST THE AGGREGATED MESSAGE.
+// rpc.ts's failover (2026-09-05, the NodeReal-quota fix) treats a -32005
+// error as "provider throttled" and tries the next endpoint — and per
+// EIP-1474, -32005 ("Limit exceeded") is ALSO exactly the code a real BSC
+// node returns for "this eth_getLogs range is too wide", which is what this
+// whole adaptive-shrinking mechanism exists to survive. When every configured
+// endpoint refuses the same over-wide range, rpc.ts exhausts its list and
+// throws one AGGREGATE RpcError whose top-level `.message` is just "All N RPC
+// endpoints... failed" — the word "range"/"limit" from the real provider
+// answer is gone from THAT string, even though rpc.ts already recorded it
+// per-endpoint in `attempts`. Checking `.message` alone (as this used to)
+// means a real range-limit refusal from every endpoint no longer matches
+// RANGE_LIMIT_PATTERN, so this throws unshrunk instead of retrying smaller —
+// silently reproducing the exact 2026-08-12 stuck-scanner incident this file
+// was written to fix, just one layer up. Found via deposits.e2e.ts crashing
+// with a real, reproducible (not flaky) failure — the test's stub returns the
+// identical -32005 response for every endpoint, exactly like several public
+// BSC nodes do in production.
 function isRangeLimitError(e: unknown): boolean {
-  return e instanceof RpcError && RANGE_LIMIT_PATTERN.test(e.message);
+  if (!(e instanceof RpcError)) return false;
+  if (RANGE_LIMIT_PATTERN.test(e.message)) return true;
+  return e.attempts.some((a) => RANGE_LIMIT_PATTERN.test(a.reason));
 }
 
 async function fetchLogsForWindow(
