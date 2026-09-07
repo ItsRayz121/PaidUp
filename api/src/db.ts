@@ -2479,6 +2479,76 @@ const MINING_SCHEMA = `
                            'transfer_fee','conversion_burn','admin_adjustment',
                            'bonus','store_redemption','task_reward','leaderboard_reward',
                            'wallet_release_out','wallet_release_in'));
+
+  -- ---- FRAUD FLAG ESCALATION + PERMANENT FORGIVENESS (founder, 2026-09-07) --
+  -- Staff wanted a real difference between "stop bothering me about this
+  -- exact problem" and "this account can never be flagged again". magnitude
+  -- is the SIZE of the underlying signal at the moment it was raised (accounts
+  -- sharing a device, distinct mismatched countries seen, etc.) — captured
+  -- once, at INSERT, by flagOnce (fraud.ts). resolution_type records HOW a
+  -- flag was cleared: 'temporary' promises nothing about the future (today's
+  -- exact old behaviour, unchanged); 'permanent' additionally tells flagOnce
+  -- "don't re-raise THIS flag type for THIS user unless the magnitude has
+  -- genuinely gotten worse than it was when forgiven" — so resolving "3 fake
+  -- accounts on one device" stays resolved at 3, but a 4th account re-flags
+  -- automatically. A flag type with no natural magnitude (mining_bot_pattern,
+  -- mining_device_share) never stores one, so permanent resolve behaves
+  -- exactly like temporary for those — silencing a signal we cannot measure
+  -- the scale of would be a real fraud blind spot, not a favour to the user.
+  ALTER TABLE fraud_flags ADD COLUMN IF NOT EXISTS magnitude INTEGER;
+  ALTER TABLE fraud_flags ADD COLUMN IF NOT EXISTS resolution_type TEXT;
+  ALTER TABLE fraud_flags DROP CONSTRAINT IF EXISTS fraud_flags_resolution_type_check;
+  ALTER TABLE fraud_flags ADD CONSTRAINT fraud_flags_resolution_type_check
+    CHECK (resolution_type IS NULL OR resolution_type IN ('temporary','permanent'));
+  -- flagOnce's suppression lookup, on every fraud check that carries a
+  -- magnitude: "what did we last permanently forgive for this user+type".
+  CREATE INDEX IF NOT EXISTS idx_fraud_user_type_permanent
+    ON fraud_flags(user_id, flag_type, resolved_at DESC) WHERE resolution_type = 'permanent';
+
+  -- ---- TASK PROOF SCREENSHOTS (founder, 2026-09-07) ------------------------
+  -- A new task-field kind, 'image': the user attaches a screenshot instead of
+  -- typing an answer. A CLOSED list, same reason every other field kind is —
+  -- an unknown kind means an unchecked answer.
+  ALTER TABLE task_fields DROP CONSTRAINT IF EXISTS task_fields_kind_check;
+  ALTER TABLE task_fields ADD CONSTRAINT task_fields_kind_check
+    CHECK (kind IN ('text','longtext','number','email','url','phone','choice','username','crypto_address','image'));
+
+  -- Kept OUT of task_proofs.answers on purpose — that column is read on every
+  -- row of the staff proof QUEUE (GET /staff/task-proofs, a paginated list),
+  -- and embedding a multi-megabyte encrypted photo inside the same JSON blob
+  -- every other small text answer lives in would mean parsing and
+  -- re-shipping that photo on every page load, for every row, even when
+  -- nobody has opened it yet — the exact "SELECT * pays for a blob on every
+  -- row" reasoning that already gave avatars their own table. The answers
+  -- array keeps a lightweight reference token ("img:<id>") for an image
+  -- field; the encrypted bytes live here, fetched and decrypted only when a
+  -- staff member actually opens one proof to review it.
+  --
+  -- Encrypted the same way a KYC ID photo is (api/src/kyc.ts, AES-256-GCM,
+  -- same key) — a task-proof screenshot is still a photo a real person
+  -- uploaded and just as capable of containing something private.
+  CREATE TABLE IF NOT EXISTS task_proof_images (
+    id              TEXT PRIMARY KEY,
+    proof_id        TEXT NOT NULL REFERENCES task_proofs(id) ON DELETE CASCADE,
+    field_id        TEXT NOT NULL,
+    -- The SNIFFED mime (kyc.ts's magic-byte check, never the browser's claim)
+    -- — needed to serve the decrypted bytes back as a correct data: URL.
+    mime            TEXT NOT NULL DEFAULT 'image/jpeg',
+    encrypted_value TEXT,
+    -- Set by the retention job (taskProofRedaction.ts) when the photo bytes
+    -- are deleted after the admin-tunable window. NULL forever if retention
+    -- is switched off (0 days). encrypted_value goes NULL at the same time —
+    -- every OTHER column on the owning task_proofs row (who approved it, for
+    -- how much, the text answers) is completely untouched by this.
+    redacted_at     TEXT,
+    created_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_proof_images_proof ON task_proof_images(proof_id);
+  -- The retention sweep's own WHERE clause (created_at < cutoff AND
+  -- encrypted_value IS NOT NULL) — cheap even at scale, and this table is
+  -- write-once-per-photo so the index never has to fight a hot row.
+  CREATE INDEX IF NOT EXISTS idx_task_proof_images_retention
+    ON task_proof_images(created_at) WHERE encrypted_value IS NOT NULL;
 `;
 
 // Launch rig catalogue (MINING_SPEC.md § 4.5). Seeded only when absent — Admin

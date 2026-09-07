@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import sharp from "sharp";
 import { sql, now, newId, logAudit } from "../db.ts";
 import { config } from "../config.ts";
+import { decryptImage } from "../kyc.ts";
 import { requirePermission, type Role, type Permission } from "../roles.ts";
 import { creditCompletion, type NetworkRow } from "../credit.ts";
 import { campaignMoney, EXHAUSTED } from "../taskBudget.ts";
@@ -1011,6 +1012,24 @@ export async function staffTaskRoutes(app: FastifyInstance) {
         userHistory: history.get(p.user_id as string) ?? { approved: 0, rejected: 0 },
       })),
     };
+  }));
+
+  // A screenshot submitted as proof, decrypted on demand. Deliberately NOT
+  // joined into the list above (db.ts's comment on task_proof_images) — this
+  // is the "only fetch and decrypt when a staff member actually opens one
+  // proof" half of that design, same permission as the list itself.
+  app.get("/staff/task-proofs/:proofId/images/:imageId", staffGuard("tasks.review", async (_ctx, req, reply) => {
+    const { proofId, imageId } = req.params as { proofId: string; imageId: string };
+    const row = await sql.get<{ mime: string; encrypted_value: string | null; redacted_at: string | null }>(
+      "SELECT mime, encrypted_value, redacted_at FROM task_proof_images WHERE id = ? AND proof_id = ?",
+      imageId, proofId,
+    );
+    if (!row) return reply.code(404).send({ error: "Photo not found." });
+    if (!row.encrypted_value) {
+      return { ok: true, deleted: true, note: "This photo was deleted after the storage-retention window." };
+    }
+    const bytes = decryptImage(row.encrypted_value);
+    return { ok: true, deleted: false, dataUrl: `data:${row.mime};base64,${bytes.toString("base64")}` };
   }));
 
   // ---- Approve / reject a proof (STEP 1 — no credit) --------------------

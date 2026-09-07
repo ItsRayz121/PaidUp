@@ -429,41 +429,55 @@ export default function StaffPage() {
 
 const FRAUD_PREVIEW = 6;
 
-// Founder, 2026-09-02: the fraud row needs a real judgement, not just
-// "Resolve". Suspending the account auto-closes its flags server-side, so this
-// is one action, not two.
+// Founder, 2026-09-07: three real judgements, not one "Resolve" button —
+// "temporary" promises nothing about the future (today's original
+// behaviour); "permanent" also clears every OTHER open flag on this same
+// user and tells the fraud checks to stay quiet on a repeat of the SAME
+// SCALE of problem, while a genuinely worse repeat (a 4th account, a 5th bad
+// referral) still fires (api/src/fraud.ts's flagOnce). Suspending the
+// account auto-closes its flags server-side, so that stays one action too.
+type FlagAction = "resolve_temp" | "resolve_permanent" | "suspend";
 function FlagActions({ id, userId, label, onDone }: {
   id: string; userId: string | null; label: string; onDone: () => void;
 }) {
-  const [busy, setBusy] = useState<"" | "resolve" | "suspend">("");
+  const [action, setAction] = useState<FlagAction>("resolve_temp");
+  const [busy, setBusy] = useState(false);
   const prompt = usePrompt();
-  async function resolve() {
-    const note = await prompt("Resolve this flag — why? (recorded)");
+
+  async function apply() {
+    if (action === "suspend") {
+      if (!userId) return;
+      const reason = await prompt(`Suspend ${label}? This stops them mining, earning and withdrawing, and closes their open flags.\n\nReason (recorded):`);
+      if (reason === null || reason.trim() === "") return;
+      setBusy(true);
+      try { await setUserStatus(userId, "suspended", reason.trim()); onDone(); }
+      catch (e) { window.alert((e as Error).message); } finally { setBusy(false); }
+      return;
+    }
+    const permanent = action === "resolve_permanent";
+    const note = await prompt(
+      permanent
+        ? "Resolve permanently — why? This also clears every other open flag on this user, and won't flag the same SCALE of problem again — only a worse one. Recorded:"
+        : "Resolve this flag — why? (recorded)",
+    );
     if (note === null) return;
-    setBusy("resolve");
-    try { await resolveFraud(id, note.trim() || undefined); onDone(); }
-    catch (e) { window.alert((e as Error).message); } finally { setBusy(""); }
+    setBusy(true);
+    try { await resolveFraud(id, note.trim() || undefined, permanent ? "permanent" : "temporary"); onDone(); }
+    catch (e) { window.alert((e as Error).message); } finally { setBusy(false); }
   }
-  async function suspend() {
-    if (!userId) return;
-    const reason = await prompt(`Suspend ${label}? This stops them mining, earning and withdrawing, and closes their open flags.\n\nReason (recorded):`);
-    if (reason === null || reason.trim() === "") return;
-    setBusy("suspend");
-    try { await setUserStatus(userId, "suspended", reason.trim()); onDone(); }
-    catch (e) { window.alert((e as Error).message); } finally { setBusy(""); }
-  }
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      <button onClick={resolve} disabled={busy !== ""}
+    <div className="flex flex-wrap items-center gap-1.5">
+      <select value={action} onChange={(e) => setAction(e.target.value as FlagAction)} disabled={busy}
+        className="rounded border border-line-strong bg-card px-1.5 py-0.5 text-[11px] text-brand-ink">
+        <option value="resolve_temp">Resolve (temporary)</option>
+        <option value="resolve_permanent">Resolve (permanent)</option>
+        {userId && <option value="suspend">Suspend user</option>}
+      </select>
+      <button onClick={apply} disabled={busy}
         className="rounded bg-brand-tint px-2 py-0.5 text-[11px] font-semibold text-brand disabled:opacity-50">
-        {busy === "resolve" ? "…" : "Resolve"}
+        {busy ? "…" : "Apply"}
       </button>
-      {userId && (
-        <button onClick={suspend} disabled={busy !== ""}
-          className="rounded bg-danger-tint px-2 py-0.5 text-[11px] font-semibold text-danger disabled:opacity-50">
-          {busy === "suspend" ? "…" : "Suspend user"}
-        </button>
-      )}
     </div>
   );
 }

@@ -59,3 +59,16 @@ export async function welcomeRepeatDaysNow(): Promise<number> {
   const stored = Number(await getSetting("welcome_repeat_days", "0"));
   return WELCOME_REPEAT_PRESETS.includes(stored) ? stored : 0;
 }
+
+/**
+ * How many days a task-proof screenshot's bytes are kept before the retention
+ * job deletes them (taskProofRedaction.ts). 0 is a real, deliberate value
+ * here (never delete) — same "unset falls back, explicit 0 is honoured" rule
+ * as ticketAutoCloseHoursNow above.
+ */
+export async function taskProofImageRetentionDaysNow(): Promise<number> {
+  const raw = await getSetting("task_proof_image_retention_days", "");
+  if (raw === "") return config.taskProofImageRetentionDays;
+  const stored = Number(raw);
+  return Number.isFinite(stored) && stored >= 0 ? stored : config.taskProofImageRetentionDays;
+}

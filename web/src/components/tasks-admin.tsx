@@ -11,10 +11,10 @@
 //   proof    — user sends evidence, staff approve it next door, credited then.
 //   postback — a partner's server calls our signed postback (URL + secret shown
 //              on the card). Same contract as a real ad network.
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   fetchTaskPostback,
-  fetchTaskFields, saveTaskFields, uploadTaskLogo, taskAssetUrl,
+  fetchTaskFields, saveTaskFields, uploadTaskLogo, taskAssetUrl, fetchStaffProofImage,
   TASK_ICON_CHOICES, TASK_CATEGORY_CHOICES, TASK_CATEGORY_LABELS,
   type CustomTask, type CustomTaskInput, type StaffTaskFieldInput, type TaskFieldKind,
   type TaskProof,
@@ -686,6 +686,7 @@ const KIND_LABELS: Record<TaskFieldKind, string> = {
   text: "Short text", longtext: "Long text", number: "Number",
   email: "Email", url: "Link", phone: "Phone", choice: "Pick one",
   username: "Username", crypto_address: "Crypto wallet address",
+  image: "Photo upload",
 };
 
 export function FieldEditor({ task }: { task: CustomTask }) {
@@ -887,6 +888,8 @@ export function ProofBody({ proof }: { proof: TaskProof }) {
                 <button onClick={() => navigator.clipboard?.writeText(a.value)}
                   className="rounded bg-card px-2 py-1 text-[10px] font-semibold text-brand">Copy</button>
               </span>
+            ) : a.kind === "image" && a.value.startsWith("img:") ? (
+              <ProofImage proofId={proof.id} imageId={a.value.slice(4)} />
             ) : (
               <span className="whitespace-pre-line break-words">{a.value}</span>
             )}
@@ -894,6 +897,39 @@ export function ProofBody({ proof }: { proof: TaskProof }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+// A screenshot answer's decrypted photo, fetched only once this proof is
+// actually open in front of a reviewer — the list itself never joins
+// task_proof_images (see that table's own comment in api/src/db.ts for why).
+function ProofImage({ proofId, imageId }: { proofId: string; imageId: string }) {
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; dataUrl: string } | { status: "deleted"; note: string } | { status: "error"; message: string }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchStaffProofImage(proofId, imageId)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.deleted) setState({ status: "deleted", note: r.note ?? "This photo was deleted." });
+        else if (r.dataUrl) setState({ status: "ready", dataUrl: r.dataUrl });
+        else setState({ status: "error", message: "No photo returned." });
+      })
+      .catch((e) => { if (!cancelled) setState({ status: "error", message: (e as Error).message }); });
+    return () => { cancelled = true; };
+  }, [proofId, imageId]);
+
+  if (state.status === "loading") return <span className="text-xs text-muted">Loading photo…</span>;
+  if (state.status === "deleted") return <span className="text-xs text-muted">{state.note}</span>;
+  if (state.status === "error") return <span className="text-xs text-danger">Could not load photo: {state.message}</span>;
+  return (
+    <a href={state.dataUrl} target="_blank" rel="noreferrer noopener">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={state.dataUrl} alt="Submitted screenshot"
+        className="max-h-64 max-w-full rounded-md border border-line object-contain" />
+    </a>
   );
 }
 

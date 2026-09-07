@@ -30,6 +30,19 @@ function canonicalCountry(c: string): string {
 // device-scoped flags, or `ip:<addr>` for IP-scoped ones (kept distinct so a
 // device flag and an IP flag on the same cluster dedupe independently).
 //
+// `magnitude` (founder, 2026-09-07) is the SIZE of the problem this specific
+// occurrence represents — accounts sharing a device, distinct mismatched
+// countries, whatever the call site can count. It is what lets a staff
+// member's "Resolve (permanent)" mean "stop telling me about THIS scale of
+// problem" rather than "never check this user again": once a flag type has
+// been permanently resolved for a user, a NEW occurrence at the same or a
+// smaller magnitude stays silent, but one that has genuinely gotten worse
+// (a 4th account, a 5th abusive referral) still fires normally. Omit it (as
+// every call site without a natural count does) and permanent resolve simply
+// behaves like temporary for that flag type — never silences it — because
+// promising silence on a signal we cannot measure the scale of would be a
+// real blind spot, not a favour.
+//
 // Returns whether a NEW row was inserted — callers don't need it, but it is
 // what lets this function page staff on the first occurrence of a high-
 // severity flag without re-alerting on every dedup no-op of an issue already
@@ -40,15 +53,33 @@ export async function flagOnce(
   userId: string | null,
   severity: string,
   detail: string,
+  magnitude?: number,
 ): Promise<boolean> {
   const existing = await sql.get<{ id: string }>(
     "SELECT id FROM fraud_flags WHERE flag_type = ? AND device_id = ? AND resolved_by IS NULL LIMIT 1",
     flagType, scopeKey,
   );
   if (existing) return false;
+
+  // Permanently-forgiven, and not yet worse than it was when forgiven: stay
+  // silent. This is a plain read with no lock — worst case under a race is
+  // two flags inserted for two different scope keys, which is fine; it is
+  // never a double-spend and this must never block a fraud check.
+  if (userId && magnitude != null) {
+    const baseline = await sql.get<{ magnitude: number | null }>(
+      `SELECT magnitude FROM fraud_flags
+        WHERE user_id = ? AND flag_type = ? AND resolution_type = 'permanent'
+        ORDER BY resolved_at DESC LIMIT 1`,
+      userId, flagType,
+    );
+    if (baseline && baseline.magnitude != null && magnitude <= baseline.magnitude) {
+      return false;
+    }
+  }
+
   await sql.run(
-    "INSERT INTO fraud_flags (id, user_id, device_id, flag_type, severity, detail, created_at) VALUES (?,?,?,?,?,?,?)",
-    newId(), userId, scopeKey, flagType, severity, detail, now(),
+    "INSERT INTO fraud_flags (id, user_id, device_id, flag_type, severity, detail, magnitude, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    newId(), userId, scopeKey, flagType, severity, detail, magnitude ?? null, now(),
   );
   // Page staff on every genuinely NEW high-severity flag — the single
   // enforcement point for alerting, so a future high-severity flag type gets
@@ -91,27 +122,32 @@ export async function recordDevice(
       await flagOnce(
         "device_reuse", deviceId, userId, "medium",
         `${users.length} accounts share this device.`,
+        users.length,
       );
     }
 
     // 2. IP reuse: many accounts from one IP. Softer than device reuse —
     // carrier-grade NAT in our markets makes many users legitimately share an
     // IP — so the threshold is higher and severity only medium (staff review).
-    if (ip) {
-      const ipUsers = await sql.all<{ user_id: string }>(
-        "SELECT DISTINCT user_id FROM user_devices WHERE ip = ?", ip,
+    // Computed once and reused by the referral-ring IP check below (3) — both
+    // ask exactly the same question.
+    const ipUsers = ip
+      ? await sql.all<{ user_id: string }>("SELECT DISTINCT user_id FROM user_devices WHERE ip = ?", ip)
+      : [];
+    if (ip && ipUsers.length >= config.ipReuseThreshold) {
+      await flagOnce(
+        "ip_reuse", `ip:${ip}`, userId, "medium",
+        `${ipUsers.length} accounts seen from this IP.`,
+        ipUsers.length,
       );
-      if (ipUsers.length >= config.ipReuseThreshold) {
-        await flagOnce(
-          "ip_reuse", `ip:${ip}`, userId, "medium",
-          `${ipUsers.length} accounts seen from this IP.`,
-        );
-      }
     }
 
     // 3. Referral ring: the account was invited by someone it shares hardware
     // or network with — classic self-referral / farm signal. Sharing a DEVICE
-    // is strong (high); sharing only an IP is a weaker fallback (medium).
+    // is strong (high); sharing only an IP is a weaker fallback (medium). The
+    // magnitude reused here (accounts entangled in the same device/IP
+    // cluster) is what lets "forgive this referral pair" still re-flag once a
+    // 4th or 5th account joins the same cluster (founder, 2026-09-07).
     const me = await sql.get<{ referred_by: string | null }>(
       "SELECT referred_by FROM users WHERE id = ?", userId,
     );
@@ -124,6 +160,7 @@ export async function recordDevice(
         await flagOnce(
           "referral_ring", deviceId, userId, "high",
           `Invited account shares a device with its referrer (${me.referred_by}).`,
+          users.length,
         );
       } else if (ip) {
         const sharesIp = await sql.get<{ id: string }>(
@@ -134,6 +171,7 @@ export async function recordDevice(
           await flagOnce(
             "referral_ring", `ip:${ip}`, userId, "medium",
             `Invited account shares an IP with its referrer (${me.referred_by}).`,
+            ipUsers.length,
           );
         }
       }
@@ -166,6 +204,7 @@ export async function checkPayoutAddressReuse(
       await flagOnce(
         "payout_address_reuse", `addr:${norm}`, userId, "medium",
         `${accounts.length} accounts withdraw to this wallet address.`,
+        accounts.length,
       );
     }
   } catch {
@@ -192,9 +231,22 @@ export async function checkGeoMismatch(
     if (!stated || !reported || stated === reported) return;
     // Scope the dedupe by user + reported country, so a user genuinely on the
     // move raises at most one open flag per foreign country, not one per offer.
+    const scopeKey = `geo:${userId}:${reported}`;
+    // Magnitude: how many DISTINCT mismatched countries this account has ever
+    // been flagged from, this one included. Counts every OTHER country first
+    // (excluding this exact scope key) so a country recurring after being
+    // forgiven reports the same magnitude every time — only a genuinely NEW
+    // country raises the count, which is what lets "forgive this one trip"
+    // stay forgiven while "now showing up from a second wrong country" still
+    // flags (founder, 2026-09-07).
+    const otherCountries = await sql.get<{ n: string }>(
+      "SELECT COUNT(DISTINCT device_id) AS n FROM fraud_flags WHERE user_id = ? AND flag_type = 'geo_mismatch' AND device_id <> ?",
+      userId, scopeKey,
+    );
     await flagOnce(
-      "geo_mismatch", `geo:${userId}:${reported}`, userId, "medium",
+      "geo_mismatch", scopeKey, userId, "medium",
       `Offer completed from "${reportedCountry}" but account country is "${statedCountry}".`,
+      Number(otherCountries?.n ?? 0) + 1,
     );
   } catch {
     // Never let a fraud signal break a verified credit.

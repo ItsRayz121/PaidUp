@@ -17,7 +17,7 @@ import { fieldsForTask, publicField, validateAnswers } from "../taskFields.ts";
 import { eligibility, userContext, type TargetingRow } from "../taskTargeting.ts";
 import { campaignState, unavailableMessage } from "../taskLifecycle.ts";
 import { recordDevice } from "../fraud.ts";
-import { parseDataUrl } from "../kyc.ts";
+import { parseDataUrl, encryptImage } from "../kyc.ts";
 
 // Wraps a handler so a thrown {statusCode,message} becomes a clean JSON error.
 function guard(
@@ -289,7 +289,16 @@ export async function appRoutes(app: FastifyInstance) {
   // Submit proof for one of OUR OWN 'proof' custom tasks. This does NOT credit
   // anything (guardrail #1) — it only files evidence into the staff review
   // queue. A staff member approves it, and THAT credits the points.
-  app.post("/tasks/:id/proof", guard(async (userId, req) => {
+  app.post("/tasks/:id/proof", {
+    // Raised HERE and nowhere else, same reasoning as /kyc (kyc.ts): a
+    // screenshot at config.kycMaxImageBytes (4MB), base64-encoded (+33%), is
+    // ~5.3MB — comfortably over Fastify's 1MB default. Without this, the
+    // "image" field kind would silently reject most real screenshots the
+    // instant they were bigger than a thumbnail. Kept well under kyc.ts's
+    // 20MB (three ID photos at once) since a task normally asks for at most
+    // one or two.
+    bodyLimit: 8 * 1024 * 1024,
+    handler: guard(async (userId, req) => {
     // The WRITE side does refuse outright — unlike the feed above, there is no
     // sensible empty state for "submit", and silently accepting a proof that
     // will never be reviewed would be worse than an error.
@@ -299,12 +308,19 @@ export async function appRoutes(app: FastifyInstance) {
     // below. It cannot be decided here: whether this task asks for evidence is a
     // per-task Admin setting, and a fixed min(1) would refuse the tap-to-confirm
     // tasks outright.
-    const { proof, answers: rawAnswers } = z.object({
+    const { proof, answers: rawAnswers, images: rawImages } = z.object({
       proof: z.string().trim().max(2000).optional(),
       // fieldId -> what they typed. Checked against the task's CURRENT fields
       // below (taskFields.ts) — the client's own validation is a courtesy and
       // does not survive a curl.
       answers: z.record(z.string().max(64), z.string().max(4000)).optional(),
+      // fieldId -> a `data:image/...;base64,...` screenshot, kept in its own
+      // map rather than folded into `answers` — a photo is orders of
+      // magnitude bigger than any typed answer, and giving it its own cap
+      // (matched to config.kycMaxImageBytes' base64 blow-up, taskFields.ts
+      // re-checks the real byte size) keeps every OTHER answer's 4000-char
+      // cap meaningful as an actual "too long to type" limit.
+      images: z.record(z.string().max(64), z.string().max(8_000_000)).optional(),
     }).parse(req.body ?? {});
 
     const task = await sql.get<Record<string, unknown>>(
@@ -336,11 +352,13 @@ export async function appRoutes(app: FastifyInstance) {
     const fields = await fieldsForTask(taskId);
     let proofText: string;
     let answersJson: string | null = null;
+    let pendingImages: { fieldId: string; imageId: string; bytes: Buffer; mime: string }[] = [];
     if (fields.length > 0) {
-      const checked = validateAnswers(fields, rawAnswers ?? {});
+      const checked = validateAnswers(fields, rawAnswers ?? {}, rawImages ?? {});
       if (!checked.ok) return { ok: false, error: checked.error };
       proofText = checked.text;
       answersJson = JSON.stringify(checked.answers);
+      pendingImages = checked.images;
     } else {
       const text = (proof ?? "").trim();
       if (task.proof_required !== 0 && text.length === 0) {
@@ -366,21 +384,33 @@ export async function appRoutes(app: FastifyInstance) {
     // Replace any earlier pending/rejected attempt so the queue holds one row
     // per user per task. The partial unique index enforces one pending row.
     await sql.tx(async (tx) => {
+      // The DELETE cascades to task_proof_images (ON DELETE CASCADE) — a
+      // resubmitted proof's old screenshot, if any, goes with the old row.
       await tx.run(
         "DELETE FROM task_proofs WHERE task_id = ? AND user_id = ? AND status IN ('pending','rejected')",
         taskId, userId,
       );
       const at = now();
+      const proofId = newId();
       await tx.run(
         `INSERT INTO task_proofs
           (id, task_id, user_id, proof_text, answers, status, reward_points, reward_rozi_micro, reward_usdt_micro,
            task_title_snapshot, task_icon_snapshot, task_logo_asset_snapshot, created_at)
          VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?)`,
-        newId(), taskId, userId, proofText, answersJson,
+        proofId, taskId, userId, proofText, answersJson,
         Number(task.points ?? 0), Number(task.reward_rozi_micro ?? 0), Number(task.reward_usdt_micro ?? 0),
         String(task.title ?? "Task"),
         task.icon ?? null, task.logo_asset_id ?? null, at,
       );
+      // Encrypted the same way a KYC photo is (see db.ts's comment on this
+      // table) — one row per screenshot, keyed by the id validateAnswers
+      // already minted for the "img:<id>" token sitting in answersJson above.
+      for (const img of pendingImages) {
+        await tx.run(
+          `INSERT INTO task_proof_images (id, proof_id, field_id, mime, encrypted_value, created_at) VALUES (?,?,?,?,?,?)`,
+          img.imageId, proofId, img.fieldId, img.mime, encryptImage(img.bytes), at,
+        );
+      }
       await tx.run(
         `INSERT INTO task_participation (user_id, task_id, started_at, updated_at) VALUES (?,?,?,?)
          ON CONFLICT (user_id, task_id) DO UPDATE SET updated_at = EXCLUDED.updated_at`,
@@ -388,7 +418,8 @@ export async function appRoutes(app: FastifyInstance) {
       );
     });
     return { ok: true, status: "pending" };
-  }));
+    }),
+  });
 
   // Balance = SUM(ledger). Never a stored field. Also returns the current
   // withdrawal fee (points) so the withdraw screen can show fee + net.

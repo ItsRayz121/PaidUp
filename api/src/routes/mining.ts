@@ -24,7 +24,7 @@ import { relayAvailable, hasEnoughGas, hasEnoughGasForDisplay } from "../payoutR
 import { loadMiningSettings } from "../mining/settings.ts";
 import {
   startSession, sessionState, accrue, grantBoost,
-  claimableRoziMicro, claimRozi, effectivePiRate, minerPopulation,
+  claimableRoziMicro, claimRozi, effectivePiRate, minerPopulation, hashrateOf,
 } from "../mining/engine.ts";
 import {
   rigUpgradeCost, rigPower, conversionPayout, conversionAllowanceMicro, toMicro, fromMicro,
@@ -433,7 +433,18 @@ export async function miningRoutes(app: FastifyInstance) {
     // a number, which is exactly the honesty problem the pi model exists to fix.
     const piRate = s.emissionModel === "pi" ? effectivePiRate(s, await minerPopulation()) : 0;
     const piReferenceSeconds = s.piReferenceHours * 3600;
+    // What the user earns per day RIGHT NOW, no upgrade applied — the "before"
+    // half of every rig card's before/after comparison (founder, 2026-09-07:
+    // "show current speed vs after upgrade, and a monthly estimate"). Computed
+    // once here rather than once per rig. Null under the pool model, for the
+    // exact reason extraRoziPerDayMicro already is below.
+    const currentHashrate = piRate > 0 ? (await hashrateOf(userId, s)).hashrate : 0;
+    const currentDailyRoziMicro = piRate > 0 && currentHashrate > 0
+      ? piPayoutMicroFor(currentHashrate * 86400, piRate, s.baseHashrate, piReferenceSeconds)
+      : null;
     return {
+      currentDailyRoziMicro,
+      currentMonthlyRoziMicro: currentDailyRoziMicro != null ? currentDailyRoziMicro * 30 : null,
       roziMicro: await roziMinedBalanceMicroOf(userId),
       // The second way to pay. Zero for everyone until a deposit is confirmed,
       // and the whole USDT option stays hidden while top-ups are switched off.
@@ -455,6 +466,13 @@ export async function miningRoutes(app: FastifyInstance) {
         const extraRoziPerDayMicro = !maxed && piRate > 0 && powerDelta > 0
           ? piPayoutMicroFor(powerDelta * 86400, piRate, s.baseHashrate, piReferenceSeconds)
           : null;
+        // The "with this upgrade" half of the monthly calculator. Current +
+        // delta, not recomputed from a new hashrate — piPayoutMicroFor is
+        // linear in shares, so the two are exactly the same number, and this
+        // avoids a second hashrateOf() call per rig.
+        const afterUpgradeMonthlyRoziMicro = extraRoziPerDayMicro != null && currentDailyRoziMicro != null
+          ? (currentDailyRoziMicro + extraRoziPerDayMicro) * 30
+          : null;
         return {
           id: r.id, name: r.name, icon: r.icon, level, maxLevel: r.max_level,
           power,
@@ -468,6 +486,7 @@ export async function miningRoutes(app: FastifyInstance) {
           // null under the pool model, or once no rate is configured — the
           // client must treat null as "not shown", never as zero.
           extraRoziPerDayMicro,
+          afterUpgradeMonthlyRoziMicro,
         };
       }),
     };
@@ -1213,9 +1232,10 @@ export async function miningRoutes(app: FastifyInstance) {
     // signal, exactly like payout_address_reuse is for Points. Flag, don't block.
     const senders = await sql.get<{ n: string }>(
       "SELECT COUNT(DISTINCT from_user_id) AS n FROM rozi_transfers WHERE to_user_id = ?", target.id);
-    if (Number(senders?.n ?? 0) >= 5) {
+    const senderCount = Number(senders?.n ?? 0);
+    if (senderCount >= 5) {
       await flagOnce("rozi_transfer_ring", `rozi:${target.id}`, target.id, "high",
-        `${senders!.n} distinct accounts have sent ROZI to this account.`);
+        `${senders!.n} distinct accounts have sent ROZI to this account.`, senderCount);
     }
 
     return { ok: true, ...result };

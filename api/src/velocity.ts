@@ -26,6 +26,7 @@ export async function checkWithdrawalVelocity(userId: string): Promise<void> {
       await flagOnce(
         "withdrawal_velocity", `user:${userId}`, userId, "medium",
         `${n} withdrawal requests in the last 24 hours.`,
+        n,
       );
     }
   } catch {

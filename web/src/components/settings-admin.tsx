@@ -328,6 +328,7 @@ export function GlobalSettingsPanel() {
     appName: "", supportEmail: "", supportTelegram: "",
     minWithdrawPoints: 0, maintenanceMessage: "",
     welcomeRepeatDays: 0 as 0 | 1 | 7 | 30 | 365,
+    taskProofImageRetentionDays: 30,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -345,6 +346,7 @@ export function GlobalSettingsPanel() {
       minWithdrawPoints: d.minWithdrawPoints,
       maintenanceMessage: d.maintenanceMessage,
       welcomeRepeatDays: (d.welcomeRepeatDays as 0 | 1 | 7 | 30 | 365) ?? 0,
+      taskProofImageRetentionDays: d.taskProofImageRetentionDays,
     });
   }, [settings.data]);
 
@@ -465,6 +467,21 @@ export function GlobalSettingsPanel() {
             The animated welcome a new user sees once, right after signing in.
             This controls whether it comes back — and how often — after they
             have already dismissed it once.
+          </span>
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold text-muted">Delete task-proof photos after</span>
+          <div className="mt-0.5 flex items-center gap-2">
+            <input className={field} type="number" min={0} max={365}
+              value={form.taskProofImageRetentionDays}
+              onChange={(e) => setForm({ ...form, taskProofImageRetentionDays: Number(e.target.value) })} />
+            <span className="text-xs text-muted">days</span>
+          </div>
+          <span className="mt-0.5 block text-xs text-muted">
+            Screenshots users attach as task proof are deleted after this many
+            days to save storage — everything else about the task (who
+            approved it, for how much) stays on record forever. 0 keeps every
+            photo forever.
           </span>
         </label>
       </div>

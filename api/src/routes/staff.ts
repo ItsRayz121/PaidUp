@@ -21,7 +21,7 @@ import { validateAddress, type ChainId } from "../chains.ts";
 import { sendPushToUser } from "../push.ts";
 import { kycFeatureEnabled, parseDataUrl } from "../kyc.ts";
 import { getAutoWithdrawMaxPoints, getAutoRefundMaxMicro } from "../autoSettleSettings.ts";
-import { ticketAutoCloseHoursNow, welcomeRepeatDaysNow } from "../settingsRuntime.ts";
+import { ticketAutoCloseHoursNow, welcomeRepeatDaysNow, taskProofImageRetentionDaysNow } from "../settingsRuntime.ts";
 import { FLAGS, FLAG_IDS, isFlagId, allFlags, setFlag, enabled as flagEnabled } from "../flags.ts";
 import { loadAnalytics } from "../analytics.ts";
 import { fetchTelegramChatIdentity } from "../telegram.ts";
@@ -1065,12 +1065,42 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // Resolve a flag (managers/admins). Append-only spirit: we don't delete, we
   // stamp who cleared it and why, leaving the trail (docs/ARCHITECTURE.md).
+  //
+  // Three actions now, not one (founder, 2026-09-07): "temporary" is exactly
+  // the old behaviour — clears this one row, promises nothing about the
+  // future, so an identical problem re-flags next time exactly as it always
+  // has. "permanent" additionally (a) clears EVERY other currently-open flag
+  // on this SAME user, of any type — one judgement, not one click per row —
+  // and (b) tells flagOnce (fraud.ts) to stay silent on a repeat of the SAME
+  // SCALE of problem for that flag type, while still firing if it genuinely
+  // gets worse (see flagOnce's own comment for the magnitude mechanics).
   app.post("/staff/fraud/:id/resolve", staffGuard("fraud.resolve", async ({ userId }, req, reply) => {
-    const note = (req.body as { note?: string })?.note;
+    const body = (req.body as { note?: string; resolutionType?: string }) ?? {};
+    const note = body.note;
+    const resolutionType = body.resolutionType === "permanent" ? "permanent" : "temporary";
     const id = (req.params as { id: string }).id;
+
+    const flag = await sql.get<{ id: string; user_id: string | null }>(
+      "SELECT id, user_id FROM fraud_flags WHERE id = ? AND resolved_by IS NULL", id,
+    );
+    if (!flag) return reply.code(404).send({ error: "Flag not found or already resolved." });
+
+    if (resolutionType === "permanent" && flag.user_id) {
+      // One UPDATE covers both "resolve this flag" and "resolve every other
+      // open flag on this user" — the clicked row is itself one of the rows
+      // this WHERE matches, so there is no separate branch for it.
+      await sql.run(
+        `UPDATE fraud_flags SET resolved_by = ?, resolution_note = COALESCE(resolution_note, ?),
+                resolved_at = ?, resolution_type = 'permanent'
+          WHERE user_id = ? AND resolved_by IS NULL`,
+        userId, note ?? null, now(), flag.user_id,
+      );
+      return reply.send({ ok: true });
+    }
+
     const res = await sql.run(
-      "UPDATE fraud_flags SET resolved_by = ?, resolution_note = ?, resolved_at = ? WHERE id = ? AND resolved_by IS NULL",
-      userId, note ?? null, now(), id,
+      "UPDATE fraud_flags SET resolved_by = ?, resolution_note = ?, resolved_at = ?, resolution_type = ? WHERE id = ? AND resolved_by IS NULL",
+      userId, note ?? null, now(), resolutionType, id,
     );
     if (!res.rowCount) return reply.code(404).send({ error: "Flag not found or already resolved." });
     return { ok: true };
@@ -1252,6 +1282,9 @@ export async function staffRoutes(app: FastifyInstance) {
     // How often the first-run welcome overlay (WelcomeExperience.tsx) is
     // allowed to show an earner again after they dismiss it. 0 = once, ever.
     welcomeRepeatDays: await welcomeRepeatDaysNow(),
+    // Task-proof screenshots: delete the photo bytes after this many days to
+    // save storage (founder, 2026-09-07). 0 = keep every photo forever.
+    taskProofImageRetentionDays: await taskProofImageRetentionDaysNow(),
   })));
 
   const settingsSchema = z.object({
@@ -1287,6 +1320,8 @@ export async function staffRoutes(app: FastifyInstance) {
     // picker, same as the founder asked for, not a text box someone can
     // typo into showing it every 3 minutes.
     welcomeRepeatDays: z.union([z.literal(0), z.literal(1), z.literal(7), z.literal(30), z.literal(365)]).optional(),
+    // 0 keeps every task-proof screenshot forever.
+    taskProofImageRetentionDays: z.number().int().min(0).max(365).optional(),
     // Treasury (hot wallet) address per chain. Empty string clears it.
     treasury: z.object({
       bep20: z.string().trim().max(120).optional(),
@@ -1344,6 +1379,9 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     if (parsed.data.welcomeRepeatDays !== undefined) {
       await setSetting("welcome_repeat_days", String(parsed.data.welcomeRepeatDays));
+    }
+    if (parsed.data.taskProofImageRetentionDays !== undefined) {
+      await setSetting("task_proof_image_retention_days", String(parsed.data.taskProofImageRetentionDays));
     }
     if (parsed.data.maintenanceMode !== undefined) {
       const wasMaint = (await getSetting("maintenance_mode", "0")) === "1";

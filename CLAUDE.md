@@ -4818,3 +4818,104 @@ See `docs/` for the full spec.
     past one Railway server (an infra/cost decision, not worth it at ~21
     total accounts). Account deletion/anonymisation stays unbuilt too — the
     founder said it isn't a priority right now.
+
+- **TASK-PROOF SCREENSHOTS, A REAL PHOTO-RETENTION SETTING, AND A FRAUD-FLAG
+  DROPDOWN WITH TRUE ESCALATION (founder, 2026-09-07).** Three asks off a
+  voice memo. Verified: two new suites (`npm run test:fraud`, 17 checks;
+  `npm run test:taskproofimages`, 26 checks) plus a 12-suite regression sweep
+  (mining e2e 65, mining unit 42, withdrawcontrols 21, stage7 96, tasksadmin
+  57, taskmarketplace 16, disbursements 96, usersadmin 59, admin 15,
+  permissions 17), all green from a fresh database; api + web typecheck,
+  eslint (0 errors, the same 7 pre-existing `<img>` warnings), web production
+  build (39 routes) all clean.
+  - **A new task-field kind, `image`.** An Admin adds "Upload a screenshot" to
+    a task's proof form exactly like any other field (Tasks & networks →
+    Edit questions). Encrypted the same way a KYC ID photo is (AES-256-GCM,
+    same key, same magic-byte sniff so a fake "JPEG" that is really an SVG
+    payload is refused before it is ever stored) — reusing `kyc.ts`'s
+    `parseDataUrl`/`encryptImage`/`decryptImage` rather than writing a second
+    copy of security-sensitive image-parsing code.
+    ⚠️ **KEPT OUT OF `task_proofs.answers` ON PURPOSE.** That column is read
+    on every row of the staff proof queue (a paginated list); embedding a
+    multi-megabyte encrypted photo in the same JSON blob every small text
+    answer lives in would mean parsing and re-shipping that photo on every
+    page load, for every row, before anyone has opened it — the same
+    "`SELECT *` pays for a blob on every row" reasoning that already gave
+    avatars their own table. New `task_proof_images` table instead; the
+    answer keeps a lightweight `"img:<id>"` reference token, and a new
+    `GET /staff/task-proofs/:proofId/images/:imageId` (same `tasks.review`
+    permission as the queue) decrypts and serves one photo only when a
+    reviewer actually opens that proof.
+    ⚠️ **A FASTIFY BODY-SIZE LIMIT WOULD HAVE SILENTLY BROKEN THIS FOR REAL
+    PHONE SCREENSHOTS.** Fastify's global default body limit is 1MB; a
+    base64-encoded photo near `config.kycMaxImageBytes` (4MB) is ~5.3MB. Every
+    other route stays at the tight default — `/kyc` is the one existing route
+    that already raises its own `bodyLimit` (20MB, three ID photos at once)
+    rather than raising it globally and handing an unauthenticated postback
+    or login route a cheap memory-exhaustion surface. `POST /tasks/:id/proof`
+    now does the same, at a narrower 8MB (realistically one or two screenshots,
+    not three ID photos). Caught by the regression test itself — the first
+    version of the "oversized photo" check failed for the wrong reason
+    (Fastify's blunt 1MB cutoff, not the app's own byte check) until this was
+    fixed, which is exactly the gap it would have shipped with in production.
+  - **Photo bytes are deleted after an admin-tunable retention window**
+    (`/staff → Feature flags → Global settings`, default 30 days, 0 = keep
+    forever) — the founder's own cost-control ask, mirroring the existing
+    postback-log redaction job (`postbackRedaction.ts`) exactly:
+    `taskProofRedaction.ts` nulls `task_proof_images.encrypted_value` and
+    stamps `redacted_at`, on its own coarse background timer. ⚠️ **Only the
+    photo is ever touched** — `field_id`/`mime` on that row and every column
+    on the owning `task_proofs` row (who approved it, for how much, every
+    text answer) are untouched forever; the retention test asserts the
+    owning row is byte-for-byte identical before and after a sweep.
+  - **The fraud-flag "Resolve" button is now a three-way dropdown**
+    (`/staff → Fraud flags`): **Resolve (temporary)** is exactly today's old
+    behaviour — clears one row, promises nothing about the future. **Resolve
+    (permanent)** additionally clears every OTHER currently-open flag on that
+    same user, of any type (one judgement, not one click per row), and tells
+    the fraud checks to stay quiet on a repeat of the SAME SCALE of problem —
+    while a genuinely worse repeat still fires. **Suspend user** is unchanged.
+    ⚠️ **THE FOUNDER'S OWN EXAMPLE — "don't re-flag 3 fake accounts I already
+    forgave, but DO flag a 4th" — REQUIRED A REAL DESIGN CHANGE, NOT JUST A
+    UI RELABEL.** `flagOnce` (`fraud.ts`) gained an optional `magnitude`
+    parameter — the SIZE of the problem this occurrence represents (accounts
+    sharing a device, distinct mismatched countries, a withdrawal-velocity
+    count, …) — captured once at INSERT. Two new `fraud_flags` columns:
+    `magnitude` and `resolution_type` (`'temporary' | 'permanent'`), plus an
+    index on `(user_id, flag_type, resolved_at DESC) WHERE resolution_type =
+    'permanent'`. A NEW occurrence is suppressed only when a permanently-
+    resolved baseline exists for that exact `(user, flag_type)` AND the new
+    magnitude is no bigger than what was forgiven — otherwise it fires
+    normally, exactly like before this feature existed.
+    ⚠️ **A FLAG TYPE WITH NO NATURAL MAGNITUDE NEVER GETS SILENCED, ON
+    PURPOSE.** `mining_bot_pattern` and `mining_device_share` have no
+    meaningful "how much worse" measure — permanent resolve still clears them
+    now, but records no baseline, so they behave exactly like temporary
+    resolve for the future. Promising silence on a signal you cannot measure
+    the scale of would be a real fraud blind spot, not a favour to the user —
+    this was flagged in a design review before it shipped and built in from
+    the start rather than left as a gap. Every OTHER flag type that had a
+    natural count already available in scope (`device_reuse`, `ip_reuse`,
+    `referral_ring` — both the device- and IP-shared variants — `payout_
+    address_reuse`, `withdrawal_velocity`, `rozi_transfer_ring`) had its
+    magnitude threaded through for free; `geo_mismatch` got one built for it
+    (distinct mismatched countries ever seen for that user, excluding the
+    current one, so a country recurring after being forgiven reports the same
+    magnitude every time and only a genuinely NEW country escalates).
+  - **A mining-machine "before vs after" monthly calculator.** `GET
+    /mining/rigs` now also returns the user's real current daily/monthly ROZI
+    rate (no upgrade applied) alongside each rig's "with this upgrade" monthly
+    figure — the rig detail page (`/mine/rigs/[id]`) shows both side by side,
+    directly under the existing current/next-level speed comparison, so a
+    user reads speed → daily → monthly → payback → then the buy buttons, in
+    that order. Null under the pool emission model, for the same reason the
+    existing "extra ROZI a day" figure already is (a shared, moving pot makes
+    a stable rate a guess, not a fact).
+  - **Two things clarified verbally, no code needed**: "Watch an ad" is a
+    flat +1 to mining speed for 4h, capped at 4/day (not a token payout, not a
+    multiplier — cut from a doubling multiplier on 2026-08-30 for handing out
+    ROZI too easily). "Speed up" (boosters) is a real, DB-backed feature for
+    spending already-earned ROZI on a temporary speed multiplier — it shows
+    empty today only because no booster has actually been priced and enabled
+    yet (`boosters` table, seeded disabled on purpose so an Admin has
+    something concrete to price rather than a stale default).

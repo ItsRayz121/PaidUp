@@ -1147,6 +1147,12 @@ const copy: Record<string, string> = {
   "rigDetail.estimateTitle": "About {value}",
   "rigDetail.estimateBody":
     "A rough estimate only, at today's admin-set rate. ROZI has no fixed cash price and this number can change at any time — it is not a guarantee of value.",
+  // The monthly before/after calculator (founder, 2026-09-07).
+  "rigDetail.monthlyTitle": "About a month from now",
+  "rigDetail.withoutUpgrade": "Without this upgrade",
+  "rigDetail.withUpgrade": "With this upgrade",
+  "rigDetail.monthlyNote":
+    "An estimate at today's mining speed. Your real speed can change — streaks end, halvings happen — so this is not a promise.",
 
   // ---- The road map ---------------------------------------------------------
   // What is coming, and when. Two rules hold this page together:

@@ -46,7 +46,10 @@ export default function RigDetailPage() {
     return <div className="p-4 pt-6"><ErrorState message={rigs.error ?? "…"} onRetry={rigs.reload} /></div>;
   }
 
-  const { roziMicro, usdtMicro, usdtEnabled, roziUsdtDisplayRate, rigs: list } = rigs.data;
+  const {
+    roziMicro, usdtMicro, usdtEnabled, roziUsdtDisplayRate,
+    currentMonthlyRoziMicro, rigs: list,
+  } = rigs.data;
   const r = list.find((x) => x.id === id);
 
   if (!r) {
@@ -105,6 +108,27 @@ export default function RigDetailPage() {
           )}
         </div>
       </Card>
+
+      {/* The monthly before/after calculator (founder, 2026-09-07): what a
+          month of mining looks like without this upgrade vs with it, sitting
+          right next to the speed comparison above. Null under the pool model,
+          same as everything else on this page that assumes a stable rate. */}
+      {!maxed && currentMonthlyRoziMicro !== null && r.afterUpgradeMonthlyRoziMicro !== null && (
+        <Card className="p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("rigDetail.monthlyTitle")}</p>
+          <div className="mt-2 grid grid-cols-2 divide-x divide-line">
+            <div className="pr-3">
+              <p className="text-xs text-muted">{t("rigDetail.withoutUpgrade")}</p>
+              <p className="num mt-0.5 text-lg font-bold text-brand-ink">{formatRozi(currentMonthlyRoziMicro)}</p>
+            </div>
+            <div className="pl-3">
+              <p className="text-xs text-muted">{t("rigDetail.withUpgrade")}</p>
+              <p className="num mt-0.5 text-lg font-bold text-success">{formatRozi(r.afterUpgradeMonthlyRoziMicro)}</p>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">{t("rigDetail.monthlyNote")}</p>
+        </Card>
+      )}
 
       {/* What this upgrade is actually worth (founder, 2026-08-12) — see the
           list page's comment for why this is null under the pool model. */}

@@ -13,13 +13,18 @@
 // shape, and the URL scheme in particular — is re-decided in `validateAnswers`.
 import { createHash } from "node:crypto";
 import { isAddress } from "viem";
-import { sql } from "./db.ts";
+import { sql, newId } from "./db.ts";
+import { parseDataUrl, type ParsedImage } from "./kyc.ts";
 
 /** The closed list. A kind decides how an answer is CHECKED, so an unknown kind
  *  would mean an unchecked answer — which is why it is refused at the admin
- *  boundary and again here, and why the DB has a CHECK constraint too. */
+ *  boundary and again here, and why the DB has a CHECK constraint too.
+ *
+ *  'image' (2026-09-07) is a screenshot instead of typed text — the answer
+ *  never carries the photo itself (see PendingImage below and its own
+ *  comment in db.ts on task_proof_images for why). */
 export const FIELD_KINDS = [
-  "text", "longtext", "number", "email", "url", "phone", "choice", "username", "crypto_address",
+  "text", "longtext", "number", "email", "url", "phone", "choice", "username", "crypto_address", "image",
 ] as const;
 export type FieldKind = (typeof FIELD_KINDS)[number];
 
@@ -31,6 +36,11 @@ export const MAX_FIELDS_PER_TASK = 8;
 const DEFAULT_MAX_LEN: Record<FieldKind, number> = {
   text: 200, longtext: 2000, number: 24, email: 160, url: 500, phone: 32, choice: 120,
   username: 120, crypto_address: 128,
+  // Unused — an image answer's stored value is a short "img:<id>" reference
+  // token, never the photo itself, and its real size cap is a BYTE cap
+  // (config.kycMaxImageBytes) applied to the raw upload, checked in
+  // validateAnswers before the token is ever created.
+  image: 0,
 };
 
 export type TaskField = {
@@ -91,8 +101,15 @@ export type StoredAnswer = {
   validation?: "evm" | "tron" | "solana" | "generic";
 };
 
+/** A screenshot pulled out of the submission, ready for the caller to encrypt
+ *  and store in task_proof_images. `imageId` is generated HERE, before the
+ *  caller's own task_proofs row exists, so the same id can go straight into
+ *  the answer's "img:<id>" reference token — the caller never has to patch
+ *  the answers array after the fact. */
+export type PendingImage = { fieldId: string; imageId: string; bytes: Buffer; mime: string };
+
 export type AnswerResult =
-  | { ok: true; answers: StoredAnswer[]; text: string }
+  | { ok: true; answers: StoredAnswer[]; text: string; images: PendingImage[] }
   | { ok: false; error: string };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -146,9 +163,35 @@ function cryptoError(label: string, validation: string | null): string {
  * missing — so a required one refuses the submit and the user is told which
  * answer is missing rather than having a silent half-submission filed.
  */
-export function validateAnswers(fields: TaskField[], input: Record<string, unknown>): AnswerResult {
+export function validateAnswers(
+  fields: TaskField[],
+  input: Record<string, unknown>,
+  images: Record<string, unknown> = {},
+): AnswerResult {
   const answers: StoredAnswer[] = [];
+  const pendingImages: PendingImage[] = [];
   for (const f of fields) {
+    // Image kind reads from a SEPARATE map, not `input` — see PendingImage's
+    // comment. Handled first and `continue`s, so the generic text-length
+    // check below (sized for a typed answer, not a base64 photo) never sees it.
+    if (f.kind === "image") {
+      const raw = images[f.id];
+      if (typeof raw !== "string" || raw.trim().length === 0) {
+        if (f.required !== 0) return { ok: false, error: `Please add a photo for “${f.label}”.` };
+        continue;
+      }
+      let parsed: ParsedImage;
+      try {
+        parsed = parseDataUrl(raw, f.label);
+      } catch (e) {
+        return { ok: false, error: (e as { message?: string })?.message ?? `“${f.label}” is not a valid photo.` };
+      }
+      const imageId = newId();
+      pendingImages.push({ fieldId: f.id, imageId, bytes: parsed.bytes, mime: parsed.mime });
+      answers.push({ fieldId: f.id, label: f.label, kind: f.kind, value: `img:${imageId}` });
+      continue;
+    }
+
     const raw = input[f.id];
     const value = typeof raw === "string" ? raw.trim() : raw == null ? "" : String(raw).trim();
     const maxLen = f.max_len ?? DEFAULT_MAX_LEN[f.kind];
@@ -219,7 +262,7 @@ export function validateAnswers(fields: TaskField[], input: Record<string, unkno
         : undefined,
     });
   }
-  return { ok: true, answers, text: renderAnswers(answers) };
+  return { ok: true, answers, text: renderAnswers(answers), images: pendingImages };
 }
 
 /** The readable rendering written to task_proofs.proof_text.
@@ -229,7 +272,7 @@ export function validateAnswers(fields: TaskField[], input: Record<string, unkno
  *  the same thing, never a replacement for it. */
 export function renderAnswers(answers: StoredAnswer[]): string {
   if (answers.length === 0) return "The user says they finished this task.";
-  return answers.map((a) => `${a.label}: ${a.value}`).join("\n");
+  return answers.map((a) => `${a.label}: ${a.kind === "image" ? "[photo attached]" : a.value}`).join("\n");
 }
 
 /** Read back what was stored. Tolerates the older rows that have no answers

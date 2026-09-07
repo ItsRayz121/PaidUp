@@ -32,6 +32,7 @@ import { tickPayoutRelay } from "./payoutRelay.ts";
 import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
 import { tickTicketAutoClose } from "./ticketAutoClose.ts";
 import { tickPostbackRedaction } from "./postbackRedaction.ts";
+import { tickTaskProofRedaction } from "./taskProofRedaction.ts";
 import { tickLeaderboardRewards } from "./leaderboardRewards.ts";
 import { fromMicro } from "./mining/core.ts";
 import { emailConfigured } from "./email.ts";
@@ -481,6 +482,15 @@ const runTicketAutoClose = everyNoOverlap("ticket-auto-close", TICKET_AUTO_CLOSE
 // an indexed column is cheap even run this rarely.
 const runPostbackRedaction = everyNoOverlap(
   "postback-redaction", config.postbackRedactionIntervalMs, tickPostbackRedaction,
+);
+
+// ---- Task-proof screenshot redaction — taskProofRedaction.ts --------------
+// Same coarse, infrequent cadence as postback redaction above, and the same
+// reason: this is housekeeping, not anything time-sensitive, and a plain
+// `UPDATE ... WHERE created_at < ?` over an indexed column is cheap even run
+// this rarely.
+const runTaskProofRedaction = everyNoOverlap(
+  "task-proof-redaction", config.taskProofRedactionIntervalMs, tickTaskProofRedaction,
 );
 
 // ---- Leaderboard reward pools — leaderboardRewards.ts ----------------------

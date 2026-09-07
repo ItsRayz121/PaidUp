@@ -578,6 +578,16 @@ export const config = {
   postbackLogRetentionDays: num(process.env.POSTBACK_LOG_RETENTION_DAYS, 90, 0),
   postbackRedactionIntervalMs: num(process.env.POSTBACK_REDACTION_INTERVAL_MS, 6 * 60 * 60 * 1000, 60_000),
 
+  // Task-proof screenshots (founder, 2026-09-07: "so we do not build up
+  // excessive storage cost"). The photo bytes are deleted after this many
+  // days; everything else about the proof — who approved it, for how much,
+  // the text answers — stays forever. Admin-tunable at runtime (see
+  // settingsRuntime.ts's taskProofImageRetentionDaysNow, which this is only
+  // the FALLBACK for) — this default is what an untouched instance uses. 0
+  // turns the sweep off (never delete).
+  taskProofImageRetentionDays: num(process.env.TASK_PROOF_IMAGE_RETENTION_DAYS, 30, 0),
+  taskProofRedactionIntervalMs: num(process.env.TASK_PROOF_REDACTION_INTERVAL_MS, 6 * 60 * 60 * 1000, 60_000),
+
   // Support tickets sitting in 'answered' (staff replied last, user never
   // came back) auto-close after this many HOURS — see ticketAutoClose.ts. 0
   // turns it off. A ticket a user never replies to is not the same as an

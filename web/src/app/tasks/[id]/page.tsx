@@ -12,7 +12,7 @@
 // server against the task's CURRENT fields (api/src/taskFields.ts) — required,
 // length, shape, and the http(s) check on a link in particular. None of what
 // this file does survives a curl, and none of it is relied on.
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Card, RewardPill, Button, SponsoredTag } from "@/components/ui";
@@ -169,7 +169,10 @@ function ProofForm({ task, fields, onSent }: {
   async function send() {
     setError(null);
     const missing = fields.find((f) => f.required && (values[f.id] ?? "").trim().length === 0);
-    if (missing) { setError(`Please fill in “${missing.label}”.`); return; }
+    if (missing) {
+      setError(missing.kind === "image" ? `Please add a photo for “${missing.label}”.` : `Please fill in “${missing.label}”.`);
+      return;
+    }
     const badAddress = fields.find((f) => f.kind === "crypto_address"
       && !looksLikeAddress(values[f.id] ?? "", f.validation ?? "generic"));
     if (badAddress) {
@@ -180,7 +183,20 @@ function ProofForm({ task, fields, onSent }: {
 
     setBusy(true);
     try {
-      const r = await submitTaskProof(task.id, proof.trim(), fields.length > 0 ? values : undefined);
+      // Split by kind at the last moment — a screenshot rides in its own
+      // channel (`images`), never in `answers` (api/src/routes/app.ts, why).
+      const answers: Record<string, string> = {};
+      const images: Record<string, string> = {};
+      for (const f of fields) {
+        const v = values[f.id];
+        if (!v) continue;
+        if (f.kind === "image") images[f.id] = v; else answers[f.id] = v;
+      }
+      const r = await submitTaskProof(
+        task.id, proof.trim(),
+        fields.length > 0 ? answers : undefined,
+        Object.keys(images).length > 0 ? images : undefined,
+      );
       if (r.ok) { setSent(true); onSent(); }
       else setError(r.error ?? "Could not send. Try again.");
     } catch (e) { setError((e as Error).message); }
@@ -284,6 +300,12 @@ function looksLikeAddress(value: string, network: string): boolean {
   return v.length >= 8 && !/\s/.test(v);
 }
 
+// A generous client-side soft cap, above the server's real one
+// (config.kycMaxImageBytes, 4MB) — this is only to fail fast with a friendly
+// message before wasting a round trip; the server re-checks the real bytes
+// regardless (taskFields.ts's own "the client's check is a courtesy" rule).
+const IMAGE_SOFT_CAP_BYTES = 5_000_000;
+
 function FieldInput({ field, value, onChange }: {
   field: TaskField; value: string; onChange: (v: string) => void;
 }) {
@@ -297,9 +319,25 @@ function FieldInput({ field, value, onChange }: {
   // and one they abandon.
   const inputType = ({
     number: "text", email: "email", url: "url", phone: "tel", text: "text",
-    longtext: "text", choice: "text", username: "text", crypto_address: "text",
+    longtext: "text", choice: "text", username: "text", crypto_address: "text", image: "text",
   } as const)[field.kind];
   const inputMode = field.kind === "number" ? "decimal" : field.kind === "phone" ? "tel" : undefined;
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // lets the same file be re-picked after an error
+    if (!file) return;
+    setImageError(null);
+    if (file.size > IMAGE_SOFT_CAP_BYTES) {
+      setImageError("That photo is too big. Try a smaller screenshot.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => onChange(String(reader.result ?? ""));
+    reader.onerror = () => setImageError("Could not read that photo. Please try again.");
+    reader.readAsDataURL(file);
+  }
 
   return (
     <div>
@@ -317,6 +355,29 @@ function FieldInput({ field, value, onChange }: {
           <option value="">Pick one…</option>
           {(field.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
+      ) : field.kind === "image" ? (
+        <div className="mt-1.5">
+          {value ? (
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-card p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={value} alt="" className="h-16 w-16 shrink-0 rounded-lg object-cover" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-brand-ink">Photo added</p>
+                <label htmlFor={`f-${field.id}`} className="text-xs font-semibold text-brand underline">
+                  Choose a different photo
+                </label>
+              </div>
+            </div>
+          ) : (
+            <label htmlFor={`f-${field.id}`}
+              className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-line bg-card p-4 text-sm font-semibold text-brand">
+              Take or choose a photo
+            </label>
+          )}
+          <input id={`f-${field.id}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment"
+            onChange={onFile} className="hidden" />
+          {imageError && <p className="mt-1 text-xs text-danger">{imageError}</p>}
+        </div>
       ) : (
         <input id={`f-${field.id}`} type={inputType} inputMode={inputMode} value={value}
           maxLength={field.maxLen} placeholder={field.placeholder}

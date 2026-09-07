@@ -56,7 +56,9 @@
     "test:bscscan": "tsx --test src/tests/bscscan.test.ts",
     "test:leaderboardrewards": "tsx src/tests/leaderboardRewards.e2e.ts",
     "test:treasuryledger": "tsx src/tests/treasuryLedger.e2e.ts",
-    "test:roziwallet": "tsx src/tests/roziWallet.e2e.ts"
+    "test:roziwallet": "tsx src/tests/roziWallet.e2e.ts",
+    "test:fraud": "tsx src/tests/fraud.e2e.ts",
+    "test:taskproofimages": "tsx src/tests/taskProofImages.e2e.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

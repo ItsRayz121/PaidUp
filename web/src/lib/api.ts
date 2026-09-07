@@ -249,7 +249,7 @@ export type Task = {
 };
 
 // ---- A task's configurable input fields (Stage 7) -------------------------
-export type TaskFieldKind = "text" | "longtext" | "number" | "email" | "url" | "phone" | "choice" | "username" | "crypto_address";
+export type TaskFieldKind = "text" | "longtext" | "number" | "email" | "url" | "phone" | "choice" | "username" | "crypto_address" | "image";
 export type TaskField = {
   id: string; label: string; kind: TaskFieldKind; required: boolean;
   placeholder?: string; help?: string; options?: string[]; maxLen: number;
@@ -453,11 +453,14 @@ export const taskAssetUrl = (id?: string | null) => id ? `${API_BASE}/task-asset
 // `answers` is fieldId -> what they typed, for a task with configured fields.
 // The server re-checks every one of them against the task's CURRENT fields
 // (api/src/taskFields.ts); the form's own validation only saves a round trip.
+// `images` is fieldId -> a `data:image/...;base64,...` screenshot, for an
+// "image" kind field — kept separate from `answers` (typed text) because it
+// is orders of magnitude bigger; see the matching split in api/src/routes/app.ts.
 export const submitTaskProof = (
-  taskId: string, proof: string, answers?: Record<string, string>,
+  taskId: string, proof: string, answers?: Record<string, string>, images?: Record<string, string>,
 ) =>
   apiFetch<{ ok: boolean; status?: string; error?: string }>(`/tasks/${taskId}/proof`, {
-    method: "POST", body: JSON.stringify({ proof, answers }),
+    method: "POST", body: JSON.stringify({ proof, answers, images }),
   });
 // `rewards` is what a friend is WORTH, served by the API rather than written into
 // the copy deck, because every one of those numbers is Admin-tunable. An invite
@@ -1216,8 +1219,15 @@ export async function downloadExport(what: "ledger" | "withdrawals" | "audit" | 
   a.click();
   URL.revokeObjectURL(url);
 }
-export const resolveFraud = (id: string, note?: string) =>
-  apiFetch<{ ok: true }>(`/staff/fraud/${id}/resolve`, { method: "POST", body: JSON.stringify({ note }) });
+// "temporary" (default) resolves just this one flag and promises nothing
+// about the future — today's original behaviour. "permanent" also clears
+// every other open flag on this SAME user and tells the fraud checks to stay
+// silent on a repeat of the same SCALE of problem, while still firing if it
+// genuinely gets worse (api/src/fraud.ts's flagOnce).
+export const resolveFraud = (id: string, note?: string, resolutionType: "temporary" | "permanent" = "temporary") =>
+  apiFetch<{ ok: true }>(`/staff/fraud/${id}/resolve`, {
+    method: "POST", body: JSON.stringify({ note, resolutionType }),
+  });
 
 // ---- Support tickets (earner side) ---------------------------------------
 // ⚠️ THE EARNER TYPE HAS NO 'internal', AND THAT IS THE POINT. GET
@@ -1541,6 +1551,13 @@ export type StaffTaskFieldInput = {
 };
 export const fetchTaskFields = (taskId: string) =>
   apiFetch<{ fields: TaskField[] }>(`/staff/tasks/${taskId}/fields`);
+// A screenshot proof's decrypted photo, fetched only when a reviewer actually
+// opens it — see the "SELECT * pays for a blob on every row" reasoning on
+// task_proof_images in api/src/db.ts for why this is its own call, not part
+// of the proof list response.
+export const fetchStaffProofImage = (proofId: string, imageId: string) =>
+  apiFetch<{ ok: true; deleted: boolean; note?: string; dataUrl?: string }>(
+    `/staff/task-proofs/${proofId}/images/${imageId}`);
 export const saveTaskFields = (taskId: string, fields: StaffTaskFieldInput[]) =>
   apiFetch<{ ok: boolean; error?: string; fields?: TaskField[] }>(
     `/staff/tasks/${taskId}/fields`, { method: "PUT", body: JSON.stringify({ fields }) });
@@ -1763,6 +1780,9 @@ export const fetchSettings = () =>
     ticketAutoCloseHours: number;
     maintenanceMode: boolean; maintenanceMessage: string;
     welcomeRepeatDays: number;
+    // Task-proof screenshots: delete the photo bytes after this many days to
+    // save storage (founder, 2026-09-07). 0 = keep every photo forever.
+    taskProofImageRetentionDays: number;
   }>("/staff/settings");
 export const updateSettings = (patch: {
   withdrawalFeePoints?: number;
@@ -1780,6 +1800,7 @@ export const updateSettings = (patch: {
   maintenanceMode?: boolean;
   maintenanceMessage?: string;
   welcomeRepeatDays?: 0 | 1 | 7 | 30 | 365;
+  taskProofImageRetentionDays?: number;
 }) =>
   apiFetch<{ ok: true }>("/staff/settings", { method: "PATCH", body: JSON.stringify(patch) });
 
@@ -1909,11 +1930,18 @@ export type Rig = {
   // under the pool model (a shared, moving pot — see api/src/routes/mining.ts)
   // or once the rig is maxed. Never treat null as zero; it means "not shown".
   extraRoziPerDayMicro: number | null;
+  // The "with this upgrade" side of the monthly calculator (founder,
+  // 2026-09-07) — null under the same conditions as extraRoziPerDayMicro.
+  afterUpgradeMonthlyRoziMicro: number | null;
 };
 export const fetchRigs = () => apiFetch<{
   roziMicro: number; usdtMicro: number; usdtEnabled: boolean;
   // Display-only estimate — see the setting's comment in api/src/mining/core.ts.
   roziUsdtDisplayRate: number;
+  // The "without any upgrade" side of the monthly calculator — what the user
+  // earns per day/month RIGHT NOW. Null under the pool model.
+  currentDailyRoziMicro: number | null;
+  currentMonthlyRoziMicro: number | null;
   rigs: Rig[];
 }>("/mining/rigs");
 export const upgradeRig = (id: string, pay: "rozi" | "usdt" = "rozi") =>
