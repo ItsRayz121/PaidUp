@@ -70,7 +70,7 @@ export default function RoadmapPage() {
         </div>
       </section>
 
-      <section className="pt-10">
+      <section className="roadmap-world-section relative pt-10">
         <div className="roadmap-intro grid gap-3 md:grid-cols-2 md:items-center">
           <div>
             <p className="text-[11px] font-extrabold uppercase tracking-[.15em] text-brand">{t("roadmap.roadmap.eyebrow")}</p>
@@ -80,7 +80,7 @@ export default function RoadmapPage() {
           <p className="text-sm leading-relaxed text-muted">{t("roadmap.roadmap.intro")}</p>
         </div>
 
-        <div className="roadmap-journey relative mt-4 md:mt-2">
+        <div className="roadmap-journey relative mt-10 md:mt-8">
           <Image
             src="/roadmap/connected-world-v1.png"
             alt="A glowing road connecting mining, identity verification, public trading and a global exchange"
@@ -110,15 +110,17 @@ export default function RoadmapPage() {
         </div>
       </section>
 
-      <section className="roadmap-note mx-auto mt-4 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><InfoIcon size={20} /></span>
-        <div><h2 className="font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-1 text-xs leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
-      </section>
+      <div className="roadmap-finale relative">
+        <section className="roadmap-note relative mx-auto mt-12 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><InfoIcon size={20} /></span>
+          <div><h2 className="font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-1 text-xs leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
+        </section>
 
-      <section className="roadmap-cta relative mt-6 overflow-hidden rounded-[22px] bg-brand px-6 py-7 text-white md:flex md:items-center md:justify-between md:px-10">
-        <div className="relative z-10"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/80">{t("roadmap.cta.eyebrow")}</p><h2 className="mt-1 text-3xl font-extrabold">{t("roadmap.cta.title")}</h2><p className="mt-1 text-sm text-white/85">{t("roadmap.cta.subtitle")}</p></div>
-        <Link href="/mine" className="relative z-10 mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-7 font-bold text-brand md:mt-0 md:w-auto">{t("roadmap.mine.cta")} <ArrowRightIcon size={18} /></Link>
-      </section>
+        <section className="roadmap-cta relative mt-6 overflow-hidden rounded-[22px] bg-brand px-6 py-7 text-white md:flex md:items-center md:justify-between md:px-10">
+          <div className="relative z-10"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/80">{t("roadmap.cta.eyebrow")}</p><h2 className="mt-1 text-3xl font-extrabold">{t("roadmap.cta.title")}</h2><p className="mt-1 text-sm text-white/85">{t("roadmap.cta.subtitle")}</p></div>
+          <Link href="/mine" className="relative z-10 mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-7 font-bold text-brand md:mt-0 md:w-auto">{t("roadmap.mine.cta")} <ArrowRightIcon size={18} /></Link>
+        </section>
+      </div>
     </div>
   );
 }
