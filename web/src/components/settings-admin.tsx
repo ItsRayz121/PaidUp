@@ -320,6 +320,20 @@ export function StaffAlertsPanel() {
   );
 }
 
+// A plain number input's value is only ever a valid numeric string or ""
+// (Number("") is 0, a real value, not a bug) — EXCEPT for an extreme paste
+// like "1e400", which evaluates to Infinity. JSON.stringify silently turns
+// Infinity into `null`, and the backend's zod schema then rejects the WHOLE
+// settings PATCH (not just this one field), dropping every other pending
+// edit in the same save with no obvious reason why. Falls back to whatever
+// was already in the box rather than a hardcoded default, so a bad paste
+// never overwrites a value the admin had actually meant to keep. Found in
+// review, 2026-09-07.
+function safeNumber(raw: string, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 // ---- Global settings -------------------------------------------------------
 export function GlobalSettingsPanel() {
   const settings = useApi(fetchSettings, []);
@@ -425,7 +439,7 @@ export function GlobalSettingsPanel() {
         <label className="block">
           <span className="text-xs font-semibold text-muted">Minimum cash-out (points)</span>
           <input className={field} type="number" min={1} value={form.minWithdrawPoints}
-            onChange={(e) => setForm({ ...form, minWithdrawPoints: Number(e.target.value) })} />
+            onChange={(e) => setForm({ ...form, minWithdrawPoints: safeNumber(e.target.value, form.minWithdrawPoints) })} />
           {/* Guardrail #4. The one setting on this screen that can quietly make
               the product useless for the people it is for. */}
           <span className="mt-0.5 block text-xs text-muted">
@@ -474,7 +488,10 @@ export function GlobalSettingsPanel() {
           <div className="mt-0.5 flex items-center gap-2">
             <input className={field} type="number" min={0} max={365}
               value={form.taskProofImageRetentionDays}
-              onChange={(e) => setForm({ ...form, taskProofImageRetentionDays: Number(e.target.value) })} />
+              onChange={(e) => setForm({
+                ...form,
+                taskProofImageRetentionDays: Math.min(365, safeNumber(e.target.value, form.taskProofImageRetentionDays)),
+              })} />
             <span className="text-xs text-muted">days</span>
           </div>
           <span className="mt-0.5 block text-xs text-muted">

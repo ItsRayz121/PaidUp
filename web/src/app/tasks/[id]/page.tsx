@@ -300,11 +300,16 @@ function looksLikeAddress(value: string, network: string): boolean {
   return v.length >= 8 && !/\s/.test(v);
 }
 
-// A generous client-side soft cap, above the server's real one
-// (config.kycMaxImageBytes, 4MB) — this is only to fail fast with a friendly
-// message before wasting a round trip; the server re-checks the real bytes
-// regardless (taskFields.ts's own "the client's check is a courtesy" rule).
-const IMAGE_SOFT_CAP_BYTES = 5_000_000;
+// ⚠️ MUST STAY AT OR BELOW api/src/config.ts's kycMaxImageBytes (4MB,
+// api/src/taskFields.ts's real cap on the decoded upload) — found in review:
+// this was set to 5MB, ABOVE the server's real 4MB limit, which meant a file
+// in the 4-5MB range passed this "fail fast" check, uploaded anyway, and
+// only THEN got rejected server-side — exactly the round trip this check
+// exists to avoid. This is still only a courtesy (the server re-checks the
+// real bytes regardless, taskFields.ts's own rule) — a founder-configured
+// KYC_MAX_IMAGE_BYTES different from the default would need this number
+// updated to match.
+const IMAGE_SOFT_CAP_BYTES = 4_000_000;
 
 function FieldInput({ field, value, onChange }: {
   field: TaskField; value: string; onChange: (v: string) => void;

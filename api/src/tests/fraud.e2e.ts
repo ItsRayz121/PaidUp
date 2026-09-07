@@ -14,7 +14,7 @@ import Fastify from "fastify";
 import jwt from "jsonwebtoken";
 import { initDb, sql, now, newId } from "../db.ts";
 import { config } from "../config.ts";
-import { flagOnce } from "../fraud.ts";
+import { flagOnce, checkGeoMismatch } from "../fraud.ts";
 import { staffRoutes } from "../routes/staff.ts";
 
 let pass = 0, fail = 0;
@@ -123,6 +123,43 @@ console.log("\n-- a flag type with no measurable magnitude is never silenced (ne
   await resolve(id, "permanent");
   check("an identical repeat STILL fires — no magnitude means no promise of silence",
     await flagOnce("mining_bot_pattern", `ad:${u}`, u, "medium", "exact dwell minimum"));
+}
+
+console.log("\n-- geo_mismatch: no magnitude, so permanent resolve never silences it — even across a fixed but not-yet-caught bug shape (regression, 2026-09-07) --");
+{
+  // An earlier version tried a "distinct other countries" magnitude for this
+  // flag type — it looked plausible in isolation, but a country A permanently
+  // forgiven could spuriously RE-FIRE later purely because an unrelated
+  // country B happened to get flagged in between (B inflated A's own
+  // "escalation" score even though nothing about A had changed). Rather than
+  // patch that interaction, this flag type dropped magnitude tracking
+  // entirely — the same treatment as mining_bot_pattern below. Proven here:
+  // permanent resolve genuinely resolves the row, but promises nothing about
+  // the future, so a plain repeat of the SAME country fires again too — never
+  // a false blind spot, whatever else happens to the user in between.
+  const u = await mkUser("geo");
+  await checkGeoMismatch(u, "Pakistan", "India");
+  const idA = await openFlagId("geo_mismatch", `geo:${u}:india`, u);
+  await resolve(idA, "permanent");
+  check("country A is genuinely resolved", !!(await sql.get<{ resolved_by: string }>(
+    "SELECT resolved_by FROM fraud_flags WHERE id = ?", idA))?.resolved_by);
+
+  // An unrelated SECOND country shows up.
+  await checkGeoMismatch(u, "Pakistan", "Nigeria");
+  const idB = await sql.get<{ id: string }>(
+    "SELECT id FROM fraud_flags WHERE flag_type = 'geo_mismatch' AND device_id = ? AND resolved_by IS NULL",
+    `geo:${u}:nigeria`,
+  );
+  check("a genuinely new country flags normally", !!idB);
+
+  // Country A recurring: with no magnitude, permanent resolve made no promise
+  // about this, so it fires again too — deliberately, not a regression.
+  await checkGeoMismatch(u, "Pakistan", "India");
+  const aReopened = await sql.get<{ id: string }>(
+    "SELECT id FROM fraud_flags WHERE flag_type = 'geo_mismatch' AND device_id = ? AND resolved_by IS NULL",
+    `geo:${u}:india`,
+  );
+  check("country A re-fires on a plain repeat too — this flag type never promises silence", !!aReopened);
 }
 
 console.log("\n-- permission gate unchanged --");

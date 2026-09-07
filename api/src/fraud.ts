@@ -231,22 +231,22 @@ export async function checkGeoMismatch(
     if (!stated || !reported || stated === reported) return;
     // Scope the dedupe by user + reported country, so a user genuinely on the
     // move raises at most one open flag per foreign country, not one per offer.
+    //
+    // ⚠️ NO MAGNITUDE HERE, DELIBERATELY (found in review, 2026-09-07). An
+    // earlier version tried "distinct OTHER countries seen, excluding this
+    // one" as a stand-in escalation score — it looked stable in isolation,
+    // but is NOT: that count keeps growing as unrelated countries get
+    // flagged over time, so country A recurring after being forgiven could
+    // read as "escalated" purely because country B happened to appear in
+    // between, with nothing about A itself having changed. Same treatment as
+    // mining_bot_pattern/mining_device_share below: permanent resolve still
+    // clears the current backlog, it just never promises future silence for
+    // this flag type — a real blind spot here (this account can never be
+    // geo-flagged again) would be worse than an occasional repeat flag.
     const scopeKey = `geo:${userId}:${reported}`;
-    // Magnitude: how many DISTINCT mismatched countries this account has ever
-    // been flagged from, this one included. Counts every OTHER country first
-    // (excluding this exact scope key) so a country recurring after being
-    // forgiven reports the same magnitude every time — only a genuinely NEW
-    // country raises the count, which is what lets "forgive this one trip"
-    // stay forgiven while "now showing up from a second wrong country" still
-    // flags (founder, 2026-09-07).
-    const otherCountries = await sql.get<{ n: string }>(
-      "SELECT COUNT(DISTINCT device_id) AS n FROM fraud_flags WHERE user_id = ? AND flag_type = 'geo_mismatch' AND device_id <> ?",
-      userId, scopeKey,
-    );
     await flagOnce(
       "geo_mismatch", scopeKey, userId, "medium",
       `Offer completed from "${reportedCountry}" but account country is "${statedCountry}".`,
-      Number(otherCountries?.n ?? 0) + 1,
     );
   } catch {
     // Never let a fraud signal break a verified credit.

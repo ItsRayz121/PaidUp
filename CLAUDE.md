@@ -4948,3 +4948,53 @@ See `docs/` for the full spec.
     (17), `test:stage7` (96), `test:tasksadmin` (57), `test:taskmarketplace`
     (16) all re-run green (the `async` change touches every caller); api
     typecheck clean; a fresh-database boot confirmed clean.
+  - ⚠️ **A CROSS-CHECK OF THIS WHOLE PASS FOUND AND FIXED THREE REAL ISSUES,
+    ONE OF THEM A GENUINE CORRECTNESS BUG IN THE ESCALATION LOGIC ITSELF
+    (2026-09-07, same day).** Verified: `test:fraud` is now **20 checks**
+    (+3, a dedicated regression proving the exact failure shape below no
+    longer reproduces) + `test:taskproofimages` (29) + the full 12-suite
+    regression sweep, all re-run green; api + web typecheck, eslint (0
+    errors), web production build all clean.
+    1. **`geo_mismatch`'s magnitude formula was NOT stable over time, so a
+       permanently-forgiven country could spuriously re-fire.** The formula
+       — "count every OTHER mismatched country ever seen, +1" — assumed that
+       count was fixed once a country was forgiven, but it keeps growing as
+       UNRELATED countries get flagged later. Concretely: country A is
+       forgiven at magnitude 1; a genuinely new country B later flags at
+       magnitude 2 (correct — a real escalation); country A then recurs a
+       third time, and its own magnitude is now recomputed as 2 (it now
+       counts B as an "other" country) — which reads as bigger than the
+       baseline of 1, so A re-fires even though NOTHING about A changed.
+       ⚠️ **FIXED BY REMOVING THE MAGNITUDE FOR THIS FLAG TYPE ENTIRELY**,
+       not by patching the formula — `geo_mismatch` now gets the exact same
+       treatment as `mining_bot_pattern`/`mining_device_share`: permanent
+       resolve still clears the current backlog, it just never promises
+       future silence, so a plain repeat fires again too. A flag type where
+       "worse" has no clean, order-independent definition should never
+       pretend to measure it — a false blind spot (this account can never be
+       geo-flagged again) is worse than an occasional repeat flag. The new
+       regression test reproduces the exact shape (forgive country A, flag
+       country B, recur country A) and asserts A fires again, not that it
+       stays silent — deliberately, since staying silent was the bug.
+    2. **A number input in Global Settings could, on an extreme paste (e.g.
+       `1e400`), silently fail the ENTIRE settings save, not just that
+       field.** `Number("1e400")` is `Infinity`; `JSON.stringify` turns
+       `Infinity` into `null`; the backend's zod schema rejects a `null` for
+       a plain `z.number()`, and `safeParse` fails the WHOLE object, so
+       every other pending edit in that save silently vanishes too. (Merely
+       clearing the field is harmless — `Number("")` is `0`, a real valid
+       value, not `NaN` as first suspected; verified directly before
+       "fixing" a bug that wasn't there.) New `safeNumber()` helper
+       (`settings-admin.tsx`) falls back to whatever was already in the box
+       when a keystroke produces a non-finite value, applied to the new
+       retention-days field AND to the pre-existing `minWithdrawPoints`
+       field it copied the pattern from — same latent risk, fixed once.
+    3. **The client-side "fail fast before wasting a round trip" screenshot
+       size check was set ABOVE the server's real limit**, so it did not
+       actually fail fast for the exact range (4-5MB) its own comment
+       claimed to cover — a file in that range passed the client check,
+       uploaded anyway, then got rejected server-side regardless. Lowered
+       `IMAGE_SOFT_CAP_BYTES` (`tasks/[id]/page.tsx`) to match
+       `config.kycMaxImageBytes`'s default (4MB), with a comment flagging
+       that the two must be kept in sync if the server-side env var is ever
+       changed.
