@@ -126,23 +126,57 @@ body {
   color: var(--color-ink);
 }
 
-/* Roadmap is the one editorial surface that uses a true desktop canvas. */
+/* The roadmap deliberately owns a cinematic dark skin in either app theme. */
 .app-frame.app-frame-roadmap-exact {
   max-width: 1180px;
-  background: linear-gradient(180deg, var(--color-card) 0%, var(--color-bg) 42%, var(--color-brand-tint) 100%);
+  --rm-cyan: #19e5e8;
+  --rm-ink: #f7fbfc;
+  --rm-muted: #a9c2ca;
+  --rm-panel: rgba(2, 35, 42, .9);
+  --rm-line: rgba(21, 224, 226, .46);
+  color: var(--rm-ink);
+  background: #031a20;
 }
 
-/* The same alternating journey is used on phones and desktop. Each road
-   segment stretches with its content row; shared endpoints stay connected
-   when text wraps or the user enlarges their font. */
-.roadmap-live { isolation: isolate; overflow-wrap: anywhere; }
+/* Each segment owns one continuous end-to-end curve. Its vertical tangents
+   meet the next segment exactly, so the route remains connected as cards wrap. */
+.roadmap-live {
+  isolation: isolate; overflow-wrap: anywhere;
+  background:
+    radial-gradient(circle at 78% 4%, rgba(0, 224, 228, .16), transparent 18%),
+    radial-gradient(circle at 17% 43%, rgba(0, 174, 181, .12), transparent 22%),
+    linear-gradient(180deg, #031d24 0%, #03181e 48%, #021317 100%);
+}
+.roadmap-live::before, .roadmap-live::after {
+  content: ""; position: absolute; z-index: -1; left: -8%; width: 116%; pointer-events: none;
+}
+.roadmap-live::before {
+  top: 180px; height: 430px; opacity: .52;
+  background: linear-gradient(150deg, transparent 38%, rgba(4, 53, 63, .8) 39% 58%, transparent 59%);
+  clip-path: polygon(0 72%, 10% 51%, 20% 68%, 35% 32%, 50% 67%, 67% 23%, 82% 64%, 92% 43%, 100% 64%, 100% 100%, 0 100%);
+}
+.roadmap-live::after {
+  bottom: 0; height: 38%; opacity: .32;
+  background: repeating-linear-gradient(94deg, transparent 0 5%, #07505b 5.3% 6.2%, transparent 6.4% 11%);
+  clip-path: polygon(0 42%, 8% 18%, 13% 55%, 22% 8%, 31% 48%, 39% 14%, 48% 58%, 58% 7%, 68% 45%, 78% 12%, 88% 51%, 95% 19%, 100% 44%, 100% 100%, 0 100%);
+}
+.roadmap-stars { position: absolute; z-index: -1; inset: 70px 0 auto; height: 68%; opacity: .5; background-image: radial-gradient(circle, #42f4f1 0 1px, transparent 1.3px); background-size: 31px 37px; mask-image: linear-gradient(#000, transparent); }
+.roadmap-live .text-brand-ink { color: var(--rm-ink); }
+.roadmap-live .text-brand, .roadmap-live h1 span, .roadmap-live .roadmap-intro h2 br + * { color: var(--rm-cyan); }
+.roadmap-live .text-muted { color: var(--rm-muted); }
+.roadmap-live .border-line { border-color: var(--rm-line); }
+.roadmap-live .bg-card\/95, .roadmap-live .bg-card { background-color: var(--rm-panel); }
+.roadmap-live .bg-brand { background-color: var(--rm-cyan); color: #02272e; }
+.roadmap-live .bg-brand-tint { background-color: rgba(25, 229, 232, .12); }
 .roadmap-hero > div, .roadmap-intro > * { min-width: 0; }
 .roadmap-hero-stage, .roadmap-island { position: relative; }
 .roadmap-hero-art, .roadmap-island img {
-  filter: hue-rotate(-35deg) saturate(.58) drop-shadow(0 14px 16px color-mix(in srgb, var(--color-brand) 22%, transparent));
+  filter: hue-rotate(-13deg) saturate(1.18) brightness(.84) drop-shadow(0 14px 24px rgba(0, 238, 240, .28));
 }
-.roadmap-features { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.roadmap-feature { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; border-radius: 14px; background: color-mix(in srgb, var(--color-brand-tint) 45%, transparent); }
+.roadmap-hero h1 { text-shadow: 0 3px 0 rgba(0,0,0,.22); }
+.roadmap-features { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.roadmap-live-panel, .roadmap-note { box-shadow: inset 0 0 28px rgba(0, 224, 228, .045), 0 18px 45px rgba(0, 0, 0, .25); }
+.roadmap-feature { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; border: 1px solid rgba(25,229,232,.24); border-radius: 14px; background: rgba(4, 50, 58, .62); }
 .roadmap-feature > span:last-child { text-align: center; }
 .roadmap-journey { position: relative; padding-block: 24px; }
 .roadmap-stop {
@@ -154,9 +188,9 @@ body {
 .roadmap-road { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .roadmap-road path { fill: none; }
 .roadmap-road-edge, .roadmap-road-surface { vector-effect: non-scaling-stroke; }
-.roadmap-road-edge { stroke: color-mix(in srgb, var(--color-brand) 30%, var(--color-card)); stroke-width: clamp(28px, 8vw, 85px); }
-.roadmap-road-surface { stroke: var(--color-brand); stroke-width: clamp(25px, 7.2vw, 77px); }
-.roadmap-road-center { stroke: #d4fffa; stroke-width: .55; stroke-dasharray: 2.2 2.4; filter: drop-shadow(0 0 1px #b6fff4); }
+.roadmap-road-edge { stroke: rgba(11, 238, 240, .38); stroke-width: clamp(34px, 8vw, 86px); filter: drop-shadow(0 0 7px #04cbd0); }
+.roadmap-road-surface { stroke: #087e8b; stroke-width: clamp(28px, 6.8vw, 73px); }
+.roadmap-road-center { stroke: #e6ffff; stroke-width: .75; stroke-dasharray: 2.3 2.5; filter: drop-shadow(0 0 1px #fff); }
 /* Vertical end tangents and non-scaling strokes keep joins smooth even when
    adjacent cards wrap to different heights (including enlarged text). */
 .roadmap-island { z-index: 1; width: 118%; justify-self: center; }
@@ -169,9 +203,9 @@ body {
 .roadmap-node {
   position: absolute; top: 50%; left: 50%; z-index: 3;
   display: grid; place-items: center; transform: translate(-50%, -50%);
-  width: 26px; height: 26px; border: 5px solid var(--color-card);
-  border-radius: 50%; background: var(--color-brand); color: white;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 40%, transparent);
+  width: 30px; height: 30px; border: 4px solid #eaffff;
+  border-radius: 50%; background: #063a44; color: white; font-size: 11px; font-weight: 900;
+  box-shadow: 0 0 0 3px var(--rm-cyan), 0 0 20px var(--rm-cyan);
 }
 /* "You are here" — a soft white ripple ping on the current step's node,
    never used on done/upcoming/planned so it stays a single, clear signal. */
@@ -192,41 +226,79 @@ body {
   0% { transform: scale(.85); opacity: .9; }
   80%, 100% { transform: scale(1.9); opacity: 0; }
 }
-.roadmap-node-done { background: var(--color-success); }
-.roadmap-badge-active { color: var(--color-bg); background: var(--color-brand); }
-.roadmap-badge-done { color: var(--color-success); background: var(--color-success-tint); }
-.roadmap-badge-upcoming { color: var(--color-brand); background: var(--color-brand-tint); }
-.roadmap-badge-planned, .roadmap-badge-scheduled { color: var(--color-muted); background: var(--color-line); }
-.roadmap-cta::before { content: ""; position: absolute; inset: -80% -10% auto 42%; height: 260px; border-radius: 50%; background: color-mix(in srgb, var(--color-card) 16%, transparent); transform: rotate(-12deg); }
+.roadmap-node-done { background: #0ebf7a; }
+.roadmap-badge-active { color: #001c18; background: #21f0a7; }
+.roadmap-badge-done { color: #43f2b5; background: rgba(16, 177, 120, .17); }
+.roadmap-badge-upcoming { color: #d9fbff; background: #164653; }
+.roadmap-badge-planned, .roadmap-badge-scheduled { color: #c0d4d9; background: #173941; }
+.roadmap-card { background: linear-gradient(135deg, rgba(3,42,49,.97), rgba(1,24,29,.94)); box-shadow: inset 0 0 26px rgba(14,220,224,.045), 0 16px 36px rgba(0,0,0,.3); }
+/* The finished composition uses one illustrated world, not four floating
+   stickers. HTML cards sit in the scene's intentional clearings while the
+   luminous road is baked into the terrain and cannot visually disconnect. */
+.roadmap-journey { padding: 0; border-radius: 28px; overflow: hidden; box-shadow: 0 22px 70px rgba(0,0,0,.42); }
+.roadmap-world-image { display: block; width: 100%; height: auto; }
+.roadmap-journey .roadmap-stop { position: absolute; inset-inline: 0; min-height: 0; padding: 0; display: block; }
+.roadmap-journey .roadmap-card-position { position: relative; width: 43%; }
+.roadmap-journey .roadmap-card { border-color: rgba(38, 238, 240, .72); background: linear-gradient(135deg, rgba(2, 37, 44, .93), rgba(1, 21, 27, .88)); backdrop-filter: blur(9px); }
+.roadmap-journey .roadmap-stop-0 { top: 8%; }
+.roadmap-journey .roadmap-stop-1 { top: 32%; }
+.roadmap-journey .roadmap-stop-2 { top: 56%; }
+.roadmap-journey .roadmap-stop-3 { top: 78%; }
+.roadmap-journey .roadmap-stop-0 .roadmap-card-position,
+.roadmap-journey .roadmap-stop-2 .roadmap-card-position { margin-left: auto; margin-right: 3%; }
+.roadmap-journey .roadmap-stop-1 .roadmap-card-position,
+.roadmap-journey .roadmap-stop-3 .roadmap-card-position { margin-left: 3%; }
+.roadmap-journey .roadmap-stop-0 .roadmap-node { left: 47%; }
+.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 55%; }
+.roadmap-journey .roadmap-stop-2 .roadmap-node { left: 46%; }
+.roadmap-journey .roadmap-stop-3 .roadmap-node { left: 54%; }
+.roadmap-journey .roadmap-node { top: 50%; }
+.roadmap-cta { background: linear-gradient(135deg, #08cfd2, #19e6e8); color: #01282e; border: 1px solid #73ffff; box-shadow: 0 18px 45px rgba(0, 225, 228, .16); }
+.roadmap-cta::before { content: ""; position: absolute; inset: -80% -10% auto 42%; height: 260px; border-radius: 50%; background: rgba(255,255,255,.13); transform: rotate(-12deg); }
+.roadmap-cta a { color: #034851; background: #f5ffff; }
 @media (max-width: 599px) {
   .roadmap-live { padding-inline: 12px; }
-  .roadmap-hero { grid-template-columns: 1fr 1fr; gap: 0; min-height: 245px; padding-top: 22px; padding-bottom: 16px; }
+  .roadmap-hero { grid-template-columns: .92fr 1.08fr; gap: 0; min-height: 230px; padding-top: 14px; padding-bottom: 10px; }
   /* Founder, 2026-09-07: fit the eyebrow and title on one line each at
      common phone widths — smaller, tighter-tracked, still comfortably
      inside the text column so nothing overflows toward the art. */
-  .roadmap-hero h1 { font-size: clamp(19px, 6.4vw, 27px); letter-spacing: -.03em; white-space: nowrap; }
+  .roadmap-hero h1 { font-size: clamp(25px, 7.8vw, 34px); letter-spacing: -.045em; white-space: normal; }
   .roadmap-hero p:first-child { font-size: clamp(7.5px, 2.3vw, 9.5px); letter-spacing: .045em; white-space: nowrap; }
-  .roadmap-hero p { font-size: 12px; }
+  .roadmap-hero p { font-size: 11px; line-height: 1.45; }
   .roadmap-hero-stage { width: 100%; }
+  .roadmap-live-panel { padding: 12px; }
+  .roadmap-live-panel > div:first-child { margin-bottom: 10px; }
+  .roadmap-live-panel h2 { font-size: 18px; }
   .roadmap-features { gap: 4px; }
-  .roadmap-feature { padding: 8px 2px; border-radius: 9px; }
+  .roadmap-feature { padding: 7px 2px; border-radius: 9px; }
   .roadmap-feature > span:first-child { width: 30px; height: 30px; border-radius: 9px; }
   .roadmap-feature svg { width: 18px; height: 18px; }
-  .roadmap-feature > span:last-child { font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+  .roadmap-feature > span:last-child { font-size: 8px; line-height: 1.25; overflow-wrap: anywhere; }
   .roadmap-intro { grid-template-columns: 1fr 1fr; align-items: center; gap: 18px; }
   .roadmap-intro h2 { font-size: clamp(19px, 5.2vw, 28px); }
   .roadmap-intro > p { font-size: 11px; line-height: 1.5; }
-  .roadmap-stop { min-height: 230px; padding-block: 22px; column-gap: 10%; }
+  .roadmap-stop { min-height: 205px; padding-block: 14px; column-gap: 9%; }
   .roadmap-card { padding: 12px 10px; border-radius: 14px; }
   .roadmap-card > div { gap: 5px; }
   .roadmap-card > div > span:first-child { font-size: 9px; letter-spacing: 0; }
   .roadmap-card > div > span:last-child { font-size: 9px; padding: 3px 6px; }
   .roadmap-card h3 { font-size: 14px; line-height: 1.3; margin-top: 7px; }
-  .roadmap-card p { font-size: 11px; line-height: 1.5; margin-top: 6px; }
+  .roadmap-card p { font-size: 10px; line-height: 1.42; margin-top: 6px; }
   .roadmap-node { width: 20px; height: 20px; border-width: 4px; }
+  .roadmap-journey { margin-inline: -12px; border-radius: 0; }
+  .roadmap-journey .roadmap-stop { min-height: 0; padding: 0; }
+  .roadmap-journey .roadmap-card-position { width: 45%; }
+  .roadmap-journey .roadmap-card { padding: 10px 9px; border-radius: 13px; }
+  .roadmap-journey .roadmap-card > div > span:first-child { font-size: 7px; }
+  .roadmap-journey .roadmap-card > div > span:last-child { font-size: 7px; }
+  .roadmap-journey .roadmap-card h3 { font-size: 12px; line-height: 1.22; }
+  .roadmap-journey .roadmap-card p { font-size: 8px; line-height: 1.35; }
+  .roadmap-note { padding: 12px; }
+  .roadmap-cta { padding: 20px; }
 }
 @media (min-width: 600px) {
   .roadmap-stop { min-height: 280px; }
+  .roadmap-journey .roadmap-stop { min-height: 0; }
   .roadmap-hero { grid-template-columns: .95fr 1.05fr; }
 }
 

@@ -1196,6 +1196,7 @@ const copy: Record<string, string> = {
   "roadmap.live.mining": "Mine ROZI every day",
   "roadmap.live.tasks": "Complete tasks",
   "roadmap.live.rigs": "Buy machines",
+  "roadmap.live.send": "Send ROZI",
   "roadmap.live.invite": "Invite friends",
   "roadmap.next.title": "What is next",
   // The richer section header above the timeline (same reference layout).
@@ -1220,17 +1221,17 @@ const copy: Record<string, string> = {
     "RoziPay opens to everyone. Mine in the first two months for the most ROZI.",
   "roadmap.step.launch.tag": "Mine together",
   "roadmap.step.kyc.when": "October — November 2026",
-  "roadmap.step.kyc.title": "ID check",
+  "roadmap.step.kyc.title": "Identity verification",
   "roadmap.step.kyc.body":
     "One quick ID check. It blocks fake accounts and unlocks real payouts.",
   "roadmap.step.kyc.tag": "A safer community",
   "roadmap.step.dex.when": "December 2026",
-  "roadmap.step.dex.title": "Open trading",
+  "roadmap.step.dex.title": "Public trading",
   "roadmap.step.dex.body":
     "ROZI lists on an open trading site for anyone to swap — the step everything else builds toward.",
   "roadmap.step.dex.tag": "More opportunity",
   "roadmap.step.cex.when": "January 2027",
-  "roadmap.step.cex.title": "Big exchange",
+  "roadmap.step.cex.title": "Major exchange listing",
   "roadmap.step.cex.body":
     "We apply to list ROZI on a major exchange. The final decision is theirs, not ours to promise.",
   "roadmap.step.cex.tag": "A global future",

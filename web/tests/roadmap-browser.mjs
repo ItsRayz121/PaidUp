@@ -56,7 +56,7 @@ try {
       const result = await page.evaluate(() => {
         const cards = [...document.querySelectorAll(".roadmap-card")];
         const stops = [...document.querySelectorAll(".roadmap-stop")];
-        const roads = stops.map((e) => e.querySelector(".roadmap-road").getBoundingClientRect());
+        const world = document.querySelector(".roadmap-world-image").getBoundingClientRect();
         const hero = document.querySelector(".roadmap-hero > div").getBoundingClientRect();
         const art = document.querySelector(".roadmap-hero-stage").getBoundingClientRect();
         return {
@@ -64,10 +64,12 @@ try {
           clipped: cards.some((e) => e.scrollWidth > e.clientWidth),
           alternating: stops.every((e, i) => {
             const card = e.querySelector(".roadmap-card").getBoundingClientRect();
-            const island = e.querySelector(".roadmap-island").getBoundingClientRect();
-            return i % 2 ? card.left >= island.right - 1 : card.right <= island.left + 1;
+            return i % 2 ? card.left < innerWidth / 2 : card.right > innerWidth / 2;
           }),
-          joins: roads.slice(1).every((e, i) => Math.abs(e.top - roads[i].bottom) < 0.6),
+          joins: world.height > world.width * 2 && stops.every((e) => {
+            const card = e.querySelector(".roadmap-card").getBoundingClientRect();
+            return card.top >= world.top && card.bottom <= world.bottom;
+          }),
           heroOverlap: hero.right > art.left + 1,
         };
       });

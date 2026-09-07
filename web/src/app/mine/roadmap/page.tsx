@@ -6,18 +6,15 @@ import { useSyncExternalStore } from "react";
 import { useI18n } from "@/lib/i18n";
 import { ROADMAP_STEPS, roadmapStates } from "@/lib/roadmap";
 import {
-  ArrowRightIcon, CheckIcon, ChipIcon, InfoIcon,
+  ArrowRightIcon, ArrowUpIcon, CheckIcon, ChipIcon, InfoIcon,
   MineIcon, ReferIcon, TasksIcon,
 } from "@/components/icons";
 
-// Founder, 2026-09-07: dropped the "Send ROZI to a friend" tile from this
-// screen (marketing preference, not a change to the feature itself — ROZI
-// transfers are live, see CLAUDE.md). Four tiles now; .roadmap-features'
-// grid is 4 columns to match (globals.css).
 const LIVE = [
   { key: "roadmap.live.mining", Icon: MineIcon },
   { key: "roadmap.live.tasks", Icon: TasksIcon },
   { key: "roadmap.live.rigs", Icon: ChipIcon },
+  { key: "roadmap.live.send", Icon: ArrowUpIcon },
   { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
 
@@ -42,10 +39,11 @@ export default function RoadmapPage() {
   const states = roadmapStates(day);
   return (
     <div className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
+      <div className="roadmap-stars" aria-hidden />
       <section className="roadmap-hero grid min-h-[300px] items-center gap-3 pt-7 md:grid-cols-[.86fr_1.14fr] md:pt-10">
         <div className="relative z-10">
           <p className="text-[11px] font-extrabold uppercase tracking-[.15em] text-brand">{t("roadmap.hero.eyebrow")}</p>
-          <h1 className="mt-2 font-display text-[38px] font-extrabold leading-[.98] tracking-[-.045em] text-brand-ink md:text-[54px]">{t("roadmap.title")}</h1>
+          <h1 className="mt-2 font-display text-[38px] font-extrabold leading-[.98] tracking-[-.045em] text-brand-ink md:text-[54px]">The road <span>ahead</span></h1>
           <p className="mt-2 text-lg font-medium text-brand-ink">{t("roadmap.subtitle")}</p>
           <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">{t("roadmap.hero.description")}</p>
         </div>
@@ -54,7 +52,7 @@ export default function RoadmapPage() {
         </div>
       </section>
 
-      <section className="relative z-10 rounded-[22px] border border-line bg-card/95 p-4 shadow-[0_18px_50px_rgba(8,47,54,.12)] backdrop-blur">
+      <section className="roadmap-live-panel relative z-10 rounded-[22px] border border-line bg-card/95 p-4 shadow-[0_18px_50px_rgba(8,47,54,.12)] backdrop-blur">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="flex items-center gap-3 text-xl font-extrabold text-brand-ink">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-white"><MineIcon size={18} /></span>
@@ -83,19 +81,19 @@ export default function RoadmapPage() {
         </div>
 
         <div className="roadmap-journey relative mt-4 md:mt-2">
+          <Image
+            src="/roadmap/connected-world-v1.png"
+            alt="A glowing road connecting mining, identity verification, public trading and a global exchange"
+            width={836}
+            height={1882}
+            sizes="(max-width: 599px) 100vw, 1100px"
+            className="roadmap-world-image"
+          />
           {ROADMAP_STEPS.map((step, index) => {
             const state = states[index];
             return (
               <article key={step.key} className={`roadmap-stop roadmap-stop-${index}`}>
-                <svg aria-hidden="true" className="roadmap-road" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <path className="roadmap-road-edge" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
-                  <path className="roadmap-road-surface" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
-                  <path className="roadmap-road-center" pathLength="100" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
-                </svg>
-                <span className={`roadmap-node roadmap-node-${state}`} aria-hidden>{state === "done" && <CheckIcon size={12} />}</span>
-                <div className="roadmap-island">
-                  <Image src={step.art} alt="" width={step.width} height={step.height} className="h-auto w-full" sizes="(max-width: 599px) 48vw, 480px" />
-                </div>
+                <span className={`roadmap-node roadmap-node-${state}`} aria-hidden>{state === "done" ? <CheckIcon size={12} /> : index + 1}</span>
                 <div className="roadmap-card-position">
                   <div className={`roadmap-card rounded-[20px] border bg-card/95 p-5 shadow-[0_16px_40px_rgba(8,47,54,.11)] backdrop-blur ${state === "active" ? "border-brand/60 ring-2 ring-brand/10" : "border-line"}`}>
                     <div className="flex flex-wrap items-center gap-2">
@@ -112,7 +110,7 @@ export default function RoadmapPage() {
         </div>
       </section>
 
-      <section className="mx-auto mt-4 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+      <section className="roadmap-note mx-auto mt-4 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><InfoIcon size={20} /></span>
         <div><h2 className="font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-1 text-xs leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
       </section>
