@@ -18,17 +18,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const isStaff = path.startsWith("/staff");
   const isAuth = path === "/login";
+  const isRoadmap = path === "/mine/roadmap";
   // Inside the Telegram Mini App there is nothing to install — Telegram IS the
   // container.
   const inTelegram = useInsideTelegram();
   // Don't cover the sign-in form, and don't interrupt someone mid-survey (the
   // network's iframe owns that screen — a sheet over it can cost them the reward).
-  const canPromptInstall = !isAuth && !path.startsWith("/surveys") && !inTelegram;
+  const canPromptInstall = !isAuth && !isRoadmap && !path.startsWith("/surveys") && !inTelegram;
   // Same places the install prompt stays off (sign-in, mid-survey) — and never
   // stacked with it: installVisible lets the install card (which was here
   // first) hold the push card back rather than the two floating above the tab
   // bar at once.
-  const canPromptPush = !isAuth && !path.startsWith("/surveys");
+  const canPromptPush = !isAuth && !isRoadmap && !path.startsWith("/surveys");
   const [installVisible, setInstallVisible] = useState(false);
   // /offline renders with no network by definition — a bar that tries to fetch a
   // balance there would only ever show a dash.
@@ -47,7 +48,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
       <I18nProvider>
-        <div className="app-frame flex flex-col">
+        <div className={`app-frame flex flex-col ${isRoadmap ? "app-frame-roadmap-exact" : ""}`}>
           <TelegramBoot />
           {chrome && <TopBar />}
           <main className="flex-1">{children}</main>

@@ -1,97 +1,13 @@
 "use client";
 
-// The road map — what is coming for ROZI, and when.
-//
-// It hangs off the mining tab rather than living on its own, because the only
-// people who care what happens to ROZI in eighteen months are the people who
-// are mining it today.
-//
-// THREE RULES THIS PAGE MUST KEEP, and they are not style preferences:
-//
-//   1. NO PRICE, EVER — not a number, not a range, not a hint. The moment a road
-//      map mentions what ROZI might be worth it stops being a plan and starts
-//      being an offer, which is the thing MINING_SPEC.md § 7 exists to keep us
-//      out of. "Open trading" is a step we are working on; "worth $X" is a
-//      promise we cannot keep.
-//   2. WHAT ALREADY WORKS COMES FIRST. A road map made only of future dates
-//      reads like a wish list. Leading with the five things a user can do right
-//      now is what earns the rest of the page any credit at all.
-//   3. THE "PLANS, NOT PROMISES" NOTE STAYS. Dates on a public page are read as
-//      commitments by users and as an offering by regulators. That one small
-//      paragraph is what lets a date move later without it being a betrayal —
-//      and the last step, a big exchange listing, is genuinely not ours alone to
-//      decide, so the page says so out loud.
-//
-// Dates are the founder's (revised 2026-07-30). Every string lives in the copy
-// deck. NOTE: "Cash out to USDT" was removed from the live list in that same
-// pass — the code works but the treasury is not funded, so no user can act on
-// it. See the roadmap.live.* comment in lib/i18n.tsx.
-//
-// VISUAL PASS (founder, 2026-09-07): the founder shared a reference layout
-// (isometric mountain hero, four "floating island" milestone illustrations,
-// a two-line "Our roadmap" header) and asked to match it closely. The
-// illustrations are custom-coded SVGs (components/roadmapArt.tsx), not an
-// imported asset, and — per the founder's own instruction — they read the
-// app's real CSS theme tokens rather than the reference's own blue palette,
-// so the page still follows whichever theme (light, or the default dark
-// "Deep Vault") the rest of the app is in. The reference is a wide desktop
-// mockup with alternating left/right cards; this app is a single-column
-// mobile PWA, so each milestone's illustration sits ABOVE its card instead —
-// the honest adaptation, not a literal copy of a layout that doesn't fit a
-// phone screen. The tested dot/line timeline-state logic below is UNCHANGED.
 import Link from "next/link";
-import { Card, SectionTitle } from "@/components/ui";
-import {
-  ArrowRightIcon, CheckIcon, InfoIcon, MineIcon, TasksIcon, ChipIcon,
-  SendIcon, ReferIcon, RocketIcon, ShieldIcon, ChartIcon, GemIcon,
-} from "@/components/icons";
+import Image from "next/image";
 import { useI18n } from "@/lib/i18n";
-import { AmbientBg } from "@/components/AmbientBg";
-import { MountainHero, MilestoneArt } from "@/components/roadmapArt";
+import {
+  ArrowRightIcon, ChartIcon, CheckIcon, ChipIcon, GemIcon, InfoIcon,
+  MineIcon, ReferIcon, RocketIcon, SendIcon, ShieldIcon, TasksIcon,
+} from "@/components/icons";
 
-// The steps, in order, each with the date range its `roadmap.step.*.when`
-// string in the copy deck describes IN WORDS ("August — September 2026").
-// These `start`/`end` values exist only to compute which state a step is in
-// below — they are never rendered, so they can never drift into a second,
-// more precise promise sitting next to the deliberately vague public one.
-//
-// NOT wired to the admin content_blocks table (audit 2026-08-12 asked for
-// this). That table is built for timed announcement cards with free-text
-// body/link fields — a fine fit for home-screen banners, a bad one here:
-// this page's own header comments carry three rules (no price, ever; dates
-// read as regulatory commitments) that a generic CMS field has no way to
-// enforce. Keeping these dates in the copy deck, reviewable in one file, is
-// what makes "grep this file for a dollar sign before shipping" possible.
-const STEPS = [
-  { key: "launch", start: "2026-08-01", end: "2026-09-30" },
-  { key: "kyc", start: "2026-10-01", end: "2026-11-30" },
-  { key: "dex", start: "2026-12-01", end: "2026-12-31" },
-  { key: "cex", start: "2027-01-01", end: "2027-01-31" },
-] as const;
-
-type StepState = "done" | "active" | "upcoming" | "planned";
-
-// Every row looked identical before this (audit 2026-08-12) — no way to tell
-// "happening now" from "months away" apart from reading the date text. Pure
-// date math against the ranges above; the first step that is neither done nor
-// active is "upcoming" (the one concrete "what's next"), everything after it
-// "planned". That is also correct with no active step at all (e.g. between two
-// ranges, or before launch) — it just names the very next one "upcoming".
-function stepStates(now: Date): StepState[] {
-  const t = now.getTime();
-  const states: StepState[] = STEPS.map((s) => {
-    if (t > new Date(`${s.end}T23:59:59`).getTime()) return "done";
-    if (t >= new Date(`${s.start}T00:00:00`).getTime()) return "active";
-    return "planned";
-  });
-  const firstPlanned = states.indexOf("planned");
-  if (firstPlanned !== -1) states[firstPlanned] = "upcoming";
-  return states;
-}
-
-// Purely decorative pairing (a "Working today" tile with no icon at all read
-// as flat next to the founder's own reference template) — the copy and the
-// order are unchanged, this only adds a picture next to each line.
 const LIVE = [
   { key: "roadmap.live.mining", Icon: MineIcon },
   { key: "roadmap.live.tasks", Icon: TasksIcon },
@@ -100,242 +16,130 @@ const LIVE = [
   { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
 
-// Same reasoning, one icon per timeline milestone. Never affects
-// `stepStates()` or the STEPS dates above — display only.
-const STEP_ICON: Record<(typeof STEPS)[number]["key"], typeof MineIcon> = {
-  launch: RocketIcon,
-  kyc: ShieldIcon,
-  dex: ChartIcon,
-  cex: GemIcon,
-};
+const STEPS = [
+  { key: "launch", start: "2026-08-01", end: "2026-09-30", Icon: RocketIcon, art: "/roadmap/island-mining-v2.png", width: 1440, height: 1092 },
+  { key: "kyc", start: "2026-10-01", end: "2026-11-30", Icon: ShieldIcon, art: "/roadmap/island-kyc-v2.png", width: 1402, height: 1122 },
+  { key: "dex", start: "2026-12-01", end: "2026-12-31", Icon: ChartIcon, art: "/roadmap/island-trading-v2.png", width: 1461, height: 1076 },
+  { key: "cex", start: "2027-01-01", end: "2027-01-31", Icon: GemIcon, art: "/roadmap/island-global-v2.png", width: 1536, height: 1024 },
+] as const;
+
+type StepState = "done" | "active" | "upcoming" | "planned";
+
+function statesAt(now: Date): StepState[] {
+  const time = now.getTime();
+  const states: StepState[] = STEPS.map((step) => {
+    if (time > new Date(`${step.end}T23:59:59`).getTime()) return "done";
+    if (time >= new Date(`${step.start}T00:00:00`).getTime()) return "active";
+    return "planned";
+  });
+  const next = states.indexOf("planned");
+  if (next >= 0) states[next] = "upcoming";
+  return states;
+}
 
 export default function RoadmapPage() {
   const { t } = useI18n();
-  // Which state each step is in "as of right now" — a fresh read on every
-  // render is exactly what's wanted here (a page left open across midnight
-  // should flip from "Happening now" the moment that becomes true).
-  const states = stepStates(new Date());
-  const tagline = t("roadmap.hero.tagline").split("\n");
+  const states = statesAt(new Date());
 
-  // Deliberately NOT behind useRequireAuth. Someone deciding whether to trust
-  // this app enough to sign up is exactly the person who should be able to read
-  // the plan, and there is nothing personal on the page.
   return (
-    <div className="relative px-4 pt-5 pb-8 space-y-6">
-      <AmbientBg variant="mine" />
-
-      <header>
-        <Link
-          href="/mine"
-          className="inline-flex items-center gap-1 text-sm font-semibold text-brand"
-        >
-          <ArrowRightIcon size={16} className="rotate-180" />
-          {t("nav.mine")}
-        </Link>
-      </header>
-
-      {/* ---- Hero: eyebrow, headline, mountain scene, tagline ---- */}
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-wider text-brand">
-          {t("roadmap.hero.eyebrow")}
-        </p>
-        <h1 className="mt-1 text-[26px] font-extrabold leading-tight text-brand-ink">
-          {t("roadmap.title")}
-        </h1>
-        <p className="mt-1.5 text-sm font-semibold text-muted">{t("roadmap.subtitle")}</p>
-        <p className="mt-2 text-sm leading-relaxed text-muted">{t("roadmap.hero.description")}</p>
-
-        <div className="relative mt-4 flex items-stretch gap-2">
-          <div className="relative min-w-0 flex-1">
-            <MountainHero className="w-full h-auto" />
-            <span className="absolute bottom-1 left-0 inline-flex -rotate-2 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-brand-ink shadow-sm">
-              <GemIcon size={12} className="shrink-0 text-brand" />
-              {t("roadmap.hero.badge")}
-            </span>
-          </div>
-          <div className="flex shrink-0 flex-col items-end justify-center gap-1 pr-1 rotate-[-3deg]">
-            {tagline.map((word, i) => (
-              <span
-                key={word}
-                className="font-serif text-[13px] italic text-brand"
-                style={{ opacity: 0.55 + i * 0.15 }}
-              >
-                {word}
-              </span>
-            ))}
-          </div>
+    <main className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
+      <section className="grid min-h-[300px] items-center gap-3 pt-7 md:grid-cols-[.86fr_1.14fr] md:pt-10">
+        <div className="relative z-10">
+          <p className="text-[11px] font-extrabold uppercase tracking-[.15em] text-brand">{t("roadmap.hero.eyebrow")}</p>
+          <h1 className="mt-2 font-display text-[38px] font-extrabold leading-[.98] tracking-[-.045em] text-brand-ink md:text-[54px]">{t("roadmap.title")}</h1>
+          <p className="mt-2 text-lg font-medium text-brand-ink">{t("roadmap.subtitle")}</p>
+          <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">{t("roadmap.hero.description")}</p>
         </div>
-      </div>
+        <div className="roadmap-hero-stage relative -mb-5 min-w-0 overflow-hidden rounded-[28px] border border-line/70 bg-brand-tint/30">
+          <Image src="/roadmap/hero-mountain-v2.png" alt="A luminous road climbing RoziPay mountain" width={1536} height={1024} priority className="roadmap-hero-art h-auto w-full" />
+        </div>
+      </section>
 
-      {/* ---- What already works ---- */}
-      <div>
-        <SectionTitle>{t("roadmap.live.title")}</SectionTitle>
-        <Card className="p-2.5">
-          <div className="grid grid-cols-2 gap-2">
-            {LIVE.map(({ key, Icon }, i) => (
-              <div key={key}
-                // The last tile spans both columns when the count is odd
-                // (cross-check, 2026-09-07) — otherwise a fixed 5-item list in
-                // a 2-column grid leaves the final tile alone next to an empty
-                // half-width gap.
-                className={`relative flex flex-col items-center gap-1.5 rounded-xl border border-line bg-brand-tint/30 p-3 text-center ${
-                  i === LIVE.length - 1 && LIVE.length % 2 === 1 ? "col-span-2" : ""
-                }`}>
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand text-white">
-                  <Icon size={17} />
-                </span>
-                <p className="text-xs font-semibold leading-snug text-brand-ink">{t(key)}</p>
-              </div>
-            ))}
+      <section className="relative z-10 rounded-[22px] border border-line bg-card/95 p-4 shadow-[0_18px_50px_rgba(8,47,54,.12)] backdrop-blur">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="flex items-center gap-3 text-xl font-extrabold text-brand-ink">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-white"><MineIcon size={18} /></span>
+            {t("roadmap.live.title")}
+          </h2>
+          <p className="hidden text-xs text-muted sm:block">Here&apos;s what you can do right now.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+          {LIVE.map(({ key, Icon }, index) => (
+            <div key={key} className={`flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-2xl bg-brand-tint/45 p-3 text-center ${index === 4 ? "col-span-2 md:col-span-1" : ""}`}>
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-card text-brand shadow-sm"><Icon size={22} /></span>
+              <span className="text-xs font-bold leading-snug text-brand-ink">{t(key)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="pt-10">
+        <div className="grid gap-3 md:grid-cols-2 md:items-center">
+          <div>
+            <p className="text-[11px] font-extrabold uppercase tracking-[.15em] text-brand">{t("roadmap.roadmap.eyebrow")}</p>
+            <h2 className="mt-1 font-display text-3xl font-extrabold leading-[1.05] tracking-[-.035em] text-brand-ink">{t("roadmap.roadmap.heading1")}<br />{t("roadmap.roadmap.heading2")}</h2>
+            <span className="mt-3 block h-0.5 w-12 bg-brand" />
           </div>
-        </Card>
-      </div>
+          <p className="text-sm leading-relaxed text-muted">{t("roadmap.roadmap.intro")}</p>
+        </div>
 
-      {/* ---- What is next ---- */}
-      <div>
-        <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-brand">
-          {t("roadmap.roadmap.eyebrow")}
-        </p>
-        <h2 className="mt-1 px-1 text-xl font-extrabold leading-tight text-brand-ink">
-          {t("roadmap.roadmap.heading1")}
-          <br />
-          {t("roadmap.roadmap.heading2")}
-        </h2>
-        <span aria-hidden className="ml-1 mt-2 block h-1 w-10 rounded-full bg-brand" />
-        <p className="mt-2 px-1 text-sm text-muted">{t("roadmap.roadmap.intro")}</p>
+        <div className="roadmap-journey relative mt-4 md:mt-2">
+          <svg aria-hidden="true" className="roadmap-ladder roadmap-ladder-mobile pointer-events-none absolute bottom-0 left-0 top-0 h-full w-[68px] min-[600px]:hidden" viewBox="0 0 68 1100" preserveAspectRatio="none">
+            <path d="M18 0 L50 138 L18 275 L50 413 L18 550 L50 688 L18 825 L50 963 L34 1100" className="roadmap-ladder-rail" />
+            <path d="M38 0 L66 138 L38 275 L66 413 L38 550 L66 688 L38 825 L66 963 L54 1100" className="roadmap-ladder-rail" />
+            {[70, 205, 343, 480, 618, 755, 893, 1030].map((y, index) => (
+              <line key={y} x1={index % 2 ? 43 : 21} y1={y} x2={index % 2 ? 61 : 41} y2={y} className="roadmap-ladder-rung" />
+            ))}
+            <circle r="7" className="roadmap-ladder-runner">
+              <animateMotion dur="7s" repeatCount="indefinite" path="M28 0 L58 138 L28 275 L58 413 L28 550 L58 688 L28 825 L58 963 L44 1100" />
+            </circle>
+          </svg>
 
-        {/* A single vertical line down the left with a dot per step. The line is
-            drawn by the border on each row rather than by an absolutely
-            positioned element, so it can never drift out of line with the dots
-            at a different font size. Dot style + badge now carry the step's
-            state (done/active/upcoming/planned) — every row used to look
-            identical, which is exactly why a page whose whole point is "when"
-            gave no visual answer to "which one is now".
-            ⚠️ THE DOT/LINE COLUMN STAYS OUTSIDE THE CARD, ON PURPOSE
-            (cross-check, 2026-09-07). An earlier pass wrapped the WHOLE row
-            (dot column included) in a bordered Card per step — which cut the
-            connecting line off at each card's own edge, since a flex-stretch
-            line can only run the height of ITS OWN box, and that box was now
-            bounded by the card instead of the full `<li>`. Only the content
-            (art/when/badge/title/body) gets the card treatment; the line still
-            spans the full `<li>` (via `space-y-0` + `pb-5`, exactly as
-            before) and reads as one continuous timeline again. */}
-        <ol className="mt-4 space-y-0">
-          {STEPS.map((step, i) => {
-            const state = states[i];
-            const StepIcon = STEP_ICON[step.key];
+          <svg aria-hidden="true" className="roadmap-ladder pointer-events-none absolute inset-0 hidden h-full w-full min-[600px]:block" viewBox="0 0 760 1160" preserveAspectRatio="none">
+            <path d="M350 0 L410 145 L350 290 L410 435 L350 580 L410 725 L350 870 L410 1015 L380 1160" className="roadmap-ladder-rail" />
+            <path d="M395 0 L455 145 L395 290 L455 435 L395 580 L455 725 L395 870 L455 1015 L425 1160" className="roadmap-ladder-rail" />
+            {[72, 217, 362, 507, 652, 797, 942, 1087].map((y, index) => (
+              <line key={y} x1={index % 2 ? 417 : 365} y1={y} x2={index % 2 ? 462 : 410} y2={y} className="roadmap-ladder-rung" />
+            ))}
+            <circle r="10" className="roadmap-ladder-runner">
+              <animateMotion dur="8s" repeatCount="indefinite" path="M372 0 L432 145 L372 290 L432 435 L372 580 L432 725 L372 870 L432 1015 L402 1160" />
+            </circle>
+          </svg>
+
+          {STEPS.map((step, index) => {
+            const state = states[index];
+            const Icon = step.Icon;
             return (
-              <li key={step.key} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  {/* Margins are the ORIGINAL 0.5/1/1.5 offsets PLUS the
-                      content Card's own p-3 (12px) padding (cross-check,
-                      2026-09-07): moving the dot/line column outside the Card
-                      fixed the connecting line, but left these tuned-for-zero-
-                      padding offsets rendering each dot ~10-12px higher than
-                      the "when"/badge line it's meant to sit level with. */}
-                  {state === "done" ? (
-                    <span
-                      aria-hidden
-                      className="mt-[14px] grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
-                    >
-                      <CheckIcon size={14} />
-                    </span>
-                  ) : state === "active" ? (
-                    <span className="mining-chamber mt-[16px] h-6 w-6 shrink-0 text-brand">
-                      <span className="mining-ring" aria-hidden="true" />
-                      <span
-                        aria-hidden
-                        className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
-                      />
-                    </span>
-                  ) : (
-                    <span
-                      aria-hidden
-                      className={`mt-[18px] grid h-3 w-3 shrink-0 place-items-center rounded-full ${
-                        state === "upcoming"
-                          ? "bg-card ring-2 ring-brand"
-                          : "bg-card ring-2 ring-line"
-                      }`}
-                    />
-                  )}
-                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
+              <article key={step.key} className={`roadmap-stop roadmap-stop-${index} relative grid min-h-[275px] items-center gap-3 pl-[58px] md:grid-cols-2 md:gap-24 md:pl-0`}>
+                <div className={`roadmap-island ${index % 2 ? "md:col-start-1" : "md:col-start-2"} md:row-start-1`}>
+                  <Image src={step.art} alt="" width={step.width} height={step.height} className="h-auto w-full" sizes="(max-width: 767px) 92vw, 390px" />
                 </div>
-                <div className="min-w-0 flex-1 pb-5">
-                  <Card className={`overflow-hidden ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
-                    <div className="bg-brand-tint/25">
-                      <MilestoneArt kind={step.key} className="h-auto w-full" />
+                <div className={`relative z-10 ${index % 2 ? "md:col-start-2" : "md:col-start-1"} md:row-start-1`}>
+                  <span className={`roadmap-node roadmap-node-${state}`} aria-hidden>{state === "done" && <CheckIcon size={14} />}</span>
+                  <div className={`rounded-[20px] border bg-card/95 p-5 shadow-[0_16px_40px_rgba(8,47,54,.11)] backdrop-blur ${state === "active" ? "border-brand/60 ring-2 ring-brand/10" : "border-line"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wide text-brand">{t(`roadmap.step.${step.key}.when`)}</span>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold roadmap-badge-${state}`}>{t(`roadmap.state.${state}`)}</span>
                     </div>
-                    <div className="p-3">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <p className="text-xs font-bold uppercase tracking-wide text-brand">
-                          {t(`roadmap.step.${step.key}.when`)}
-                        </p>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                            state === "done"
-                              ? "bg-success-tint text-success"
-                              : state === "active"
-                                ? "bg-brand text-white"
-                                : state === "upcoming"
-                                  ? "bg-brand-tint text-brand"
-                                  : "bg-line/60 text-muted"
-                          }`}
-                        >
-                          {t(`roadmap.state.${state}`)}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 flex items-center gap-1.5 font-bold text-brand-ink">
-                        <StepIcon size={16} className="shrink-0 text-brand" />
-                        {t(`roadmap.step.${step.key}.title`)}
-                      </p>
-                      <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
-                    </div>
-                  </Card>
+                    <h3 className="mt-2 flex items-center gap-2 text-lg font-extrabold text-brand-ink"><Icon size={18} className="text-brand" />{t(`roadmap.step.${step.key}.title`)}</h3>
+                    <p className="mt-1.5 text-sm leading-relaxed text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
+                  </div>
                 </div>
-              </li>
+              </article>
             );
           })}
-        </ol>
-      </div>
-
-      {/* ---- Plans, not promises ---- */}
-      <Card className="p-4">
-        <p className="flex items-center gap-2 font-bold text-brand-ink">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-tint text-brand">
-            <InfoIcon size={16} />
-          </span>
-          {t("roadmap.note.title")}
-        </p>
-        <p className="mt-1.5 text-sm text-muted">{t("roadmap.note.body")}</p>
-      </Card>
-
-      {/* ---- Closing banner ---- */}
-      <div className="relative overflow-hidden rounded-2xl bg-brand p-5 text-white">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-10 -top-14 h-40 w-40 rounded-full opacity-70"
-          style={{ background: "radial-gradient(circle, var(--color-brand-ink), transparent 70%)" }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -bottom-16 -left-10 h-36 w-36 rounded-full opacity-40"
-          style={{ background: "radial-gradient(circle, #7ff4ec, transparent 70%)" }}
-        />
-        <div className="relative">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/80">
-            {t("roadmap.cta.eyebrow")}
-          </p>
-          <h2 className="mt-1 text-lg font-bold text-white">{t("roadmap.cta.title")}</h2>
-          <p className="mt-1 text-sm text-white/90">{t("roadmap.cta.subtitle")}</p>
         </div>
-          <Link
-            href="/mine"
-            className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-white px-5 text-base font-semibold text-brand transition hover:brightness-95"
-          >
-            <MineIcon size={20} />
-            {t("roadmap.mine.cta")}
-          </Link>
-      </div>
-    </div>
+      </section>
+
+      <section className="mx-auto mt-4 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><InfoIcon size={20} /></span>
+        <div><h2 className="font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-1 text-xs leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
+      </section>
+
+      <section className="roadmap-cta relative mt-6 overflow-hidden rounded-[22px] bg-brand px-6 py-7 text-white md:flex md:items-center md:justify-between md:px-10">
+        <div className="relative z-10"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/80">{t("roadmap.cta.eyebrow")}</p><h2 className="mt-1 text-3xl font-extrabold">{t("roadmap.cta.title")}</h2><p className="mt-1 text-sm text-white/85">{t("roadmap.cta.subtitle")}</p></div>
+        <Link href="/mine" className="relative z-10 mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-7 font-bold text-brand md:mt-0 md:w-auto">{t("roadmap.mine.cta")} <ArrowRightIcon size={18} /></Link>
+      </section>
+    </main>
   );
 }
