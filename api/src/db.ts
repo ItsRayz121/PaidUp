@@ -2531,8 +2531,10 @@ const MINING_SCHEMA = `
     id              TEXT PRIMARY KEY,
     proof_id        TEXT NOT NULL REFERENCES task_proofs(id) ON DELETE CASCADE,
     field_id        TEXT NOT NULL,
-    -- The SNIFFED mime (kyc.ts's magic-byte check, never the browser's claim)
-    -- — needed to serve the decrypted bytes back as a correct data: URL.
+    -- Always 'image/webp' now (taskFields.ts re-encodes every upload to WebP
+    -- for storage cost, whatever format the phone actually sent) — kept as a
+    -- real column, not hardcoded at read time, so an OLD row from before that
+    -- re-encoding existed still serves back with its true original mime.
     mime            TEXT NOT NULL DEFAULT 'image/jpeg',
     encrypted_value TEXT,
     -- Set by the retention job (taskProofRedaction.ts) when the photo bytes

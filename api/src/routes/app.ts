@@ -354,7 +354,7 @@ export async function appRoutes(app: FastifyInstance) {
     let answersJson: string | null = null;
     let pendingImages: { fieldId: string; imageId: string; bytes: Buffer; mime: string }[] = [];
     if (fields.length > 0) {
-      const checked = validateAnswers(fields, rawAnswers ?? {}, rawImages ?? {});
+      const checked = await validateAnswers(fields, rawAnswers ?? {}, rawImages ?? {});
       if (!checked.ok) return { ok: false, error: checked.error };
       proofText = checked.text;
       answersJson = JSON.stringify(checked.answers);

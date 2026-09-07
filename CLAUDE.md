@@ -4919,3 +4919,32 @@ See `docs/` for the full spec.
     empty today only because no booster has actually been priced and enabled
     yet (`boosters` table, seeded disabled on purpose so an Admin has
     something concrete to price rather than a stale default).
+  - ⚠️ **SAME DAY, FOLLOW-UP: EVERY SCREENSHOT IS NOW DOWNSCALED + RE-ENCODED
+    TO WEBP SERVER-SIDE BEFORE IT IS EVER ENCRYPTED — THE REAL COST LEVER,
+    NOT JUST THE RETENTION WINDOW ABOVE.** The founder's own framing: cost is
+    the whole point, and a raised body-size limit only controls what the
+    server will ACCEPT, not what it permanently STORES. `taskFields.ts`
+    reuses the exact `sharp` pipeline already used for task logo uploads
+    (`rotate → resize → webp`, `staffTasks.ts`) — every "image" answer is
+    capped at 1600px on its longer side and re-encoded to WebP quality 80
+    before encryption, regardless of what format or size the phone actually
+    sent. `validateAnswers` is now `async` (its one call site,
+    `routes/app.ts`, just gained an `await`) to make room for this.
+    ⚠️ **DONE SERVER-SIDE, NOT CLIENT-SIDE, ON PURPOSE.** A client can be
+    modified or skipped entirely (a raw API call bypassing the web app), so
+    trusting the browser to shrink the photo first would not actually
+    guarantee anything real gets saved — the server is the one place this
+    can be enforced for every caller. `task_proof_images.mime` is now always
+    `'image/webp'` for a new row (an OLD row from before this shipped still
+    serves back with its real original mime — the column was never
+    hardcoded at read time, so nothing needed a migration).
+    Verified with the real claim, not just "some webp comes back":
+    `npm run test:taskproofimages` (now **29 checks**, +3) generates a
+    genuinely decodable 2000×1000 JPEG via `sharp` itself (a magic-byte-only
+    fixture, like KYC's own, is no longer enough — this is actually decoded
+    now), and asserts the returned image (a) is a real, valid WebP, (b) was
+    capped at 1600px on its long side, (c) kept its aspect ratio, and (d) is
+    measurably smaller once stored than the original upload. `test:fraud`
+    (17), `test:stage7` (96), `test:tasksadmin` (57), `test:taskmarketplace`
+    (16) all re-run green (the `async` change touches every caller); api
+    typecheck clean; a fresh-database boot confirmed clean.

@@ -6,7 +6,8 @@
 //   npm run test:taskproofimages
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import { initDb, sql, now, newId, getSetting, setSetting } from "../db.ts";
+import sharp from "sharp";
+import { initDb, sql, now, newId, setSetting } from "../db.ts";
 import { config } from "../config.ts";
 import { appRoutes } from "../routes/app.ts";
 import { staffTaskRoutes } from "../routes/staffTasks.ts";
@@ -50,12 +51,16 @@ const createTask = async (payload: Record<string, unknown>) => {
   return (r.json() as { ok: boolean; id?: string; error?: string });
 };
 
-// A real, minimal JPEG — the SOI marker (ff d8 ff) is what the magic-byte
-// sniff (kyc.ts) looks for. Same fixture shape as kyc.e2e.ts.
-const JPEG = Buffer.concat([
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
-  Buffer.from("a screenshot, long enough to be a plausible photo".repeat(4)),
-]);
+// A GENUINELY DECODABLE JPEG, not just magic-byte-prefixed garbage — the
+// server now actually decompresses and re-encodes every upload (taskFields.ts),
+// so a fixture that only satisfies the magic-byte sniff (like kyc.e2e.ts's,
+// which is never handed to sharp) would fail at the compression step here.
+// 2000px on the long side, ON PURPOSE — bigger than
+// TASK_PROOF_IMAGE_MAX_DIMENSION (1600), so the tests below can prove the
+// downscale actually happens, not just that SOME webp comes back.
+const JPEG = await sharp({
+  create: { width: 2000, height: 1000, channels: 3, background: { r: 200, g: 30, b: 30 } },
+}).jpeg().toBuffer();
 const jpegUrl = `data:image/jpeg;base64,${JPEG.toString("base64")}`;
 const fakeJpegUrl = `data:image/jpeg;base64,${Buffer.from("<svg onload=alert(1)>").toString("base64")}`;
 
@@ -127,9 +132,15 @@ let imageId = "";
     "SELECT mime, encrypted_value FROM task_proof_images WHERE id = ? AND proof_id = ?", imageId, proofId,
   );
   check("a task_proof_images row exists", !!imgRow);
-  check("the sniffed mime is stored", imgRow?.mime === "image/jpeg");
+  check("it was re-encoded to webp, whatever format was uploaded", imgRow?.mime === "image/webp");
   check("the stored value is ENCRYPTED — the plaintext base64 does not appear in it",
     !imgRow!.encrypted_value.includes(JPEG.toString("base64").slice(0, 40)));
+  // The actual cost claim, checked directly: an encrypted, base64-doubled
+  // WEBP of a downscaled 1600px image should still land well under the
+  // original 2000px JPEG's own size.
+  check("compression genuinely shrank what gets stored, not just re-labelled it",
+    Buffer.byteLength(imgRow!.encrypted_value, "base64") < JPEG.length,
+    `stored~${Buffer.byteLength(imgRow!.encrypted_value, "base64")} original=${JPEG.length}`);
 }
 
 console.log("\n-- staff can view it decrypted; nobody else can --");
@@ -141,9 +152,14 @@ console.log("\n-- staff can view it decrypted; nobody else can --");
   check("staff read succeeds", asStaff.statusCode === 200 && body.ok === true);
   check("not marked deleted", body.deleted === false);
   const decoded = Buffer.from((body.dataUrl ?? "").split(",")[1] ?? "", "base64");
-  check("it decrypts back to the EXACT original bytes", decoded.equals(JPEG));
-  check("the data URL carries the real mime, not a hardcoded one",
-    (body.dataUrl ?? "").startsWith("data:image/jpeg;base64,"));
+  const meta = await sharp(decoded).metadata();
+  check("it decrypts back to a real, decodable webp image", meta.format === "webp");
+  check("the longer side was capped at the configured max dimension",
+    Math.max(meta.width ?? 0, meta.height ?? 0) <= 1600, JSON.stringify(meta));
+  check("aspect ratio survived the resize (2:1 in, 2:1 out)",
+    Math.abs((meta.width ?? 0) / (meta.height ?? 1) - 2) < 0.05, JSON.stringify(meta));
+  check("the data URL carries the real (re-encoded) mime",
+    (body.dataUrl ?? "").startsWith("data:image/webp;base64,"));
 
   const asOutsider = await app.inject({
     method: "GET", url: `/staff/task-proofs/${proofId}/images/${imageId}`, headers: authOf(outsider),
@@ -178,7 +194,7 @@ console.log("\n-- retention: only the photo bytes are deleted, everything else s
   check("the photo bytes are gone", row?.encrypted_value === null);
   check("redacted_at is stamped", !!row?.redacted_at);
   check("field_id and mime survive — this was a targeted null, not a row wipe",
-    row?.field_id === fieldId && row?.mime === "image/jpeg");
+    row?.field_id === fieldId && row?.mime === "image/webp");
 
   const after = await sql.get<Record<string, unknown>>(
     "SELECT proof_text, status, answers FROM task_proofs WHERE id = ?", proofId,
@@ -228,7 +244,9 @@ console.log("\n-- a resubmission cascades away the old photo --");
   ))!.id;
   check("first submit ok", (first.json() as { ok: boolean }).ok === true);
 
-  const secondJpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe1]), Buffer.from("a different screenshot".repeat(6))]);
+  const secondJpeg = await sharp({
+    create: { width: 300, height: 300, channels: 3, background: { r: 30, g: 30, b: 200 } },
+  }).jpeg().toBuffer();
   await app.inject({
     method: "POST", url: `/tasks/${taskId}/proof`, headers: authOf(u3),
     payload: { images: { [fieldId]: `data:image/jpeg;base64,${secondJpeg.toString("base64")}` } },

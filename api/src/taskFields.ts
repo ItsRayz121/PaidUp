@@ -13,8 +13,22 @@
 // shape, and the URL scheme in particular — is re-decided in `validateAnswers`.
 import { createHash } from "node:crypto";
 import { isAddress } from "viem";
+import sharp from "sharp";
 import { sql, newId } from "./db.ts";
 import { parseDataUrl, type ParsedImage } from "./kyc.ts";
+
+// The whole point of this feature was to save storage cost (founder,
+// 2026-09-07), and a raw phone screenshot uploaded as-is is the single most
+// expensive thing this app stores per byte — it lands as base64 TEXT in
+// Postgres, which is the priciest place to keep bytes. Every "image" answer
+// is downscaled and re-encoded to WebP HERE, server-side, before it is ever
+// encrypted — same `sharp` pipeline already used for task logo uploads
+// (staffTasks.ts: rotate -> resize -> webp), reused rather than duplicated.
+// Server-side, not client-side, on purpose: a client can be modified or
+// skipped entirely, so trusting the browser to shrink the photo first would
+// not actually guarantee anything is ever saved.
+const TASK_PROOF_IMAGE_MAX_DIMENSION = 1600; // the longer side, in pixels
+const TASK_PROOF_IMAGE_WEBP_QUALITY = 80;    // legible for a text screenshot, still a real cut
 
 /** The closed list. A kind decides how an answer is CHECKED, so an unknown kind
  *  would mean an unchecked answer — which is why it is refused at the admin
@@ -163,11 +177,11 @@ function cryptoError(label: string, validation: string | null): string {
  * missing — so a required one refuses the submit and the user is told which
  * answer is missing rather than having a silent half-submission filed.
  */
-export function validateAnswers(
+export async function validateAnswers(
   fields: TaskField[],
   input: Record<string, unknown>,
   images: Record<string, unknown> = {},
-): AnswerResult {
+): Promise<AnswerResult> {
   const answers: StoredAnswer[] = [];
   const pendingImages: PendingImage[] = [];
   for (const f of fields) {
@@ -186,8 +200,26 @@ export function validateAnswers(
       } catch (e) {
         return { ok: false, error: (e as { message?: string })?.message ?? `“${f.label}” is not a valid photo.` };
       }
+      // Downscale + re-encode to WebP — see the file header for why this is
+      // the actual cost lever, not the upload size cap above. `failOn:
+      // "warning"` is the same strict-decode setting the logo pipeline uses:
+      // a corrupt or truncated image should be refused, not half-processed
+      // and stored as a broken photo nobody can review.
+      let compressed: Buffer;
+      try {
+        compressed = await sharp(parsed.bytes, { failOn: "warning" }).rotate()
+          .resize(TASK_PROOF_IMAGE_MAX_DIMENSION, TASK_PROOF_IMAGE_MAX_DIMENSION, {
+            fit: "inside", withoutEnlargement: true,
+          })
+          .webp({ quality: TASK_PROOF_IMAGE_WEBP_QUALITY })
+          .toBuffer();
+      } catch {
+        return { ok: false, error: `“${f.label}” could not be processed as an image. Try a different photo.` };
+      }
       const imageId = newId();
-      pendingImages.push({ fieldId: f.id, imageId, bytes: parsed.bytes, mime: parsed.mime });
+      // Always webp now, regardless of what was uploaded — one format to
+      // store and serve, and the smallest of the three we accept in.
+      pendingImages.push({ fieldId: f.id, imageId, bytes: compressed, mime: "image/webp" });
       answers.push({ fieldId: f.id, label: f.label, kind: f.kind, value: `img:${imageId}` });
       continue;
     }
