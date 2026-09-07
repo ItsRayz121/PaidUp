@@ -64,7 +64,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // The blocking theme script intentionally sets data-theme before hydration.
+    <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${sora.variable} antialiased`}>
         {/* No telegram-web-app.js here, deliberately: telegram.org is blocked
             on many Pakistani networks, and a blocked beforeInteractive script

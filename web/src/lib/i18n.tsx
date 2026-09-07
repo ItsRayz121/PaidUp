@@ -1190,15 +1190,13 @@ const copy: Record<string, string> = {
   // together they are one tagline, not four sentences.
   "roadmap.hero.tagline": "Mine\nEarn\nBuild\nTogether",
   "roadmap.live.title": "Working today",
+  "roadmap.live.description": "Here's what you can do right now.",
+  // Founder, 2026-09-07: keep these to a word or two each — one tile still
+  // spells out "every day" since that's the one habit this screen is selling.
   "roadmap.live.mining": "Mine ROZI every day",
-  "roadmap.live.tasks": "Complete tasks — earn and mine faster",
-  "roadmap.live.rigs": "Buy machines to mine faster",
-  // ⚠️ THE QUALIFIER IS LOAD-BEARING. Sending requires the ID check
-  // (transferRequireKyc = 1), and the "What is next" section below dates the ID
-  // check to October — November. Unqualified, this row told a user a feature
-  // works today sixty pixels above the date its gate arrives.
-  "roadmap.live.send": "Send ROZI to a friend (after your ID check)",
-  "roadmap.live.invite": "Invite friends and earn with them",
+  "roadmap.live.tasks": "Complete tasks",
+  "roadmap.live.rigs": "Buy machines",
+  "roadmap.live.invite": "Invite friends",
   "roadmap.next.title": "What is next",
   // The richer section header above the timeline (same reference layout).
   "roadmap.roadmap.eyebrow": "Our roadmap",
@@ -1214,25 +1212,27 @@ const copy: Record<string, string> = {
   "roadmap.state.active": "Happening now",
   "roadmap.state.upcoming": "Up next",
   "roadmap.state.planned": "Planned",
+  "roadmap.state.scheduled": "Scheduled",
   "roadmap.step.launch.when": "August — September 2026",
   "roadmap.step.launch.title": "Mining opens to everyone",
+  // Founder, 2026-09-07: compressed — same facts (early = most ROZI), fewer words.
   "roadmap.step.launch.body":
-    "RoziPay opens to everyone. Two months of mining, so the people who came first have the most ROZI.",
+    "RoziPay opens to everyone. Mine in the first two months for the most ROZI.",
   "roadmap.step.launch.tag": "Mine together",
   "roadmap.step.kyc.when": "October — November 2026",
   "roadmap.step.kyc.title": "ID check",
   "roadmap.step.kyc.body":
-    "Show us your ID once. It keeps fake accounts out, and it is what lets us pay real money out safely.",
+    "One quick ID check. It blocks fake accounts and unlocks real payouts.",
   "roadmap.step.kyc.tag": "A safer community",
   "roadmap.step.dex.when": "December 2026",
   "roadmap.step.dex.title": "Open trading",
   "roadmap.step.dex.body":
-    "ROZI goes on an open trading site, where anyone can swap it. This is the step we are building everything else toward.",
+    "ROZI lists on an open trading site for anyone to swap — the step everything else builds toward.",
   "roadmap.step.dex.tag": "More opportunity",
   "roadmap.step.cex.when": "January 2027",
   "roadmap.step.cex.title": "Big exchange",
   "roadmap.step.cex.body":
-    "We apply to list ROZI on a large, well-known exchange. Big exchanges decide for themselves, so this one is not ours alone to promise.",
+    "We apply to list ROZI on a major exchange. The final decision is theirs, not ours to promise.",
   "roadmap.step.cex.tag": "A global future",
   // The honest footer. It is small, but it is the difference between a plan and
   // a promise — and it is the line that lets us move a date without breaking

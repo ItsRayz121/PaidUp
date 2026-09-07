@@ -2,46 +2,46 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useSyncExternalStore } from "react";
 import { useI18n } from "@/lib/i18n";
+import { ROADMAP_STEPS, roadmapStates } from "@/lib/roadmap";
 import {
-  ArrowRightIcon, ChartIcon, CheckIcon, ChipIcon, GemIcon, InfoIcon,
-  MineIcon, ReferIcon, RocketIcon, SendIcon, ShieldIcon, TasksIcon,
+  ArrowRightIcon, CheckIcon, ChipIcon, InfoIcon,
+  MineIcon, ReferIcon, TasksIcon,
 } from "@/components/icons";
 
+// Founder, 2026-09-07: dropped the "Send ROZI to a friend" tile from this
+// screen (marketing preference, not a change to the feature itself — ROZI
+// transfers are live, see CLAUDE.md). Four tiles now; .roadmap-features'
+// grid is 4 columns to match (globals.css).
 const LIVE = [
   { key: "roadmap.live.mining", Icon: MineIcon },
   { key: "roadmap.live.tasks", Icon: TasksIcon },
   { key: "roadmap.live.rigs", Icon: ChipIcon },
-  { key: "roadmap.live.send", Icon: SendIcon },
   { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
 
-const STEPS = [
-  { key: "launch", start: "2026-08-01", end: "2026-09-30", Icon: RocketIcon, art: "/roadmap/island-mining-v2.png", width: 1440, height: 1092 },
-  { key: "kyc", start: "2026-10-01", end: "2026-11-30", Icon: ShieldIcon, art: "/roadmap/island-kyc-v2.png", width: 1402, height: 1122 },
-  { key: "dex", start: "2026-12-01", end: "2026-12-31", Icon: ChartIcon, art: "/roadmap/island-trading-v2.png", width: 1461, height: 1076 },
-  { key: "cex", start: "2027-01-01", end: "2027-01-31", Icon: GemIcon, art: "/roadmap/island-global-v2.png", width: 1536, height: 1024 },
-] as const;
-
-type StepState = "done" | "active" | "upcoming" | "planned";
-
-function statesAt(now: Date): StepState[] {
-  const time = now.getTime();
-  const states: StepState[] = STEPS.map((step) => {
-    if (time > new Date(`${step.end}T23:59:59`).getTime()) return "done";
-    if (time >= new Date(`${step.start}T00:00:00`).getTime()) return "active";
-    return "planned";
-  });
-  const next = states.indexOf("planned");
-  if (next >= 0) states[next] = "upcoming";
-  return states;
+function subscribeToDay(onChange: () => void) {
+  const timer = window.setInterval(onChange, 60_000);
+  window.addEventListener("focus", onChange);
+  document.addEventListener("visibilitychange", onChange);
+  return () => {
+    window.clearInterval(timer);
+    window.removeEventListener("focus", onChange);
+    document.removeEventListener("visibilitychange", onChange);
+  };
 }
+
+const currentDay = () => new Date().toISOString().slice(0, 10);
+// A stable server snapshot avoids baking the build date into cached HTML.
+const serverDay = () => null;
 
 export default function RoadmapPage() {
   const { t } = useI18n();
-  const states = statesAt(new Date());
+  const day = useSyncExternalStore(subscribeToDay, currentDay, serverDay);
+  const states = roadmapStates(day);
   return (
-    <main className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
+    <div className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
       <section className="roadmap-hero grid min-h-[300px] items-center gap-3 pt-7 md:grid-cols-[.86fr_1.14fr] md:pt-10">
         <div className="relative z-10">
           <p className="text-[11px] font-extrabold uppercase tracking-[.15em] text-brand">{t("roadmap.hero.eyebrow")}</p>
@@ -60,7 +60,7 @@ export default function RoadmapPage() {
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-white"><MineIcon size={18} /></span>
             {t("roadmap.live.title")}
           </h2>
-          <p className="hidden text-xs text-muted sm:block">Here&apos;s what you can do right now.</p>
+          <p className="hidden text-xs text-muted sm:block">{t("roadmap.live.description")}</p>
         </div>
         <div className="roadmap-features">
           {LIVE.map(({ key, Icon }) => (
@@ -83,14 +83,14 @@ export default function RoadmapPage() {
         </div>
 
         <div className="roadmap-journey relative mt-4 md:mt-2">
-          {STEPS.map((step, index) => {
+          {ROADMAP_STEPS.map((step, index) => {
             const state = states[index];
             return (
               <article key={step.key} className={`roadmap-stop roadmap-stop-${index}`}>
                 <svg aria-hidden="true" className="roadmap-road" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <path className="roadmap-road-edge" d="M50 0 C90 25 10 75 50 100" />
-                  <path className="roadmap-road-surface" d="M50 0 C90 25 10 75 50 100" />
-                  <path className="roadmap-road-center" pathLength="100" d="M50 0 C90 25 10 75 50 100" />
+                  <path className="roadmap-road-edge" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
+                  <path className="roadmap-road-surface" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
+                  <path className="roadmap-road-center" pathLength="100" d="M50 0 C50 15 90 25 50 50 C10 75 50 85 50 100" />
                 </svg>
                 <span className={`roadmap-node roadmap-node-${state}`} aria-hidden>{state === "done" && <CheckIcon size={12} />}</span>
                 <div className="roadmap-island">
@@ -121,6 +121,6 @@ export default function RoadmapPage() {
         <div className="relative z-10"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/80">{t("roadmap.cta.eyebrow")}</p><h2 className="mt-1 text-3xl font-extrabold">{t("roadmap.cta.title")}</h2><p className="mt-1 text-sm text-white/85">{t("roadmap.cta.subtitle")}</p></div>
         <Link href="/mine" className="relative z-10 mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-7 font-bold text-brand md:mt-0 md:w-auto">{t("roadmap.mine.cta")} <ArrowRightIcon size={18} /></Link>
       </section>
-    </main>
+    </div>
   );
 }

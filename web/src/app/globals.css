@@ -135,12 +135,13 @@ body {
 /* The same alternating journey is used on phones and desktop. Each road
    segment stretches with its content row; shared endpoints stay connected
    when text wraps or the user enlarges their font. */
-.roadmap-live { isolation: isolate; }
+.roadmap-live { isolation: isolate; overflow-wrap: anywhere; }
+.roadmap-hero > div, .roadmap-intro > * { min-width: 0; }
 .roadmap-hero-stage, .roadmap-island { position: relative; }
 .roadmap-hero-art, .roadmap-island img {
   filter: hue-rotate(-35deg) saturate(.58) drop-shadow(0 14px 16px color-mix(in srgb, var(--color-brand) 22%, transparent));
 }
-.roadmap-features { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.roadmap-features { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .roadmap-feature { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; border-radius: 14px; background: color-mix(in srgb, var(--color-brand-tint) 45%, transparent); }
 .roadmap-feature > span:last-child { text-align: center; }
 .roadmap-journey { position: relative; padding-block: 24px; }
@@ -152,10 +153,12 @@ body {
 }
 .roadmap-road { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .roadmap-road path { fill: none; }
-.roadmap-road-edge { stroke: color-mix(in srgb, var(--color-brand) 30%, var(--color-card)); stroke-width: 10; }
-.roadmap-road-surface { stroke: var(--color-brand); stroke-width: 8.8; }
+.roadmap-road-edge, .roadmap-road-surface { vector-effect: non-scaling-stroke; }
+.roadmap-road-edge { stroke: color-mix(in srgb, var(--color-brand) 30%, var(--color-card)); stroke-width: clamp(28px, 8vw, 85px); }
+.roadmap-road-surface { stroke: var(--color-brand); stroke-width: clamp(25px, 7.2vw, 77px); }
 .roadmap-road-center { stroke: #d4fffa; stroke-width: .55; stroke-dasharray: 2.2 2.4; filter: drop-shadow(0 0 1px #b6fff4); }
-/* Identical endpoints and tangents keep adjacent road segments smooth. */
+/* Vertical end tangents and non-scaling strokes keep joins smooth even when
+   adjacent cards wrap to different heights (including enlarged text). */
 .roadmap-island { z-index: 1; width: 118%; justify-self: center; }
 .roadmap-island img { display: block; width: 100%; height: auto; }
 .roadmap-card-position { position: relative; z-index: 2; min-width: 0; }
@@ -170,20 +173,41 @@ body {
   border-radius: 50%; background: var(--color-brand); color: white;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 40%, transparent);
 }
-.roadmap-node-active { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 22%, transparent), 0 0 18px var(--color-brand); }
+/* "You are here" — a soft white ripple ping on the current step's node,
+   never used on done/upcoming/planned so it stays a single, clear signal. */
+.roadmap-node-active {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 22%, transparent), 0 0 18px var(--color-brand);
+  animation: roadmap-node-ping 2.1s cubic-bezier(.2, .7, .3, 1) infinite;
+}
+.roadmap-node-active::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  border: 2px solid #fff; opacity: 0;
+  animation: roadmap-node-ring 2.1s cubic-bezier(.2, .7, .3, 1) infinite;
+}
+@keyframes roadmap-node-ping {
+  0%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 22%, transparent), 0 0 18px var(--color-brand); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 22%, transparent), 0 0 26px 4px #fff; }
+}
+@keyframes roadmap-node-ring {
+  0% { transform: scale(.85); opacity: .9; }
+  80%, 100% { transform: scale(1.9); opacity: 0; }
+}
 .roadmap-node-done { background: var(--color-success); }
-.roadmap-badge-active { color: white; background: var(--color-brand); }
+.roadmap-badge-active { color: var(--color-bg); background: var(--color-brand); }
 .roadmap-badge-done { color: var(--color-success); background: var(--color-success-tint); }
 .roadmap-badge-upcoming { color: var(--color-brand); background: var(--color-brand-tint); }
-.roadmap-badge-planned { color: var(--color-muted); background: var(--color-line); }
+.roadmap-badge-planned, .roadmap-badge-scheduled { color: var(--color-muted); background: var(--color-line); }
 .roadmap-cta::before { content: ""; position: absolute; inset: -80% -10% auto 42%; height: 260px; border-radius: 50%; background: color-mix(in srgb, var(--color-card) 16%, transparent); transform: rotate(-12deg); }
 @media (max-width: 599px) {
   .roadmap-live { padding-inline: 12px; }
   .roadmap-hero { grid-template-columns: 1fr 1fr; gap: 0; min-height: 245px; padding-top: 22px; padding-bottom: 16px; }
-  .roadmap-hero h1 { font-size: clamp(26px, 7.5vw, 38px); }
-  .roadmap-hero p:first-child { font-size: 9px; letter-spacing: .08em; }
+  /* Founder, 2026-09-07: fit the eyebrow and title on one line each at
+     common phone widths — smaller, tighter-tracked, still comfortably
+     inside the text column so nothing overflows toward the art. */
+  .roadmap-hero h1 { font-size: clamp(19px, 6.4vw, 27px); letter-spacing: -.03em; white-space: nowrap; }
+  .roadmap-hero p:first-child { font-size: clamp(7.5px, 2.3vw, 9.5px); letter-spacing: .045em; white-space: nowrap; }
   .roadmap-hero p { font-size: 12px; }
-  .roadmap-hero-stage { width: 135%; margin-left: -20%; }
+  .roadmap-hero-stage { width: 100%; }
   .roadmap-features { gap: 4px; }
   .roadmap-feature { padding: 8px 2px; border-radius: 9px; }
   .roadmap-feature > span:first-child { width: 30px; height: 30px; border-radius: 9px; }
