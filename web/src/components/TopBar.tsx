@@ -17,12 +17,9 @@ import { formatRozi, totalRoziMicro } from "@/lib/format";
 import { LogoMark } from "./Logo";
 import { BellIcon } from "./icons";
 import { useI18n } from "@/lib/i18n";
-import { usePathname } from "next/navigation";
 
 export function TopBar() {
   const { t } = useI18n();
-  const path = usePathname();
-  const isRoadmap = path === "/mine/roadmap";
   // The unread count (brief part 39). A message that lands in the inbox with
   // nothing on screen to say so is a message nobody reads — which is the whole
   // reason people reach for a push notification instead, and push is the thing
@@ -41,24 +38,13 @@ export function TopBar() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-card/95 backdrop-blur">
-      <div className="mx-auto flex w-full items-center justify-between gap-3 px-4 py-2.5 lg:px-8">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
         <Link href="/" className="flex items-center gap-2">
           <LogoMark size={28} />
           <span className="text-base font-bold leading-none text-brand-ink">
             Rozi<span className="text-brand">Pay</span>
           </span>
         </Link>
-
-        {isRoadmap && (
-          <nav aria-label="Roadmap navigation" className="hidden items-center gap-9 text-sm font-medium text-muted md:flex">
-            <Link href="/" className="transition hover:text-brand">{t("nav.home")}</Link>
-            <span className="relative font-semibold text-brand after:absolute after:-bottom-3 after:left-0 after:h-0.5 after:w-full after:rounded-full after:bg-brand">
-              {t("mine.roadmap.title")}
-            </span>
-            <Link href="/wallet" className="transition hover:text-brand">{t("nav.wallet")}</Link>
-            <Link href="/profile" className="transition hover:text-brand">{t("nav.profile")}</Link>
-          </nav>
-        )}
 
         <div className="flex items-center gap-2">
           {/* The bell only appears once there is something unread. An always-on
@@ -77,7 +63,7 @@ export function TopBar() {
           {/* Tapping the balance goes to the wallet — the thing you'd want next. */}
           <Link
             href="/wallet"
-            className={`items-center gap-1.5 rounded-full border border-brand/10 bg-brand-tint px-3 py-1.5 ${isRoadmap ? "hidden sm:flex" : "flex"}`}
+            className="flex items-center gap-1.5 rounded-full border border-brand/10 bg-brand-tint px-3 py-1.5"
             aria-label={t("topbar.balanceLabel")}
           >
             {/* Waits for BOTH calls: showing the mined half first would let the
@@ -95,11 +81,6 @@ export function TopBar() {
                   : "—"}
             </span>
           </Link>
-          {isRoadmap && (
-            <Link href="/mine" className="hidden min-h-10 items-center justify-center rounded-full bg-brand px-7 text-sm font-bold text-white transition hover:brightness-110 md:inline-flex">
-              {t("roadmap.mine.cta")}
-            </Link>
-          )}
         </div>
       </div>
     </header>

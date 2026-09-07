@@ -121,10 +121,10 @@ export default function RoadmapPage() {
   // this app enough to sign up is exactly the person who should be able to read
   // the plan, and there is nothing personal on the page.
   return (
-    <div className="relative overflow-hidden px-4 pb-8 pt-5 md:px-10 md:pb-10 md:pt-12 lg:px-16">
+    <div className="relative px-4 pt-5 pb-8 space-y-6">
       <AmbientBg variant="mine" />
 
-      <header className="md:hidden">
+      <header>
         <Link
           href="/mine"
           className="inline-flex items-center gap-1 text-sm font-semibold text-brand"
@@ -135,27 +135,29 @@ export default function RoadmapPage() {
       </header>
 
       {/* ---- Hero: eyebrow, headline, mountain scene, tagline ---- */}
-      <section className="mt-6 grid items-center gap-4 md:mt-0 md:min-h-[285px] md:grid-cols-[0.82fr_1.18fr] md:gap-7">
-        <div className="relative z-10">
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand md:text-xs">{t("roadmap.hero.eyebrow")}</p>
-          <h1 className="mt-2 text-[34px] font-extrabold leading-[1.02] tracking-[-0.035em] text-brand-ink md:text-[54px]">{t("roadmap.title")}</h1>
-          <p className="mt-2 text-base font-semibold text-brand-ink md:text-xl">{t("roadmap.subtitle")}</p>
-          <p className="mt-2 max-w-md text-sm leading-relaxed text-muted md:text-base">{t("roadmap.hero.description")}</p>
-        </div>
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-brand">
+          {t("roadmap.hero.eyebrow")}
+        </p>
+        <h1 className="mt-1 text-[26px] font-extrabold leading-tight text-brand-ink">
+          {t("roadmap.title")}
+        </h1>
+        <p className="mt-1.5 text-sm font-semibold text-muted">{t("roadmap.subtitle")}</p>
+        <p className="mt-2 text-sm leading-relaxed text-muted">{t("roadmap.hero.description")}</p>
 
-        <div className="relative flex items-stretch gap-2 md:-mb-8">
+        <div className="relative mt-4 flex items-stretch gap-2">
           <div className="relative min-w-0 flex-1">
-            <MountainHero className="h-auto w-full drop-shadow-[0_22px_22px_rgba(13,92,99,0.14)]" />
+            <MountainHero className="w-full h-auto" />
             <span className="absolute bottom-1 left-0 inline-flex -rotate-2 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-brand-ink shadow-sm">
               <GemIcon size={12} className="shrink-0 text-brand" />
               {t("roadmap.hero.badge")}
             </span>
           </div>
-          <div className="flex shrink-0 rotate-[-3deg] flex-col items-end justify-center gap-1 pr-1 md:pr-3">
+          <div className="flex shrink-0 flex-col items-end justify-center gap-1 pr-1 rotate-[-3deg]">
             {tagline.map((word, i) => (
               <span
                 key={word}
-                className="font-serif text-[13px] italic text-brand md:text-lg"
+                className="font-serif text-[13px] italic text-brand"
                 style={{ opacity: 0.55 + i * 0.15 }}
               >
                 {word}
@@ -163,24 +165,21 @@ export default function RoadmapPage() {
             ))}
           </div>
         </div>
-      </section>
+      </div>
 
       {/* ---- What already works ---- */}
-      <section className="relative z-10 mt-7 md:mt-2">
-        <Card className="p-3 shadow-[0_16px_44px_rgba(8,47,54,0.10)] md:rounded-[22px] md:p-4">
-          <div className="mb-3 flex items-center justify-between gap-4 px-1">
-            <SectionTitle>{t("roadmap.live.title")}</SectionTitle>
-            <p className="hidden text-sm text-muted md:block">Here&apos;s what you can do right now.</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
+      <div>
+        <SectionTitle>{t("roadmap.live.title")}</SectionTitle>
+        <Card className="p-2.5">
+          <div className="grid grid-cols-2 gap-2">
             {LIVE.map(({ key, Icon }, i) => (
               <div key={key}
                 // The last tile spans both columns when the count is odd
                 // (cross-check, 2026-09-07) — otherwise a fixed 5-item list in
                 // a 2-column grid leaves the final tile alone next to an empty
                 // half-width gap.
-                className={`relative flex min-h-[106px] flex-col items-center justify-center gap-2 rounded-xl bg-brand-tint/35 p-3 text-center ${
-                  i === LIVE.length - 1 && LIVE.length % 2 === 1 ? "col-span-2 md:col-span-1" : ""
+                className={`relative flex flex-col items-center gap-1.5 rounded-xl border border-line bg-brand-tint/30 p-3 text-center ${
+                  i === LIVE.length - 1 && LIVE.length % 2 === 1 ? "col-span-2" : ""
                 }`}>
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand text-white">
                   <Icon size={17} />
@@ -190,20 +189,20 @@ export default function RoadmapPage() {
             ))}
           </div>
         </Card>
-      </section>
+      </div>
 
       {/* ---- What is next ---- */}
-      <section className="mt-10 md:mt-12">
-        <div className="grid gap-4 md:grid-cols-2 md:items-center">
-          <div>
-            <p className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-brand md:text-xs">{t("roadmap.roadmap.eyebrow")}</p>
-            <h2 className="mt-1 px-1 text-2xl font-extrabold leading-tight tracking-[-0.025em] text-brand-ink md:text-4xl">
-              {t("roadmap.roadmap.heading1")}<br />{t("roadmap.roadmap.heading2")}
-            </h2>
-            <span aria-hidden className="ml-1 mt-3 block h-1 w-12 rounded-full bg-brand" />
-          </div>
-          <p className="px-1 text-sm leading-relaxed text-muted md:text-base">{t("roadmap.roadmap.intro")}</p>
-        </div>
+      <div>
+        <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-brand">
+          {t("roadmap.roadmap.eyebrow")}
+        </p>
+        <h2 className="mt-1 px-1 text-xl font-extrabold leading-tight text-brand-ink">
+          {t("roadmap.roadmap.heading1")}
+          <br />
+          {t("roadmap.roadmap.heading2")}
+        </h2>
+        <span aria-hidden className="ml-1 mt-2 block h-1 w-10 rounded-full bg-brand" />
+        <p className="mt-2 px-1 text-sm text-muted">{t("roadmap.roadmap.intro")}</p>
 
         {/* A single vertical line down the left with a dot per step. The line is
             drawn by the border on each row rather than by an absolutely
@@ -221,14 +220,13 @@ export default function RoadmapPage() {
             (art/when/badge/title/body) gets the card treatment; the line still
             spans the full `<li>` (via `space-y-0` + `pb-5`, exactly as
             before) and reads as one continuous timeline again. */}
-        <ol className="relative mt-5 space-y-0 md:mt-8">
-          <span aria-hidden className="absolute bottom-[9%] left-1/2 top-[9%] hidden w-10 -translate-x-1/2 rounded-full bg-gradient-to-b from-brand-tint via-brand/15 to-brand-tint md:block" />
+        <ol className="mt-4 space-y-0">
           {STEPS.map((step, i) => {
             const state = states[i];
             const StepIcon = STEP_ICON[step.key];
             return (
-              <li key={step.key} className="flex gap-3 md:relative md:min-h-[300px] md:items-center md:gap-0">
-                <div className="flex flex-col items-center md:absolute md:left-1/2 md:top-1/2 md:z-20 md:-translate-x-1/2 md:-translate-y-1/2">
+              <li key={step.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
                   {/* Margins are the ORIGINAL 0.5/1/1.5 offsets PLUS the
                       content Card's own p-3 (12px) padding (cross-check,
                       2026-09-07): moving the dot/line column outside the Card
@@ -238,12 +236,12 @@ export default function RoadmapPage() {
                   {state === "done" ? (
                     <span
                       aria-hidden
-                      className="mt-[14px] grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white md:mt-0 md:ring-8 md:ring-bg"
+                      className="mt-[14px] grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
                     >
                       <CheckIcon size={14} />
                     </span>
                   ) : state === "active" ? (
-                    <span className="mining-chamber mt-[16px] h-6 w-6 shrink-0 text-brand md:mt-0 md:ring-8 md:ring-bg">
+                    <span className="mining-chamber mt-[16px] h-6 w-6 shrink-0 text-brand">
                       <span className="mining-ring" aria-hidden="true" />
                       <span
                         aria-hidden
@@ -253,21 +251,18 @@ export default function RoadmapPage() {
                   ) : (
                     <span
                       aria-hidden
-                      className={`mt-[18px] grid h-3 w-3 shrink-0 place-items-center rounded-full md:mt-0 md:h-5 md:w-5 md:ring-8 md:ring-bg ${
+                      className={`mt-[18px] grid h-3 w-3 shrink-0 place-items-center rounded-full ${
                         state === "upcoming"
                           ? "bg-card ring-2 ring-brand"
                           : "bg-card ring-2 ring-line"
                       }`}
                     />
                   )}
-                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line md:hidden" />}
+                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
                 </div>
-                <div className="min-w-0 flex-1 pb-5 md:grid md:grid-cols-2 md:items-center md:gap-20 md:pb-0">
-                  <div className={`md:row-start-1 ${i % 2 === 0 ? "md:col-start-1" : "md:col-start-2"}`}>
-                    <MilestoneArt kind={step.key} className="hidden h-auto w-full scale-110 drop-shadow-[0_22px_18px_rgba(13,92,99,0.16)] md:block" />
-                  </div>
-                  <Card className={`overflow-hidden shadow-[0_14px_36px_rgba(8,47,54,0.09)] md:row-start-1 ${i % 2 === 0 ? "md:col-start-2" : "md:col-start-1"} ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
-                    <div className="bg-brand-tint/25 md:hidden">
+                <div className="min-w-0 flex-1 pb-5">
+                  <Card className={`overflow-hidden ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
+                    <div className="bg-brand-tint/25">
                       <MilestoneArt kind={step.key} className="h-auto w-full" />
                     </div>
                     <div className="p-3">
@@ -301,21 +296,21 @@ export default function RoadmapPage() {
             );
           })}
         </ol>
-      </section>
+      </div>
 
       {/* ---- Plans, not promises ---- */}
-      <Card className="mx-auto mt-2 max-w-3xl p-4 md:flex md:items-center md:gap-3 md:px-6">
+      <Card className="p-4">
         <p className="flex items-center gap-2 font-bold text-brand-ink">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-tint text-brand">
             <InfoIcon size={16} />
           </span>
           {t("roadmap.note.title")}
         </p>
-        <p className="mt-1.5 text-sm text-muted md:mt-0">{t("roadmap.note.body")}</p>
+        <p className="mt-1.5 text-sm text-muted">{t("roadmap.note.body")}</p>
       </Card>
 
       {/* ---- Closing banner ---- */}
-      <div className="relative mt-5 overflow-hidden rounded-2xl bg-brand p-5 text-white md:mt-6 md:flex md:items-center md:justify-between md:rounded-[22px] md:px-10 md:py-8">
+      <div className="relative overflow-hidden rounded-2xl bg-brand p-5 text-white">
         <div
           aria-hidden
           className="pointer-events-none absolute -right-10 -top-14 h-40 w-40 rounded-full opacity-70"
@@ -335,7 +330,7 @@ export default function RoadmapPage() {
         </div>
           <Link
             href="/mine"
-            className="relative mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-white px-7 text-base font-semibold text-brand transition hover:brightness-95 md:mt-0 md:w-auto md:min-w-[240px]"
+            className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-white px-5 text-base font-semibold text-brand transition hover:brightness-95"
           >
             <MineIcon size={20} />
             {t("roadmap.mine.cta")}

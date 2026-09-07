@@ -126,17 +126,6 @@ body {
   color: var(--color-ink);
 }
 
-/* The roadmap is the one public, editorial page in the earner app. It keeps
-   the phone frame on small screens, but uses the reference's full story-canvas
-   on larger displays. All other earning flows remain intentionally phone-sized. */
-@media (min-width: 768px) {
-  .app-frame.app-frame-roadmap {
-    max-width: 1120px;
-    box-shadow: 0 0 70px rgba(8, 47, 54, 0.09);
-  }
-  .app-frame-roadmap > header > div { max-width: 1000px; }
-}
-
 /* Restrained "earned" pop — used on confirmation screens only */
 @keyframes pop-in {
   0% { transform: scale(0.8); opacity: 0; }
