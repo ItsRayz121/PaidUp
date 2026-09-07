@@ -133,8 +133,15 @@ export default function RoadmapPage() {
         <SectionTitle>{t("roadmap.live.title")}</SectionTitle>
         <Card className="p-2.5">
           <div className="grid grid-cols-2 gap-2">
-            {LIVE.map(({ key, Icon }) => (
-              <div key={key} className="relative flex items-start gap-2 rounded-xl border border-line bg-brand-tint/30 p-2.5">
+            {LIVE.map(({ key, Icon }, i) => (
+              <div key={key}
+                // The last tile spans both columns when the count is odd
+                // (cross-check, 2026-09-07) — otherwise a fixed 5-item list in
+                // a 2-column grid leaves the final tile alone next to an empty
+                // half-width gap.
+                className={`relative flex items-start gap-2 rounded-xl border border-line bg-brand-tint/30 p-2.5 ${
+                  i === LIVE.length - 1 && LIVE.length % 2 === 1 ? "col-span-2" : ""
+                }`}>
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand text-white">
                   <Icon size={16} />
                 </span>
@@ -157,47 +164,52 @@ export default function RoadmapPage() {
             at a different font size. Dot style + badge now carry the step's
             state (done/active/upcoming/planned) — every row used to look
             identical, which is exactly why a page whose whole point is "when"
-            gave no visual answer to "which one is now". Each step now sits in
-            its own Card (was a bare list row) with a small icon next to its
-            title — display only, same as the LIVE tiles above; it never
-            touches stepStates()/STEPS, the thing this file's header warns not
-            to casually edit. */}
-        <ol className="space-y-3">
+            gave no visual answer to "which one is now".
+            ⚠️ THE DOT/LINE COLUMN STAYS OUTSIDE THE CARD, ON PURPOSE
+            (cross-check, 2026-09-07). An earlier pass wrapped the WHOLE row
+            (dot column included) in a bordered Card per step — which cut the
+            connecting line off at each card's own edge, since a flex-stretch
+            line can only run the height of ITS OWN box, and that box was now
+            bounded by the card instead of the full `<li>`. Only the content
+            (when/badge/title/body) gets the card treatment; the line still
+            spans the full `<li>` (via `space-y-0` + `pb-5`, exactly as
+            before) and reads as one continuous timeline again. */}
+        <ol className="space-y-0">
           {STEPS.map((step, i) => {
             const state = states[i];
             const StepIcon = STEP_ICON[step.key];
             return (
-              <li key={step.key}>
-                <Card className={`flex gap-3 p-3.5 ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
-                  <div className="flex flex-col items-center">
-                    {state === "done" ? (
+              <li key={step.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  {state === "done" ? (
+                    <span
+                      aria-hidden
+                      className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
+                    >
+                      <CheckIcon size={14} />
+                    </span>
+                  ) : state === "active" ? (
+                    <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
+                      <span className="mining-ring" aria-hidden="true" />
                       <span
                         aria-hidden
-                        className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
-                      >
-                        <CheckIcon size={14} />
-                      </span>
-                    ) : state === "active" ? (
-                      <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
-                        <span className="mining-ring" aria-hidden="true" />
-                        <span
-                          aria-hidden
-                          className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
-                        />
-                      </span>
-                    ) : (
-                      <span
-                        aria-hidden
-                        className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
-                          state === "upcoming"
-                            ? "bg-card ring-2 ring-brand"
-                            : "bg-card ring-2 ring-line"
-                        }`}
+                        className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
                       />
-                    )}
-                    {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
+                    </span>
+                  ) : (
+                    <span
+                      aria-hidden
+                      className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
+                        state === "upcoming"
+                          ? "bg-card ring-2 ring-brand"
+                          : "bg-card ring-2 ring-line"
+                      }`}
+                    />
+                  )}
+                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
+                </div>
+                <div className="min-w-0 flex-1 pb-5">
+                  <Card className={`p-3 ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <p className="text-xs font-bold uppercase tracking-wide text-brand">
                         {t(`roadmap.step.${step.key}.when`)}
@@ -221,8 +233,8 @@ export default function RoadmapPage() {
                       {t(`roadmap.step.${step.key}.title`)}
                     </p>
                     <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
-                  </div>
-                </Card>
+                  </Card>
+                </div>
               </li>
             );
           })}
@@ -247,9 +259,9 @@ export default function RoadmapPage() {
         <p className="mt-1 text-sm text-white/90">{t("roadmap.cta.subtitle")}</p>
         <Link
           href="/mine"
-          className="mt-3 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-brand"
+          className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-white px-5 text-base font-semibold text-brand transition hover:brightness-95"
         >
-          <MineIcon size={18} />
+          <MineIcon size={20} />
           {t("roadmap.mine.cta")}
         </Link>
       </div>

@@ -3,8 +3,40 @@
 // Shared display primitives for the staff console (admin rebuild, Phase A).
 // One status vocabulary, one time format, one money format, one id chip — used
 // on every list and every detail page so nothing formatted two ways.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { formatPoints, formatUsdtMicro, formatRozi } from "@/lib/format";
+
+// ---- click-outside-to-close ------------------------------------------------
+// One popover/dropdown-close mechanism for the panel's small floating menus
+// (a filter's own popover, a row's actions menu). Only listens while `active`
+// is true — a table of many rows must never keep one idle document listener
+// per row for a menu that is closed (cross-check, 2026-09-07).
+//
+// `refs` are checked with plain DOM `.contains()`, so a ref pointing at
+// content rendered through a portal (e.g. a table row's dropdown, escaped to
+// document.body to dodge a sticky/overflow ancestor) still counts as "inside"
+// as long as its own ref is included — pass every root the click may land in.
+export function useClickOutside(
+  refs: RefObject<HTMLElement | null>[],
+  onOutside: () => void,
+  active = true,
+) {
+  useEffect(() => {
+    if (!active) return;
+    function onClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (refs.some((r) => r.current?.contains(target))) return;
+      onOutside();
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+    // `refs` are ref containers (checked live via `.current` at click time,
+    // never stale) and `onOutside` here is always a simple state setter that
+    // is safe to call from any render's closure — re-subscribing on every
+    // render for these would cost more than it buys.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+}
 
 // ---- status badges --------------------------------------------------------
 // Every state string the panel shows, mapped to one of four tones. A value not

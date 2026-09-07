@@ -4,6 +4,7 @@
 // no way to find a user, pay one, suspend one, or appoint staff. These add them.
 // Internal tool — density over friendliness, jargon allowed (DESIGN_BRIEF).
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, bulkSetUserStatus, setUserReview, adjustUserPoints,
@@ -17,7 +18,7 @@ import { useTableQuery } from "@/lib/staffTable";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
 import { DataTable, type Column } from "@/components/staff/DataTable";
 import { MultiSelectFilter } from "@/components/staff/MultiSelectFilter";
-import { StatusBadge, TimeCell, RoziMicro } from "@/components/staff/primitives";
+import { StatusBadge, TimeCell, RoziMicro, useClickOutside } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
 import { usePrompt } from "@/components/staff/prompt";
 
@@ -63,7 +64,7 @@ export function UsersPanel() {
   }
 
   async function exportAll() {
-    try { await downloadExport("users", q.search); toast.ok("Export started."); }
+    try { await downloadExport("users", q.search, q.filters); toast.ok("Export started."); }
     catch (e) { toast.err((e as Error).message); }
   }
 
@@ -177,7 +178,7 @@ export function UsersPanel() {
           <div className="flex items-center gap-1.5">
             <TelegramNamesButton onDone={users.reload} />
             <button onClick={exportAll} className="rounded-md bg-brand-tint px-2.5 py-1.5 text-xs font-semibold text-brand">
-              Export {q.search ? "matching" : "all"} (CSV)
+              Export {q.search || Object.values(q.filters).some(Boolean) ? "matching" : "all"} (CSV)
             </button>
           </div>
         }
@@ -232,23 +233,51 @@ function TelegramNamesButton({ onDone }: { onDone: () => void }) {
 // collapsed into one dropdown (founder, 2026-09-07). The full set (with a
 // proper typed confirmation) moves to the User detail Danger zone in Phase B;
 // kept here so nothing regresses in the meantime.
+//
+// ⚠️ THE PANEL IS PORTALED TO document.body, POSITIONED via getBoundingClientRect
+// (cross-check, 2026-09-07). This column is `sticky` (DataTable.tsx), and the
+// table's own wrapper is `overflow-x-auto` — per the CSS overflow spec that
+// forces `overflow-y: auto` too, so an ordinary absolutely-positioned panel
+// nested inside gets clipped by the wrapper, and (separately) a later row's
+// own opaque `sticky` cell paints OVER an earlier row's open menu, since each
+// row's sticky cell is its own stacking context ordered by DOM position, not
+// by this panel's z-index. Rendering outside the table entirely, at a fixed
+// viewport position, sidesteps both. Closes on scroll (its position is
+// computed once, at open) rather than trying to track the anchor live.
 function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const prompt = usePrompt();
   const { openUser } = useStaffNav();
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const suspended = u.status !== "active";
 
-  // Click-outside closes the menu, same pattern as StaffSearch's own popover.
+  // Both roots count as "inside" — the trigger button (still in the row) and
+  // the portal panel (rendered at document.body, no longer a DOM descendant
+  // of the row at all).
+  useClickOutside([btnRef, panelRef], () => setOpen(false), open);
+
+  // The panel's position is computed once, at open — closing on scroll (the
+  // table itself can scroll horizontally, and the page can scroll) is
+  // simpler and safer than trying to keep a fixed-position panel glued to a
+  // moving anchor.
   useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    if (!open) return;
+    function onScroll() { setOpen(false); }
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [open]);
+
+  function toggleMenu() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 176) }); // 176px = w-44
     }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+    setOpen((o) => !o);
+  }
 
   async function run(fn: () => Promise<unknown>, okMsg: string) {
     setBusy(true);
@@ -296,32 +325,38 @@ function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void })
   }
 
   return (
-    <div ref={wrapRef} className="relative inline-block text-left">
-      <button disabled={busy} onClick={() => setOpen((o) => !o)}
-        className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand disabled:opacity-50">
+    <>
+      {/* Never disabled on `busy` — "Open" is pure navigation and must stay
+          reachable even while an unrelated Adjust/Suspend/Review on this same
+          row is in flight (cross-check, 2026-09-07: it used to be gated
+          alongside the money-affecting actions). */}
+      <button ref={btnRef} onClick={toggleMenu}
+        className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">
         Actions <span aria-hidden className="text-brand/70">▾</span>
       </button>
-      {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-line bg-card py-1 shadow-lg">
+      {open && pos && createPortal(
+        <div ref={panelRef} style={{ position: "fixed", top: pos.top, left: pos.left }}
+          className="z-50 w-44 rounded-lg border border-line bg-card py-1 shadow-lg">
           <button onClick={() => pick(() => openUser(u.id))}
             className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
             Open
           </button>
-          <button onClick={() => pick(adjust)}
-            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
+          <button disabled={busy} onClick={() => pick(adjust)}
+            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40 disabled:opacity-50">
             Adjust points
           </button>
-          <button onClick={() => pick(toggleStatus)}
-            className={`block w-full px-3 py-1.5 text-left text-xs font-semibold hover:bg-brand-tint/40 ${suspended ? "text-success" : "text-danger"}`}>
+          <button disabled={busy} onClick={() => pick(toggleStatus)}
+            className={`block w-full px-3 py-1.5 text-left text-xs font-semibold hover:bg-brand-tint/40 disabled:opacity-50 ${suspended ? "text-success" : "text-danger"}`}>
             {suspended ? "Restore" : "Suspend"}
           </button>
-          <button onClick={() => pick(toggleReview)}
-            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
+          <button disabled={busy} onClick={() => pick(toggleReview)}
+            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40 disabled:opacity-50">
             {u.underReview ? "Clear review" : "Mark for review"}
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

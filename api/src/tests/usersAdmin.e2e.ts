@@ -135,6 +135,31 @@ console.log("\n-- CSV export gains a 'users' export type --");
 }
 
 // ---------------------------------------------------------------------------
+// Cross-check, 2026-09-07: the export used to apply ONLY the search box —
+// every column filter (status/kyc/country/flagged/held/review) was silently
+// ignored, even though the panel's own button read "Export matching".
+console.log("\n-- CSV export honours the SAME filters as the list, not just the search box --");
+{
+  const admin = await mkStaff("export-filter-admin", "admin");
+  const active = await mkUser("export-filter-active"); // mkUser seeds 'Pakistan'
+  const banned = await mkUser("export-filter-banned");
+  await sql.run("UPDATE users SET status = 'suspended' WHERE id = ?", banned);
+  const india = await mkUser("export-filter-india");
+  await sql.run("UPDATE users SET country = 'India' WHERE id = ?", india);
+
+  const byStatus = await app.inject({ method: "GET", url: "/staff/export/users?status=suspended", headers: authOf(admin) });
+  check("export?status=suspended includes the suspended row", byStatus.body.includes(`export-filter-banned`));
+  check("export?status=suspended excludes an active row", !byStatus.body.includes(`export-filter-active@`));
+
+  const byCountry = await app.inject({ method: "GET", url: "/staff/export/users?country=India", headers: authOf(admin) });
+  check("export?country=India includes the India row", byCountry.body.includes("export-filter-india"));
+  check("export?country=India excludes a Pakistan row", !byCountry.body.includes("export-filter-active@"));
+
+  const combined = await app.inject({ method: "GET", url: `/staff/export/users?q=${TAG}`, headers: authOf(admin) });
+  check("the plain search-box export still works unchanged", combined.body.includes("export-filter-active"));
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- the 'under review' state is distinct from active/suspended --");
 {
   const admin = await mkStaff("admin4", "admin");

@@ -1202,11 +1202,25 @@ export const fetchAuditActions = () =>
 
 // CSV export can't be a plain <a href>: the API authenticates with a Bearer
 // header, which a browser navigation won't send. Fetch it as a blob instead.
-// `q` (users only) carries the same search filter the panel is showing, so
-// "Export" pulls the whole matching set, not just the short page on screen.
-export async function downloadExport(what: "ledger" | "withdrawals" | "audit" | "users", q = ""): Promise<void> {
+// `q` + `filters` (users only) carry the SAME search box + column filters
+// (status/kyc/country/flagged/held/review) the panel is showing, so "Export"
+// pulls the whole matching set, not just the short page on screen — and not
+// just the search box, which is all this used to forward (cross-check,
+// 2026-09-07: the button already read "Export matching" when a filter was
+// active, but the export ignored every filter except the search text).
+export async function downloadExport(
+  what: "ledger" | "withdrawals" | "audit" | "users",
+  q = "",
+  filters: Record<string, string> = {},
+): Promise<void> {
   const token = getToken();
-  const qs = what === "users" && q ? `?q=${encodeURIComponent(q)}` : "";
+  let qs = "";
+  if (what === "users") {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+    qs = params.toString() ? `?${params.toString()}` : "";
+  }
   const res = await fetch(`${API_BASE}/staff/export/${what}${qs}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });

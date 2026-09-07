@@ -144,6 +144,44 @@ export async function labelTreasuryHashes(hashes: string[]): Promise<Map<string,
   return out;
 }
 
+// Shared WHERE-builder for the Users list AND its CSV export (cross-check,
+// 2026-09-07). Before this, `GET /staff/export/:what=users` only ever applied
+// the free-text search box — never status/kyc/country/flagged/held/review —
+// even though its own comment claimed parity with GET /staff/users and its
+// button reads "Export matching". One function, two callers, so the two
+// screens can never drift apart the way they already had.
+//
+// `sort`/`dir` are NOT part of this — CSV export has no meaningful "sort", and
+// keeping that whitelist inline at GET /staff/users (the only caller that
+// needs it) avoids handing this shared function a column-name allowlist it
+// would otherwise have to re-export just for one route to reuse.
+function buildUsersWhere(query: Record<string, string | string[] | undefined>): { whereSql: string; params: unknown[] } {
+  const qRaw = Array.isArray(query.q) ? query.q[0] : query.q;
+  const q = (qRaw ?? "").trim().toLowerCase();
+  const where: string[] = [];
+  const wp: unknown[] = [];
+  if (q) { where.push("(LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)"); wp.push(`%${q}%`, q); }
+  if (query.status === "active" || query.status === "suspended") { where.push("u.status = ?"); wp.push(query.status); }
+  if (["none", "pending", "approved", "rejected"].includes((Array.isArray(query.kyc) ? query.kyc[0] : query.kyc) ?? "")) {
+    where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(Array.isArray(query.kyc) ? query.kyc[0] : query.kyc);
+  }
+  // Comma-separated list (founder, 2026-09-07: "he should be able to select
+  // two or more countries") — the picker joins its selection with commas, and
+  // a single-country value is just a one-element list here. `Array.isArray`
+  // guards against a hand-built link repeating the same query key
+  // (`?country=A&country=B`), which Fastify hands back as a string[] instead
+  // of one comma-joined string, and which would otherwise throw on `.split`.
+  const countryRaw = Array.isArray(query.country) ? query.country.join(",") : query.country;
+  if (countryRaw) {
+    const countries = countryRaw.split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
+    if (countries.length > 0) { where.push("LOWER(u.country) = ANY(?)"); wp.push(countries); }
+  }
+  if (query.flagged === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
+  if (query.held === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
+  if (query.review === "1") where.push("u.under_review_reason IS NOT NULL");
+  return { whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "", params: wp };
+}
+
 export async function staffRoutes(app: FastifyInstance) {
   // Withdrawal queue. Agents only see requests within their approval limit.
   //
@@ -1979,29 +2017,15 @@ export async function staffRoutes(app: FastifyInstance) {
   // WHERE clause is assembled from a fixed set of conditions with bound
   // params; `sort` / `dir` map through a whitelist to a column literal — never
   // interpolated from the request. Same list is used for the row page and the
-  // COUNT, so `total` always matches the filter.
+  // COUNT, so `total` always matches the filter. The WHERE-builder itself now
+  // lives in `buildUsersWhere()` below, shared with the CSV export (cross-
+  // check, 2026-09-07 — the export used to apply ONLY the search box, never
+  // any of these filters, even though its own button reads "Export matching").
   app.get("/staff/users", staffGuard("users.list", async (_ctx, req) => {
     const query = req.query as Record<string, string | undefined>;
-    const q = (query.q ?? "").trim().toLowerCase();
     const limit = Math.min(Number(query.limit ?? 10) || 10, 200);
     const offset = Math.max(Number(query.offset ?? 0) || 0, 0);
-
-    const where: string[] = [];
-    const wp: unknown[] = [];
-    if (q) { where.push("(LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)"); wp.push(`%${q}%`, q); }
-    if (query.status === "active" || query.status === "suspended") { where.push("u.status = ?"); wp.push(query.status); }
-    if (["none", "pending", "approved", "rejected"].includes(query.kyc ?? "")) { where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(query.kyc); }
-    // Comma-separated list (founder, 2026-09-07: "he should be able to select
-    // two or more countries") — the picker joins its selection with commas,
-    // and a single-country value is just a one-element list here.
-    if (query.country) {
-      const countries = query.country.split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
-      if (countries.length > 0) { where.push("LOWER(u.country) = ANY(?)"); wp.push(countries); }
-    }
-    if (query.flagged === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
-    if (query.held === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
-    if (query.review === "1") where.push("u.under_review_reason IS NOT NULL");
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const { whereSql, params: wp } = buildUsersWhere(query);
 
     const SORTS: Record<string, string> = {
       created_at: "u.created_at", email: "u.email", status: "u.status", balance: "balance",
@@ -2897,12 +2921,14 @@ export async function staffRoutes(app: FastifyInstance) {
          ORDER BY a.created_at DESC LIMIT 10000`,
       );
     } else if (what === "users") {
-      // Same search filter as GET /staff/users (email or exact id), so
-      // "Export" on the Users panel exports the WHOLE matching set, not just
-      // the short page currently on screen. Balance/open-flags/held computed
-      // the same way that list endpoint does, for the same reason: a number
-      // here that disagrees with the one on screen is worse than no number.
-      const q = ((req.query as { q?: string }).q ?? "").trim().toLowerCase();
+      // The SAME filters as GET /staff/users — status/kyc/country/flagged/
+      // held/review, not just the search box (cross-check, 2026-09-07: this
+      // branch used to apply ONLY `q`, silently ignoring every other filter,
+      // even though "Export {matching/all}" on the panel's own button implies
+      // the whole FILTERED set). Balance/open-flags/held computed the same
+      // way that list endpoint does, for the same reason: a number here that
+      // disagrees with the one on screen is worse than no number.
+      const { whereSql, params: wp } = buildUsersWhere(req.query as Record<string, string | string[] | undefined>);
       rows = await sql.all(
         `SELECT u.created_at, u.email, u.id, u.country, u.status,
                 COALESCE((SELECT SUM(amount) FROM ledger_entries l WHERE l.user_id = u.id), 0)::int AS balance,
@@ -2914,9 +2940,9 @@ export async function staffRoutes(app: FastifyInstance) {
                 (u.withdrawal_hold_reason IS NOT NULL
                   AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?)) AS payouts_held
          FROM users u
-         WHERE (? = '' OR LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)
+         ${whereSql}
          ORDER BY u.created_at DESC LIMIT 10000`,
-        now(), q, `%${q}%`, q,
+        now(), ...wp,
       );
     } else {
       return reply.code(404).send({ error: "Unknown export." });

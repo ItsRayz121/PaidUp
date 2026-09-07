@@ -8,7 +8,16 @@
 // FilterDef ("filterKey -> value") — a single selection is just a
 // one-element list, so nothing about GET /staff/users' existing single-value
 // contract had to change beyond splitting on a comma server-side.
-import { useEffect, useMemo, useRef, useState } from "react";
+//
+// ⚠️ A selectable option must never itself contain a comma — this component
+// only ever lets a user pick from `options` (never free-typed, unlike the
+// task-targeting CountryPicker), so as long as every option is comma-free the
+// join/split round-trip can never corrupt a selection. Filtered defensively
+// below rather than merely documented, since `options` today is
+// COUNTRY_OPTIONS (a hardcoded, comma-free list) but nothing stops a future
+// caller passing something else.
+import { useMemo, useRef, useState } from "react";
+import { useClickOutside } from "./primitives";
 
 export function MultiSelectFilter({
   label, options, value, onChange,
@@ -20,29 +29,23 @@ export function MultiSelectFilter({
   onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
   const selected = useMemo(() => (value ? value.split(",").filter(Boolean) : []), [value]);
+  const safeOptions = useMemo(() => options.filter((o) => !o.includes(",")), [options]);
 
-  // Click-outside closes the panel — same pattern as StaffSearch's own popover.
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+  useClickOutside([wrapRef], () => setOpen(false), open);
 
   const matches = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return needle ? options.filter((o) => o.toLowerCase().includes(needle)) : options;
-  }, [q, options]);
+    const needle = query.trim().toLowerCase();
+    return needle ? safeOptions.filter((o) => o.toLowerCase().includes(needle)) : safeOptions;
+  }, [query, safeOptions]);
 
   function toggle(o: string) {
     const next = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o];
     onChange(next.join(","));
   }
-  function clear() { onChange(""); setQ(""); }
+  function clear() { onChange(""); setQuery(""); }
 
   const buttonLabel = selected.length === 0
     ? `${label}: any`
@@ -61,7 +64,7 @@ export function MultiSelectFilter({
       {open && (
         <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-line bg-card p-2 shadow-lg">
           <input
-            value={q} onChange={(e) => setQ(e.target.value)}
+            value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder={`Search ${label.toLowerCase()}…`}
             autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false}
             className="w-full rounded-md border border-line bg-card px-2 py-1 text-xs outline-none focus:border-brand"
