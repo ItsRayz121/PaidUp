@@ -1991,7 +1991,13 @@ export async function staffRoutes(app: FastifyInstance) {
     if (q) { where.push("(LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)"); wp.push(`%${q}%`, q); }
     if (query.status === "active" || query.status === "suspended") { where.push("u.status = ?"); wp.push(query.status); }
     if (["none", "pending", "approved", "rejected"].includes(query.kyc ?? "")) { where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(query.kyc); }
-    if (query.country) { where.push("LOWER(u.country) = ?"); wp.push(query.country.toLowerCase()); }
+    // Comma-separated list (founder, 2026-09-07: "he should be able to select
+    // two or more countries") — the picker joins its selection with commas,
+    // and a single-country value is just a one-element list here.
+    if (query.country) {
+      const countries = query.country.split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
+      if (countries.length > 0) { where.push("LOWER(u.country) = ANY(?)"); wp.push(countries); }
+    }
     if (query.flagged === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
     if (query.held === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
     if (query.review === "1") where.push("u.under_review_reason IS NOT NULL");

@@ -33,7 +33,16 @@ export type Column<Row> = {
 
 export type FilterDef =
   | { key: string; label: string; type: "select"; options: { value: string; label: string }[] }
-  | { key: string; label: string; type: "text"; placeholder?: string };
+  | { key: string; label: string; type: "text"; placeholder?: string }
+  /**
+   * An arbitrary filter control (e.g. a searchable multi-select) that still
+   * lives in the same filter-bar row and still counts toward
+   * `activeFilterCount` / "Clear filters" — it just reads and writes
+   * `q.filters[key]` itself instead of DataTable rendering a plain
+   * `<select>`. Put it first in the `filters` array to make it the leftmost
+   * control (founder, 2026-09-07: "shift country ... at the first row").
+   */
+  | { key: string; label: string; type: "custom"; render: () => ReactNode };
 
 export type BulkAction = {
   label: string;
@@ -149,15 +158,17 @@ export function DataTable<Row>(p: Props<Row>) {
             f.type === "select" ? (
               <select key={f.key} value={q.filters[f.key] ?? ""}
                 onChange={(e) => q.setFilter(f.key, e.target.value)}
-                className="rounded-md border border-line bg-card p-1.5 text-xs outline-none">
+                className="rounded-md border border-line bg-card p-1 text-[11px] outline-none">
                 <option value="">{f.label}: any</option>
                 {f.options.map((o) => <option key={o.value} value={o.value}>{f.label}: {o.label}</option>)}
               </select>
-            ) : (
+            ) : f.type === "text" ? (
               <input key={f.key} value={q.filters[f.key] ?? ""}
                 onChange={(e) => q.setFilter(f.key, e.target.value)}
                 placeholder={f.placeholder ?? f.label}
-                className="w-36 rounded-md border border-line bg-card p-1.5 text-xs outline-none focus:border-brand" />
+                className="w-28 rounded-md border border-line bg-card p-1 text-[11px] outline-none focus:border-brand" />
+            ) : (
+              <div key={f.key}>{f.render()}</div>
             ),
           )}
           {activeFilterCount > 0 && (

@@ -1219,6 +1219,12 @@ const copy: Record<string, string> = {
   "roadmap.note.body":
     "We will build in this order. Dates can move, and we will say so here if they do. We never promise a price for ROZI.",
   "roadmap.mine.cta": "Mine ROZI now",
+  // The closing banner (founder, 2026-09-07: "more engaging and good
+  // looking" — a founder-shared template ends the same way, with an
+  // encouraging line, never a price or a promise). Plain encouragement only.
+  "roadmap.cta.eyebrow": "Be part of what's next",
+  "roadmap.cta.title": "Join us on the journey",
+  "roadmap.cta.subtitle": "Mine every day and be early — the people who start now are the people this is built for.",
 
   // COMBINED — see the label block at home.rozi.label. This card shows mined +
   // earned, so it must carry the combined label. It said "Your mined ROZI" over

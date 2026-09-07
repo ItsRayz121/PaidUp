@@ -27,11 +27,13 @@
 // pass — the code works but the treasury is not funded, so no user can act on
 // it. See the roadmap.live.* comment in lib/i18n.tsx.
 import Link from "next/link";
-import { Card, Button, SectionTitle } from "@/components/ui";
+import { Card, SectionTitle } from "@/components/ui";
 import {
-  ArrowRightIcon, CheckIcon, InfoIcon, MineIcon,
+  ArrowRightIcon, CheckIcon, InfoIcon, MineIcon, TasksIcon, ChipIcon,
+  SendIcon, ReferIcon, RocketIcon, ShieldIcon, ChartIcon, GemIcon,
 } from "@/components/icons";
 import { useI18n } from "@/lib/i18n";
+import { AmbientBg } from "@/components/AmbientBg";
 
 // The steps, in order, each with the date range its `roadmap.step.*.when`
 // string in the copy deck describes IN WORDS ("August — September 2026").
@@ -73,13 +75,25 @@ function stepStates(now: Date): StepState[] {
   return states;
 }
 
+// Purely decorative pairing (a "Working today" tile with no icon at all read
+// as flat next to the founder's own reference template) — the copy and the
+// order are unchanged, this only adds a picture next to each line.
 const LIVE = [
-  "roadmap.live.mining",
-  "roadmap.live.tasks",
-  "roadmap.live.rigs",
-  "roadmap.live.send",
-  "roadmap.live.invite",
+  { key: "roadmap.live.mining", Icon: MineIcon },
+  { key: "roadmap.live.tasks", Icon: TasksIcon },
+  { key: "roadmap.live.rigs", Icon: ChipIcon },
+  { key: "roadmap.live.send", Icon: SendIcon },
+  { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
+
+// Same reasoning, one icon per timeline milestone. Never affects
+// `stepStates()` or the STEPS dates above — display only.
+const STEP_ICON: Record<(typeof STEPS)[number]["key"], typeof MineIcon> = {
+  launch: RocketIcon,
+  kyc: ShieldIcon,
+  dex: ChartIcon,
+  cex: GemIcon,
+};
 
 export default function RoadmapPage() {
   const { t } = useI18n();
@@ -92,7 +106,9 @@ export default function RoadmapPage() {
   // this app enough to sign up is exactly the person who should be able to read
   // the plan, and there is nothing personal on the page.
   return (
-    <div className="px-4 pt-5 pb-8 space-y-5">
+    <div className="relative px-4 pt-5 pb-8 space-y-5">
+      <AmbientBg variant="mine" />
+
       <header>
         <Link
           href="/mine"
@@ -101,22 +117,34 @@ export default function RoadmapPage() {
           <ArrowRightIcon size={16} className="rotate-180" />
           {t("nav.mine")}
         </Link>
-        <h1 className="mt-2 text-xl font-bold text-brand-ink">{t("roadmap.title")}</h1>
-        <p className="text-sm text-muted">{t("roadmap.subtitle")}</p>
+        <div className="mt-3 flex items-center gap-3">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-brand text-white">
+            <RocketIcon size={24} />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-brand-ink">{t("roadmap.title")}</h1>
+            <p className="text-sm text-muted">{t("roadmap.subtitle")}</p>
+          </div>
+        </div>
       </header>
 
       {/* ---- What already works ---- */}
       <div>
         <SectionTitle>{t("roadmap.live.title")}</SectionTitle>
-        <Card className="divide-y divide-line">
-          {LIVE.map((key) => (
-            <p key={key} className="flex items-center gap-2.5 px-4 py-3 text-sm text-brand-ink">
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white">
-                <CheckIcon size={14} />
-              </span>
-              {t(key)}
-            </p>
-          ))}
+        <Card className="p-2.5">
+          <div className="grid grid-cols-2 gap-2">
+            {LIVE.map(({ key, Icon }) => (
+              <div key={key} className="relative flex items-start gap-2 rounded-xl border border-line bg-brand-tint/30 p-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand text-white">
+                  <Icon size={16} />
+                </span>
+                <p className="text-xs font-semibold leading-snug text-brand-ink">{t(key)}</p>
+                <span aria-hidden className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-success text-white">
+                  <CheckIcon size={10} />
+                </span>
+              </div>
+            ))}
+          </div>
         </Card>
       </div>
 
@@ -129,64 +157,72 @@ export default function RoadmapPage() {
             at a different font size. Dot style + badge now carry the step's
             state (done/active/upcoming/planned) — every row used to look
             identical, which is exactly why a page whose whole point is "when"
-            gave no visual answer to "which one is now". */}
-        <ol className="space-y-0">
+            gave no visual answer to "which one is now". Each step now sits in
+            its own Card (was a bare list row) with a small icon next to its
+            title — display only, same as the LIVE tiles above; it never
+            touches stepStates()/STEPS, the thing this file's header warns not
+            to casually edit. */}
+        <ol className="space-y-3">
           {STEPS.map((step, i) => {
             const state = states[i];
+            const StepIcon = STEP_ICON[step.key];
             return (
-              <li key={step.key} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  {state === "done" ? (
-                    <span
-                      aria-hidden
-                      className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
-                    >
-                      <CheckIcon size={14} />
-                    </span>
-                  ) : state === "active" ? (
-                    <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
-                      <span className="mining-ring" aria-hidden="true" />
+              <li key={step.key}>
+                <Card className={`flex gap-3 p-3.5 ${state === "active" ? "border-brand/40 ring-1 ring-brand/15" : ""}`}>
+                  <div className="flex flex-col items-center">
+                    {state === "done" ? (
                       <span
                         aria-hidden
-                        className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
+                        className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
+                      >
+                        <CheckIcon size={14} />
+                      </span>
+                    ) : state === "active" ? (
+                      <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
+                        <span className="mining-ring" aria-hidden="true" />
+                        <span
+                          aria-hidden
+                          className="relative grid h-3 w-3 place-items-center rounded-full bg-brand"
+                        />
+                      </span>
+                    ) : (
+                      <span
+                        aria-hidden
+                        className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
+                          state === "upcoming"
+                            ? "bg-card ring-2 ring-brand"
+                            : "bg-card ring-2 ring-line"
+                        }`}
                       />
-                    </span>
-                  ) : (
-                    <span
-                      aria-hidden
-                      className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
-                        state === "upcoming"
-                          ? "bg-card ring-2 ring-brand"
-                          : "bg-card ring-2 ring-line"
-                      }`}
-                    />
-                  )}
-                  {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
-                </div>
-                <div className="min-w-0 flex-1 pb-5">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <p className="text-xs font-bold uppercase tracking-wide text-brand">
-                      {t(`roadmap.step.${step.key}.when`)}
-                    </p>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        state === "done"
-                          ? "bg-success-tint text-success"
-                          : state === "active"
-                            ? "bg-brand text-white"
-                            : state === "upcoming"
-                              ? "bg-brand-tint text-brand"
-                              : "bg-line/60 text-muted"
-                      }`}
-                    >
-                      {t(`roadmap.state.${state}`)}
-                    </span>
+                    )}
+                    {i < STEPS.length - 1 && <span aria-hidden className="w-px flex-1 bg-line" />}
                   </div>
-                  <p className="mt-0.5 font-bold text-brand-ink">
-                    {t(`roadmap.step.${step.key}.title`)}
-                  </p>
-                  <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
-                </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-xs font-bold uppercase tracking-wide text-brand">
+                        {t(`roadmap.step.${step.key}.when`)}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                          state === "done"
+                            ? "bg-success-tint text-success"
+                            : state === "active"
+                              ? "bg-brand text-white"
+                              : state === "upcoming"
+                                ? "bg-brand-tint text-brand"
+                                : "bg-line/60 text-muted"
+                        }`}
+                      >
+                        {t(`roadmap.state.${state}`)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 flex items-center gap-1.5 font-bold text-brand-ink">
+                      <StepIcon size={16} className="shrink-0 text-brand" />
+                      {t(`roadmap.step.${step.key}.title`)}
+                    </p>
+                    <p className="mt-1 text-sm text-muted">{t(`roadmap.step.${step.key}.body`)}</p>
+                  </div>
+                </Card>
               </li>
             );
           })}
@@ -202,10 +238,21 @@ export default function RoadmapPage() {
         <p className="mt-1 text-sm text-muted">{t("roadmap.note.body")}</p>
       </Card>
 
-      <Button href="/mine" full>
-        <MineIcon size={20} />
-        {t("roadmap.mine.cta")}
-      </Button>
+      {/* ---- Closing banner ---- */}
+      <div className="rounded-2xl bg-brand p-5 text-white">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/80">
+          {t("roadmap.cta.eyebrow")}
+        </p>
+        <h2 className="mt-1 text-lg font-bold text-white">{t("roadmap.cta.title")}</h2>
+        <p className="mt-1 text-sm text-white/90">{t("roadmap.cta.subtitle")}</p>
+        <Link
+          href="/mine"
+          className="mt-3 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-brand"
+        >
+          <MineIcon size={18} />
+          {t("roadmap.mine.cta")}
+        </Link>
+      </div>
     </div>
   );
 }

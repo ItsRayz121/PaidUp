@@ -3,7 +3,7 @@
 // Super-admin panels. `admin` was always the top role, but it had no tools:
 // no way to find a user, pay one, suspend one, or appoint staff. These add them.
 // Internal tool — density over friendliness, jargon allowed (DESIGN_BRIEF).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   searchUsers, setUserStatus, bulkSetUserStatus, setUserReview, adjustUserPoints,
@@ -16,6 +16,7 @@ import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
 import { DataTable, type Column } from "@/components/staff/DataTable";
+import { MultiSelectFilter } from "@/components/staff/MultiSelectFilter";
 import { StatusBadge, TimeCell, RoziMicro } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
 import { usePrompt } from "@/components/staff/prompt";
@@ -122,11 +123,13 @@ export function UsersPanel() {
       // Pinned to the right edge (founder, 2026-09-07): "Open / Adjust /
       // Suspend / Review" used to sit past the ROZI/USDT columns, off the
       // right side of the viewport, and needed a horizontal scroll to reach
-      // on a normal-width screen.
+      // on a normal-width screen. Collapsed into one dropdown the same day
+      // (founder: "you can make it as a dropdown") — four buttons per row,
+      // times a page of users, was the actual clutter; one "Actions" menu
+      // reads the same information with a fraction of the on-screen width.
       key: "actions", header: "", sticky: true, render: (u) => (
-        <div className="flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => openUser(u.id)} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">Open</button>
-          <UserQuickActions u={u} reload={users.reload} />
+        <div onClick={(e) => e.stopPropagation()}>
+          <UserActionsMenu u={u} reload={users.reload} />
         </div>
       ),
     },
@@ -148,6 +151,17 @@ export function UsersPanel() {
         searchPlaceholder="Search email or user id — blank shows the newest"
         emptyTitle="No users found"
         filters={[
+          // First in the row, on purpose (founder, 2026-09-07: "shift country
+          // ... clear filters both at the first row") — a searchable
+          // multi-select (COUNTRY_OPTIONS is ~180 names; "he should be able to
+          // select two or more countries ... search them") instead of a plain
+          // single-value <select>. Stored as one comma-joined string in
+          // q.filters.country, same "filterKey -> value" shape every other
+          // filter uses — GET /staff/users splits it server-side.
+          { key: "country", label: "Country", type: "custom", render: () => (
+            <MultiSelectFilter label="Country" options={COUNTRY_OPTIONS}
+              value={q.filters.country ?? ""} onChange={(v) => q.setFilter("country", v)} />
+          ) },
           { key: "status", label: "Status", type: "select", options: [
             { value: "active", label: "active" }, { value: "suspended", label: "suspended" },
           ] },
@@ -158,8 +172,6 @@ export function UsersPanel() {
           { key: "flagged", label: "Fraud flags", type: "select", options: [{ value: "1", label: "has open" }] },
           { key: "held", label: "Payouts held", type: "select", options: [{ value: "1", label: "yes" }] },
           { key: "review", label: "Under review", type: "select", options: [{ value: "1", label: "yes" }] },
-          { key: "country", label: "Country", type: "select",
-            options: COUNTRY_OPTIONS.map((c) => ({ value: c, label: c })) },
         ]}
         toolbarRight={
           <div className="flex items-center gap-1.5">
@@ -216,20 +228,38 @@ function TelegramNamesButton({ onDone }: { onDone: () => void }) {
   );
 }
 
-// Per-row quick actions — adjust points, suspend/restore, mark for review.
-// The full set (with a proper typed confirmation) moves to the User detail
-// Danger zone in Phase B; kept here so nothing regresses in the meantime.
-function UserQuickActions({ u, reload }: { u: AdminUserRow; reload: () => void }) {
+// Per-row actions — open, adjust points, suspend/restore, mark for review —
+// collapsed into one dropdown (founder, 2026-09-07). The full set (with a
+// proper typed confirmation) moves to the User detail Danger zone in Phase B;
+// kept here so nothing regresses in the meantime.
+function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void }) {
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const prompt = usePrompt();
+  const { openUser } = useStaffNav();
+  const wrapRef = useRef<HTMLDivElement>(null);
   const suspended = u.status !== "active";
+
+  // Click-outside closes the menu, same pattern as StaffSearch's own popover.
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
 
   async function run(fn: () => Promise<unknown>, okMsg: string) {
     setBusy(true);
     try { await fn(); toast.ok(okMsg); reload(); }
     catch (e) { toast.err((e as Error).message); }
     finally { setBusy(false); }
+  }
+
+  function pick(fn: () => void) {
+    setOpen(false);
+    fn();
   }
 
   async function toggleStatus() {
@@ -266,16 +296,32 @@ function UserQuickActions({ u, reload }: { u: AdminUserRow; reload: () => void }
   }
 
   return (
-    <>
-      <button disabled={busy} onClick={adjust} className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">Adjust</button>
-      <button disabled={busy} onClick={toggleStatus}
-        className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50 ${suspended ? "bg-success" : "bg-danger"}`}>
-        {suspended ? "Restore" : "Suspend"}
+    <div ref={wrapRef} className="relative inline-block text-left">
+      <button disabled={busy} onClick={() => setOpen((o) => !o)}
+        className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand disabled:opacity-50">
+        Actions <span aria-hidden className="text-brand/70">▾</span>
       </button>
-      <button disabled={busy} onClick={toggleReview} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand disabled:opacity-50">
-        {u.underReview ? "Clear review" : "Review"}
-      </button>
-    </>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-line bg-card py-1 shadow-lg">
+          <button onClick={() => pick(() => openUser(u.id))}
+            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
+            Open
+          </button>
+          <button onClick={() => pick(adjust)}
+            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
+            Adjust points
+          </button>
+          <button onClick={() => pick(toggleStatus)}
+            className={`block w-full px-3 py-1.5 text-left text-xs font-semibold hover:bg-brand-tint/40 ${suspended ? "text-success" : "text-danger"}`}>
+            {suspended ? "Restore" : "Suspend"}
+          </button>
+          <button onClick={() => pick(toggleReview)}
+            className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
+            {u.underReview ? "Clear review" : "Mark for review"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

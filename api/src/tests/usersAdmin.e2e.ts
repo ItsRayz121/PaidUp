@@ -237,6 +237,33 @@ console.log("\n-- user list: server-side filters + sort (admin rebuild, Phase B)
 }
 
 // ---------------------------------------------------------------------------
+// Founder, 2026-09-07: "he should be able to select two or more countries" —
+// the country filter now accepts a comma-separated list.
+console.log("\n-- user list: country filter accepts more than one country --");
+{
+  const admin = await mkStaff("country-admin", "admin");
+  const pk = await mkUser("country-pk"); // mkUser always seeds 'Pakistan'
+  const india = await mkUser("country-india");
+  await sql.run("UPDATE users SET country = 'India' WHERE id = ?", india);
+  const nigeria = await mkUser("country-nigeria");
+  await sql.run("UPDATE users SET country = 'Nigeria' WHERE id = ?", nigeria);
+
+  const single = await app.inject({ method: "GET", url: "/staff/users?country=India&limit=200", headers: authOf(admin) });
+  const singleIds = single.json().users.map((u: { id: string }) => u.id);
+  check("a single country still filters to just that country",
+    singleIds.includes(india) && !singleIds.includes(pk) && !singleIds.includes(nigeria), single.body);
+
+  const multi = await app.inject({ method: "GET", url: "/staff/users?country=India,Nigeria&limit=200", headers: authOf(admin) });
+  const multiIds = multi.json().users.map((u: { id: string }) => u.id);
+  check("a comma-separated list matches EITHER country",
+    multiIds.includes(india) && multiIds.includes(nigeria) && !multiIds.includes(pk), multi.body);
+
+  const caseInsensitive = await app.inject({ method: "GET", url: "/staff/users?country=india&limit=200", headers: authOf(admin) });
+  const ciIds = caseInsensitive.json().users.map((u: { id: string }) => u.id);
+  check("the match is case-insensitive, same as the single-country filter always was", ciIds.includes(india));
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- user 360: the tabbed detail endpoint (admin rebuild, Phase B) --");
 {
   const admin = await mkStaff("u360-admin", "admin");
