@@ -1177,6 +1177,18 @@ const copy: Record<string, string> = {
   "mine.roadmap.title": "Roadmap",
   "roadmap.title": "The road ahead",
   "roadmap.subtitle": "Where RoziPay is going, and when.",
+  // The hero block (founder, 2026-09-07: match a shared reference layout —
+  // eyebrow line, one-line description under the subtitle, a small floating
+  // badge and a handwritten-style tagline beside the mountain illustration).
+  // Still no price, still the same three rules at the top of this file.
+  "roadmap.hero.eyebrow": "A brighter tomorrow, together",
+  "roadmap.hero.description":
+    "A simple path to a more open, fair and rewarding economy — built with you, step by step.",
+  "roadmap.hero.badge": "Real people, real value",
+  // Four short words, read top to bottom next to the mountain art — split on
+  // the newline in roadmap/page.tsx rather than four separate keys, since
+  // together they are one tagline, not four sentences.
+  "roadmap.hero.tagline": "Mine\nEarn\nBuild\nTogether",
   "roadmap.live.title": "Working today",
   "roadmap.live.mining": "Mine ROZI every day",
   "roadmap.live.tasks": "Complete tasks — earn and mine faster",
@@ -1188,6 +1200,12 @@ const copy: Record<string, string> = {
   "roadmap.live.send": "Send ROZI to a friend (after your ID check)",
   "roadmap.live.invite": "Invite friends and earn with them",
   "roadmap.next.title": "What is next",
+  // The richer section header above the timeline (same reference layout).
+  "roadmap.roadmap.eyebrow": "Our roadmap",
+  "roadmap.roadmap.heading1": "Small steps.",
+  "roadmap.roadmap.heading2": "A bigger tomorrow.",
+  "roadmap.roadmap.intro":
+    "RoziPay is growing, and so is our community. Here's what's coming next on the road ahead.",
   // State badges for the timeline (audit 2026-08-12: every "next" row looked
   // identical before this — no way to tell "happening now" from "months away").
   // Computed from the same date ranges the *.when strings above describe, in
@@ -1200,31 +1218,35 @@ const copy: Record<string, string> = {
   "roadmap.step.launch.title": "Mining opens to everyone",
   "roadmap.step.launch.body":
     "RoziPay opens to everyone. Two months of mining, so the people who came first have the most ROZI.",
+  "roadmap.step.launch.tag": "Mine together",
   "roadmap.step.kyc.when": "October — November 2026",
   "roadmap.step.kyc.title": "ID check",
   "roadmap.step.kyc.body":
     "Show us your ID once. It keeps fake accounts out, and it is what lets us pay real money out safely.",
+  "roadmap.step.kyc.tag": "A safer community",
   "roadmap.step.dex.when": "December 2026",
   "roadmap.step.dex.title": "Open trading",
   "roadmap.step.dex.body":
     "ROZI goes on an open trading site, where anyone can swap it. This is the step we are building everything else toward.",
+  "roadmap.step.dex.tag": "More opportunity",
   "roadmap.step.cex.when": "January 2027",
   "roadmap.step.cex.title": "Big exchange",
   "roadmap.step.cex.body":
     "We apply to list ROZI on a large, well-known exchange. Big exchanges decide for themselves, so this one is not ours alone to promise.",
+  "roadmap.step.cex.tag": "A global future",
   // The honest footer. It is small, but it is the difference between a plan and
   // a promise — and it is the line that lets us move a date without breaking
   // faith with anyone.
   "roadmap.note.title": "These are our plans, not promises.",
   "roadmap.note.body":
     "We will build in this order. Dates can move, and we will say so here if they do. We never promise a price for ROZI.",
-  "roadmap.mine.cta": "Mine ROZI now",
+  "roadmap.mine.cta": "Start mining now",
   // The closing banner (founder, 2026-09-07: "more engaging and good
   // looking" — a founder-shared template ends the same way, with an
   // encouraging line, never a price or a promise). Plain encouragement only.
   "roadmap.cta.eyebrow": "Be part of what's next",
-  "roadmap.cta.title": "Join us on the journey",
-  "roadmap.cta.subtitle": "Mine every day and be early — the people who start now are the people this is built for.",
+  "roadmap.cta.title": "Mine ROZI today",
+  "roadmap.cta.subtitle": "Join a growing community and be early on the journey.",
 
   // COMBINED — see the label block at home.rozi.label. This card shows mined +
   // earned, so it must carry the combined label. It said "Your mined ROZI" over

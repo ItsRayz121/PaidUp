@@ -18,6 +18,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const isStaff = path.startsWith("/staff");
   const isAuth = path === "/login";
+  const isRoadmap = path === "/mine/roadmap";
   // Inside the Telegram Mini App there is nothing to install — Telegram IS the
   // container.
   const inTelegram = useInsideTelegram();
@@ -47,7 +48,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
       <I18nProvider>
-        <div className="app-frame flex flex-col">
+        <div className={`app-frame flex flex-col ${isRoadmap ? "app-frame-roadmap" : ""}`}>
           <TelegramBoot />
           {chrome && <TopBar />}
           <main className="flex-1">{children}</main>

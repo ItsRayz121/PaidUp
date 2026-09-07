@@ -126,6 +126,17 @@ body {
   color: var(--color-ink);
 }
 
+/* The roadmap is the one public, editorial page in the earner app. It keeps
+   the phone frame on small screens, but uses the reference's full story-canvas
+   on larger displays. All other earning flows remain intentionally phone-sized. */
+@media (min-width: 768px) {
+  .app-frame.app-frame-roadmap {
+    max-width: 1120px;
+    box-shadow: 0 0 70px rgba(8, 47, 54, 0.09);
+  }
+  .app-frame-roadmap > header > div { max-width: 1000px; }
+}
+
 /* Restrained "earned" pop — used on confirmation screens only */
 @keyframes pop-in {
   0% { transform: scale(0.8); opacity: 0; }
@@ -580,4 +591,22 @@ body {
   .reactor .r-ring, .reactor .r-spin, .reactor .r-core { animation: none; }
   .reactor .r-spin { opacity: 0.5; }
   .reactor .r-ring { opacity: 0.14; }
+}
+
+/* /mine/roadmap decorative art (components/roadmapArt.tsx) — a slow cloud
+   drift and a faint flag sway, same "purely decorative" rule as the reactor
+   rings above: transform-only, frozen under reduced-motion. */
+.rm-cloud { animation: rm-drift 9s ease-in-out infinite; transform-origin: center; }
+.rm-cloud-2 { animation-duration: 12s; animation-delay: -3s; }
+@keyframes rm-drift {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(6px); }
+}
+.rm-flag { animation: rm-sway 3.4s ease-in-out infinite; transform-origin: 182px 10px; }
+@keyframes rm-sway {
+  0%, 100% { transform: translate(182px, 10px) rotate(0deg); }
+  50% { transform: translate(182px, 10px) rotate(2.5deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rm-cloud, .rm-flag { animation: none; }
 }
