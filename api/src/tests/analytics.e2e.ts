@@ -190,6 +190,32 @@ console.log("\n-- money: cost and revenue --");
     typeof a.money.depositMicroAll === "string" && typeof a.mining.roziMinedTodayMicro === "string");
 }
 
+console.log("\n-- ROZI dashboard boxes (founder, 2026-09-07) --");
+{
+  const u = await mkUser("rozi-boxes");
+  const insertRozi = (sourceType: string, amount: number) => sql.run(
+    "INSERT INTO rozi_ledger (id, user_id, amount, direction, source_type, created_at) VALUES (?,?,?,'credit',?,?)",
+    newId(), u, amount, sourceType, now(),
+  );
+  await insertRozi("mining", 5_000_000); // 5 ROZI, micro
+  await insertRozi("task_reward", 1_000_000); // 1 ROZI, micro
+  await sql.run(
+    "INSERT INTO mining_unclaimed (epoch, user_id, micro, created_at) VALUES (?,?,?,?)",
+    999999, u, 2_000_000, now(),
+  );
+  const a = await loadAnalytics(30);
+  check("ROZI paid to users (30d) includes mining + task_reward credits",
+    Number(a.mining.roziPaidMicro30d) >= 6_000_000, a.mining.roziPaidMicro30d);
+  check("ROZI waiting to be paid includes the unclaimed session",
+    Number(a.mining.roziUnclaimedMicro) >= 2_000_000, a.mining.roziUnclaimedMicro);
+  check("total ROZI mined (all time) is at least what we just minted + parked",
+    Number(a.mining.roziEmittedAllTimeMicro) >= 8_000_000, a.mining.roziEmittedAllTimeMicro);
+  check("emitted + remaining accounts for the whole 21M cap (within rounding)",
+    Math.abs(Number(a.mining.roziEmittedAllTimeMicro) + Number(a.mining.roziReserveRemainingMicro) - Number(a.mining.roziSupplyCapMicro)) < 1_000_000,
+    JSON.stringify(a.mining));
+  check("remaining is never more than the cap", Number(a.mining.roziReserveRemainingMicro) <= Number(a.mining.roziSupplyCapMicro));
+}
+
 console.log("\n-- per-network margin --");
 {
   const a = await loadAnalytics(30);

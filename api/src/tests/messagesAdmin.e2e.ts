@@ -115,6 +115,64 @@ console.log("\n-- search narrows rows, not counts; status=all spans everything -
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n-- GET /staff/support/inbox: ONE ROW PER PERSON (founder, 2026-09-07) --");
+{
+  // Same person, TWO separate support_tickets rows (a closed conversation,
+  // then a new one later) — exactly the shape that used to show as two
+  // separate rows in the Inbox for one person.
+  const person = await mkUser("multi-segment");
+  const first = await app.inject({
+    method: "POST", url: "/support/tickets", headers: authOf(person),
+    payload: { subject: `${TAG} first question`, message: "how do withdrawals work?" },
+  });
+  const firstId = first.json().ticket.id as string;
+  await app.inject({ method: "PATCH", url: `/staff/tickets/${firstId}`, headers: authOf(agent), payload: { status: "closed" } });
+  await sql.run("UPDATE support_tickets SET created_at = ?, updated_at = ? WHERE id = ?",
+    new Date((clock += 60_000)).toISOString(), new Date(clock).toISOString(), firstId);
+
+  const second = await app.inject({
+    method: "POST", url: "/support/tickets", headers: authOf(person),
+    payload: { subject: `${TAG} second question`, message: "my withdrawal is stuck" },
+  });
+  const secondId = second.json().ticket.id as string;
+  await sql.run("UPDATE support_tickets SET created_at = ?, updated_at = ? WHERE id = ?",
+    new Date((clock += 60_000)).toISOString(), new Date(clock).toISOString(), secondId);
+
+  const inbox = await app.inject({ method: "GET", url: `/staff/support/inbox?status=all&q=${TAG}&limit=100`, headers: authOf(agent) });
+  check("200", inbox.statusCode === 200, inbox.body.slice(0, 300));
+  const conv = (inbox.json() as { conversations: { id: string; ticketId: string; userId: string; status: string; messageCount: number }[] })
+    .conversations.filter((c) => c.userId === person);
+  check("the person appears exactly ONCE, not once per segment", conv.length === 1, JSON.stringify(conv));
+  check("the row represents their LATEST ticket (the open, second one)", conv[0].ticketId === secondId && conv[0].status === "open");
+  check("messageCount is summed across BOTH segments (1 each)", conv[0].messageCount === 2, String(conv[0].messageCount));
+
+  const thread = await app.inject({ method: "GET", url: `/staff/support/inbox/${person}`, headers: authOf(agent) });
+  check("200", thread.statusCode === 200);
+  const td = thread.json() as { ticket: { id: string; status: string }; messages: { body: string }[] };
+  check("the merged ticket is the latest (open) segment", td.ticket.id === secondId && td.ticket.status === "open");
+  check("messages from BOTH segments are present, in time order", td.messages.length === 2
+    && td.messages[0].body.includes("withdrawals work")
+    && td.messages[1].body.includes("stuck"), JSON.stringify(td.messages.map((m) => m.body)));
+
+  // Replying uses the id the merged endpoint names (the latest segment),
+  // exactly as TicketThread's own targetId logic does.
+  const reply = await app.inject({
+    method: "POST", url: `/staff/tickets/${td.ticket.id}/reply`, headers: authOf(agent),
+    payload: { message: "checking now" },
+  });
+  check("a reply targeting the merged thread's own ticket id works", reply.statusCode === 200, reply.body);
+
+  const after = await app.inject({ method: "GET", url: `/staff/support/inbox/${person}`, headers: authOf(agent) });
+  const ad2 = after.json() as { messages: { body: string }[] };
+  check("the reply is now part of the merged history too (3 messages)", ad2.messages.length === 3, String(ad2.messages.length));
+
+  const outsiderRead = await app.inject({ method: "GET", url: `/staff/support/inbox`, headers: authOf(outsider) });
+  check("a non-staff caller is refused (403)", outsiderRead.statusCode === 403);
+  const outsiderThread = await app.inject({ method: "GET", url: `/staff/support/inbox/${person}`, headers: authOf(outsider) });
+  check("...on the thread endpoint too", outsiderThread.statusCode === 403);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n-- permission gate unchanged --");
 {
   check("a non-staff user gets 403", (await app.inject({ method: "GET", url: "/staff/tickets", headers: authOf(outsider) })).statusCode === 403);

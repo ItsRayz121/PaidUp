@@ -39,6 +39,10 @@ export type EligibleItem = {
   proofId: string;
   userId: string;
   userEmail: string;
+  userUsername: string | null;
+  userDisplayName: string | null;
+  userTelegramUsername: string | null;
+  userTelegramName: string | null;
   taskId: string;
   taskTitle: string;
   points: number;
@@ -72,6 +76,10 @@ export type DisbursementRow = {
   batchId: string;
   userId: string;
   userEmail: string | null;
+  userUsername: string | null;
+  userDisplayName: string | null;
+  userTelegramUsername: string | null;
+  userTelegramName: string | null;
   proofId: string | null;
   taskTitle: string | null;
   amountPoints: number;
@@ -144,6 +152,8 @@ export async function listEligible(
   const [rows, totalRow] = await Promise.all([
     sql.all<Record<string, unknown>>(
       `SELECT p.id AS proof_id, p.user_id, u.email AS user_email,
+              u.username AS user_username, u.display_name AS user_display_name,
+              u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
               p.task_id, t.title AS task_title, p.reviewed_at,
               COALESCE(p.reward_points, t.points, 0) AS points,
               COALESCE(p.reward_usdt_micro, t.reward_usdt_micro, 0) AS usdt_micro,
@@ -172,6 +182,10 @@ export async function listEligible(
       proofId: String(r.proof_id),
       userId: String(r.user_id),
       userEmail: String(r.user_email ?? ""),
+      userUsername: (r.user_username as string) ?? null,
+      userDisplayName: (r.user_display_name as string) ?? null,
+      userTelegramUsername: (r.user_telegram_username as string) ?? null,
+      userTelegramName: (r.user_telegram_name as string) ?? null,
       taskId: String(r.task_id),
       taskTitle: String(r.task_title ?? ""),
       points: Number(r.points ?? 0),
@@ -523,7 +537,10 @@ async function talliesFor(batchIds: string[]): Promise<Record<string, Record<Dis
 }
 
 const DISBURSEMENT_SELECT = `
-  SELECT d.*, u.email AS user_email, t.title AS task_title,
+  SELECT d.*, u.email AS user_email,
+         u.username AS user_username, u.display_name AS user_display_name,
+         u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
+         t.title AS task_title,
          EXISTS (
            SELECT 1 FROM payout_relay_jobs j
            WHERE j.request_id = d.withdrawal_request_id
@@ -541,6 +558,10 @@ function mapDisbursement(r: Record<string, unknown>): DisbursementRow {
     batchId: String(r.batch_id),
     userId: String(r.user_id),
     userEmail: (r.user_email as string) ?? null,
+    userUsername: (r.user_username as string) ?? null,
+    userDisplayName: (r.user_display_name as string) ?? null,
+    userTelegramUsername: (r.user_telegram_username as string) ?? null,
+    userTelegramName: (r.user_telegram_name as string) ?? null,
     proofId: (r.proof_id as string) ?? null,
     taskTitle: (r.task_title as string) ?? null,
     amountPoints: Number(r.amount_points ?? 0),

@@ -98,6 +98,13 @@ export const config = {
   minWithdrawPoints: 1000,
   otpTtlMinutes: 10,
   otpMaxAttempts: 5,
+  // Minimum time between resent signup-verification codes for the SAME email
+  // (founder, 2026-09-07). A per-IP route limiter alone stops one attacker
+  // hammering many inboxes, not many callers hammering ONE person's — this is
+  // the real per-email throttle. 60s default; not `num()`'d from an env var
+  // since nothing about this is a cost/billing concern (unlike the RPC/price
+  // ceilings in costGuard.ts) — a plain literal here is honest about that.
+  resendCodeCooldownSeconds: 60,
 
   // Referral commission: referrer earns this share of a referred user's task
   // points, as a separate referral_bonus ledger entry. Fallbacks used only when
@@ -560,6 +567,16 @@ export const config = {
   // one multicall per 300 deposit addresses, so this one also grows with the
   // user base. Env-tunable so it can be slowed without a deploy.
   reconcileIntervalMs: num(process.env.RECONCILE_INTERVAL_MS, 60 * 60 * 1000, 60_000),
+
+  // Audit finding A-08: postback_log's `raw` column stores the network's full
+  // request (their signature, transaction id, whatever else they sent) PLUS
+  // the caller's IP, forever. A row past this many days has its `raw` blanked
+  // (see postbackRedaction.ts) — the metadata that actually settles a dispute
+  // (network, external_id, verified, outcome, when) is kept, only the raw
+  // echo of the request and the IP are dropped. 90 days comfortably clears
+  // CPX's own up-to-~60-day fraud-reversal window (CLAUDE.md). 0 turns it off.
+  postbackLogRetentionDays: num(process.env.POSTBACK_LOG_RETENTION_DAYS, 90, 0),
+  postbackRedactionIntervalMs: num(process.env.POSTBACK_REDACTION_INTERVAL_MS, 6 * 60 * 60 * 1000, 60_000),
 
   // Support tickets sitting in 'answered' (staff replied last, user never
   // came back) auto-close after this many HOURS — see ticketAutoClose.ts. 0

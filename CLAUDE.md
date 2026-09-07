@@ -4707,3 +4707,114 @@ See `docs/` for the full spec.
     `test:referrals` (26), `test:taskbudget` (46),
     `test:leaderboardrewards` (46) all re-run green; api + web typecheck,
     eslint, web production build (38 routes) all clean.
+
+- **A ~19-ITEM FOUNDER PUNCH LIST, PLUS ONE REAL BUG A SECURITY REVIEW CAUGHT
+  BEFORE IT SHIPPED (2026-09-07).** A phone-review list spanning security
+  fixes, staff-panel UI, and a genuinely new toast-replacement-for-prompts
+  system. Verified: **all 47 backend test scripts** (~1,700+ checks across
+  e2e + unit suites) re-run from a fresh database, 0 failures; api + web
+  typecheck clean; eslint 0 errors; web production build (39 routes) clean;
+  `security-review` skill run at the end — found and fixed one real issue
+  (below) before commit.
+  - **Backend correctness/security**: (1) `bnbPrice.ts` gained a CoinGecko
+    fallback alongside Binance — the Treasury Wallet panel's BNB→USD line was
+    already built (2026-09-05) but silently vanished with no error whenever
+    the one provider failed, which read as "the feature doesn't exist" rather
+    than a transient miss. (2) `GET /withdrawals` and `GET /wallet/bnb/withdrawals`
+    capped at 500 rows (the last two unbounded endpoints from audit finding
+    B12 — every sibling endpoint was already capped). (3) **Audit A-13
+    closed**: `/auth/register` no longer returns a distinct 409 for an
+    email that already has a verified account — same `{ok:true}` shape
+    either way, and for that one case it quietly emails a password-reset
+    code instead of a verify code (useful to the real owner, invisible to
+    anyone else). (4) **A new `/auth/resend-code` endpoint** — a per-email
+    60s cooldown (not just the route's per-IP limiter), inherits whatever
+    password the user already chose rather than asking them to retype the
+    whole signup form. (5) **Audit B10 closed**: a second, smaller Postgres
+    pool (`sqlStaff` in db.ts) now backs the ~31-query staff analytics
+    dashboard and the raw queries in `routes/staff.ts` — `touchActivity`
+    (fires on every earner request) deliberately stays on the MAIN pool, or
+    the split would have moved the busiest write in the app onto the small
+    pool instead of protecting it. (6) `/health` now does a real `SELECT 1`
+    with a 3s timeout instead of a static `{ok:true}` (audit A-10).
+    (7) `postbackRedaction.ts` — a new periodic job blanks `postback_log.raw`
+    (the network's echoed request + the caller's IP) past a 90-day retention
+    window (`POSTBACK_LOG_RETENTION_DAYS`), keeping the outcome/network/
+    verified columns forever for dispute resolution (audit A-08).
+  - ⚠️ **A SECURITY REVIEW FOUND A REAL ENUMERATION SIDE-CHANNEL IN THE A-13
+    FIX ITSELF, CAUGHT BEFORE COMMIT.** The new `/auth/register` and
+    `/auth/resend-code` swallowed the email-send error and returned
+    `{ok:true}` on the "account already exists and is verified" branch, but
+    still returned a distinct `502` on the other branches (new account,
+    existing-unverified) when the send failed. With email delivery broken —
+    a real state this project has actually been in, not hypothetical — a
+    `200` vs `502` proved exactly what the whole fix exists to hide: whether
+    an email already has a verified account. Fixed by swallowing the error
+    identically on every branch of both routes, matching `/auth/forgot`'s
+    own established pattern exactly. Regression test added
+    (`test:authregister`'s new block forces a real send failure via
+    `NODE_ENV=production` with no `RESEND_API_KEY` and asserts all three
+    branches answer 200 with an identical body).
+  - **Users & IDs**: the "Points balance" column is gone (redundant with
+    Total/Mined/Wallet ROZI); the row actions (Open/Adjust/Suspend/Review)
+    are now pinned to the right edge of the table (`DataTable`'s new opt-in
+    `sticky` column flag) so they never need a horizontal scroll to reach —
+    they used to sit past the ROZI/USDT columns, off-screen on a normal
+    width.
+  - **Growth → Reward pools**: the winner-count cap was hard-limited to 100
+    in both the calculator UI and the backend (`MAX_TIERS` in
+    `leaderboardRewardSettings.ts`) — raised to 10,000. `loadLeaderboard`'s
+    own query already aggregates every qualifying user regardless of the
+    `LIMIT` it's asked for, so this was a typing-effort ceiling, not a real
+    performance one; the calculator's preview table caps at showing the
+    first 300 rows (Apply still fills in every one).
+  - **Support tickets — one row per PERSON, not per ticket segment.** The
+    Inbox listed each closed-then-reopened conversation as a SEPARATE row
+    for the same person (`GET /staff/tickets` is per-`support_tickets`-row
+    by design, correct for the audit-oriented table view, wrong for the
+    chat-style Inbox). New `GET /staff/support/inbox` (grouped by user_id,
+    latest ticket's status/subject, message count summed across ALL that
+    person's segments) + `GET /staff/support/inbox/:userId` (every message
+    across every one of their tickets, merged and time-ordered — mirroring
+    how the earner's own `/support/chat` already reads their history).
+    `TicketThread` (staff.tsx) gained an optional `mergedUserId` mode; a
+    reply always targets whatever ticket id the fetched response names
+    (the person's latest), not a stale id from the list.
+  - **Dashboard gets a ROZI row.** Four new boxes alongside the existing USDT
+    ones: ROZI paid to users (30d, all emitting sources), ROZI waiting to be
+    paid (the `mining_unclaimed` backlog — mirrors the USDT "waiting to be
+    paid" pending-withdrawals box), Total ROZI mined (all time,
+    `totalEmittedMicro()` — the same figure the 21M cap is enforced against,
+    reused rather than re-derived), and ROZI left in the mining reserve
+    (cap − emitted).
+  - **Money & payouts**: "Largest Treasury Payouts" moved into the same row
+    as "Failed Payout Relay Jobs" instead of its own row below.
+  - **Disbursements screen** now shows `@handle`/name instead of a raw email
+    (the one screen flagged-and-deferred on 2026-09-02) — both
+    `EligibleItem`'s and `DisbursementRow`'s queries gained the four identity
+    columns.
+  - **Privacy & Data page** (`/privacy`, public, no auth) — closes audit
+    A-12's "no privacy/retention policy" gap. States plainly what is
+    collected, what is not sold/shared, and where retention is genuinely
+    automatic (postback logs, 90 days) versus where it is not yet (ID-check
+    photos — ask via Help and a person actions it by hand; there is still no
+    self-serve delete-my-account button). Linked from `/login`'s footer;
+    added to `robots.ts`/`sitemap.ts` as the one new public route.
+  - **The last `window.prompt()` popup boxes are gone.** New
+    `components/staff/prompt.tsx` (`PromptProvider`/`usePrompt()`, mounted
+    in `staff/page.tsx` next to `ToastProvider`) is a real in-app modal with
+    the same imperative call contract window.prompt had
+    (`await prompt(message)` → the typed string, or `null` on cancel), so
+    replacing a call site needed no restructuring beyond `async`/`await`.
+    All 35 call sites across 9 files converted (admin.tsx, growth-admin.tsx,
+    mining-admin.tsx, kyc-admin.tsx, UserDetail.tsx, TasksAdmin.tsx,
+    Disbursements.tsx, MoneyQueues.tsx, staff/page.tsx) — this was the one
+    thing the 2026-08-29 Phase A entry named as still outstanding ("input
+    prompts stay window.prompt until Phase F"). `window.confirm()` (a plain
+    yes/no, not a text prompt) was deliberately left alone — out of scope.
+  - **Explicitly skipped, per the founder's own call, not oversights**: a
+    real-time chain listener (would add new infrastructure without removing
+    cost, and today's polling already works at this traffic level); scaling
+    past one Railway server (an infra/cost decision, not worth it at ~21
+    total accounts). Account deletion/anonymisation stays unbuilt too — the
+    founder said it isn't a priority right now.

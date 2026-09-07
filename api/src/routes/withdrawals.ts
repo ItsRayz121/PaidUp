@@ -24,6 +24,11 @@ import { requireFeature } from "../flags.ts";
 import { minWithdrawPointsNow } from "../settingsRuntime.ts";
 import { pointsToUsdt } from "../payout.ts";
 
+// Same cap and reasoning as HISTORY_ROW_CAP in routes/app.ts (B12 in
+// audit/CAPACITY_BOTTLENECKS.md): far above what any screen renders, but a
+// real ceiling on what one heavy user's history query can return.
+const WITHDRAWAL_HISTORY_CAP = 500;
+
 // Upsert a user's saved payout address for a chain (set once, reuse). Best-effort.
 //
 // ⚠️ A PROOF BELONGS TO ONE ADDRESS. `verified` is only ever true on the path
@@ -509,7 +514,8 @@ export async function withdrawalRoutes(app: FastifyInstance) {
   // unrequested cash-out (founder, 2026-09-05).
   app.get("/withdrawals", guard(async (userId) => {
     const rows = await sql.all<Record<string, unknown>>(
-      "SELECT * FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC", userId,
+      "SELECT * FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+      userId, WITHDRAWAL_HISTORY_CAP,
     );
     const ids = rows.map((r) => r.id as string);
     const disbursed = ids.length
@@ -891,7 +897,8 @@ export async function withdrawalRoutes(app: FastifyInstance) {
 
   app.get("/wallet/bnb/withdrawals", guard(async (userId) => {
     const rows = await sql.all<Record<string, unknown>>(
-      "SELECT * FROM bnb_withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC", userId,
+      "SELECT * FROM bnb_withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+      userId, WITHDRAWAL_HISTORY_CAP,
     );
     return {
       requests: rows.map((r) => ({

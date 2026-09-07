@@ -20,6 +20,7 @@ import { DetailLayout } from "./DetailLayout";
 import { DisbursementsPanel } from "./Disbursements";
 import { StatusBadge, TimeCell, StatusTabs, statusLabel } from "./primitives";
 import { useToast } from "./toast";
+import { usePrompt, type PromptApi } from "./prompt";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
 import {
   fetchCustomTasks, createCustomTask, updateCustomTask, updateTaskLifecycle,
@@ -474,6 +475,7 @@ function TaskMetricsTab({ taskId }: { taskId: string }) {
 function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () => void }) {
   const [status, setStatus] = useState("all");
   const toast = useToast();
+  const prompt = usePrompt();
   const data = useApi(
     () => fetchTaskProofs({ taskId, status, limit: 50, dir: "asc", scopeCounts: true }),
     [taskId, status], true, QUEUE_POLL_MS,
@@ -486,11 +488,11 @@ function TaskProofsTab({ taskId, onDecided }: { taskId: string; onDecided: () =>
   async function decide(p: TaskProof, action: "approve" | "reject", trim = false) {
     let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
-      const n = window.prompt("Why are you rejecting this? The user will see it.");
+      const n = await prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
       opts = { note: n };
     } else if (trim) {
-      const a = askApproveAmounts(p);
+      const a = await askApproveAmounts(p, prompt, toast.err);
       if (a === null) return;
       opts = a;
     }
@@ -568,29 +570,31 @@ const PROOF_TABS = ["all", "pending", "reward_pending", "paid", "rejected"];
 
 // Approve dialog — the Agent confirms (and may trim) the reward before it is
 // locked onto the proof. Cannot exceed what the user was promised.
-function askApproveAmounts(p: TaskProof): { roziMicro?: number; usdtMicro?: number; note?: string } | null {
+async function askApproveAmounts(
+  p: TaskProof, prompt: PromptApi, onError: (msg: string) => void,
+): Promise<{ roziMicro?: number; usdtMicro?: number; note?: string } | null> {
   const roziCeil = Number(p.task_rozi_micro ?? 0);
   const usdtCeil = Number(p.task_usdt_micro ?? 0);
   let roziMicro = roziCeil;
   let usdtMicro = usdtCeil;
   if (roziCeil > 0) {
-    const raw = window.prompt(
-      `ROZI to give (max ${(roziCeil / 1_000_000).toLocaleString()}). Enter 0 to skip it.`,
-      String(roziCeil / 1_000_000),
-    );
+    const raw = await prompt({
+      message: `ROZI to give (max ${(roziCeil / 1_000_000).toLocaleString()}). Enter 0 to skip it.`,
+      defaultValue: String(roziCeil / 1_000_000),
+    });
     if (raw === null) return null;
     const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) { window.alert("Not a number."); return null; }
+    if (!Number.isFinite(n) || n < 0) { onError("Not a number."); return null; }
     roziMicro = Math.min(roziCeil, Math.round(n * 1_000_000));
   }
   if (usdtCeil > 0) {
-    const raw = window.prompt(
-      `USDT to give (max ${(usdtCeil / 1_000_000).toFixed(3)}). Enter 0 to skip it.`,
-      String(usdtCeil / 1_000_000),
-    );
+    const raw = await prompt({
+      message: `USDT to give (max ${(usdtCeil / 1_000_000).toFixed(3)}). Enter 0 to skip it.`,
+      defaultValue: String(usdtCeil / 1_000_000),
+    });
     if (raw === null) return null;
     const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) { window.alert("Not a number."); return null; }
+    if (!Number.isFinite(n) || n < 0) { onError("Not a number."); return null; }
     usdtMicro = Math.min(usdtCeil, Math.round(n * 1_000_000));
   }
   return { roziMicro, usdtMicro };
@@ -600,6 +604,7 @@ export function ProofReviewPanel() {
   const q = useTableQuery("tasks:proofs", { pageSize: 25, sort: "created_at", dir: "asc" });
   const c = useQueueControls(q, "all");
   const toast = useToast();
+  const prompt = usePrompt();
   const [open, setOpen] = useState<TaskProof | null>(null);
 
   const data = useApi(
@@ -621,11 +626,11 @@ export function ProofReviewPanel() {
   async function decide(p: TaskProof, action: "approve" | "reject", trim = false) {
     let opts: { note?: string; roziMicro?: number; usdtMicro?: number } = {};
     if (action === "reject") {
-      const n = window.prompt("Why are you rejecting this? The user will see it.");
+      const n = await prompt("Why are you rejecting this? The user will see it.");
       if (n === null) return;
       opts = { note: n };
     } else if (trim) {
-      const a = askApproveAmounts(p);
+      const a = await askApproveAmounts(p, prompt, toast.err);
       if (a === null) return;
       opts = a;
     }
@@ -657,7 +662,7 @@ export function ProofReviewPanel() {
   async function bulk(ids: string[], action: "approve" | "reject" | "release") {
     let note: string | undefined;
     if (action === "reject") {
-      const n = window.prompt(`Why are you rejecting these ${ids.length}? Every one of them will see this.`);
+      const n = await prompt(`Why are you rejecting these ${ids.length}? Every one of them will see this.`);
       if (n === null) return;
       note = n;
     }

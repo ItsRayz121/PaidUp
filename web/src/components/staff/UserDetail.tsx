@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DetailLayout, type DetailTab } from "./DetailLayout";
 import { StatusBadge, TimeCell, Points, UsdtMicro, Addr, TxHash } from "./primitives";
 import { useToast } from "./toast";
+import { usePrompt } from "./prompt";
 import {
   fetchStaffUser, setUserStatus, setUserReview, setWithdrawalHold,
   adjustUserPoints, adjustUserRozi, adjustUserUsdt, releaseUserRoziToWallet, type StaffUserDetail,
@@ -116,6 +117,7 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
     telegramName: u.telegram_name as string | null,
   }, { full: true });
   const toast = useToast();
+  const prompt = usePrompt();
   const [tab, setTab] = useState("overview");
   const [busy, setBusy] = useState(false);
   // On-demand, only while the Balances tab is open — a live chain read must
@@ -134,45 +136,48 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
   const suspended = S(u.status) !== "active";
 
   // ---- Danger zone actions ----
-  function doStatus() {
+  async function doStatus() {
     const next = suspended ? "active" : "suspended";
-    const reason = window.prompt(next === "suspended"
+    const reason = await prompt(next === "suspended"
       ? "Why are you suspending this account? They are locked out immediately."
       : "Why are you restoring this account?");
     if (!reason?.trim()) return;
     act(() => setUserStatus(u.id, next, reason.trim()), `Account ${next === "suspended" ? "suspended" : "restored"}.`);
   }
-  function doHold() {
+  async function doHold() {
     if (u.withdrawalHeld) {
       if (!window.confirm("Lift the payout hold on this account?")) return;
       act(() => setWithdrawalHold(u.id, null), "Payout hold lifted.");
       return;
     }
-    const reason = window.prompt("Why are you holding this account's automatic payouts? (They still mine and earn.)");
+    const reason = await prompt("Why are you holding this account's automatic payouts? (They still mine and earn.)");
     if (!reason?.trim()) return;
     act(() => setWithdrawalHold(u.id, reason.trim()), "Automatic payouts held.");
   }
-  function doReview() {
+  async function doReview() {
     if (u.underReview) {
       if (!window.confirm("Clear the review mark?")) return;
       act(() => setUserReview(u.id, null), "Review mark cleared.");
       return;
     }
-    const reason = window.prompt("Why are you marking this account for review?");
+    const reason = await prompt("Why are you marking this account for review?");
     if (!reason?.trim()) return;
     act(() => setUserReview(u.id, reason.trim()), "Marked for review.");
   }
-  function doAdjustPoints() {
-    const raw = window.prompt("Adjust POINTS. Positive adds, negative removes (e.g. 500 or -500).\nA credit is real money the user can withdraw. Logged against you.");
+  async function doAdjustPoints() {
+    const raw = await prompt({
+      message: "Adjust POINTS. Positive adds, negative removes (e.g. 500 or -500).\nA credit is real money the user can withdraw. Logged against you.",
+      placeholder: "500 or -500",
+    });
     if (raw === null) return;
     const points = Number(raw.trim());
     if (!Number.isInteger(points) || points === 0) { toast.err("Enter a whole number that is not zero."); return; }
-    const reason = window.prompt("Reason (the user sees this in their wallet):");
+    const reason = await prompt("Reason (the user sees this in their wallet):");
     if (!reason?.trim()) return;
     act(async () => { const r = await adjustUserPoints(u.id, points, reason.trim()); toast.ok(`Points ${r.before} → ${r.after}.`); }, "");
   }
-  function doAdjustUsdt() {
-    const raw = window.prompt(
+  async function doAdjustUsdt() {
+    const raw = await prompt(
       "Adjust USDT deposit-credit balance (dollars, decimals allowed). Positive adds, negative removes.\n" +
       "Use this to fix a treasury shortfall: a debit here brings the books back to what the chain holds.\n" +
       "A debit MAY take the balance negative — that is expected when the recorded balance was wrong.",
@@ -180,19 +185,19 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
     if (raw === null) return;
     const usdt = Number(raw.trim());
     if (!Number.isFinite(usdt) || usdt === 0) { toast.err("Enter a non-zero number."); return; }
-    const reason = window.prompt("Reason (min 3 characters — lands in the audit log):");
+    const reason = await prompt("Reason (min 3 characters — lands in the audit log):");
     if (!reason || reason.trim().length < 3) return;
     act(async () => {
       const r = await adjustUserUsdt(u.id, usdt, reason.trim());
       toast.ok(`USDT ${(r.beforeMicro / 1e6).toFixed(6)} → ${(r.afterMicro / 1e6).toFixed(6)}.`);
     }, "");
   }
-  function doAdjustRozi() {
-    const raw = window.prompt("Adjust ROZI (whole ROZI, decimals allowed). Positive adds, negative removes.");
+  async function doAdjustRozi() {
+    const raw = await prompt("Adjust ROZI (whole ROZI, decimals allowed). Positive adds, negative removes.");
     if (raw === null) return;
     const rozi = Number(raw.trim());
     if (!Number.isFinite(rozi) || rozi === 0) { toast.err("Enter a non-zero amount."); return; }
-    const note = window.prompt("Reason (min 3 characters):");
+    const note = await prompt("Reason (min 3 characters):");
     if (!note || note.trim().length < 3) return;
     act(() => adjustUserRozi(u.id, rozi, note.trim()), "ROZI adjusted.");
   }
@@ -201,17 +206,17 @@ export function UserDetail({ d, onReload, onBack, canDisburse = false }: {
   // server re-checks KYC itself; this button just tells staff up front why it
   // would refuse, so they are not surprised after typing an amount.
   const kycOk = S(u.kyc_status) === "approved";
-  function doReleaseToWallet() {
+  async function doReleaseToWallet() {
     if (!kycOk && !window.confirm(
       "This user has not passed the ID check (KYC) yet. The server will refuse this release unless the KYC feature itself is switched off. Try anyway?",
     )) return;
-    const raw = window.prompt(
+    const raw = await prompt(
       `Move how much Mined ROZI into their Wallet? They currently have ${(N(u.roziMinedMicro) / 1e6).toFixed(3)} Mined ROZI.`,
     );
     if (raw === null) return;
     const rozi = Number(raw.trim());
     if (!Number.isFinite(rozi) || rozi <= 0) { toast.err("Enter an amount greater than zero."); return; }
-    const note = window.prompt("Reason (min 3 characters — lands in the audit log):");
+    const note = await prompt("Reason (min 3 characters — lands in the audit log):");
     if (!note || note.trim().length < 3) return;
     act(async () => {
       const r = await releaseUserRoziToWallet(u.id, rozi, note.trim());

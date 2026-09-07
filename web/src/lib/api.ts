@@ -307,6 +307,14 @@ export const login = (email: string, password: string) =>
     method: "POST", body: JSON.stringify({ email, password }),
   });
 
+// Resend the signup verification code (2026-09-07) — keeps whatever password
+// was already chosen, rather than asking the user to fill in the whole
+// register form again just to get a fresh code.
+export const resendCode = (email: string) =>
+  apiFetch<{ ok: true; retryAfterSeconds?: number }>("/auth/resend-code", {
+    method: "POST", body: JSON.stringify({ email }),
+  });
+
 // Ask for a password-reset code.
 export const forgotPassword = (email: string) =>
   apiFetch<{ ok: true }>("/auth/forgot", { method: "POST", body: JSON.stringify({ email }) });
@@ -815,6 +823,8 @@ export type BatchStatus =
 
 export type EligibleReward = {
   proofId: string; userId: string; userEmail: string;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
   taskId: string; taskTitle: string;
   points: number; usdtMicro: number; roziMicro: number;
   approvedAt: string | null; inBatch: boolean;
@@ -831,6 +841,8 @@ export type DisbursementBatch = {
 };
 export type DisbursementRow = {
   id: string; batchId: string; userId: string; userEmail: string | null;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
   proofId: string | null; taskTitle: string | null;
   amountPoints: number; usdtMicro: number; roziMicro: number;
   sourceKind: "points" | "earned_usdt";
@@ -1294,6 +1306,30 @@ export type StaffTicketMessage = {
 };
 export const fetchStaffTicket = (id: string) =>
   apiFetch<{ ticket: Record<string, unknown>; messages: StaffTicketMessage[] }>(`/staff/tickets/${id}`);
+
+// ---- Support Inbox: one row per PERSON, not per ticket segment ----------
+// (founder, 2026-09-07 — see the endpoint's own comment in routes/staff.ts).
+export type StaffInboxConversation = {
+  id: string; ticketId: string; userId: string; userEmail: string; subject: string;
+  userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
+  status: string; messageCount: number; updatedAt: string;
+  lastMessage: string | null;
+  assignedTo: string | null; assigneeEmail: string | null;
+};
+export const fetchStaffInbox = (p: { status?: string; q?: string; limit?: number; offset?: number } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set("status", p.status ?? "open");
+  if (p.q) qs.set("q", p.q);
+  qs.set("limit", String(p.limit ?? 25));
+  qs.set("offset", String(p.offset ?? 0));
+  return apiFetch<{
+    counts: Record<string, number>; conversations: StaffInboxConversation[];
+    total: number; offset: number; limit: number;
+  }>(`/staff/support/inbox?${qs.toString()}`);
+};
+export const fetchStaffInboxThread = (userId: string) =>
+  apiFetch<{ ticket: Record<string, unknown>; messages: StaffTicketMessage[] }>(`/staff/support/inbox/${userId}`);
 // `internal: true` writes a note the USER NEVER SEES and sends no push. The
 // filter that keeps it from them lives in the API (GET /support/tickets).
 export const replyStaffTicket = (id: string, message: string, close = false, internal = false, image?: string | null) =>
@@ -1666,7 +1702,12 @@ export type Analytics = {
     proofsSubmitted: number; proofsApproved: number; proofsPending: number;
     approvalRate: number; completionsToday: number;
   };
-  mining: { activeMiners: number; sessions: number; roziMinedTodayMicro: string };
+  mining: {
+    activeMiners: number; sessions: number; roziMinedTodayMicro: string;
+    roziPaidMicro30d: string; roziMinersInWindow: number; roziMinersAllTime: number;
+    roziUnclaimedMicro: string;
+    roziEmittedAllTimeMicro: string; roziReserveRemainingMicro: string; roziSupplyCapMicro: string;
+  };
   money: {
     depositMicro30d: string; depositMicroAll: string; refundMicro30d: string;
     withdrawnPoints30d: number; withdrawnPointsAll: number; withdrawPendingPoints: number;

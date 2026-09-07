@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { fetchAnalytics, type Analytics } from "@/lib/api";
-import { formatUsdtMicro, formatPoints, formatMoney } from "@/lib/format";
+import { formatUsdtMicro, formatPoints, formatMoney, formatRozi } from "@/lib/format";
 import { TimeChart, FunnelBars, StatTile, compact } from "@/components/charts";
 import { useStaffNav } from "@/lib/staffNav";
 
@@ -86,6 +86,20 @@ export function AnalyticsDashboard() {
           tone={a.money.withdrawPendingPoints > 0 ? "warn" : "normal"} onClick={() => goToSection("money")} />
         <StatTile label={`Deposits (${days}d)`} value={usdt(a.money.depositMicro30d)}
           sub={`${usdt(a.money.depositMicroAll)} all time`} onClick={() => goToSection("money")} />
+
+        {/* Part 11's USDT row above answers "how is cash moving"; these four
+            answer the same question for ROZI (founder, 2026-09-07) — a
+            different currency, guardrail #7's own two-ledger split, so it
+            gets its own row rather than being folded into the money one. */}
+        <StatTile label={`ROZI paid to users (${days}d)`} value={`${formatRozi(Number(a.mining.roziPaidMicro30d))} ROZI`}
+          sub={`${compact(a.mining.roziMinersInWindow)} miners paid`} onClick={() => goToSection("mining")} />
+        <StatTile label="ROZI waiting to be paid" value={`${formatRozi(Number(a.mining.roziUnclaimedMicro))} ROZI`}
+          sub="mined, not yet claimed" tone={Number(a.mining.roziUnclaimedMicro) > 0 ? "warn" : "normal"}
+          onClick={() => goToSection("mining")} />
+        <StatTile label="Total ROZI mined" value={`${formatRozi(Number(a.mining.roziEmittedAllTimeMicro))} ROZI`}
+          sub={`${compact(a.mining.roziMinersAllTime)} miners ever`} onClick={() => goToSection("mining")} />
+        <StatTile label="ROZI left in the mining reserve" value={`${formatRozi(Number(a.mining.roziReserveRemainingMicro))} ROZI`}
+          sub={`of ${formatRozi(Number(a.mining.roziSupplyCapMicro))} ROZI cap`} onClick={() => goToSection("mining")} />
 
         <StatTile label="Proofs waiting" value={compact(a.tasks.proofsPending)}
           sub={`${a.tasks.approvalRate}% approved`}

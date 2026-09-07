@@ -504,6 +504,8 @@ const copy: Record<string, string> = {
   "login.enterCode": "Enter the code",
   "login.checking": "Checking…",
   "login.verifyContinue": "Verify and continue",
+  "login.resendCode": "Resend code",
+  "login.resendIn": "Resend code ({s}s)",
   // forgot mode
   "login.forgot.title": "Forgot password",
   "login.forgot.subtitle": "Enter your email. We will send a code to set a new password.",

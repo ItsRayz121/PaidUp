@@ -380,16 +380,28 @@ export async function authRoutes(app: FastifyInstance) {
     const existing = await sql.get<{ id: string; email_verified: number }>(
       "SELECT id, email_verified FROM users WHERE email = ?", email,
     );
-    if (existing && existing.email_verified) {
-      return reply.code(409).send({ error: "This email already has an account. Please log in." });
-    }
 
-    // Hash only now that we know the request can proceed (scrypt is deliberately
-    // expensive — don't pay it for a 409). Do NOT write it to the account yet:
-    // the password is bound to the verification code and applied only when that
-    // code is confirmed — otherwise anyone could overwrite an unverified
-    // account's password (account takeover).
+    // Hash UNCONDITIONALLY, before branching on whether the account exists
+    // (audit A-13). Scrypt is deliberately expensive and is the dominant cost
+    // of this route — skipping it only on the "already has an account" branch
+    // below would leave a timing signal that gives away the same thing the
+    // old distinct 409 response did in its body. Do NOT write it to the
+    // account yet: the password is bound to the verification code and applied
+    // only when that code is confirmed — otherwise anyone could overwrite an
+    // unverified account's password (account takeover).
     const passwordHash = await hashPassword(parsed.data.password);
+
+    // Anti-enumeration (audit A-13): the OLD 409 here let anyone learn whether
+    // an email has an account simply by trying to register it. This now
+    // mirrors /auth/forgot's own long-standing pattern a few routes down —
+    // the SAME {ok:true} response either way. When the account already exists
+    // and is verified, quietly send a password-reset code instead of a
+    // verification code: useful to the real owner (who forgot they'd signed
+    // up), invisible to anyone else, and no distinct response to read.
+    if (existing && existing.email_verified) {
+      try { await issueCode(email, "reset"); } catch (err) { req.log.error({ err }, "email send failed"); }
+      return { ok: true };
+    }
 
     if (!existing) {
       // Create the account with NO password yet (email_verified = 0). The
@@ -428,11 +440,19 @@ export async function authRoutes(app: FastifyInstance) {
       }
     }
 
+    // ⚠️ SWALLOWED, NOT SURFACED — security-review finding, 2026-09-07. This
+    // used to return a 502 here while the branch above (existing + verified)
+    // always returned {ok:true} — so with email delivery broken (a real state
+    // this project has actually been in, see email.ts), a 200 vs. 502 split
+    // reopened EXACTLY the enumeration the anti-enumeration fix above exists
+    // to close, just moved from the response body into the status code:
+    // 200 proved "this email already has a verified account", 502 proved it
+    // did not. Every branch of this route must fail the SAME way regardless
+    // of account state, matching /auth/forgot's own established swallow.
     try {
       await issueCode(email, "verify", passwordHash);
     } catch (err) {
       req.log.error({ err }, "email send failed");
-      return reply.code(502).send({ error: emailUnavailableMessage() });
     }
     return { ok: true };
   });
@@ -461,6 +481,58 @@ export async function authRoutes(app: FastifyInstance) {
     await ensureAdminRole(user.id, user.email);
     await recordDevice(user.id, deviceOf(req), req.ip);
     return { token: await signToken(user.id), user: await publicUser(user) };
+  });
+
+  // Resend the signup verification code (founder, 2026-09-07: "if the email
+  // got failed... the user can ask for one more [code] after a minute or
+  // two"). Before this, the only way to get a fresh code was to submit the
+  // whole register form again — which works, but forces re-typing a password
+  // and silently rebinds it to whatever was just typed. This keeps whatever
+  // password the user already chose (inherited from the most recent pending
+  // code) and asks for nothing but the email.
+  //
+  // Same anti-enumeration shape as /auth/forgot below: {ok:true} regardless
+  // of whether the account exists or is already verified — nothing here can
+  // be used to probe for an email's existence.
+  app.post("/auth/resend-code", limited(8, "10 minutes"), async (req, reply) => {
+    const parsed = forgotSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Please enter a valid email." });
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const existing = await sql.get<{ id: string; email_verified: number }>(
+      "SELECT id, email_verified FROM users WHERE email = ?", email,
+    );
+    if (!existing || existing.email_verified) return { ok: true };
+
+    // A real per-EMAIL cooldown, not just the route's per-IP rate limit —
+    // the limit above stops one IP hammering many emails, this stops many
+    // IPs hammering ONE person's inbox. `retryAfterSeconds` is safe to state
+    // plainly: it only ever appears once a code has already been sent for
+    // THIS email, which an enumeration probe (a single cold guess at someone
+    // else's address) can never trigger.
+    const last = await sql.get<{ created_at: string; pending_password_hash: string | null }>(
+      "SELECT created_at, pending_password_hash FROM email_codes WHERE email = ? AND purpose = 'verify' ORDER BY created_at DESC LIMIT 1",
+      email,
+    );
+    if (last) {
+      const elapsedSeconds = (Date.now() - new Date(last.created_at).getTime()) / 1000;
+      const waitMore = config.resendCodeCooldownSeconds - elapsedSeconds;
+      if (waitMore > 0) return { ok: true, retryAfterSeconds: Math.ceil(waitMore) };
+    }
+
+    // ⚠️ SWALLOWED, NOT SURFACED — same finding as /auth/register just above.
+    // A nonexistent/verified email short-circuits to {ok:true} before this
+    // point; a distinct 502 here (only reachable for a real, unverified
+    // account) would let a broken email provider answer "does this account
+    // exist and need verifying" with a status code instead of a body.
+    try {
+      // Inherit the password bound to the most recent code — a resend must
+      // not silently forget what the user already chose at signup.
+      await issueCode(email, "verify", last?.pending_password_hash ?? null);
+    } catch (err) {
+      req.log.error({ err }, "email send failed");
+    }
+    return { ok: true };
   });
 
   // Log in with email + password. No code needed once the email is verified.

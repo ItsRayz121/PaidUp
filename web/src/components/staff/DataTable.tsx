@@ -21,6 +21,14 @@ export type Column<Row> = {
   render: (row: Row) => ReactNode;
   /** Value for CSV export. Omit to use a best-effort of render(). */
   csv?: (row: Row) => string | number;
+  /**
+   * Pin this ONE column to the right edge of the scroll area (founder,
+   * 2026-09-07: a row's action buttons must be reachable without scrolling
+   * sideways). Opt-in per column, not a table-wide default, so a table with a
+   * genuinely wide "actions" area is the only one that pays for the extra
+   * `sticky` layer — every other list is unaffected.
+   */
+  sticky?: boolean;
 };
 
 export type FilterDef =
@@ -195,7 +203,9 @@ export function DataTable<Row>(p: Props<Row>) {
                   </th>
                 )}
                 {columns.map((c) => (
-                  <th key={c.key} className={`p-2.5 ${c.align === "right" ? "text-right" : ""} ${c.className ?? ""}`}>
+                  <th key={c.key} className={`p-2.5 ${c.align === "right" ? "text-right" : ""} ${
+                    c.sticky ? "sticky right-0 z-10 border-l border-line-strong bg-brand-tint" : ""
+                  } ${c.className ?? ""}`}>
                     {c.sortable ? (
                       <button onClick={() => q.setSort(c.key)} className="inline-flex items-center gap-1 font-semibold uppercase hover:text-brand-ink">
                         {c.header}
@@ -219,7 +229,9 @@ export function DataTable<Row>(p: Props<Row>) {
                       </td>
                     )}
                     {columns.map((c) => (
-                      <td key={c.key} className={`p-2.5 ${c.align === "right" ? "text-right" : ""} ${c.className ?? ""}`}>
+                      <td key={c.key} className={`p-2.5 ${c.align === "right" ? "text-right" : ""} ${
+                        c.sticky ? "sticky right-0 z-10 border-l border-line-strong bg-card" : ""
+                      } ${c.className ?? ""}`}>
                         {c.render(r)}
                       </td>
                     ))}

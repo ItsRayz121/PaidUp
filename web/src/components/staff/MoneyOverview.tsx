@@ -213,10 +213,10 @@ export function MoneyOverview() {
           rows={o.latest.deposits.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
         <LatestList title="Failed payout relay jobs" onOpen={() => goToSection("money", "p-withdrawals-group")}
           rows={o.latest.relayFailed.map((r) => ({ ...r, amount: formatUsdtMicro(r.usdtMicro) }))} />
+        {/* Sits beside "Failed payout relay jobs" in the same row, rather than
+            its own separate full-width block below (founder, 2026-09-07). */}
+        <LargestPayoutsBlock />
       </div>
-
-      {/* ---- largest treasury -> user payouts, ever ---- */}
-      <LargestPayoutsBlock />
     </section>
   );
 }

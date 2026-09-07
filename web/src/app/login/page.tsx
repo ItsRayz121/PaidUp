@@ -7,9 +7,14 @@ import { ShieldIcon, CheckIcon, ArrowRightIcon, TelegramIcon } from "@/component
 import { LogoLockup } from "@/components/Logo";
 import { useI18n } from "@/lib/i18n";
 import {
-  register, verifyEmail, login, forgotPassword, resetPassword, fetchTelegramConfig,
+  register, verifyEmail, login, forgotPassword, resetPassword, resendCode, fetchTelegramConfig,
   setSession, getToken, getStoredUser, ApiError, type SessionUser,
 } from "@/lib/api";
+
+// Matches the API's own default (config.ts's resendCodeCooldownSeconds) —
+// purely a client-side UX starting point; the server's own retryAfterSeconds
+// is what actually governs it if the two ever drift.
+const RESEND_COOLDOWN_SECONDS = 60;
 
 type Mode = "login" | "register" | "verify" | "forgot" | "reset";
 
@@ -103,6 +108,14 @@ function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // "Resend code" cooldown (2026-09-07) — a plain per-second countdown while
+  // on the verify screen; the button re-enables at 0.
+  const [resendCooldown, setResendCooldown] = useState(0);
+  useEffect(() => {
+    if (mode !== "verify" || resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1_000);
+    return () => clearInterval(id);
+  }, [mode, resendCooldown]);
 
   // Already signed in? Skip to the app — UNLESS they were sent here on purpose
   // to reset their password, in which case bouncing them away is the bug.
@@ -135,6 +148,7 @@ function LoginForm() {
       if (e instanceof ApiError && e.status === 403 && mode === "login") {
         setInfo(t("login.msg.verifyPrompt"));
         setMode("verify");
+        setResendCooldown(RESEND_COOLDOWN_SECONDS);
       } else {
         setError((e as Error).message);
       }
@@ -146,8 +160,28 @@ function LoginForm() {
     await register(email.trim(), password, ref);
     setInfo(t("login.msg.codeSent", { email: email.trim() }));
     setMode("verify");
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
   });
-  const doVerify = () => run(async () => finish(await verifyEmail(email.trim(), code)));
+  const doResend = () => run(async () => {
+    const r = await resendCode(email.trim());
+    setResendCooldown(r.retryAfterSeconds ?? RESEND_COOLDOWN_SECONDS);
+    setInfo(r.retryAfterSeconds ? null : t("login.msg.codeSent", { email: email.trim() }));
+  });
+  const doVerify = () => run(async () => {
+    try {
+      finish(await verifyEmail(email.trim(), code));
+      return;
+    } catch (e) {
+      // A code sent for an email that ALREADY has a verified account
+      // (2026-09-07, anti-enumeration fix — /auth/register no longer says so,
+      // it quietly emails a password-reset code instead) is a "reset" code,
+      // not a "verify" one — the server response can't tell the two cases
+      // apart, on purpose, so the client tries both here rather than asking
+      // the user which screen they're supposed to be on.
+      if (!(e instanceof ApiError) || password.length < 8) throw e;
+    }
+    finish(await resetPassword(email.trim(), code, password));
+  });
   const doLogin = () => run(async () => finish(await login(email.trim(), password)));
   const doForgot = () => run(async () => {
     await forgotPassword(email.trim());
@@ -264,6 +298,10 @@ function LoginForm() {
               {busy ? t("login.checking") : <><CheckIcon size={18} /> {t("login.verifyContinue")}</>}
             </Button>
           </div>
+          <button onClick={doResend} disabled={busy || resendCooldown > 0}
+            className="mt-3 w-full text-center text-sm font-semibold text-brand disabled:text-muted">
+            {resendCooldown > 0 ? t("login.resendIn", { s: String(resendCooldown) }) : t("login.resendCode")}
+          </button>
           <button onClick={() => go("login")}
             className="mt-4 w-full text-center text-sm font-semibold text-brand">{t("login.backToLogin")}</button>
         </div>
@@ -317,6 +355,10 @@ function LoginForm() {
             className="mt-4 w-full text-center text-sm font-semibold text-brand">{t("login.backToLogin")}</button>
         </div>
       )}
+
+      <a href="/privacy" className="mt-8 block text-center text-xs text-muted underline">
+        Privacy &amp; your data
+      </a>
     </div>
   );
 }

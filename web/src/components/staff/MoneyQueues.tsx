@@ -18,6 +18,7 @@ import { DataTable, type Column, type FilterDef } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell, CopyId, Addr, ErrText, StatusTabs, TxHash, statusLabel, Spinner, ErrorRow } from "./primitives";
 import { useToast } from "./toast";
+import { usePrompt } from "./prompt";
 import { useStaffNav, consumePendingGroupSubTab } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS, TreasuryPanel } from "@/components/staff";
 import { UsdtTopupConfigPanel } from "@/components/mining-admin";
@@ -184,6 +185,7 @@ function ResolveControls({ kind, row, canDo, compact, onDone }: {
 }) {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const prompt = usePrompt();
 
   if (row.handledAt) {
     return (
@@ -198,7 +200,7 @@ function ResolveControls({ kind, row, canDo, compact, onDone }: {
     if (action === "retry" && !window.confirm(
       "Re-queue this on-chain send? Do this ONLY if you have checked the chain and nothing was actually sent — a resend that lands twice is a double payment.",
     )) return;
-    const note = window.prompt(
+    const note = await prompt(
       action === "acknowledge" ? "What did you check? (required — goes in the audit log)"
       : action === "credit_back" ? "Why is the money going back? (required)"
       : "Why is it safe to retry? (required)",
@@ -282,6 +284,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
   const q = useTableQuery("money:withdrawals", PAGE);
   const c = useQueueControls(q, "all");
   const toast = useToast();
+  const prompt = usePrompt();
   const [open, setOpen] = useState<StaffWithdrawal | null>(null);
 
   const data = useApi(
@@ -300,7 +303,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
     let note: string | undefined;
     let txHash: string | undefined;
     if (action === "reject") {
-      const reason = window.prompt("Reason for rejecting (the user will see this):");
+      const reason = await prompt("Reason for rejecting (the user will see this):");
       if (reason === null) return;
       note = reason;
     }
@@ -310,7 +313,7 @@ export function WithdrawalsPanel({ canOpenLedger }: { canOpenLedger: boolean }) 
       // that recreates the "platform eats the fee" bug on any build missing the
       // field).
       const amount = r.netUsdt ? `${r.netUsdt} USDT` : "the NET amount shown on the row";
-      const hash = window.prompt(
+      const hash = await prompt(
         `Send ${amount} to:\n\n${r.address ?? "(no address on this request)"}\n\n` +
         "Send the payment FIRST, then paste the transaction hash (0x…) here.",
       );
@@ -477,6 +480,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:deposits", PAGE);
   const c = useQueueControls(q, "all");
   const toast = useToast();
+  const prompt = usePrompt();
   const [open, setOpen] = useState<AdminTopup | null>(null);
 
   const data = useApi(
@@ -492,11 +496,11 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
   const treasuryChain = data.data?.treasuryChain;
 
   async function confirm(r: AdminTopup) {
-    const raw = window.prompt(
-      "How much USDT did you actually SEE on the chain?\n\n" +
-      `The user claimed ${r.amount}. Type what the block explorer shows — that is what will be credited.`,
-      String(r.amount),
-    );
+    const raw = await prompt({
+      message: "How much USDT did you actually SEE on the chain?\n\n" +
+        `The user claimed ${r.amount}. Type what the block explorer shows — that is what will be credited.`,
+      defaultValue: String(r.amount),
+    });
     if (raw === null) return;
     const amount = Number(raw);
     if (!Number.isFinite(amount) || amount <= 0) { toast.err("That is not an amount."); return; }
@@ -504,7 +508,7 @@ export function DepositsPanel({ canDecide }: { canDecide: boolean }) {
     catch (e) { toast.err((e as Error).message); }
   }
   async function reject(r: AdminTopup) {
-    const reason = window.prompt("Why is this being rejected? The user will see this.");
+    const reason = await prompt("Why is this being rejected? The user will see this.");
     if (!reason) return;
     try { await rejectTopup(r.id, reason); toast.ok("Rejected."); data.reload(); setOpen(null); }
     catch (e) { toast.err((e as Error).message); }
@@ -598,6 +602,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
   const q = useTableQuery("money:refunds", PAGE);
   const c = useQueueControls(q, "all");
   const toast = useToast();
+  const prompt = usePrompt();
   const [open, setOpen] = useState<AdminRefund | null>(null);
 
   const data = useApi(
@@ -612,7 +617,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
 
   async function pay(r: AdminRefund) {
     // ⚠️ SENDS netAmount, NOT amount — the gas fee comes out of what is sent.
-    const txHash = window.prompt(
+    const txHash = await prompt(
       `Send ${r.netAmount} USDT to:\n\n${r.address}\n\n` +
       "Do that FIRST, from the treasury wallet. Then paste the transaction hash here as proof — the user will see it.",
     );
@@ -621,7 +626,7 @@ export function RefundsPanel({ canDecide }: { canDecide: boolean }) {
     catch (e) { toast.err((e as Error).message); }
   }
   async function decline(r: AdminRefund) {
-    const reason = window.prompt("Why is this being rejected? The user will see this, and their USDT credit goes back.");
+    const reason = await prompt("Why is this being rejected? The user will see this, and their USDT credit goes back.");
     if (!reason) return;
     try { await rejectRefund(r.id, reason); toast.ok("Rejected — the money went back to their balance."); data.reload(); setOpen(null); }
     catch (e) { toast.err((e as Error).message); }

@@ -20,6 +20,7 @@ import {
 import { formatPoints, formatRozi, formatPointsAsRozi, formatMoney, timeAgo, displayIdentity } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
 import { computeDistribution, distributionToTiersString, type DistributionMethod } from "@/lib/rewardDistribution";
+import { usePrompt } from "@/components/staff/prompt";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -316,9 +317,10 @@ export function LeaderboardPanel() {
   const data = useApi(fetchLeaderboardAdmin, []);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const prompt = usePrompt();
 
   async function hide(userId: string, email: string) {
-    const reason = window.prompt(
+    const reason = await prompt(
       `Hide ${email} from the public leaderboard?\n\n` +
       "This hides them from two read-only boards. It changes no balance and does not stop them " +
       "earning.\n\nWhy? (recorded, and shown on this screen)",
@@ -513,31 +515,45 @@ function fromDraft(d: SettingsDraft): LeaderboardRewardSettings {
 // distribution engine, it only fills in the existing one's input faster and
 // more fairly than typing 100 numbers by hand.
 const POOL_PRESETS = [10, 20, 50, 100, 1000];
+// A staff-facing display cap, not a design limit — the whole tier list still
+// gets computed and applied at any winner count up to WINNERS_MAX below.
+// React rendering tens of thousands of table rows with no virtualization
+// would visibly stall the tab; nobody actually reads 10,000 rows to check
+// them by eye anyway. The applied string (below) is never truncated.
+const PREVIEW_ROW_CAP = 300;
 
 function DistributionCalculator({ onApply }: { onApply: (tiers: string) => void }) {
   const [pool, setPool] = useState("100");
   const [winners, setWinners] = useState("10");
   const [method, setMethod] = useState<DistributionMethod>("balanced");
   const poolN = Math.max(0, Number(pool) || 0);
-  const winnersN = Math.max(0, Math.min(100, Math.floor(Number(winners) || 0)));
+  // Founder, 2026-09-07: "if I select 1000 that goes distributed among 1000,
+  // ... even 10,000 that goes distributed among 10,000." loadLeaderboard's
+  // own query already aggregates every qualifying user regardless of the
+  // LIMIT it is asked for (leaderboard.ts), so raising this cap adds no real
+  // query cost — the underlying scan was already happening for the top-20
+  // view.
+  const WINNERS_MAX = 10_000;
+  const winnersN = Math.max(0, Math.min(WINNERS_MAX, Math.floor(Number(winners) || 0)));
   const result = computeDistribution(poolN, winnersN, method);
 
   return (
     <div className="rounded-lg border border-line bg-brand-tint/20 p-2.5">
       <p className="text-xs font-semibold text-brand-ink">Distribution calculator</p>
       <p className="mt-0.5 text-[11px] text-muted">
-        Pick a pool and a winner count (1–100) and this fills the field above for you — fairly, not
-        typed rank by rank. <strong>Balanced competitive</strong> (the default) gives higher ranks a real
-        edge without first place swallowing the pool; <strong>Equal</strong> splits it evenly.
+        Pick a pool and a winner count (1–{WINNERS_MAX.toLocaleString()}) and this fills the field above
+        for you — fairly, not typed rank by rank. <strong>Balanced competitive</strong> (the default) gives
+        higher ranks a real edge without first place swallowing the pool; <strong>Equal</strong> splits it
+        evenly across every winner, whether that&apos;s 10 people or 10,000.
       </p>
       <div className="mt-2 flex flex-wrap items-end gap-2">
         <label className="text-[10px] text-muted">Total pool (ROZI)<br />
           <input type="number" min={0} value={pool} onChange={(e) => setPool(e.target.value)}
             className="mt-0.5 w-24 rounded border border-line bg-card px-1.5 py-1 text-xs num" />
         </label>
-        <label className="text-[10px] text-muted">Winners (1–100)<br />
-          <input type="number" min={1} max={100} value={winners} onChange={(e) => setWinners(e.target.value)}
-            className="mt-0.5 w-20 rounded border border-line bg-card px-1.5 py-1 text-xs num" />
+        <label className="text-[10px] text-muted">Winners (1–{WINNERS_MAX.toLocaleString()})<br />
+          <input type="number" min={1} max={WINNERS_MAX} value={winners} onChange={(e) => setWinners(e.target.value)}
+            className="mt-0.5 w-24 rounded border border-line bg-card px-1.5 py-1 text-xs num" />
         </label>
         <label className="text-[10px] text-muted">Method<br />
           <select value={method} onChange={(e) => setMethod(e.target.value as DistributionMethod)}
@@ -575,7 +591,7 @@ function DistributionCalculator({ onApply }: { onApply: (tiers: string) => void 
               <tr><th className="px-1.5 py-1">Rank</th><th className="px-1.5 py-1">%</th><th className="px-1.5 py-1">ROZI</th></tr>
             </thead>
             <tbody>
-              {result.rows.map((r) => (
+              {result.rows.slice(0, PREVIEW_ROW_CAP).map((r) => (
                 <tr key={r.rank} className={`border-t border-line ${r.rozi === 0 ? "text-danger" : ""}`}>
                   <td className="px-1.5 py-0.5 font-mono">{r.rank}</td>
                   <td className="px-1.5 py-0.5 font-mono">{r.percent}%</td>
@@ -584,6 +600,12 @@ function DistributionCalculator({ onApply }: { onApply: (tiers: string) => void 
               ))}
             </tbody>
           </table>
+          {result.rows.length > PREVIEW_ROW_CAP && (
+            <p className="border-t border-line bg-brand-tint/30 px-1.5 py-1 text-[10px] text-muted">
+              Showing the first {PREVIEW_ROW_CAP} of {result.rows.length} ranks — Apply still fills in
+              every one of them.
+            </p>
+          )}
         </div>
       )}
 

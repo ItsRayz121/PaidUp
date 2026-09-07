@@ -9,7 +9,15 @@
 // The single exception is `user_activity_days`, which exists because DAU cannot
 // be derived from anything already stored — see its comment in db.ts.
 
-import { sql, now } from "./db.ts";
+import { sql, sqlStaff, now } from "./db.ts";
+import { totalEmittedMicro, loadMiningSettings } from "./mining/settings.ts";
+import { toMicro, fromMicro } from "./mining/core.ts";
+// `touchActivity` below runs on EVERY authenticated request (earner and staff
+// alike, via auth.ts's requireActiveUser) and MUST stay on the main pool
+// (`sql`) — it would defeat the whole point of the staff pool split (B10) to
+// route the busiest write in the app through a 3-connection pool. Only
+// `loadAnalytics`'s own ~31-query burst — the actual thing that can starve
+// other requests — moves to `sqlStaff`.
 
 // ---- Activity ---------------------------------------------------------------
 
@@ -52,7 +60,7 @@ const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString(
 const dayStr = (n: number) => utcDay(new Date(Date.now() - n * 86400_000));
 
 async function scalar(text: string, ...params: unknown[]): Promise<number> {
-  const r = await sql.get<{ v: number | string }>(text, ...params);
+  const r = await sqlStaff.get<{ v: number | string }>(text, ...params);
   return Number(r?.v ?? 0);
 }
 
@@ -73,6 +81,7 @@ export async function loadAnalytics(days = 30) {
     completionsToday, taskOpens30d, proofsRejected30d,
     // Mining
     activeMiners, sessions30d, roziMinedToday,
+    roziPaidMicro30d, roziMinersInWindow, roziMinersAllTime,
     // Money
     depositMicro30d, depositMicroAll,
     withdrawnPoints30d, withdrawnPointsAll, withdrawPendingPoints,
@@ -115,6 +124,27 @@ export async function loadAnalytics(days = 30) {
         WHERE source_type = 'mining' AND direction = 'credit' AND created_at >= ?`,
       startOfToday,
     ),
+    // "ROZI paid to users" (Part 11 dashboard boxes, founder 2026-09-07) — the
+    // ROZI equivalent of "Paid to users (30d)" a few lines down: every credit
+    // from an EMITTING source (mining, RoziPay task rewards, leaderboard
+    // prizes) in the window. Referral hashrate and rig purchases move no
+    // currency, so they are correctly absent here.
+    scalar(
+      `SELECT COALESCE(SUM(amount),0) AS v FROM rozi_ledger
+        WHERE source_type IN ('mining','task_reward','leaderboard_reward')
+          AND direction = 'credit' AND created_at >= ?`,
+      since,
+    ),
+    scalar(
+      `SELECT COUNT(DISTINCT user_id)::int AS v FROM rozi_ledger
+        WHERE source_type IN ('mining','task_reward','leaderboard_reward')
+          AND direction = 'credit' AND created_at >= ?`,
+      since,
+    ),
+    scalar(
+      `SELECT COUNT(DISTINCT user_id)::int AS v FROM rozi_ledger
+        WHERE source_type IN ('mining','task_reward','leaderboard_reward') AND direction = 'credit'`,
+    ),
 
     scalar("SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger WHERE direction = 'credit' AND source_type = 'topup' AND created_at >= ?", since),
     scalar("SELECT COALESCE(SUM(amount),0) AS v FROM usdt_ledger WHERE direction = 'credit' AND source_type = 'topup'"),
@@ -143,12 +173,28 @@ export async function loadAnalytics(days = 30) {
     scalar("SELECT COUNT(*)::int AS v FROM support_tickets WHERE status != 'closed'"),
   ]);
 
+  // "ROZI waiting to be paid" — a real backlog, not a window: mining rewards
+  // settle into mining_unclaimed and stay there until the user actually taps
+  // Claim (founder decision 2026-08-12 made claiming a real action, not a
+  // silent auto-credit) — the exact same shape as the USDT "Waiting to be
+  // paid" box's pending-withdrawal-requests backlog just above it.
+  const roziUnclaimedMicro = await scalar("SELECT COALESCE(SUM(micro),0) AS v FROM mining_unclaimed");
+  // "Total ROZI mined" / "ROZI left in the mining reserve" — the SAME cap
+  // accounting the 21M supply cap is enforced against everywhere else
+  // (mining/settings.ts's totalEmittedMicro, reused rather than re-derived —
+  // a second, slightly-different definition of "emitted" on this screen is
+  // exactly how a dashboard number quietly disagrees with the real ledger).
+  const miningSettings = await loadMiningSettings();
+  const supplyCapMicro = toMicro(miningSettings.supplyCap);
+  const roziEmittedMicro = await totalEmittedMicro(sqlStaff);
+  const roziRemainingMicro = Math.max(0, supplyCapMicro - roziEmittedMicro);
+
   // ---- Retention -----------------------------------------------------------
   // D1 / D7 / D30: of the users who signed up on a given day, how many were
   // active N days later. Measured against a cohort that is OLD ENOUGH to have
   // had the chance — a D7 number that includes people who signed up yesterday
   // is not low, it is meaningless.
-  const retention = await sql.all<{ window: string; cohort: number; returned: number }>(
+  const retention = await sqlStaff.all<{ window: string; cohort: number; returned: number }>(
     `WITH cohorts AS (
        SELECT id, to_char(created_at::timestamp, 'YYYY-MM-DD') AS signup_day
          FROM users
@@ -166,7 +212,7 @@ export async function loadAnalytics(days = 30) {
   );
 
   const retentionFor = async (n: number, oldestDays: number) => {
-    const r = await sql.get<{ cohort: number; returned: number }>(
+    const r = await sqlStaff.get<{ cohort: number; returned: number }>(
       `WITH cohorts AS (
          SELECT id, created_at::timestamp::date AS signup_day
            FROM users
@@ -193,7 +239,7 @@ export async function loadAnalytics(days = 30) {
   // onto a generated date range so a quiet day appears as a zero rather than
   // vanishing — a line chart that silently drops empty days draws a trend that
   // did not happen.
-  const series = await sql.all<{
+  const series = await sqlStaff.all<{
     day: string; signups: number; active: number;
     completions: number; points: number;
   }>(
@@ -216,7 +262,7 @@ export async function loadAnalytics(days = 30) {
     dayStr(days - 1), today,
   );
 
-  const miningSeries = await sql.all<{ day: string; rozi: string; miners: number }>(
+  const miningSeries = await sqlStaff.all<{ day: string; rozi: string; miners: number }>(
     `WITH days AS (
        SELECT to_char(d, 'YYYY-MM-DD') AS day
          FROM generate_series(?::date, ?::date, '1 day') AS d
@@ -242,7 +288,7 @@ export async function loadAnalytics(days = 30) {
   // At a 60/40 split, a 600-point reward implies a $1.00 gross and $0.40 to us,
   // but only while the dashboard's split matches what the network is really
   // paying. A real revenue figure needs the network's own reporting.
-  const byNetwork = await sql.all<{
+  const byNetwork = await sqlStaff.all<{
     network: string; label: string; split: number; status: string;
     completions: number; user_points: number;
   }>(
@@ -299,6 +345,15 @@ export async function loadAnalytics(days = 30) {
     mining: {
       activeMiners, sessions: sessions30d,
       roziMinedTodayMicro: String(roziMinedToday),
+      // Dashboard's 4 ROZI boxes, alongside the existing USDT ones (founder,
+      // 2026-09-07) — see this function's own comments above for what each
+      // one measures and why.
+      roziPaidMicro30d: String(roziPaidMicro30d),
+      roziMinersInWindow, roziMinersAllTime,
+      roziUnclaimedMicro: String(roziUnclaimedMicro),
+      roziEmittedAllTimeMicro: String(roziEmittedMicro),
+      roziReserveRemainingMicro: String(roziRemainingMicro),
+      roziSupplyCapMicro: String(supplyCapMicro),
     },
     money: {
       depositMicro30d: String(depositMicro30d),

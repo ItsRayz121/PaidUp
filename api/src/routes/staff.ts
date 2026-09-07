@@ -1,7 +1,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
-  sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
+  // ⚠️ `sqlStaff` (audit finding B10 — its own separate, small connection
+  // pool) is imported HERE AS `sql`, so every bare `sql.xxx(...)` call written
+  // directly in this file — the Users list, search, withdrawal/fraud/ticket
+  // queries, etc. — runs on the staff pool. The named helpers below
+  // (`balanceOf`, `postLedger`, `getSetting`, ...) are unaffected: they are
+  // separate functions defined in db.ts that close over ITS OWN module-level
+  // `sql`, on the main pool, because they are shared with earner routes too.
+  sqlStaff as sql, now, newId, balanceOf, roziBalanceMicroOf, usdtBalanceMicroOf,
   roziMinedBalanceMicroOf, roziWalletBalanceMicroOf,
   postLedger, postEarnedUsdt, postUsdt, logAudit, getSetting, setSetting,
 } from "../db.ts";
@@ -1480,6 +1487,141 @@ export async function staffRoutes(app: FastifyInstance) {
         assignedTo: t.assigned_to, assigneeEmail: t.assignee_email,
         at: t.created_at, updatedAt: t.updated_at,
       })),
+    };
+  }));
+
+  // ---- Support Inbox: ONE ROW PER PERSON (founder, 2026-09-07) -----------
+  // "in one support chat person can go for multiple support from same chat"
+  // — /staff/tickets above is per-SEGMENT (one row per support_tickets row),
+  // which is exactly right for the audit-oriented "All tickets" table, but
+  // wrong for the chat-style Inbox: a person who closed a conversation and
+  // later opened a new one showed up as TWO separate rows for the same
+  // person. These two endpoints group by user_id instead — one conversation
+  // per person, however many support_tickets rows sit underneath it,
+  // mirroring how the EARNER's own /support/chat already reads their whole
+  // history as one merged, time-ordered thread rather than segment by
+  // segment.
+  app.get("/staff/support/inbox", staffGuard("support.view", async (_ctx, req) => {
+    const q = req.query as { status?: string; q?: string; limit?: string; offset?: string };
+    const status = q.status ?? "open";
+    const limit = Math.min(Number(q.limit ?? 25) || 25, 200);
+    const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    // "all" is a real choice here too, for the same reason as /staff/tickets.
+    if (status !== "all") { where.push("latest.status = ?"); params.push(status); }
+    if (q.q?.trim()) {
+      const like = `%${q.q.trim().toLowerCase()}%`;
+      where.push("(LOWER(latest.subject) LIKE ? OR LOWER(u.email) LIKE ?)");
+      params.push(like, like);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    // One CTE, reused three times: the LATEST support_tickets row per user_id
+    // (their current conversation), via DISTINCT ON ordered by created_at —
+    // Postgres's own "top-1-per-group" idiom, cheap on an already-small table.
+    const latestCte = `
+      WITH latest AS (
+        SELECT DISTINCT ON (ti.user_id) ti.*
+          FROM support_tickets ti
+         ORDER BY ti.user_id, ti.created_at DESC
+      )`;
+
+    const [rows, totalRow, counts] = await Promise.all([
+      sql.all<Record<string, unknown>>(
+        `${latestCte}
+         SELECT latest.id, latest.user_id, latest.subject, latest.status, latest.updated_at,
+                latest.assigned_to, u.email AS user_email, a.email AS assignee_email,
+                u.username AS user_username, u.display_name AS user_display_name,
+                u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
+                -- Summed/picked across ALL of this person's tickets, not just
+                -- the latest one — a message sent in an older, now-closed
+                -- segment is still part of the same conversation.
+                (SELECT COUNT(*)::int FROM ticket_messages m
+                   JOIN support_tickets s ON s.id = m.ticket_id
+                  WHERE s.user_id = latest.user_id AND m.author_role <> 'internal') AS message_count,
+                (SELECT m.body FROM ticket_messages m
+                   JOIN support_tickets s ON s.id = m.ticket_id
+                  WHERE s.user_id = latest.user_id AND m.author_role <> 'internal'
+                  ORDER BY m.created_at DESC LIMIT 1) AS last_message
+           FROM latest
+           JOIN users u ON u.id = latest.user_id
+           LEFT JOIN users a ON a.id = latest.assigned_to
+           ${whereSql}
+           ORDER BY latest.updated_at DESC
+           LIMIT ? OFFSET ?`,
+        ...params, limit, offset,
+      ),
+      sql.get<{ n: string | number }>(
+        `${latestCte}
+         SELECT COUNT(*) AS n FROM latest JOIN users u ON u.id = latest.user_id ${whereSql}`,
+        ...params,
+      ),
+      // Per-status counts, over every PERSON's current conversation — same
+      // "counts never follow the active filter" rule as the ticket queue.
+      sql.all<{ status: string; n: number }>(`${latestCte} SELECT status, COUNT(*)::int AS n FROM latest GROUP BY status`),
+    ]);
+
+    return {
+      counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
+      total: Number(totalRow?.n ?? rows.length),
+      offset, limit,
+      conversations: rows.map((t) => ({
+        // `id` is the USER id here — this list is one row per person, and the
+        // frontend keys/selects rows by it. `ticketId` is that person's
+        // latest support_tickets row, which is what a reply/close/reopen
+        // action actually targets.
+        id: t.user_id, ticketId: t.id, userId: t.user_id, userEmail: t.user_email,
+        userUsername: t.user_username ?? null, userDisplayName: t.user_display_name ?? null,
+        userTelegramUsername: t.user_telegram_username ?? null, userTelegramName: t.user_telegram_name ?? null,
+        subject: t.subject, status: t.status, messageCount: t.message_count, lastMessage: t.last_message,
+        assignedTo: t.assigned_to, assigneeEmail: t.assignee_email, updatedAt: t.updated_at,
+      })),
+    };
+  }));
+
+  app.get("/staff/support/inbox/:userId", staffGuard("support.view", async (_ctx, req, reply) => {
+    const targetUserId = (req.params as { userId: string }).userId;
+    const latest = await sql.get<Record<string, unknown>>(
+      `SELECT ti.*, u.email AS user_email, u.status AS user_status,
+              u.username AS user_username, u.display_name AS user_display_name,
+              u.telegram_username AS user_telegram_username, u.telegram_name AS user_telegram_name,
+              u.kyc_status, u.country, a.email AS assignee_email
+         FROM support_tickets ti
+         JOIN users u ON u.id = ti.user_id
+         LEFT JOIN users a ON a.id = ti.assigned_to
+        WHERE ti.user_id = ?
+        ORDER BY ti.created_at DESC
+        LIMIT 1`, targetUserId,
+    );
+    if (!latest) return reply.code(404).send({ error: "No conversation found for that user." });
+    // Every message across EVERY one of this user's tickets, walked in TIME
+    // order — never segment by segment, the same rule /support/chat follows
+    // and for the identical reason: a reply can land on an older segment
+    // after a newer one already started, and grouping by segment would
+    // render it above messages sent days later.
+    const messages = await sql.all(
+      `SELECT m.id, m.author_role, m.body, m.image, m.created_at, au.email AS author_email
+         FROM ticket_messages m
+         JOIN support_tickets s ON s.id = m.ticket_id
+         LEFT JOIN users au ON au.id = m.author_id
+        WHERE s.user_id = ?
+        ORDER BY m.created_at ASC`, targetUserId,
+    );
+    return {
+      // Shaped exactly like GET /staff/tickets/:id's own `ticket` — `id` here
+      // is the LATEST support_tickets row, which is what reply/patch target;
+      // TicketThread (staff.tsx) does not need to know the difference.
+      ticket: {
+        id: latest.id, userId: latest.user_id, userEmail: latest.user_email,
+        userUsername: latest.user_username ?? null, userDisplayName: latest.user_display_name ?? null,
+        userTelegramUsername: latest.user_telegram_username ?? null, userTelegramName: latest.user_telegram_name ?? null,
+        userStatus: latest.user_status, kycStatus: latest.kyc_status, country: latest.country,
+        subject: latest.subject, status: latest.status, at: latest.created_at,
+        updatedAt: latest.updated_at, rating: latest.rating,
+        assignedTo: latest.assigned_to, assigneeEmail: latest.assignee_email,
+      },
+      messages,
     };
   }));
 

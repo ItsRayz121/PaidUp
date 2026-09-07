@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
-  fetchKpis, fetchStaffTicket, replyStaffTicket, patchStaffTicket,
+  fetchKpis, fetchStaffTicket, fetchStaffInboxThread, replyStaffTicket, patchStaffTicket,
   fetchNetworks, updateNetwork, updateAllNetworkReferrals, fetchSettings, updateSettings,
   fetchReferralAdmin, type StaffTicket, type NetworkConfig, type ReferralNetwork,
 } from "@/lib/api";
@@ -132,9 +132,25 @@ export const TICKET_STATUSES = ["all", "open", "answered", "closed"];
 // the buttons beside it) off screen — tap it to read the whole thing in place.
 const LONG_MESSAGE_CHARS = 320;
 
-export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => void }) {
+// `mergedUserId` (Inbox mode, 2026-09-07): when set, this renders the FULL
+// history across every one of that person's support_tickets rows (fetched
+// from GET /staff/support/inbox/:userId), not just the single ticket `t`
+// happens to be. `t` is still passed for its id as a fetch key/fallback
+// before the merged thread has loaded — replies always target the id the
+// FETCHED response names (the person's latest ticket), never the stale `t.id`
+// once merged data is in, since a poll can move which ticket is "latest".
+export function TicketThread({ t, onChange, mergedUserId }: {
+  t: StaffTicket; onChange: () => void; mergedUserId?: string;
+}) {
   const id = t.id;
-  const thread = useApi(() => fetchStaffTicket(id), [id]);
+  const thread = useApi(
+    () => mergedUserId ? fetchStaffInboxThread(mergedUserId) : fetchStaffTicket(id),
+    [id, mergedUserId],
+  );
+  // The reply/patch target: once loaded, always the id the SERVER says is
+  // this conversation's current ticket (in merged mode that can be a
+  // different, newer row than `t.id` was when the list was fetched).
+  const targetId = (thread.data?.ticket as { id?: string } | undefined)?.id ?? id;
   const [reply, setReply] = useState("");
   const [internal, setInternal] = useState(false);
   const [image, setImage] = useState<string | null>(null);
@@ -145,7 +161,7 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
   async function send(close: boolean) {
     setBusy(true); setErr(null);
     try {
-      await replyStaffTicket(id, reply.trim(), close, internal, image);
+      await replyStaffTicket(targetId, reply.trim(), close, internal, image);
       setReply(""); setInternal(false); setImage(null); thread.reload(); onChange();
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
@@ -159,7 +175,7 @@ export function TicketThread({ t, onChange }: { t: StaffTicket; onChange: () => 
 
   async function patch(p: { assignedTo?: string | null; status?: string }) {
     setBusy(true); setErr(null);
-    try { await patchStaffTicket(id, p); thread.reload(); onChange(); }
+    try { await patchStaffTicket(targetId, p); thread.reload(); onChange(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }

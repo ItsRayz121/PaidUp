@@ -45,6 +45,8 @@
     "test:moneyadmin": "tsx src/tests/moneyAdmin.e2e.ts",
     "test:tasksadmin": "tsx src/tests/tasksAdmin.e2e.ts",
     "test:messagesadmin": "tsx src/tests/messagesAdmin.e2e.ts",
+    "test:postbackredaction": "tsx src/tests/postbackRedaction.e2e.ts",
+    "test:authregister": "tsx src/tests/authRegister.e2e.ts",
     "test:disbursements": "tsx src/tests/disbursements.e2e.ts",
     "test:otprace": "tsx src/tests/otp-race.e2e.ts",
     "test:miningbatch": "tsx src/tests/mining-batch.e2e.ts",

@@ -47,7 +47,12 @@ export const LEADERBOARD_REWARD_DEFAULTS: LeaderboardRewardSettings = {
 };
 
 const KEY = "leaderboardRewards.config";
-const MAX_TIERS = 20; // matches loadLeaderboard's own row cap — see leaderboard.ts
+// Raised from 20 (founder, 2026-09-07: reward pools up to top-1,000 or
+// top-10,000). loadLeaderboard's own query (leaderboard.ts) GROUPs BY and
+// aggregates every qualifying ledger row regardless of the LIMIT it is
+// asked for — the cost is the same whether the tier count is 20 or 10,000,
+// so this is a display/typing-effort ceiling, not a performance one.
+const MAX_TIERS = 10_000;
 
 export function clampTiers(tiers: unknown): number[] {
   if (!Array.isArray(tiers)) return [];

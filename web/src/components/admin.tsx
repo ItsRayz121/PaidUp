@@ -16,8 +16,9 @@ import { useStaffNav } from "@/lib/staffNav";
 import { useTableQuery } from "@/lib/staffTable";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
 import { DataTable, type Column } from "@/components/staff/DataTable";
-import { StatusBadge, TimeCell, Points, RoziMicro } from "@/components/staff/primitives";
+import { StatusBadge, TimeCell, RoziMicro } from "@/components/staff/primitives";
 import { useToast } from "@/components/staff/toast";
+import { usePrompt } from "@/components/staff/prompt";
 
 // ---- Users list — on the shared DataTable (admin rebuild, Phase A) --------
 // Search / pagination / row count / CSV / bulk-suspend all come from the one
@@ -38,6 +39,7 @@ export function UsersPanel() {
     [q.search, q.pageSize, q.offset, q.sort, q.dir, JSON.stringify(q.filters)],
   );
   const toast = useToast();
+  const prompt = usePrompt();
   const { openUser } = useStaffNav();
   const rows = users.data?.users ?? [];
 
@@ -45,7 +47,7 @@ export function UsersPanel() {
   // a partial failure (a row already in that state, the actor's own id in the
   // selection) is reported, never swallowed into one ok/fail.
   async function bulkStatus(ids: string[], status: "active" | "suspended") {
-    const reason = window.prompt(
+    const reason = await prompt(
       status === "suspended"
         ? `Why are you suspending ${ids.length} account(s)? They are locked out immediately.`
         : `Why are you restoring ${ids.length} account(s)?`,
@@ -73,13 +75,6 @@ export function UsersPanel() {
           <span className="block truncate text-xs text-muted">{u.id}</span>
         </div>
       ),
-    },
-    {
-      // Part 10 — no bare, unlabeled "Balance": this is the points/cash
-      // ledger (task+referral earnings, the real 1000pts=$1 rate), so it says
-      // so, distinct from the real ROZI ledger column right after it.
-      key: "balance", header: "Points balance", align: "right", sortable: true,
-      csv: (u) => u.balance, render: (u) => <Points value={u.balance} />,
     },
     {
       // Part 10 — a genuinely separate ledger from the points balance above
@@ -124,8 +119,12 @@ export function UsersPanel() {
     },
     { key: "created_at", header: "Joined", sortable: true, csv: (u) => u.created_at, render: (u) => <TimeCell iso={u.created_at} /> },
     {
-      key: "actions", header: "", render: (u) => (
-        <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+      // Pinned to the right edge (founder, 2026-09-07): "Open / Adjust /
+      // Suspend / Review" used to sit past the ROZI/USDT columns, off the
+      // right side of the viewport, and needed a horizontal scroll to reach
+      // on a normal-width screen.
+      key: "actions", header: "", sticky: true, render: (u) => (
+        <div className="flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => openUser(u.id)} className="rounded-md bg-brand-tint px-2.5 py-1 text-xs font-semibold text-brand">Open</button>
           <UserQuickActions u={u} reload={users.reload} />
         </div>
@@ -223,6 +222,7 @@ function TelegramNamesButton({ onDone }: { onDone: () => void }) {
 function UserQuickActions({ u, reload }: { u: AdminUserRow; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const prompt = usePrompt();
   const suspended = u.status !== "active";
 
   async function run(fn: () => Promise<unknown>, okMsg: string) {
@@ -232,32 +232,35 @@ function UserQuickActions({ u, reload }: { u: AdminUserRow; reload: () => void }
     finally { setBusy(false); }
   }
 
-  function toggleStatus() {
+  async function toggleStatus() {
     const next = suspended ? "active" : "suspended";
-    const reason = window.prompt(next === "suspended"
+    const reason = await prompt(next === "suspended"
       ? "Why are you suspending this account? They are locked out immediately."
       : "Why are you restoring this account?");
     if (!reason?.trim()) return;
     run(() => setUserStatus(u.id, next, reason.trim()), `Account ${next === "suspended" ? "suspended" : "restored"}.`);
   }
 
-  function adjust() {
-    const raw = window.prompt("Adjust points. Positive adds, negative removes (e.g. 500 or -500).\nA credit is real money the user can withdraw. Logged against you.");
+  async function adjust() {
+    const raw = await prompt({
+      message: "Adjust points. Positive adds, negative removes (e.g. 500 or -500).\nA credit is real money the user can withdraw. Logged against you.",
+      placeholder: "500 or -500",
+    });
     if (raw === null) return;
     const points = Number(raw.trim());
     if (!Number.isInteger(points) || points === 0) { toast.err("Enter a whole number that is not zero."); return; }
-    const reason = window.prompt("Reason (the user sees this in their wallet):");
+    const reason = await prompt("Reason (the user sees this in their wallet):");
     if (!reason?.trim()) return;
     run(async () => { const r = await adjustUserPoints(u.id, points, reason.trim()); toast.ok(`Balance ${r.before} → ${r.after} points.`); }, "");
   }
 
-  function toggleReview() {
+  async function toggleReview() {
     if (u.underReview) {
       if (!window.confirm("Clear the review mark on this account?")) return;
       run(() => setUserReview(u.id, null), "Review mark cleared.");
       return;
     }
-    const reason = window.prompt("Why are you marking this account for review?");
+    const reason = await prompt("Why are you marking this account for review?");
     if (!reason?.trim()) return;
     run(() => setUserReview(u.id, reason.trim()), "Marked for review.");
   }

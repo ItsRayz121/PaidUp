@@ -23,9 +23,27 @@ import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell, Addr, TxHash } from "./primitives";
 import { useToast } from "./toast";
+import { usePrompt } from "./prompt";
 import { useStaffNav } from "@/lib/staffNav";
 import { RefreshBar, QUEUE_POLL_MS } from "@/components/staff";
-import { formatUsdtMicro } from "@/lib/format";
+import { formatUsdtMicro, displayIdentity } from "@/lib/format";
+
+// Same shape and job as MoneyQueues.tsx's own (unexported) `identityOf` —
+// duplicated rather than imported across files for a 5-line helper, matching
+// how every other staff screen already does this locally (founder,
+// 2026-09-07: this screen was the one CLAUDE.md's 2026-09-02 pass flagged and
+// deliberately left showing a raw email; the four identity columns needed to
+// fix it are added to EligibleItem/DisbursementRow in disbursements.ts).
+function identityOf(r: {
+  userEmail: string | null; userUsername?: string | null; userDisplayName?: string | null;
+  userTelegramUsername?: string | null; userTelegramName?: string | null;
+}): string {
+  return displayIdentity({
+    email: r.userEmail ?? "", username: r.userUsername,
+    displayName: r.userDisplayName, telegramUsername: r.userTelegramUsername,
+    telegramName: r.userTelegramName,
+  });
+}
 import { reconcileRowsFromCsv } from "@/lib/csv";
 import {
   fetchEligibleRewards, fetchDisbursementBatches, fetchDisbursementBatch,
@@ -147,7 +165,7 @@ function EligiblePool({ canManage, taskId, onCreated }: {
       key: "user", header: "User", csv: (r) => r.userEmail,
       render: (r) => (
         <div className="min-w-0">
-          <span className="block truncate font-medium text-brand-ink">{r.userEmail}</span>
+          <span className="block truncate font-medium text-brand-ink">{identityOf(r)}</span>
           <span className="block truncate text-xs text-muted">{r.userId}</span>
         </div>
       ),
@@ -283,6 +301,7 @@ function BatchList({ onOpen, taskId }: { onOpen: (id: string) => void; taskId?: 
 
 function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean; onBack: () => void }) {
   const toast = useToast();
+  const prompt = usePrompt();
   const { openUser } = useStaffNav();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -307,7 +326,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
   // still on screen as a copyable chip.
   async function rename() {
     if (!batch) return;
-    const next = window.prompt("What should this batch be called?", batchLabel(batch));
+    const next = await prompt({ message: "What should this batch be called?", defaultValue: batchLabel(batch) });
     if (next === null) return;
     if (!next.trim()) { toast.err("Give the batch a name."); return; }
     try { await renameDisbursementBatch(id, next.trim()); toast.ok("Renamed."); data.reload(); }
@@ -330,7 +349,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
     finally { setBusy(false); }
   }
   async function markPaid(r: DisbursementRow) {
-    const hash = window.prompt(
+    const hash = await prompt(
       `Send ${usdt(r.usdtMicro)} to:\n\n${r.destAddress}\n\nDo that first, then paste the transaction hash here.`,
     );
     if (!hash) return;
@@ -372,7 +391,7 @@ function BatchDetail({ id, canManage, onBack }: { id: string; canManage: boolean
             <tr key={r.id} className="border-b border-line/60 align-top">
               <td className="py-2 pr-3">
                 <button className="text-left" onClick={() => openUser(r.userId)}>
-                  <span className="block truncate text-brand hover:underline">{r.userEmail}</span>
+                  <span className="block truncate text-brand hover:underline">{identityOf(r)}</span>
                   <span className="block truncate text-xs text-muted">{r.taskTitle}</span>
                 </button>
               </td>

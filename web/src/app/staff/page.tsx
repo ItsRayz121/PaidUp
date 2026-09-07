@@ -30,6 +30,7 @@ import { BroadcastPanel, ContentPanel } from "@/components/notify-admin";
 import { StaffNavContext, useStaffNav, setPendingGroupSubTab, type SectionId } from "@/lib/staffNav";
 import { StaffSearch } from "@/components/staff-search";
 import { ToastProvider } from "@/components/staff/toast";
+import { PromptProvider, usePrompt } from "@/components/staff/prompt";
 import { UserLookupScreen } from "@/components/staff/UserDetail";
 import { DashboardOverview } from "@/components/staff/DashboardOverview";
 import { MoneyOverview } from "@/components/staff/MoneyOverview";
@@ -323,6 +324,7 @@ export default function StaffPage() {
   };
 
   return (
+    <PromptProvider>
     <ToastProvider>
     <div className="mx-auto max-w-6xl px-4 py-5">
       <header className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur">
@@ -420,6 +422,7 @@ export default function StaffPage() {
       </div>
     </div>
     </ToastProvider>
+    </PromptProvider>
   );
 }
 
@@ -433,8 +436,9 @@ function FlagActions({ id, userId, label, onDone }: {
   id: string; userId: string | null; label: string; onDone: () => void;
 }) {
   const [busy, setBusy] = useState<"" | "resolve" | "suspend">("");
+  const prompt = usePrompt();
   async function resolve() {
-    const note = window.prompt("Resolve this flag — why? (recorded)");
+    const note = await prompt("Resolve this flag — why? (recorded)");
     if (note === null) return;
     setBusy("resolve");
     try { await resolveFraud(id, note.trim() || undefined); onDone(); }
@@ -442,7 +446,7 @@ function FlagActions({ id, userId, label, onDone }: {
   }
   async function suspend() {
     if (!userId) return;
-    const reason = window.prompt(`Suspend ${label}? This stops them mining, earning and withdrawing, and closes their open flags.\n\nReason (recorded):`);
+    const reason = await prompt(`Suspend ${label}? This stops them mining, earning and withdrawing, and closes their open flags.\n\nReason (recorded):`);
     if (reason === null || reason.trim() === "") return;
     setBusy("suspend");
     try { await setUserStatus(userId, "suspended", reason.trim()); onDone(); }

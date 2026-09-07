@@ -4,25 +4,52 @@
 // from "nearly empty" without doing the conversion themselves.
 //
 // Source: Binance's public ticker (no API key, no billing, generous public
-// rate limit) — this is a display estimate, never a rate anything is priced
-// or settled against. Unlike ROZI (guardrail #7: no fixed rate, ever), BNB is
-// a real, liquid, publicly-priced asset; showing its market value is not the
-// same claim as pricing ROZI would be.
+// rate limit), with CoinGecko's public simple-price endpoint as a fallback
+// (2026-09-07 — Binance can and does fail from some hosting networks, and a
+// single-source read with no fallback silently vanished the whole line on the
+// panel with no error shown, which read as "the feature was never built"
+// rather than "one provider hiccuped"). Both are display estimates, never a
+// rate anything is priced or settled against. Unlike ROZI (guardrail #7: no
+// fixed rate, ever), BNB is a real, liquid, publicly-priced asset; showing its
+// market value is not the same claim as pricing ROZI would be.
 //
 // ⚠️ CACHED 5 MINUTES AND CHARGED THROUGH costGuard, ON PURPOSE. This file
 // exists in the shadow of two real billing incidents from something polling a
-// provider forever (CLAUDE.md, 2026-08-13 and 2026-08-27) — Binance's ticker
-// isn't billed, but the same "never let a call site have no ceiling" rule
-// applies here too, and the panel it feeds is only ever opened on demand, not
-// polled.
+// provider forever (CLAUDE.md, 2026-08-13 and 2026-08-27) — neither ticker is
+// billed, but the same "never let a call site have no ceiling" rule applies
+// here too, and the panel it feeds is only ever opened on demand, not polled.
+// ONE `charge("price", ...)` call covers BOTH providers for a single request —
+// trying the fallback is not a second call site to meter, it is the same
+// logical "get today's BNB price" attempt.
 import { config } from "./config.ts";
 import { charge } from "./costGuard.ts";
 
 const TTL_MS = 5 * 60_000;
 const TIMEOUT_MS = 5_000;
-const URL = "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT";
+const BINANCE_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT";
+const COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd";
 
 let cache: { at: number; usdMicroPerBnb: number } | null = null;
+
+async function fetchBinance(signal: AbortSignal): Promise<number> {
+  const res = await fetch(BINANCE_URL, { signal });
+  if (!res.ok) throw new Error(`Binance price HTTP ${res.status}`);
+  const body = (await res.json()) as { price?: string };
+  const price = Number(body.price);
+  if (!Number.isFinite(price) || price <= 0) throw new Error("Binance: bad price payload");
+  return price;
+}
+
+async function fetchCoinGecko(signal: AbortSignal): Promise<number> {
+  const res = await fetch(COINGECKO_URL, { signal });
+  if (!res.ok) throw new Error(`CoinGecko price HTTP ${res.status}`);
+  const body = (await res.json()) as { binancecoin?: { usd?: number } };
+  const price = body.binancecoin?.usd;
+  if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) {
+    throw new Error("CoinGecko: bad price payload");
+  }
+  return price;
+}
 
 /** 1 BNB's price in micro-USD (6dp), or null if never successfully fetched. */
 export async function bnbUsdMicroPrice(): Promise<number | null> {
@@ -32,25 +59,24 @@ export async function bnbUsdMicroPrice(): Promise<number | null> {
   // number, which reads as the price vanishing rather than a rate limit.
   if (!charge("price", 1, "low")) return cache?.usdMicroPerBnb ?? null;
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(URL, { signal: ctrl.signal });
-    if (!res.ok) throw new Error(`price HTTP ${res.status}`);
-    const body = (await res.json()) as { price?: string };
-    const price = Number(body.price);
-    if (!Number.isFinite(price) || price <= 0) throw new Error("bad price payload");
-    const usdMicroPerBnb = Math.round(price * 1_000_000);
-    cache = { at: Date.now(), usdMicroPerBnb };
-    return usdMicroPerBnb;
-  } catch {
-    // Same posture as every other on-demand chain/price read in this
-    // codebase (bscscan.ts, hasEnoughGasForDisplay): never throw on a display
-    // read, and a stale cached price beats no price at all.
-    return cache?.usdMicroPerBnb ?? null;
-  } finally {
-    clearTimeout(timer);
+  for (const source of [fetchBinance, fetchCoinGecko]) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    try {
+      const price = await source(ctrl.signal);
+      const usdMicroPerBnb = Math.round(price * 1_000_000);
+      cache = { at: Date.now(), usdMicroPerBnb };
+      return usdMicroPerBnb;
+    } catch {
+      // Try the next source. Same posture as every other on-demand
+      // chain/price read in this codebase (bscscan.ts,
+      // hasEnoughGasForDisplay): never throw on a display read.
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  // Both sources failed — a stale cached price beats no price at all.
+  return cache?.usdMicroPerBnb ?? null;
 }
 
 /** wei (18dp) x a price in micro-USD-per-BNB -> micro-USD (6dp). Null propagates. */

@@ -22,6 +22,7 @@ import {
 // the numbers would make them harder to check, not easier.
 import { formatPoints, displayIdentity, formatRozi, pointsToRoziMicro } from "@/lib/format";
 import { useStaffNav } from "@/lib/staffNav";
+import { usePrompt } from "@/components/staff/prompt";
 
 const n = (v: number) => v.toLocaleString();
 
@@ -1010,6 +1011,7 @@ export function StorePanel() {
   const queue = useApi(() => fetchRedemptions(queueFilter), [queueFilter]);
   const [msg, setMsg] = useState<string | null>(null);
   const [draft, setDraft] = useState({ title: "", costRozi: "", stock: "", inputLabel: "", description: "" });
+  const prompt = usePrompt();
 
   async function add() {
     try {
@@ -1032,7 +1034,7 @@ export function StorePanel() {
   }
 
   async function decide(id: string, action: "fulfil" | "reject") {
-    const note = window.prompt(
+    const note = await prompt(
       action === "reject"
         ? "Why? The user sees this, and their ROZI goes back."
         : "Any note for the record? (optional)",

@@ -31,6 +31,7 @@ import { tickReconcile } from "./deposits/reconcile.ts";
 import { tickPayoutRelay } from "./payoutRelay.ts";
 import { tickBnbWithdrawals } from "./bnbWithdraw.ts";
 import { tickTicketAutoClose } from "./ticketAutoClose.ts";
+import { tickPostbackRedaction } from "./postbackRedaction.ts";
 import { tickLeaderboardRewards } from "./leaderboardRewards.ts";
 import { fromMicro } from "./mining/core.ts";
 import { emailConfigured } from "./email.ts";
@@ -195,7 +196,28 @@ app.addContentTypeParser(
   },
 );
 
-app.get("/health", async () => ({ ok: true, service: "rozipay-api" }));
+// Audit finding A-10: this used to always answer `{ ok: true }`, so a real
+// database outage — the one thing that actually stops this API from serving
+// anything — was invisible to whatever watches this endpoint (Railway's own
+// health check, or a future uptime monitor). A cheap, real reachability
+// check, with its own short deadline so a hung database cannot also hang the
+// probe: `SELECT 1` is answered in well under a millisecond by a healthy
+// pool, and 3s is generously past that while still being a fast failure for
+// Railway to act on.
+app.get("/health", async (_req, reply) => {
+  const dbCheck = sql.get<{ v: number }>("SELECT 1 AS v");
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("db check timed out")), 3_000);
+  });
+  try {
+    await Promise.race([dbCheck, timeout]);
+    return { ok: true, service: "rozipay-api", checks: { db: true } };
+  } catch (err) {
+    app.log.error({ err }, "health check: database unreachable");
+    reply.code(503);
+    return { ok: false, service: "rozipay-api", checks: { db: false } };
+  }
+});
 
 // ---- Maintenance mode (brief part 45) --------------------------------------
 // One switch that closes the app to earners. A global hook rather than a check
@@ -452,6 +474,14 @@ const runReconcile = everyNoOverlap("reconcile", config.reconcileIntervalMs, tic
 // lowest sane setting.
 const TICKET_AUTO_CLOSE_TICK_MS = 10 * 60 * 1000;
 const runTicketAutoClose = everyNoOverlap("ticket-auto-close", TICKET_AUTO_CLOSE_TICK_MS, tickTicketAutoClose);
+
+// ---- Postback log redaction — postbackRedaction.ts (audit finding A-08) ---
+// A coarse, infrequent cleanup (default every 6h): this is housekeeping, not
+// anything time-sensitive, and a plain `UPDATE ... WHERE created_at < ?` over
+// an indexed column is cheap even run this rarely.
+const runPostbackRedaction = everyNoOverlap(
+  "postback-redaction", config.postbackRedactionIntervalMs, tickPostbackRedaction,
+);
 
 // ---- Leaderboard reward pools — leaderboardRewards.ts ----------------------
 // Weekly/monthly ROZI prizes for the top of each track. Coarse cadence on

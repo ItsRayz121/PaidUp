@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { useToast } from "@/components/staff/toast";
+import { usePrompt } from "@/components/staff/prompt";
 import { StatusTabs } from "@/components/staff/primitives";
 import { useStaffNav } from "@/lib/staffNav";
 import { can } from "@/lib/permissions";
@@ -39,6 +40,7 @@ async function loadImage(id: string, which: "selfie" | "front" | "back"): Promis
 
 function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
   const toast = useToast();
+  const prompt = usePrompt();
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ function Review({ sub, onDone }: { sub: KycSubmission; onDone: () => void }) {
   async function decide(decision: "approved" | "rejected") {
     let reason: string | undefined;
     if (decision === "rejected") {
-      const r = window.prompt("Why? The user will see this, so say what to fix (e.g. 'ID photo is blurry').");
+      const r = await prompt("Why? The user will see this, so say what to fix (e.g. 'ID photo is blurry').");
       if (r === null) return;
       if (!r.trim()) { toast.err("A reason is required."); return; }
       reason = r.trim();

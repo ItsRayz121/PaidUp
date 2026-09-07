@@ -16,7 +16,7 @@ import { DataTable, type Column } from "./DataTable";
 import { DetailLayout } from "./DetailLayout";
 import { StatusBadge, TimeCell, StatusTabs } from "./primitives";
 import { RefreshBar, QUEUE_POLL_MS, TicketThread, TICKET_STATUSES } from "@/components/staff";
-import { fetchStaffTickets, type StaffTicket } from "@/lib/api";
+import { fetchStaffTickets, fetchStaffInbox, type StaffTicket } from "@/lib/api";
 import { displayIdentity } from "@/lib/format";
 
 // Two views over the same endpoint (founder, 2026-09-03). INBOX is for
@@ -56,14 +56,17 @@ function SupportInbox() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
 
+  // ONE ROW PER PERSON (founder, 2026-09-07): a person who closed a
+  // conversation and later opened a new one used to show as two separate
+  // rows here. `id` below is the USER id, and opening a row loads that
+  // person's WHOLE history — every one of their support_tickets rows,
+  // merged and time-ordered — not just their latest one.
   const data = useApi(
-    () => fetchStaffTickets({
-      status, q: search, sort: "updated_at", dir: "desc", limit: INBOX_LIMIT, offset: 0,
-    }),
+    () => fetchStaffInbox({ status, q: search, limit: INBOX_LIMIT, offset: 0 }),
     [status, search],
     true, auto ? QUEUE_POLL_MS : undefined,
   );
-  const rows = data.data?.tickets ?? [];
+  const rows = data.data?.conversations ?? [];
   const counts = data.data?.counts ?? {};
   // The list can move under the open conversation on a poll; keep showing the
   // one that is actually open by matching on id, not by holding a stale row.
@@ -148,7 +151,17 @@ function SupportInbox() {
                 </div>
                 <span className="ms-auto"><StatusBadge status={open.status} /></span>
               </div>
-              <TicketThread t={open} onChange={data.reload} />
+              <TicketThread
+                t={{
+                  id: open.ticketId, userId: open.userId, userEmail: open.userEmail, subject: open.subject,
+                  userUsername: open.userUsername, userDisplayName: open.userDisplayName,
+                  userTelegramUsername: open.userTelegramUsername, userTelegramName: open.userTelegramName,
+                  status: open.status, messageCount: open.messageCount, at: open.updatedAt, updatedAt: open.updatedAt,
+                  lastMessage: open.lastMessage, assignedTo: open.assignedTo, assigneeEmail: open.assigneeEmail,
+                }}
+                mergedUserId={open.userId}
+                onChange={data.reload}
+              />
             </div>
           ) : (
             <p className="p-6 text-center text-sm text-muted">

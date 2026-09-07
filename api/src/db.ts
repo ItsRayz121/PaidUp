@@ -94,7 +94,7 @@ function pgSslOptions(connectionString: string): false | Record<string, unknown>
   return { rejectUnauthorized: false };
 }
 
-function makePgDriver(connectionString: string): Driver {
+function makePgDriver(connectionString: string, opts?: { max?: number; applicationName?: string }): Driver {
   // ⚠️ THE TWO TIMEOUTS BELOW ARE HOW THIS API SHEDS LOAD. WITHOUT THEM IT DOES NOT.
   //
   // With `max` alone, `pool.connect()` (sql.tx, below) waits with NO deadline once
@@ -119,11 +119,11 @@ function makePgDriver(connectionString: string): Driver {
   const pool = new Pool({
     connectionString,
     ssl: pgSslOptions(connectionString) || undefined,
-    max: Math.max(1, Number(process.env.PG_POOL_MAX ?? 20)),
+    max: Math.max(1, opts?.max ?? Number(process.env.PG_POOL_MAX ?? 20)),
     connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS ?? 5_000),
     idleTimeoutMillis: 30_000,
     statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS ?? 10_000),
-    application_name: "rozipay-api",
+    application_name: opts?.applicationName ?? "rozipay-api",
   });
   // A pool error on an IDLE client is emitted on the pool, not on any request. With
   // no listener, Node treats it as an unhandled 'error' event and kills the process
@@ -207,39 +207,71 @@ const driver: Driver = config.databaseUrl
 
 export const usingRealPostgres = Boolean(config.databaseUrl);
 
-export const sql = {
-  async run(text: string, ...params: unknown[]): Promise<{ rowCount: number }> {
-    const r = await driver.query(text, params);
-    return { rowCount: r.rowCount };
-  },
-  async get<T>(text: string, ...params: unknown[]): Promise<T | undefined> {
-    const r = await driver.query(text, params);
-    return r.rows[0] as T | undefined;
-  },
-  async all<T>(text: string, ...params: unknown[]): Promise<T[]> {
-    const r = await driver.query(text, params);
-    return r.rows as T[];
-  },
-  // Money moves inside this. If the callback throws, nothing is written.
-  async tx<T>(fn: (t: TxApi) => Promise<T>): Promise<T> {
-    const t = await driver.begin();
-    const api: TxApi = {
-      run: async (text, ...params) => ({ rowCount: (await t.query(text, params)).rowCount }),
-      get: async <R>(text: string, ...params: unknown[]) =>
-        (await t.query(text, params)).rows[0] as R | undefined,
-      all: async <R>(text: string, ...params: unknown[]) =>
-        (await t.query(text, params)).rows as R[],
-    };
-    try {
-      const out = await fn(api);
-      await t.commit();
-      return out;
-    } catch (err) {
-      await t.rollback();
-      throw err;
-    }
-  },
-};
+// A staff-scoped query API, backed by its OWN small connection pool (audit
+// finding B10, REMEDIATION_PLAN.md's "split the pools"): the staff analytics
+// dashboard alone issues ~31 concurrent queries in one `Promise.all`
+// (analytics.ts), and on the shared pool that single page load could starve
+// every earner request behind it. `sqlStaff` gives `/staff/*` routes a
+// separate, small (default 3) pool so a staff-side burst can never do that —
+// it can only ever starve OTHER staff requests, and there are far fewer of
+// those happening at once.
+//
+// ⚠️ ONLY the raw `sql.xxx(...)` calls written directly inside a staff-only
+// route file move to this pool (those files import `sqlStaff as sql`).
+// Shared helpers this file exports — `balanceOf`, `postLedger`, `getSetting`,
+// etc. — are used by earner routes too and are DELIBERATELY NOT rerouted:
+// they keep using the module-level `sql` below, on the main pool, so a staff
+// action that calls one of them (e.g. an admin points adjustment) still runs
+// on the same pool as every other write to that same ledger.
+//
+// PGlite (local dev / tests) has no real second connection to give — it is a
+// single-connection WASM database — so `sqlStaff` there is just `sql` itself;
+// the split only matters, and only exists, against real Postgres.
+const staffDriver: Driver = config.databaseUrl
+  ? makePgDriver(config.databaseUrl, {
+      max: Math.max(1, Number(process.env.PG_POOL_MAX_STAFF ?? 3)),
+      applicationName: "rozipay-api-staff",
+    })
+  : driver;
+
+function makeSqlApi(d: Driver) {
+  return {
+    async run(text: string, ...params: unknown[]): Promise<{ rowCount: number }> {
+      const r = await d.query(text, params);
+      return { rowCount: r.rowCount };
+    },
+    async get<T>(text: string, ...params: unknown[]): Promise<T | undefined> {
+      const r = await d.query(text, params);
+      return r.rows[0] as T | undefined;
+    },
+    async all<T>(text: string, ...params: unknown[]): Promise<T[]> {
+      const r = await d.query(text, params);
+      return r.rows as T[];
+    },
+    // Money moves inside this. If the callback throws, nothing is written.
+    async tx<T>(fn: (t: TxApi) => Promise<T>): Promise<T> {
+      const t = await d.begin();
+      const api: TxApi = {
+        run: async (text, ...params) => ({ rowCount: (await t.query(text, params)).rowCount }),
+        get: async <R>(text: string, ...params: unknown[]) =>
+          (await t.query(text, params)).rows[0] as R | undefined,
+        all: async <R>(text: string, ...params: unknown[]) =>
+          (await t.query(text, params)).rows as R[],
+      };
+      try {
+        const out = await fn(api);
+        await t.commit();
+        return out;
+      } catch (err) {
+        await t.rollback();
+        throw err;
+      }
+    },
+  };
+}
+
+export const sql = makeSqlApi(driver);
+export const sqlStaff = makeSqlApi(staffDriver);
 
 export type TxApi = {
   run: (text: string, ...params: unknown[]) => Promise<{ rowCount: number }>;
