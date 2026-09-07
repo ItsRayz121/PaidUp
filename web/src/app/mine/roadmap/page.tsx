@@ -40,6 +40,19 @@ function statesAt(now: Date): StepState[] {
 export default function RoadmapPage() {
   const { t } = useI18n();
   const states = statesAt(new Date());
+  const currentIndex = Math.max(0, states.findIndex((state) => state === "active" || state === "upcoming"));
+  const mobileProgress = [
+    "M18 0 L50 138",
+    "M18 0 L50 138 L18 275 L50 413",
+    "M18 0 L50 138 L18 275 L50 413 L18 550 L50 688",
+    "M18 0 L50 138 L18 275 L50 413 L18 550 L50 688 L18 825 L50 963",
+  ][currentIndex];
+  const desktopProgress = [
+    "M350 0 L410 145",
+    "M350 0 L410 145 L350 290 L410 435",
+    "M350 0 L410 145 L350 290 L410 435 L350 580 L410 725",
+    "M350 0 L410 145 L350 290 L410 435 L350 580 L410 725 L350 870 L410 1015",
+  ][currentIndex];
 
   return (
     <main className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
@@ -87,6 +100,7 @@ export default function RoadmapPage() {
           <svg aria-hidden="true" className="roadmap-ladder roadmap-ladder-mobile pointer-events-none absolute bottom-0 left-0 top-0 h-full w-[68px] min-[600px]:hidden" viewBox="0 0 68 1100" preserveAspectRatio="none">
             <path d="M18 0 L50 138 L18 275 L50 413 L18 550 L50 688 L18 825 L50 963 L34 1100" className="roadmap-ladder-rail" />
             <path d="M38 0 L66 138 L38 275 L66 413 L38 550 L66 688 L38 825 L66 963 L54 1100" className="roadmap-ladder-rail" />
+            <path d={mobileProgress} className="roadmap-ladder-progress" />
             {[70, 205, 343, 480, 618, 755, 893, 1030].map((y, index) => (
               <line key={y} x1={index % 2 ? 43 : 21} y1={y} x2={index % 2 ? 61 : 41} y2={y} className="roadmap-ladder-rung" />
             ))}
@@ -98,6 +112,7 @@ export default function RoadmapPage() {
           <svg aria-hidden="true" className="roadmap-ladder pointer-events-none absolute inset-0 hidden h-full w-full min-[600px]:block" viewBox="0 0 760 1160" preserveAspectRatio="none">
             <path d="M350 0 L410 145 L350 290 L410 435 L350 580 L410 725 L350 870 L410 1015 L380 1160" className="roadmap-ladder-rail" />
             <path d="M395 0 L455 145 L395 290 L455 435 L395 580 L455 725 L395 870 L455 1015 L425 1160" className="roadmap-ladder-rail" />
+            <path d={desktopProgress} className="roadmap-ladder-progress" />
             {[72, 217, 362, 507, 652, 797, 942, 1087].map((y, index) => (
               <line key={y} x1={index % 2 ? 417 : 365} y1={y} x2={index % 2 ? 462 : 410} y2={y} className="roadmap-ladder-rung" />
             ))}
