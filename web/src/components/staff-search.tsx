@@ -15,6 +15,7 @@ import type { SectionId } from "@/lib/staffNav";
 import type { UiPermission } from "@/lib/permissions";
 import { staffRecordSearch, type StaffSearchHit } from "@/lib/api";
 import { SearchIcon } from "@/components/icons";
+import { useClickOutside } from "@/components/staff/primitives";
 
 export type SearchDest = {
   label: string;
@@ -218,14 +219,10 @@ export function StaffSearch({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Click outside closes the dropdown.
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+  // Click outside closes the dropdown (shared with MultiSelectFilter and
+  // UserActionsMenu's own popovers, cross-check 2026-09-07 — this used to be
+  // its own copy, unconditionally attached even while closed).
+  useClickOutside([wrapRef], () => setOpen(false), open);
 
   const activeIdx = active < items.length ? active : 0;
 

@@ -155,30 +155,43 @@ export async function labelTreasuryHashes(hashes: string[]): Promise<Map<string,
 // keeping that whitelist inline at GET /staff/users (the only caller that
 // needs it) avoids handing this shared function a column-name allowlist it
 // would otherwise have to re-export just for one route to reuse.
+// A hand-built link can repeat the same query key (`?status=a&status=b`),
+// which Fastify hands back as a string[] instead of one value — every
+// single-value field below is normalised through this ONE helper (cross-
+// check, 2026-09-07: the first cut only guarded `country` and `kyc`, leaving
+// `status`/`flagged`/`held`/`review` open to the identical failure — a
+// strict `=== "1"` check against an array is just `false`, so the filter
+// would silently drop rather than apply or error).
+function firstOf(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
 function buildUsersWhere(query: Record<string, string | string[] | undefined>): { whereSql: string; params: unknown[] } {
-  const qRaw = Array.isArray(query.q) ? query.q[0] : query.q;
-  const q = (qRaw ?? "").trim().toLowerCase();
+  const q = (firstOf(query.q) ?? "").trim().toLowerCase();
   const where: string[] = [];
   const wp: unknown[] = [];
   if (q) { where.push("(LOWER(u.email) LIKE ? OR LOWER(u.id) = ?)"); wp.push(`%${q}%`, q); }
-  if (query.status === "active" || query.status === "suspended") { where.push("u.status = ?"); wp.push(query.status); }
-  if (["none", "pending", "approved", "rejected"].includes((Array.isArray(query.kyc) ? query.kyc[0] : query.kyc) ?? "")) {
-    where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(Array.isArray(query.kyc) ? query.kyc[0] : query.kyc);
+  const status = firstOf(query.status);
+  if (status === "active" || status === "suspended") { where.push("u.status = ?"); wp.push(status); }
+  const kyc = firstOf(query.kyc);
+  if (["none", "pending", "approved", "rejected"].includes(kyc ?? "")) {
+    where.push("COALESCE(u.kyc_status, 'none') = ?"); wp.push(kyc);
   }
   // Comma-separated list (founder, 2026-09-07: "he should be able to select
   // two or more countries") — the picker joins its selection with commas, and
-  // a single-country value is just a one-element list here. `Array.isArray`
-  // guards against a hand-built link repeating the same query key
-  // (`?country=A&country=B`), which Fastify hands back as a string[] instead
-  // of one comma-joined string, and which would otherwise throw on `.split`.
+  // a single-country value is just a one-element list here. Country gets its
+  // OWN array handling (`.join(",")`, not `firstOf`'s "take the first") since
+  // a repeated `?country=` key here is plausibly a genuine multi-select, not
+  // a malformed link — losing all-but-one selected country would be worse
+  // than the malformed-link case `firstOf` guards everywhere else.
   const countryRaw = Array.isArray(query.country) ? query.country.join(",") : query.country;
   if (countryRaw) {
     const countries = countryRaw.split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
     if (countries.length > 0) { where.push("LOWER(u.country) = ANY(?)"); wp.push(countries); }
   }
-  if (query.flagged === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
-  if (query.held === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
-  if (query.review === "1") where.push("u.under_review_reason IS NOT NULL");
+  if (firstOf(query.flagged) === "1") where.push("EXISTS (SELECT 1 FROM fraud_flags f WHERE f.user_id = u.id AND f.resolved_by IS NULL)");
+  if (firstOf(query.held) === "1") { where.push("(u.withdrawal_hold_reason IS NOT NULL AND (u.withdrawal_hold_until IS NULL OR u.withdrawal_hold_until > ?))"); wp.push(now()); }
+  if (firstOf(query.review) === "1") where.push("u.under_review_reason IS NOT NULL");
   return { whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "", params: wp };
 }
 

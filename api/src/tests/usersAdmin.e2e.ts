@@ -259,6 +259,17 @@ console.log("\n-- user list: server-side filters + sort (admin rebuild, Phase B)
 
   const badSort = await app.inject({ method: "GET", url: "/staff/users?sort=email);DROP&dir=asc", headers: authOf(admin) });
   check("an unknown sort key is ignored, not injected", badSort.statusCode === 200);
+
+  // Cross-check, 2026-09-07: a hand-built link repeating the same query key
+  // makes Fastify hand back a string[] instead of one value. `status ===
+  // "active"` against an array is just `false`, so an un-hardened filter
+  // silently drops instead of applying — this must not 500 and must not
+  // silently return every status.
+  const repeatedKey = await app.inject({ method: "GET", url: "/staff/users?status=suspended&status=active&limit=200", headers: authOf(admin) });
+  check("a repeated ?status= key does not 500", repeatedKey.statusCode === 200, repeatedKey.body.slice(0, 200));
+  const repeatedIds = repeatedKey.json().users.map((u: { id: string }) => u.id);
+  check("it takes the FIRST value (firstOf) rather than silently matching every status",
+    repeatedIds.includes(banned) && !repeatedIds.includes(active1));
 }
 
 // ---------------------------------------------------------------------------

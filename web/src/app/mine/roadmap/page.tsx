@@ -181,15 +181,21 @@ export default function RoadmapPage() {
             return (
               <li key={step.key} className="flex gap-3">
                 <div className="flex flex-col items-center">
+                  {/* Margins are the ORIGINAL 0.5/1/1.5 offsets PLUS the
+                      content Card's own p-3 (12px) padding (cross-check,
+                      2026-09-07): moving the dot/line column outside the Card
+                      fixed the connecting line, but left these tuned-for-zero-
+                      padding offsets rendering each dot ~10-12px higher than
+                      the "when"/badge line it's meant to sit level with. */}
                   {state === "done" ? (
                     <span
                       aria-hidden
-                      className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
+                      className="mt-[14px] grid h-6 w-6 shrink-0 place-items-center rounded-full bg-success text-white"
                     >
                       <CheckIcon size={14} />
                     </span>
                   ) : state === "active" ? (
-                    <span className="mining-chamber mt-1 h-6 w-6 shrink-0 text-brand">
+                    <span className="mining-chamber mt-[16px] h-6 w-6 shrink-0 text-brand">
                       <span className="mining-ring" aria-hidden="true" />
                       <span
                         aria-hidden
@@ -199,7 +205,7 @@ export default function RoadmapPage() {
                   ) : (
                     <span
                       aria-hidden
-                      className={`mt-1.5 grid h-3 w-3 shrink-0 place-items-center rounded-full ${
+                      className={`mt-[18px] grid h-3 w-3 shrink-0 place-items-center rounded-full ${
                         state === "upcoming"
                           ? "bg-card ring-2 ring-brand"
                           : "bg-card ring-2 ring-line"

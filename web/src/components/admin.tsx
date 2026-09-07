@@ -244,9 +244,18 @@ function TelegramNamesButton({ onDone }: { onDone: () => void }) {
 // by this panel's z-index. Rendering outside the table entirely, at a fixed
 // viewport position, sidesteps both. Closes on scroll (its position is
 // computed once, at open) rather than trying to track the anchor live.
+// Rough panel height (4 items ~32px each + a little padding) — used only to
+// decide whether to open the panel below or above the trigger; it does not
+// need to be exact, just enough to avoid the panel rendering off the bottom
+// of a short viewport (cross-check, 2026-09-07: a row near the bottom of a
+// modest-height window could open a menu that was partly or fully below
+// `window.innerHeight`, with no way to scroll to it — the very next scroll
+// attempt hit this same component's own "close on scroll" listener).
+const ROW_MENU_HEIGHT_PX = 170;
+
 function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const prompt = usePrompt();
@@ -260,21 +269,42 @@ function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void })
   // of the row at all).
   useClickOutside([btnRef, panelRef], () => setOpen(false), open);
 
-  // The panel's position is computed once, at open — closing on scroll (the
-  // table itself can scroll horizontally, and the page can scroll) is
-  // simpler and safer than trying to keep a fixed-position panel glued to a
-  // moving anchor.
+  // The panel's position is computed once, at open — closing on scroll OR
+  // resize (the table itself can scroll horizontally, the page can scroll,
+  // and a window resize / DevTools open-close / orientation change reflows
+  // everything the same way a scroll would) is simpler and safer than trying
+  // to keep a fixed-position panel glued to a moving anchor. Without the
+  // resize listener too (cross-check, 2026-09-07), a menu opened and then a
+  // window resize with no scroll left it floating at a stale coordinate,
+  // detached from — or overlapping — a row it no longer belonged to.
   useEffect(() => {
     if (!open) return;
-    function onScroll() { setOpen(false); }
-    window.addEventListener("scroll", onScroll, true);
-    return () => window.removeEventListener("scroll", onScroll, true);
+    function onReflow() { setOpen(false); }
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow);
+    return () => {
+      window.removeEventListener("scroll", onReflow, true);
+      window.removeEventListener("resize", onReflow);
+    };
   }, [open]);
 
   function toggleMenu() {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 176) }); // 176px = w-44
+      // Anchored by its RIGHT edge, not a left offset computed from an
+      // assumed panel width — a `left` computed as `r.right - <width>` has to
+      // be kept in sync by hand with the panel's own `w-44` class every time
+      // either changes (cross-check, 2026-09-07). Anchoring `right` to the
+      // button's own right edge needs no width assumption at all.
+      const right = Math.max(8, window.innerWidth - r.right);
+      const spaceBelow = window.innerHeight - r.bottom;
+      // Open upward when there is not enough room below AND there is more
+      // room above than below — a row near the bottom of a short window.
+      if (spaceBelow < ROW_MENU_HEIGHT_PX && r.top > spaceBelow) {
+        setPos({ bottom: Math.max(8, window.innerHeight - r.top + 4), right });
+      } else {
+        setPos({ top: r.bottom + 4, right });
+      }
     }
     setOpen((o) => !o);
   }
@@ -335,7 +365,8 @@ function UserActionsMenu({ u, reload }: { u: AdminUserRow; reload: () => void })
         Actions <span aria-hidden className="text-brand/70">▾</span>
       </button>
       {open && pos && createPortal(
-        <div ref={panelRef} style={{ position: "fixed", top: pos.top, left: pos.left }}
+        <div ref={panelRef}
+          style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}
           className="z-50 w-44 rounded-lg border border-line bg-card py-1 shadow-lg">
           <button onClick={() => pick(() => openUser(u.id))}
             className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-brand-ink hover:bg-brand-tint/40">
