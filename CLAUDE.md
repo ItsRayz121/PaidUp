@@ -5266,3 +5266,78 @@ See `docs/` for the full spec.
     API) — the artwork was verified in isolation at the exact box sizes that
     screen uses. The coin behaviour in all three modes is untouched code, so
     the risk is confined to how it looks in context.
+
+- **THE /mine HERO IS THE FOUNDER'S OWN RENDER NOW, NOT A DRAWN HOURGLASS
+  (founder, 2026-09-08, later the same day).** Hours after the SVG hourglass
+  was rebuilt (entry above), the founder sent a 3D render as "the real example
+  image that I wanted" and asked for a premium Web3 hero rather than "a basic
+  SVG illustration". Told plainly that hand-authored vector shapes do not reach
+  a render's shading, and that the reliable way to get exactly that image is to
+  use it as an asset. New `web/public/brand/mine-hero-v1.webp` (44 KB) +
+  `components/MiningHero.tsx`; `components/HourglassClaim.tsx` and its whole
+  `.hg-*` CSS block are **deleted**. Verified: web `tsc --noEmit` clean,
+  `eslint src` 0 errors (the same 7 pre-existing `<img>` warnings), `next build`
+  clean, and rendered in real headless Chrome across three animation phases at
+  3x, in both skins. No backend suite re-run — no API, ledger, copy or
+  guardrail was touched.
+  - **The asset is the founder's own image, cropped and re-encoded, nothing
+    generated.** There is no image MCP in this workspace, so `sharp` in `api/`
+    did the work: crop out the baked card border and text
+    (`extract 46,26,770x528`), WebP q84. q78/84/90 were compared at 34/44/58 KB
+    and 84 was the first with no banding in the dark gradients.
+  - ⚠️ **THIS TRADES AWAY THE PROGRESS-LINKED COIN SPLIT, WHICH WAS A FOUNDER
+    ASK (2026-08-30), AND THAT IS A KNOWING REVERSAL.** The sand level in the
+    upper bulb and the coin pile in the lower one are **pixels** in the asset,
+    so nothing can move them. The split was always explicitly decorative — the
+    countdown beside the hero is the exact figure and always was — but it is
+    gone, and `sessionProgress` in `app/mine/page.tsx` went with it (it had no
+    other consumer). **The fix, if it is ever wanted back, is a render of the
+    same scene with an EMPTY glass**, which `MiningHero` could then fill live;
+    that is written in the component header too.
+  - ⚠️ **THREE PROPERTIES HOLD THE LIVE OVERLAY IN REGISTER WITH THE ART AND
+    ALL THREE MUST AGREE**: the SVG `viewBox` is the asset's exact pixel size
+    (770x528), the wrapper's `aspect-ratio` is that same ratio, and `.mh-art`
+    paints `background-size: 100% 100%` — spelled out rather than `cover`,
+    which is only equivalent while the ratio holds, so a future slip shows up
+    as a stretched image instead of an overlay that silently drifts.
+    **Every coordinate was MEASURED off a 50px grid composited over the asset,
+    not estimated**: centre x 388 · neck y 285 · baked pile x 325..450,
+    y 340..405 · brass base top y 415 · platform ring y ~470 · medallion
+    (383, 58). Re-crop or replace the asset and re-measure with a grid first.
+  - ⚠️ **COINS SPAWN BELOW THE NECK BECAUSE THE ART FORCES IT.** A coin matched
+    to the baked pile is ~26px across and the neck glass is only ~16px — a coin
+    cannot be drawn passing through it without visibly overflowing the glass.
+    The same constraint keeps the stream dots inside x 383..393 and falling
+    straight down; widen that spread and they leave the neck.
+  - ⚠️ **THE COIN COLOURS WERE SAMPLED OUT OF THE ASSET, NOT PICKED.** A
+    dropping coin lands on the pile the render already shows, so a mismatch is
+    side by side and obvious — the first attempt used the app's own marigold
+    accent and read plainly orange next to the render's yellow-gold. Measured
+    off the baked pile: rim **#f3d72e**, face **#e8fff5**, mark **#003c38**.
+  - ⚠️ **A FADING COIN LEFT A GREY GHOST DISC, AND ONLY LOOKING AT IT CAUGHT
+    IT.** The exit fade ran ~780ms, and a half-transparent gold disc on dark
+    glass does not read as a coin disappearing — it reads as a rendering bug.
+    The exit is ~120ms now and must stay abrupt; the visible window is also
+    kept shorter than the stagger between coins so only one is ever on screen.
+  - ⚠️ **THE PANEL PAINTS ITS OWN DARK GROUND IN BOTH SKINS.** The art is one
+    dark raster and cannot re-theme, so on the light skin it would sit on a
+    white card and read as a broken image. The two gradient stops are sampled
+    from the asset's own top and bottom edges (#01363c / #00252b) so the art
+    dissolves into the panel instead of ending on a seam. Checked in the light
+    skin: it reads as a deliberate illustration panel.
+  - **Every animation is opacity and `translate` only — never `scale`**, the
+    same SVG transform-origin trap the entry above records. The asset is
+    referenced from CSS as a `background-image` rather than through
+    `next/image`, deliberately: it is already optimised, and Vercel's image
+    optimisation is metered — this project has shipped two real billing
+    incidents. It is also **not preloaded**, since a preload in the shared
+    layout would cost every user on every screen for one screen's art.
+  - The hero is landscape now (was a 224x291 portrait box), so it fills the
+    card width; the claim card caps it at 300px so a secondary, conditional
+    card does not out-shout the mining hero. `mine.running.coins` was deleted
+    from the copy deck — already orphaned since 2026-08-29, and its widget is
+    now gone too.
+  - **Not done**: nobody has seen this on a real phone, and `/mine` itself was
+    never opened (it needs a logged-in session) — the hero was rendered in
+    isolation at the real card width in both skins. The previous SVG hourglass
+    is recoverable from commit `b6cec63` if the raster is ever rejected.

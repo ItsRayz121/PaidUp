@@ -8,7 +8,7 @@ import {
   MineIcon, FlameIcon, BoltIcon, StarIcon, InfoIcon, ArrowRightIcon, RocketIcon,
   ChartIcon, GiftIcon, GemIcon,
 } from "@/components/icons";
-import { HourglassClaim } from "@/components/HourglassClaim";
+import { MiningHero } from "@/components/MiningHero";
 import { MiningReactor } from "@/components/MiningReactor";
 import { AmbientBg } from "@/components/AmbientBg";
 import { TxDetailSheet } from "@/components/TxDetailSheet";
@@ -29,12 +29,11 @@ import { rewardsHistory, type Row } from "@/lib/walletHistory";
 // The session countdown moved to lib/hooks.ts — the home screen leads with
 // mining now and shows the same clock.
 
-// The hourglass artwork is 208x270 in its own viewBox (components/
-// HourglassClaim.tsx), so a box that is not that ratio squashes the glass.
-// Kept here, next to the three call sites, because that file deliberately no
-// longer pins its own size.
-const HOURGLASS_BOX = { width: 224, height: 291 };
-const HOURGLASS_BOX_SM = { width: 168, height: 218 };
+// The hero is a landscape panel now (components/MiningHero.tsx) and it sets
+// its own aspect ratio from the asset, so there is no box to pin here any
+// more — it fills whatever width it is given. The claim card gets a cap so a
+// secondary, conditional card does not out-shout the mining hero above it.
+const CLAIM_HERO_MAX = 300;
 
 export default function MinePage() {
   const { ready } = useRequireAuth();
@@ -101,16 +100,12 @@ export default function MinePage() {
   // eslint-disable-next-line react-hooks/purity
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
-  // How far through the current mining session we are, 0..1 — feeds the
-  // hourglass so its coins start in the TOP bulb and drop one by one as the
-  // session elapses (founder, 2026-08-30), instead of sitting settled at the
-  // bottom the whole time. Purely decorative: it tracks ELAPSED TIME, never the
-  // real ROZI amount (see HourglassClaim.tsx's header). `countdown` above
-  // re-renders this component every second, so Date.now() here stays fresh.
-  const sessionMs = (s?.session.sessionHours ?? 8) * 3600_000;
-  const sessionStartMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - sessionMs : 0;
-  // eslint-disable-next-line react-hooks/purity
-  const sessionProgress = sessionStartMs ? Math.min(1, Math.max(0, (Date.now() - sessionStartMs) / sessionMs)) : 0;
+  // The 0..1 "how far through the session" value that used to live here is
+  // gone with the SVG hourglass it fed (2026-09-08). The hero's art is a
+  // render, so nothing on this screen can consume a progress fraction any
+  // more — `countdown` above is the real, exact figure, and always was.
+  // components/MiningHero.tsx records what it would take to restore the
+  // progress-linked version.
 
   // Start mining. An ad fires first when the gate is on: the rewarded video
   // inside Telegram, the direct link on the website — the same formats the
@@ -346,29 +341,25 @@ export default function MinePage() {
         <div className="mt-5">
           {startPour ? (
             <div className="pt-1 pb-2">
-              {/* Same hourglass the claim card uses (components/HourglassClaim.tsx)
-                  — coins dropping from the upper glass to the lower one — played
-                  once right after a session starts, not just on claim. Priority
-                  over the running-session view below: mining.reload() flips
+              {/* The start-of-session flourish — the same hero, run brighter
+                  and faster for ~2.2s, then it hands off. Priority over the
+                  running-session view below: mining.reload() flips
                   s.session.active to true while this is still playing, and this
-                  branch must win that race so the pour is not skipped. */}
-              <div className="relative mx-auto" style={HOURGLASS_BOX}>
-                <HourglassClaim onSettled={onStartPourSettled} />
-              </div>
+                  branch must win that race so the flourish is not skipped. */}
+              <MiningHero variant="pour" onSettled={onStartPourSettled} />
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.started.pour")}</p>
             </div>
           ) : s.session.active ? (
             <div className="pt-1 pb-2">
-              {/* The session hourglass (founder, 2026-08-30): coins start in the
-                  TOP bulb and drop one by one, newest through the neck, as the
-                  session elapses — `progress` is the fraction of the session
-                  done. Reverses the 2026-08-29 "settled at the bottom the whole
-                  time" look, which read as an already-finished glass. Purely
-                  decorative — it tracks elapsed time, never the real ROZI
-                  amount; the countdown below is the exact figure. */}
-              <div className="relative mx-auto" style={HOURGLASS_BOX}>
-                <HourglassClaim progress={sessionProgress} />
-              </div>
+              {/* ⚠️ THE HERO NO LONGER TAKES `progress`, AND THAT IS A KNOWN
+                  REVERSAL OF THE 2026-08-30 ASK. The base art is a render
+                  (components/MiningHero.tsx) whose sand level and coin pile
+                  are pixels, so the coin split can no longer track how far
+                  through the session we are. It was always explicitly
+                  decorative; `countdown` right below is the exact figure and
+                  always was. MiningHero's header records what it would take to
+                  bring the progress-linked version back. */}
+              <MiningHero variant="mining" />
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
@@ -406,13 +397,12 @@ export default function MinePage() {
           settlement or a tap. */}
       {s.claimableMicro > 0 && (
         <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
-          <div className="relative mx-auto" style={HOURGLASS_BOX_SM}>
+          <div className="relative mx-auto" style={{ maxWidth: CLAIM_HERO_MAX }}>
             {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
-            {/* Wood/metal/glass hourglass, filled with real RoziPay-mark
-                coins — see components/HourglassClaim.tsx. Pours once on
-                mount (this card only ever mounts when claimableMicro is
-                already > 0), then settles into a static glow. */}
-            <HourglassClaim />
+            {/* The same hero in its "ready" state — a warmer glow and a calmed
+                stream, because the moment here is "there is something to
+                collect", not "work is happening". */}
+            <MiningHero variant="ready" />
           </div>
           <p className="mt-3 text-sm font-semibold text-accent-ink">{t("mine.claim.title")}</p>
           <p className="num mt-1 text-3xl font-extrabold text-brand-ink">

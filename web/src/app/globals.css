@@ -470,13 +470,13 @@ body {
   }
 }
 
-/* Claim card (founder, 2026-08-12, visual redone 2026-08-13 — see
-   components/HourglassClaim.tsx): mined ROZI is settled but sits unclaimed
-   until the user taps Claim. claim-burst is one-shot, added on tap and
-   removed once it finishes — a small ring at the CENTER of the claim visual,
-   not sized to fill it (the claim visual is now the tall, rectangular
-   hourglass below; the old inset:0 circle assumed a square icon and would
-   draw an oval here instead of a burst). */
+/* Claim card (founder, 2026-08-12; visual redone 2026-08-13, and again
+   2026-09-08 — see components/MiningHero.tsx): mined ROZI is settled but sits
+   unclaimed until the user taps Claim. claim-burst is one-shot, added on tap
+   and removed once it finishes — a small ring at the CENTER of the claim
+   visual, deliberately not sized to fill it. The claim visual has never been
+   square (it was a tall hourglass, it is a landscape hero panel now), and an
+   inset:0 circle would draw an oval there instead of a burst. */
 @keyframes claim-burst {
   0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
   40% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
@@ -498,230 +498,171 @@ body {
   .claim-burst { animation: none; opacity: 0; }
 }
 
-/* The hourglass claim visual itself — components/HourglassClaim.tsx builds
-   the wood/metal/glass/coins in plain SVG (no CSS needed for those), so
-   what's left here is the coin face gradients, the "ready" glow once the
-   pour finishes, and a gem-sparkle twinkle carried over from the old
-   gem-glint moment this replaced. */
-/* ⚠️ THE CALLER OWNS THE SIZE. This used to be a fixed 108x166, which meant
-   the box and the artwork's aspect ratio were pinned in two different files —
-   widening the viewBox for the plinth and the crystals (HourglassClaim.tsx)
-   would have squashed the glass with nothing to say why. The three call sites
-   in app/mine/page.tsx set the box; the SVG just fills it. */
-.hg-wrap { width: 100%; height: 100%; transition: filter 300ms; }
+/* The /mine hero — components/MiningHero.tsx. The base art is the founder's
+   own rendered concept (public/brand/mine-hero-v1.webp); everything here is
+   the live motion layered over it, plus the panel it sits in.
 
-/* Ambient life while the glass sits there: lit grains drifting down the upper
-   bulb, the two arc sweeps behind the frame, gold dust around it, and a slow
-   shimmer across the crystals. Decorative like everything else in this file —
-   not one of them reads a number, and every one freezes for reduced motion. */
-
-/* The grains falling through the upper bulb. Delays are staggered across one
-   full duration so the stream never visibly stops and restart. */
-.hg-sand circle { animation: hg-sand-fall 4.6s linear infinite; }
-.hg-sand circle:nth-child(2) { animation-delay: 0.45s; }
-.hg-sand circle:nth-child(3) { animation-delay: 0.9s; }
-.hg-sand circle:nth-child(4) { animation-delay: 1.35s; }
-.hg-sand circle:nth-child(5) { animation-delay: 1.8s; }
-.hg-sand circle:nth-child(6) { animation-delay: 2.25s; }
-.hg-sand circle:nth-child(7) { animation-delay: 2.7s; }
-.hg-sand circle:nth-child(8) { animation-delay: 3.15s; }
-.hg-sand circle:nth-child(9) { animation-delay: 3.6s; }
-.hg-sand circle:nth-child(10) { animation-delay: 4.05s; }
-@keyframes hg-sand-fall {
-  0% { opacity: 0; transform: translateY(-4px); }
-  25% { opacity: 0.95; }
-  70% { opacity: 0.75; }
-  100% { opacity: 0; transform: translateY(14px); }
+   ⚠️ THREE PROPERTIES HOLD THE OVERLAY IN REGISTER WITH THE ART, AND ALL
+   THREE HAVE TO AGREE: the SVG viewBox is the asset's exact pixel size
+   (770x528, set in the component), the wrapper's aspect-ratio is that same
+   ratio (set inline, from the same constants), and the art below is painted
+   `100% 100%` rather than `cover`. `cover` would be equivalent only while the
+   ratio holds exactly — spelling it out means a future ratio slip shows up as
+   a stretched image instead of as an overlay that silently drifts off the
+   thing it points at. */
+.mh-wrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 18px;
+  /* ⚠️ THE PANEL PAINTS ITS OWN DARK GROUND, IN BOTH SKINS ON PURPOSE. The
+     art is one dark raster and cannot re-theme, so on the light skin it would
+     otherwise sit on a white card and read as a broken image. These two
+     values are sampled from the asset's own top and bottom edges, so the art
+     dissolves into the panel instead of ending on a visible seam. */
+  background: linear-gradient(180deg, #01363c 0%, #00252b 100%);
+}
+.mh-art {
+  position: absolute;
+  inset: 0;
+  background-image: url("/brand/mine-hero-v1.webp");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+.mh-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
-/* ⚠️ THE ARC BRIGHTNESS LIVES ONLY HERE — THE SVG CARRIES NO `opacity`
-   ATTRIBUTE ON THEM, on purpose (see the note at the arcs in
-   HourglassClaim.tsx). That means the reduced-motion fallback below MUST set
-   a static opacity for each of the three weights: with `animation: none` and
-   nothing else, they would all fall back to fully opaque, and the 7px-wide
-   glow arcs at full strength swamp the whole artwork. */
-.hg-arc { animation: hg-arc-breathe 5.6s ease-in-out infinite; }
-.hg-arc-wide { animation-name: hg-arc-breathe-soft; }
-.hg-arc-thin { animation-name: hg-arc-breathe-thin; }
-.hg-arc-b { animation-duration: 7.2s; animation-delay: 0.8s; }
-.hg-arc-c { animation-duration: 6.4s; animation-delay: 1.6s; }
-.hg-arc-d { animation-duration: 8s; animation-delay: 2.4s; }
-@keyframes hg-arc-breathe {
-  0%, 100% { opacity: 0.42; }
+/* ---- the flow ------------------------------------------------------------
+   Every animation in this file is opacity and `translate` only.
+   ⚠️ NEVER ADD `scale` TO ANY OF THESE. A CSS transform on an SVG element
+   takes its origin from the user-space origin, not the shape's own centre, so
+   scaling a circle positioned by cx/cy throws it clean across the artwork.
+   `transform-box: fill-box` would fix it; not needing it cannot regress. */
+.mh-grain {
+  fill: #bffdf6;
+  opacity: 0;
+  animation: mh-grain-drift 4.4s linear infinite;
+}
+.mh-grain-low {
+  fill: #9ff3ea;
+  animation-duration: 5.2s;
+}
+@keyframes mh-grain-drift {
+  0% { opacity: 0; transform: translateY(-3px); }
+  30% { opacity: 0.85; }
+  70% { opacity: 0.6; }
+  100% { opacity: 0; transform: translateY(15px); }
+}
+
+/* The bright core of the stream sits under the dots and only breathes — the
+   dots are what actually reads as movement. */
+.mh-stream-core { animation: mh-core-breathe 2.6s ease-in-out infinite; }
+@keyframes mh-core-breathe {
+  0%, 100% { opacity: 0.45; }
   50% { opacity: 0.95; }
 }
-@keyframes hg-arc-breathe-soft {
-  0%, 100% { opacity: 0.07; }
-  50% { opacity: 0.22; }
-}
-@keyframes hg-arc-breathe-thin {
-  0%, 100% { opacity: 0.22; }
-  50% { opacity: 0.6; }
-}
-
-/* The gold dust (founder, 2026-09-08). Idle it only twinkles in place; while a
-   session runs, `.hg-mining` on the wrapper swaps in a keyframe that also
-   carries each mote outward, so the field reads as spreading.
-   ⚠️ OPACITY AND TRANSLATE ONLY — NEVER `scale`. A CSS transform on an SVG
-   element takes its origin from the user-space origin, not the shape's own
-   centre, so scaling a circle that is positioned by cx/cy throws it across the
-   artwork. `transform-box: fill-box` would fix that; not needing it at all is
-   cheaper and cannot regress. */
-/* ⚠️ THE ARC AND MOTE COLOURS ARE THEME VARIABLES, AND THE LIGHT SKIN IS NOT
-   OPTIONAL HERE. The near-white teal and gold below are tuned for the dark
-   vault card. The light skin puts the same artwork on a #ffffff card, where
-   `#ffd98a` gold dust and a `#ffdf9e` arc are invisible — so a light-skin user
-   would get a field of animated elements that paint every frame and show
-   nothing. These sit on :root rather than on `.app-frame` so they still
-   resolve if the glass is ever rendered outside the app shell. */
-:root {
-  --hg-arc-teal: #8ff8ec;
-  --hg-arc-teal-edge: #3fe4d8;
-  --hg-arc-gold: #ffdf9e;
-  --hg-arc-gold-edge: #f2a417;
-  --hg-mote: #ffd98a;
-}
-:root:not([data-theme="vault"]) {
-  --hg-arc-teal: #0f8f93;
-  --hg-arc-teal-edge: #12898f;
-  --hg-arc-gold: #c07a06;
-  --hg-arc-gold-edge: #a86400;
-  --hg-mote: #d98b06;
-}
-.hg-stop-t-mid { stop-color: var(--hg-arc-teal); }
-.hg-stop-t-edge { stop-color: var(--hg-arc-teal-edge); }
-.hg-stop-g-mid { stop-color: var(--hg-arc-gold); }
-.hg-stop-g-edge { stop-color: var(--hg-arc-gold-edge); }
-
-/* The stroke IS the mote's glow — a second, larger circle behind each one
-   would double the element count of the field for the same look. Element
-   opacity multiplies stroke-opacity, so it still fades out cleanly. */
-.hg-mote {
+.mh-stream-dot {
+  fill: #eafffb;
   opacity: 0;
-  fill: var(--hg-mote);
-  stroke: var(--hg-mote);
-  stroke-width: 2.4;
-  stroke-opacity: 0.22;
-  animation: hg-mote-idle 6s ease-in-out infinite;
+  animation: mh-stream-fall 1.9s linear infinite;
 }
-@keyframes hg-mote-idle {
+@keyframes mh-stream-fall {
+  0% { opacity: 0; transform: translateY(0); }
+  18% { opacity: 1; }
+  82% { opacity: 0.7; }
+  100% { opacity: 0; transform: translateY(82px); }
+}
+
+/* A token dropping onto the pile the render already shows collected: fade in,
+   fall, one small bounce, hold, gone.
+   ⚠️ THE EXIT IS DELIBERATELY ABRUPT (~1.5% of the cycle, about 120ms) AND
+   MUST STAY THAT WAY. The first version faded out over ten times that, and a
+   half-transparent gold disc sitting on dark glass does not read as a coin
+   disappearing — it reads as a grey ghost disc, i.e. as a rendering bug. Seen
+   in a browser, not predicted.
+   ⚠️ The visible window (~20% of the cycle) is kept SHORTER than the stagger
+   between coins (a third of the cycle), so only one is ever on screen. */
+.mh-coin {
+  opacity: 0;
+  animation: mh-coin-drop 7.8s ease-in infinite;
+}
+@keyframes mh-coin-drop {
+  0% { opacity: 0; transform: translateY(0); }
+  2% { opacity: 1; transform: translateY(2px); }
+  12% { opacity: 1; transform: translateY(30px); }
+  14% { transform: translateY(26px); }
+  16.5% { transform: translateY(30px); }
+  19% { opacity: 1; transform: translateY(30px); }
+  20.5% { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 0; transform: translateY(30px); }
+}
+
+/* ---- ambience ----------------------------------------------------------- */
+.mh-glow-neck { animation: mh-pulse 3.1s ease-in-out infinite; }
+.mh-glow-base { animation: mh-pulse 4.3s ease-in-out infinite; animation-delay: 0.7s; }
+.mh-glow-med { animation: mh-pulse 3.7s ease-in-out infinite; animation-delay: 1.4s; }
+@keyframes mh-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.mh-spark {
+  fill: #ffd98a;
+  opacity: 0;
+  animation: mh-spark-twinkle 4.6s ease-in-out infinite;
+}
+@keyframes mh-spark-twinkle {
   0%, 100% { opacity: 0; }
-  50% { opacity: 0.5; }
-}
-.hg-wrap.hg-mining .hg-mote-l { animation-name: hg-mote-out-l; }
-.hg-wrap.hg-mining .hg-mote-r { animation-name: hg-mote-out-r; }
-.hg-wrap.hg-mining .hg-mote-u { animation-name: hg-mote-out-u; }
-.hg-wrap.hg-mining .hg-mote-d { animation-name: hg-mote-out-d; }
-@keyframes hg-mote-out-l {
-  0% { opacity: 0; transform: translate(0, 0); }
-  35% { opacity: 0.9; }
-  100% { opacity: 0; transform: translate(-9px, -4px); }
-}
-@keyframes hg-mote-out-r {
-  0% { opacity: 0; transform: translate(0, 0); }
-  35% { opacity: 0.9; }
-  100% { opacity: 0; transform: translate(9px, -4px); }
-}
-@keyframes hg-mote-out-u {
-  0% { opacity: 0; transform: translate(0, 0); }
-  35% { opacity: 0.9; }
-  100% { opacity: 0; transform: translate(0, -11px); }
-}
-@keyframes hg-mote-out-d {
-  0% { opacity: 0; transform: translate(0, 0); }
-  35% { opacity: 0.9; }
-  100% { opacity: 0; transform: translate(-2px, 10px); }
+  50% { opacity: 0.85; }
 }
 
-.hg-crystals { animation: hg-crystal-shimmer 5s ease-in-out infinite; }
-@keyframes hg-crystal-shimmer {
-  0%, 100% { opacity: 0.75; }
-  50% { opacity: 1; }
-}
-.hg-neck { animation: hg-neck-glow 2.4s ease-in-out infinite; }
-@keyframes hg-neck-glow {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .hg-sand circle,
-  .hg-arc,
-  .hg-mote,
-  .hg-crystals,
-  .hg-neck { animation: none; }
-  /* Static stand-ins for the three animated opacities. Order matters: the
-     weight-specific rules have the same specificity as `.hg-arc`, so they
-     have to come after it to win. */
-  .hg-sand circle { opacity: 0.7; }
-  .hg-mote { opacity: 0.45; }
-  .hg-arc { opacity: 0.7; }
-  .hg-arc-thin { opacity: 0.45; }
-  .hg-arc-wide { opacity: 0.14; }
-}
-.hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
+/* ---- variants ------------------------------------------------------------
+   "pour" is the flourish right after the start tap: the same motion, run
+   faster and brighter for its ~2.2s. "ready" is the claim card, where the
+   panel sits in a warmer glow and the stream calms down — the moment is
+   "there is something to collect", not "work is happening". */
+.mh-pour .mh-stream-dot { animation-duration: 0.85s; }
+.mh-pour .mh-stream-core { animation-duration: 1.1s; }
+.mh-pour .mh-grain { animation-duration: 2s; }
+/* Three coins in quick succession across the ~2.2s flourish. ⚠️ `!important`
+   is load-bearing here, not laziness: the per-coin delay is an INLINE style
+   (the component stages them for the steady state), and an inline style beats
+   an ordinary stylesheet rule — `!important` is the only thing that can
+   re-stage them for this variant. */
+.mh-pour .mh-coin { animation-duration: 2.6s; }
+.mh-pour .mh-coin:nth-of-type(1) { animation-delay: 0s !important; }
+.mh-pour .mh-coin:nth-of-type(2) { animation-delay: 0.6s !important; }
+.mh-pour .mh-coin:nth-of-type(3) { animation-delay: 1.2s !important; }
 
-/* "Working" state (founder, 2026-08-29): coins sit settled in the bottom bulb
-   while a mining session runs. A gentle breathing glow + a spark trickling
-   down through the neck says "running" without draining the glass. */
-.hg-wrap.hg-working { animation: hg-working-glow 3.2s ease-in-out infinite; }
-.hg-wrap.hg-working::after {
-  content: "";
-  position: absolute;
-  /* ⚠️ Percentages of the BOX, against art laid out in a viewBox — so this
-     had to move when the viewBox grew for the plinth and the crystals
-     (2026-09-08). The neck sits at y = 120 of a box spanning -12..258, i.e.
-     48.9% down; the dot starts just above it and falls through. Re-derive
-     this if VB_Y / VB_H in HourglassClaim.tsx ever change again. */
-  left: 50%;
-  top: 45%;
-  width: 7px;
-  height: 7px;
-  margin-left: -3.5px;
-  border-radius: 9999px;
-  background: var(--color-accent);
-  pointer-events: none;
-  animation: hg-working-trickle 1.5s ease-in infinite;
-}
-@keyframes hg-working-glow {
-  0%, 100% { filter: drop-shadow(0 0 8px rgba(242, 164, 23, 0.35)); }
-  50% { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.7)); }
-}
-@keyframes hg-working-trickle {
-  0% { transform: translateY(0) scale(0.8); opacity: 0; }
-  30% { opacity: 0.9; }
-  100% { transform: translateY(18px) scale(0.5); opacity: 0; }
-}
+.mh-ready { box-shadow: 0 0 22px rgba(242, 164, 23, 0.28); }
+.mh-ready .mh-stream-dot { animation-duration: 3.2s; }
+.mh-ready .mh-glow-med { animation-duration: 2.2s; }
+.mh-ready .mh-spark { animation-duration: 2.4s; }
+
 @media (prefers-reduced-motion: reduce) {
-  .hg-wrap.hg-working { animation: none; filter: drop-shadow(0 0 10px rgba(242, 164, 23, 0.5)); }
-  .hg-wrap.hg-working::after { animation: none; opacity: 0; }
-}
-.hg-coin-ring { fill: url(#hgCoinGrad); stroke: #a86400; stroke-width: 0.6; }
-.hg-coin-face { fill: url(#hgCoinFaceGrad); }
-.hg-splash { opacity: 0; }
-.hg-splash.play { animation: hg-splash 550ms ease-out; }
-@keyframes hg-splash {
-  0% { opacity: 0.9; transform: scale(0.4); }
-  100% { opacity: 0; transform: scale(1.7); }
-}
-.hg-sparkle {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  opacity: 0;
-  pointer-events: none;
-  background: var(--color-accent);
-  clip-path: polygon(50% 0%, 63% 38%, 100% 50%, 63% 62%, 50% 100%, 37% 62%, 0% 50%, 37% 38%);
-}
-.hg-wrap.ready .hg-sparkle { animation: hg-twinkle 1.6s ease-in-out infinite; }
-.hg-sparkle.s1 { top: 40%; left: -6%; animation-delay: 0s; }
-.hg-sparkle.s2 { top: 24%; right: -8%; animation-delay: 0.4s; }
-.hg-sparkle.s3 { top: 58%; right: -2%; animation-delay: 0.8s; }
-@keyframes hg-twinkle {
-  0%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
-  50% { opacity: 1; transform: scale(1) rotate(90deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .hg-wrap.ready .hg-sparkle { animation: none; opacity: 0; }
+  .mh-grain,
+  .mh-stream-core,
+  .mh-stream-dot,
+  .mh-coin,
+  .mh-glow-neck,
+  .mh-glow-base,
+  .mh-glow-med,
+  .mh-spark { animation: none; }
+  /* Static stand-ins, since every one of the above rests at opacity 0 and
+     would otherwise disappear entirely rather than simply stop moving. */
+  .mh-grain { opacity: 0.7; }
+  .mh-stream-core { opacity: 0.8; }
+  .mh-stream-dot { opacity: 0.85; }
+  .mh-spark { opacity: 0.7; }
+  .mh-glow-neck,
+  .mh-glow-base,
+  .mh-glow-med { opacity: 0.8; }
+  /* The dropping tokens are the one thing with nowhere sensible to rest — the
+     render already shows a full pile — so they stay hidden. */
+  .mh-coin { opacity: 0; }
 }
 
 /* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13;
@@ -938,16 +879,10 @@ body {
   background-color: #07161a;
 }
 
-/* ⚠️ THE WHITE RIM THIS RULE USED TO ADD IS GONE ON PURPOSE (2026-09-08).
-   It existed because the frame was dark wood and black metal, which lost its
-   edges against the dark card. The frame is brass now — the brightest thing
-   on the screen — and a white outline over gold only muddies it. What is left
-   is a warm lift on the light skin, where a gold frame on a near-white card
-   is the case that needs help instead. The wrapper's own marigold "ready"
-   glow is on `.hg-wrap`, not the inner <svg>, so the two do not collide. */
-:root:not([data-theme="vault"]) .app-frame .hg-wrap svg {
-  filter: drop-shadow(0 1px 2px rgba(8, 47, 54, 0.28));
-}
+/* The light-skin lift that used to sit here is gone with the SVG hourglass it
+   was written for (2026-09-08). The hero is a raster on its own dark panel
+   now — see `.mh-wrap`, which paints that ground in BOTH skins — so there is
+   no longer a case of gold-on-near-white needing help. */
 
 /* ============================================================
    Balance hero sheen — a slow light sweep across the big number

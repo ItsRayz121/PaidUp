@@ -784,10 +784,10 @@ const copy: Record<string, string> = {
   "mine.start": "Start mining for {hours} hours",
   "mine.started.pour": "Mining started! Filling up your session…",
   "mine.running": "You are mining now",
-  // The persistent session hourglass's counter (founder, 2026-08-28) — purely
-  // decorative, reflects elapsed time, never the real ROZI amount (the
-  // number above it). See HourglassClaim.tsx's own header.
-  "mine.running.coins": "{dropped} of {total} coins dropped",
+  // ("mine.running.coins" lived here — the hourglass's "X of N coins dropped"
+  // counter. It was already orphaned when the count line was dropped on
+  // 2026-08-29, and the hourglass itself is gone as of 2026-09-08, so the key
+  // went with it rather than sitting in the deck unreferenced.)
   "mine.running.note": "Come back when the time runs out and start again.",
   "mine.device.blocked":
     "Someone already mined on this phone today with a different account. So this account earns nothing today. One phone, one miner.",
