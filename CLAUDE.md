@@ -5135,3 +5135,56 @@ See `docs/` for the full spec.
     Overscan buys 6%; art buys as much as you want. The cost is that all four
     card tops and all four node offsets are measured against the current
     framing and would need re-measuring against the new image.
+
+- **THE SCENE'S LANDMARKS GET BIGGER, WITH A REVERT SWITCH ON THE PAGE
+  (founder, 2026-09-08, same day).** Asked for "slight bigger landmarks with
+  revert button option". Verified: web `tsc --noEmit`, `eslint src` (0 errors,
+  the same 7 pre-existing `<img>` warnings), `next build` (39 routes) clean,
+  **and driven in real headless Chrome** — the zoom compared at 106/114/122/130%,
+  the result looked at across the whole page at 320, 393 and 485px, and the
+  revert switch clicked through all six of its states. Visual only; no backend
+  suite re-run.
+  - ⚠️ **THE ARTWORK WAS NOT REDRAWN, AND THAT WAS THE RECOMMENDATION.** There
+    is no image-generation tool authorised in this workspace (Canva et al. are
+    unauthenticated MCPs), so genuinely larger landmarks — the mine, the ID
+    shield, the trading screen, the globe each drawn to occupy more of the
+    frame — is still the real answer and still unbuilt. What shipped is more
+    overscan: **106% → 118%**, which is the only lever one baked PNG has.
+    Past ~122% the mining village's outer stone arch starts being cut, and at
+    130% the village is plainly clipped — that was rendered and looked at, not
+    assumed, and it is the ceiling for this image.
+  - **`--rm-scene-zoom` is now the ONE number**, and everything that must move
+    with it is derived: the image width, its side bleed
+    (`calc((100% - var(--rm-scene-zoom)) / 2)`) and all four node offsets
+    (`calc(var(--rm-node-f) * var(--rm-scene-zoom) - (var(--rm-scene-zoom) - 100%) / 2)`).
+    ⚠️ **This replaced four hand-computed percentages, and that is a real
+    safety change, not tidying** — re-scaling meant re-deriving each by hand,
+    and one missed value leaves a numbered marker floating off the road with
+    nothing failing. Each stop now carries only where its landmark sits in the
+    artwork (`--rm-node-f`), which does not change when the frame does.
+    Confirmed: marker 1 lands within 1px of the same road pixel at both zooms.
+  - **The revert is a real switch, not a git revert.** `data-scene="plain"`
+    restores the 106% framing; `/mine/roadmap?compare=1` shows a small pill
+    that flips it and remembers the choice, `?compare=0` puts the pill away,
+    `?scene=plain` sets it directly. ⚠️ **The pill is NOT shown to earners** —
+    this is a public page and a "Scene: Bigger / Original" control next to a
+    balance is just a confusing button; it renders only for someone who asked
+    for it. Its label is inline English on purpose: a founder tool, not product
+    copy, so it stays out of the copy deck.
+  - ⚠️ **TWO TRAPS COST REAL TIME HERE; BOTH LOOK LIKE A BUG IN THE CODE.**
+    (a) **The dev server serves STALE `globals.css` after an edit** — not only
+    after a git checkout, which is all this file said before. It happened twice
+    in one session: `width: 106%` was still live after being replaced by
+    `var(--rm-scene-zoom)` (the zoom "did nothing" at 118% AND 130%), and later
+    the revert pill rendered as an unstyled 24px-tall link in page flow because
+    its rule was not in the stylesheet at all. Both times the fix was to touch
+    the file and wait ~6s. **Before concluding a CSS change has no effect,
+    check the rule is actually in `document.styleSheets`.**
+    (b) **`img { max-width: 100% }` from Tailwind preflight** silently caps any
+    `width` over 100% on an image — see the entry above; `max-width: none` is
+    load-bearing and its absence is invisible in a diff.
+  - **`react-hooks/set-state-in-effect` needed a scoped exception**, matching
+    `ThemeProvider` in `lib/theme.tsx` exactly: prerendered HTML cannot know a
+    per-device choice, so the first client render has to agree with it and
+    reconcile once. The default is `"big"`, which is also the CSS default, so
+    nothing flashes for anyone who has not chosen otherwise.

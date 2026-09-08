@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "@/lib/i18n";
 import { ROADMAP_STEPS, roadmapStates } from "@/lib/roadmap";
 import {
@@ -23,6 +23,22 @@ const LIVE = [
   { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
 
+/* The illustrated scene can be flipped back to its previous framing without a
+   deploy (founder, 2026-09-08, asked for the bigger landmarks "with revert
+   button option"). "big" is the default and matches the CSS default, so the
+   first paint never disagrees with it and nothing flashes; only someone who
+   has deliberately chosen "plain" sees a switch on mount.
+   The control itself is NOT shown to earners — this is a public page and a
+   "Scene: Bigger / Original" pill would just be a confusing extra button next
+   to a balance. It appears only for someone who asked for it with ?compare=1,
+   and ?compare=0 puts it away again. Its label is inline English on purpose:
+   it is a founder tool, not product copy, so it stays out of the copy deck.
+   Reachable as /mine/roadmap?compare=1, or directly with ?scene=plain. */
+type Scene = "big" | "plain";
+const SCENE_KEY = "rozipay.roadmap.scene";
+const COMPARE_KEY = "rozipay.roadmap.compare";
+const isScene = (v: unknown): v is Scene => v === "big" || v === "plain";
+
 function subscribeToDay(onChange: () => void) {
   const timer = window.setInterval(onChange, 60_000);
   window.addEventListener("focus", onChange);
@@ -42,6 +58,46 @@ export default function RoadmapPage() {
   const { t } = useI18n();
   const day = useSyncExternalStore(subscribeToDay, currentDay, serverDay);
   const states = roadmapStates(day);
+  const [scene, setScene] = useState<Scene>("big");
+  const [compare, setCompare] = useState(false);
+
+  // Read from the URL first (it is how the choice is made) and fall back to
+  // what was stored. Every storage touch is wrapped: a private window or a
+  // browser set to block site data throws on access, and this must never be
+  // the reason the roadmap fails to render.
+  useEffect(() => {
+    let wanted: Scene | null = null;
+    let wantCompare: boolean | null = null;
+    const q = new URLSearchParams(window.location.search);
+    const s = q.get("scene");
+    if (isScene(s)) wanted = s;
+    const c = q.get("compare");
+    if (c === "1") wantCompare = true;
+    if (c === "0") wantCompare = false;
+    try {
+      if (wanted) localStorage.setItem(SCENE_KEY, wanted);
+      else {
+        const stored = localStorage.getItem(SCENE_KEY);
+        if (isScene(stored)) wanted = stored;
+      }
+      if (wantCompare !== null) localStorage.setItem(COMPARE_KEY, wantCompare ? "1" : "0");
+      else wantCompare = localStorage.getItem(COMPARE_KEY) === "1";
+    } catch {}
+    // Same shape (and the same scoped exception) as ThemeProvider in
+    // lib/theme.tsx: the prerendered HTML cannot know a per-device choice, so
+    // the first client render has to match it and then reconcile once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (wanted) setScene(wanted);
+    if (wantCompare) setCompare(true);
+  }, []);
+
+  const flipScene = useCallback(() => {
+    setScene((prev) => {
+      const next: Scene = prev === "big" ? "plain" : "big";
+      try { localStorage.setItem(SCENE_KEY, next); } catch {}
+      return next;
+    });
+  }, []);
   return (
     <div className="roadmap-live relative overflow-hidden px-4 pb-8 md:px-10 lg:px-14">
       <div className="roadmap-stars" aria-hidden />
@@ -85,7 +141,7 @@ export default function RoadmapPage() {
           <p className="text-sm leading-relaxed text-muted">{t("roadmap.roadmap.intro")}</p>
         </div>
 
-        <div className="roadmap-journey relative mt-10 md:mt-8">
+        <div className="roadmap-journey relative mt-10 md:mt-8" data-scene={scene}>
           <Image
             src="/roadmap/connected-world-v1.png"
             alt="A glowing road connecting mining, identity verification, public trading and a global exchange"
@@ -137,6 +193,12 @@ export default function RoadmapPage() {
           <Link href="/mine" className="relative z-10 inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 text-[13px] font-bold">{t("roadmap.mine.cta")} <ArrowRightIcon size={15} /></Link>
         </section>
       </div>
+
+      {compare ? (
+        <button type="button" onClick={flipScene} className="roadmap-scene-toggle" aria-live="polite">
+          Scene: {scene === "big" ? "Bigger" : "Original"}
+        </button>
+      ) : null}
     </div>
   );
 }

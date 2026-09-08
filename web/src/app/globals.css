@@ -269,7 +269,26 @@ body {
    cards are absolutely positioned over the scene (stop-3 sits at 84%, so its
    lower half is inside the bottom fade) and must stay fully opaque. Masking
    the container would fade the words too. */
-.roadmap-journey { padding: 0; border-radius: 0; overflow: hidden; margin-inline: -16px; }
+/* --rm-scene-zoom is the ONE number that sets how much of the frame the
+   illustration's landmarks fill, and everything that has to move with it is
+   derived from it below — the image width, its side bleed, and all four node
+   offsets. It was four hand-computed percentages before; a scale change then
+   meant re-deriving each by hand, and a missed one leaves a numbered marker
+   floating off the road. Change this value alone.
+   The "original" value (data-scene="plain") is what shipped earlier on
+   2026-09-08, so the in-page revert really does return to that look. */
+.roadmap-journey { padding: 0; border-radius: 0; overflow: hidden; margin-inline: -16px; --rm-scene-zoom: 118%; }
+.roadmap-journey[data-scene="plain"] { --rm-scene-zoom: 106%; }
+/* The revert pill (see mine/roadmap/page.tsx). Gated behind ?compare=1, so
+   this is never on screen for an earner. Sits clear of the tab bar. */
+.roadmap-scene-toggle {
+  position: fixed; z-index: 40; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  min-height: 36px; padding: 0 14px; border-radius: 9999px;
+  font-size: 12px; font-weight: 700; letter-spacing: .01em;
+  color: #02272e; background: var(--rm-cyan);
+  border: 1px solid rgba(255, 255, 255, .35);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .45);
+}
 /* Founder, 2026-09-08: "make the images slightly bigger". The scene is one
    baked illustration that already ran edge to edge, so the only lever without
    new artwork is to overscan it: 106% wide, bled 3% off each side, clipped by
@@ -281,7 +300,8 @@ body {
    sits at (-3 + 106f)% of the container, so the four node offsets below were
    re-mapped through that. Change this scale and re-map them again. */
 .roadmap-world-image {
-  display: block; width: 106%; max-width: none; margin-inline: -3%; height: auto;
+  display: block; width: var(--rm-scene-zoom); max-width: none;
+  margin-inline: calc((100% - var(--rm-scene-zoom)) / 2); height: auto;
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
   mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
 }
@@ -309,10 +329,17 @@ body {
 .roadmap-journey .roadmap-stop-2 .roadmap-card-position { margin-left: auto; margin-right: 3%; }
 .roadmap-journey .roadmap-stop-1 .roadmap-card-position,
 .roadmap-journey .roadmap-stop-3 .roadmap-card-position { margin-left: 3%; }
-.roadmap-journey .roadmap-stop-0 .roadmap-node { left: 46.8%; }
-.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 64.8%; }
-.roadmap-journey .roadmap-stop-2 .roadmap-node { left: 45.8%; }
-.roadmap-journey .roadmap-stop-3 .roadmap-node { left: 54.2%; }
+/* Each stop carries WHERE ITS LANDMARK SITS IN THE ARTWORK as a plain
+   fraction; the offset into the overscanned container is arithmetic, not a
+   second number to keep in sync. A point at fraction f of the image sits at
+   (f * zoom) - (zoom - 100%)/2 of the container. */
+.roadmap-journey .roadmap-stop-0 { --rm-node-f: .47; }
+.roadmap-journey .roadmap-stop-1 { --rm-node-f: .64; }
+.roadmap-journey .roadmap-stop-2 { --rm-node-f: .46; }
+.roadmap-journey .roadmap-stop-3 { --rm-node-f: .54; }
+.roadmap-journey .roadmap-node {
+  left: calc(var(--rm-node-f) * var(--rm-scene-zoom) - (var(--rm-scene-zoom) - 100%) / 2);
+}
 .roadmap-journey .roadmap-node { top: 50%; }
 /* Founder, 2026-09-07: this closed the page as a tall, solid-cyan band —
    the loudest thing on a deliberately cinematic dark page, and a different
