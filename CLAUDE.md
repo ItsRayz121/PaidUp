@@ -5069,3 +5069,69 @@ See `docs/` for the full spec.
     catches the road's cyan bloom, so card 1 measured "road under" at desktop
     while the render plainly shows it well clear. Confirm a collision verdict by
     looking at the render before acting on it.
+
+- **THE ROADMAP HERO HOLDS ONE LINE EACH, "SEND ROZI" LEAVES "WORKING TODAY",
+  AND THE SCENE GETS 6% BIGGER (founder, 2026-09-08).** A phone review of
+  `/mine/roadmap`: title and subtitle each wrapping to two lines, a tile for
+  something not being sold yet, and a wish for the illustration's landmarks to
+  read larger. Verified: web `tsc --noEmit`, `eslint src` (0 errors, the same 7
+  pre-existing `<img>` warnings), `next build` (38 routes) all clean, **and
+  rendered in real headless Chrome at 320 / 360 / 393 / 412 / 480 / 485 / 599px**
+  — the hero fit measured numerically at each, the journey looked at in the
+  render at 320, 393 and 485. ⚠️ Visual only: no API, ledger, copy-meaning or
+  guardrail change, so no backend suite was re-run.
+  - **"The road ahead" and "Where RoziPay is going, and when." each hold one
+    line**, nowrap with a vw-driven clamp, and the text column was widened
+    (`.92fr` → `1.04fr`) to buy it — the mountain gives up the difference,
+    which is the right trade on a page whose subject is the road below.
+    ⚠️ **THE SIZES WERE MEASURED, AND THE TWO RATIOS THAT MAKE THEM
+    RE-DERIVABLE ARE IN THE CSS COMMENT**: at this weight and tracking the
+    title renders **6.911×** its font-size wide and the line under it
+    **15.836×**, against a column of `(viewport − 24px) × 0.52`. The vw figures
+    are the widest that still leave ~8% slack at 320px. Change either string,
+    or the column split, and both ratios change — re-measure.
+    ⚠️ **`scrollWidth` CANNOT TELL YOU THE SLACK, ONLY THAT THERE IS SOME.** It
+    returns `max(clientWidth, content)`, so a line fitting with 1px to spare and
+    one with 60px both report exactly the element width. The first attempt was
+    signed off on that basis and was sitting at 192px inside a 192px column;
+    the real number needs a `Range` over the text node. A nowrap line that
+    fits on the reviewer's phone and not on a narrower one overflows toward the
+    art with **nothing on screen to say so** — which is why every width was
+    checked, not one.
+  - **"Send ROZI" is off "Working today" again** — it was dropped once in
+    `5bc998f` and came back with the world revamp. ⚠️ Transfers *are* enabled
+    server-side (`transfersEnabled = 1`, 2026-07-30), so this is a **product
+    call, not a bug fix**: this panel is what a new user reads as "here is what
+    works today", and the founder's position is that sending is not something
+    to sell yet. Four tiles also gave each label real room — at five they were
+    down to 8px type on a phone, now 9px. The dead `roadmap.live.send` string
+    was deleted rather than left as an unused key.
+  - **The scene is 106% wide, bled 3% off each side and clipped** by
+    `.roadmap-journey`'s `overflow: hidden`. It is one baked illustration that
+    already ran edge to edge, so overscan is the only lever on landmark size
+    without new artwork; the outermost trees are the whole cost.
+    ⚠️ **`max-width: none` IS LOAD-BEARING AND ITS ABSENCE IS SILENT.**
+    Tailwind preflight sets `img { max-width: 100% }`, so the first version
+    applied `width: 106%` and changed **nothing at all** — caught only by
+    reading the element's measured width back (417px vs 393px), never visible
+    in the diff.
+    ⚠️ **VERTICAL POSITIONS SURVIVE A SCALE CHANGE; HORIZONTAL ONES DO NOT.**
+    The container has no height of its own, so it grows with the image and
+    every `top: N%` stays the same fraction of the artwork. But a point at
+    fraction `f` of the image now sits at `(-3 + 106f)%` of the container, so
+    the four `.roadmap-node` offsets were re-mapped through that. Re-scale the
+    image and re-map them again.
+  - **Step cards 39% → 35% wide**, the other half of "bigger images", with the
+    journey card padding tightened (`9px 8px` → `8px 7px`) to hold the height
+    roughly where 39% had it — a narrower card wraps more, and **height is the
+    axis that can still reach a road pass**. ⚠️ Narrowing is the one direction
+    that cannot create the collision this file has warned about twice: cards 1
+    and 3 are right-aligned so their left edge moves *away* from the central
+    road, and cards 2 and 4 are left-aligned so their right edge does.
+    **Widening re-creates it — re-measure at 390px AND 485px first.**
+  - **Not done, and it is the real answer to the ask:** genuinely larger
+    landmarks need `connected-world-v1.png` redrawn with the mine, the ID
+    shield, the trading screen and the globe occupying more of the frame.
+    Overscan buys 6%; art buys as much as you want. The cost is that all four
+    card tops and all four node offsets are measured against the current
+    framing and would need re-measuring against the new image.

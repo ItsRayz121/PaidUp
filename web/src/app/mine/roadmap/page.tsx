@@ -6,15 +6,20 @@ import { useSyncExternalStore } from "react";
 import { useI18n } from "@/lib/i18n";
 import { ROADMAP_STEPS, roadmapStates } from "@/lib/roadmap";
 import {
-  ArrowRightIcon, ArrowUpIcon, CheckIcon, ChipIcon, InfoIcon,
+  ArrowRightIcon, CheckIcon, ChipIcon, InfoIcon,
   MineIcon, ReferIcon, TasksIcon,
 } from "@/components/icons";
 
+// Founder, 2026-09-08: "Send ROZI" is off this list again (it was dropped
+// once in 5bc998f and came back with the world revamp). Transfers are
+// technically enabled server-side, but this screen is what a new user reads
+// as "here is what works today" — the founder's call is that sending is not
+// something to sell yet. Four tiles also give each label real room; at five
+// they were down to 8px type on a phone.
 const LIVE = [
   { key: "roadmap.live.mining", Icon: MineIcon },
   { key: "roadmap.live.tasks", Icon: TasksIcon },
   { key: "roadmap.live.rigs", Icon: ChipIcon },
-  { key: "roadmap.live.send", Icon: ArrowUpIcon },
   { key: "roadmap.live.invite", Icon: ReferIcon },
 ] as const;
 

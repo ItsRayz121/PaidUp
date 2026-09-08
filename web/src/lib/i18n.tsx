@@ -1196,7 +1196,6 @@ const copy: Record<string, string> = {
   "roadmap.live.mining": "Mine ROZI every day",
   "roadmap.live.tasks": "Complete tasks",
   "roadmap.live.rigs": "Buy machines",
-  "roadmap.live.send": "Send ROZI",
   "roadmap.live.invite": "Invite friends",
   "roadmap.next.title": "What is next",
   // The richer section header above the timeline (same reference layout).

@@ -194,7 +194,7 @@ body {
   filter: hue-rotate(-13deg) saturate(1.18) brightness(.84) drop-shadow(0 14px 24px rgba(0, 238, 240, .28));
 }
 .roadmap-hero h1 { text-shadow: 0 3px 0 rgba(0,0,0,.22); }
-.roadmap-features { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.roadmap-features { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .roadmap-live-panel, .roadmap-note { box-shadow: inset 0 0 28px rgba(0, 224, 228, .07), 0 18px 45px rgba(0, 0, 0, .25), 0 0 36px rgba(0, 215, 221, .07); }
 .roadmap-feature { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; border: 1px solid rgba(25,229,232,.24); border-radius: 14px; background: rgba(4, 50, 58, .62); }
 .roadmap-feature > span:last-child { text-align: center; }
@@ -270,20 +270,36 @@ body {
    lower half is inside the bottom fade) and must stay fully opaque. Masking
    the container would fade the words too. */
 .roadmap-journey { padding: 0; border-radius: 0; overflow: hidden; margin-inline: -16px; }
+/* Founder, 2026-09-08: "make the images slightly bigger". The scene is one
+   baked illustration that already ran edge to edge, so the only lever without
+   new artwork is to overscan it: 106% wide, bled 3% off each side, clipped by
+   .roadmap-journey's overflow:hidden. The landmarks read 6% larger and only
+   the outermost trees are lost.
+   VERTICAL POSITIONS ARE UNAFFECTED — the container has no height of its own,
+   so it grows with the image and every `top: N%` stays the same fraction of
+   the artwork. HORIZONTAL ones are not: a point at fraction f of the image now
+   sits at (-3 + 106f)% of the container, so the four node offsets below were
+   re-mapped through that. Change this scale and re-map them again. */
 .roadmap-world-image {
-  display: block; width: 100%; height: auto;
+  display: block; width: 106%; max-width: none; margin-inline: -3%; height: auto;
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
   mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
 }
 .roadmap-journey .roadmap-stop { position: absolute; inset-inline: 0; min-height: 0; padding: 0; display: block; }
-.roadmap-journey .roadmap-card-position { position: relative; width: 39%; }
-/* 39% is measured, not guessed, and it is measured at TWO widths — the card
-   is 88px tall at 485px but 98px at 390px (titles wrap), and the taller card
-   reaches into a road pass the shorter one clears. At 43% the road ran UNDER
-   cards 2 and 4 and came within 2-4px of 1 and 3; 41% still left card 3 at
-   2px on a real phone. 39% clears the road by >=10px at both widths.
-   Widening these cards re-creates the collision — re-measure against the
-   artwork at 390px AND 485px before changing it, not just one. */
+.roadmap-journey .roadmap-card-position { position: relative; width: 35%; }
+/* Card width was MEASURED against the artwork, never guessed, at TWO widths —
+   the card is 88px tall at 485px but 98px at 390px (titles wrap), and the
+   taller card reaches into a road pass the shorter one clears. At 43% the road
+   ran UNDER cards 2 and 4 and came within 2-4px of 1 and 3; 41% still left
+   card 3 at 2px on a real phone; 39% cleared by >=10px at both widths.
+   35% (founder, 2026-09-08: give the scene more of the frame) is NARROWER than
+   the measured-safe 39%, and narrowing is the one direction that cannot create
+   a collision: cards 1 and 3 are right-aligned, so their left edge moves away
+   from the central road, and cards 2 and 4 are left-aligned, so their right
+   edge does. The padding below was tightened in the same pass to hold the card
+   height roughly where 39% had it, since a narrower card wraps more and height
+   is the axis that CAN reach a pass.
+   WIDENING re-creates the collision — re-measure at 390px AND 485px first. */
 .roadmap-journey .roadmap-card { border-color: rgba(38, 238, 240, .72); background: linear-gradient(135deg, rgba(2, 37, 44, .93), rgba(1, 21, 27, .88)); backdrop-filter: blur(9px); }
 .roadmap-journey .roadmap-stop-0 { top: 8%; }
 .roadmap-journey .roadmap-stop-1 { top: 40%; }
@@ -293,10 +309,10 @@ body {
 .roadmap-journey .roadmap-stop-2 .roadmap-card-position { margin-left: auto; margin-right: 3%; }
 .roadmap-journey .roadmap-stop-1 .roadmap-card-position,
 .roadmap-journey .roadmap-stop-3 .roadmap-card-position { margin-left: 3%; }
-.roadmap-journey .roadmap-stop-0 .roadmap-node { left: 47%; }
-.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 64%; }
-.roadmap-journey .roadmap-stop-2 .roadmap-node { left: 46%; }
-.roadmap-journey .roadmap-stop-3 .roadmap-node { left: 54%; }
+.roadmap-journey .roadmap-stop-0 .roadmap-node { left: 46.8%; }
+.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 64.8%; }
+.roadmap-journey .roadmap-stop-2 .roadmap-node { left: 45.8%; }
+.roadmap-journey .roadmap-stop-3 .roadmap-node { left: 54.2%; }
 .roadmap-journey .roadmap-node { top: 50%; }
 /* Founder, 2026-09-07: this closed the page as a tall, solid-cyan band —
    the loudest thing on a deliberately cinematic dark page, and a different
@@ -321,12 +337,25 @@ body {
 }
 @media (max-width: 599px) {
   .roadmap-live { padding-inline: 12px; }
-  .roadmap-hero { grid-template-columns: .92fr 1.08fr; gap: 0; min-height: 230px; padding-top: 14px; padding-bottom: 10px; }
-  /* Founder, 2026-09-07: fit the eyebrow and title on one line each at
-     common phone widths — smaller, tighter-tracked, still comfortably
-     inside the text column so nothing overflows toward the art. */
-  .roadmap-hero h1 { font-size: clamp(25px, 7.8vw, 34px); letter-spacing: -.045em; white-space: normal; }
+  .roadmap-hero { grid-template-columns: 1.04fr .96fr; gap: 0; min-height: 230px; padding-top: 14px; padding-bottom: 10px; }
+  /* Founder, 2026-09-08: the title and the line under it each hold ONE line
+     on a phone. Both are nowrap with a vw-driven clamp, so they shrink and
+     grow together and the fit holds at every width — verified at 320, 360,
+     393, 412, 480 and 599px, because a nowrap line that fits at one width and
+     not another overflows silently toward the art with nothing on screen to
+     say so. The text column was widened (.92fr -> 1.04fr) to buy that line;
+     the mountain gives up the difference, which is the right trade on a page
+     whose subject is the illustrated road further down.
+     THESE SIZES WERE MEASURED, and the two numbers that make them
+     re-derivable without a browser: at this weight and tracking the title
+     renders 6.911x its font-size wide and the line under it 15.836x, against
+     a column of (viewport - 24px) * 0.52. The vw figures below are the widest
+     that still leave ~8% slack at the narrow end (320px). Change the copy in
+     either string, or the column split, and both ratios change — re-measure
+     rather than nudging until it looks right on one phone. */
+  .roadmap-hero h1 { font-size: clamp(16px, 6.4vw, 34px); letter-spacing: -.048em; white-space: nowrap; }
   .roadmap-hero p:first-child { font-size: clamp(7.5px, 2.3vw, 9.5px); letter-spacing: .045em; white-space: nowrap; }
+  .roadmap-hero p:nth-of-type(2) { font-size: clamp(7px, 2.8vw, 11px); white-space: nowrap; }
   .roadmap-hero p { font-size: 11px; line-height: 1.45; }
   .roadmap-hero-stage { width: 100%; }
   .roadmap-live-panel { padding: 12px; }
@@ -336,7 +365,7 @@ body {
   .roadmap-feature { padding: 7px 2px; border-radius: 9px; }
   .roadmap-feature > span:first-child { width: 30px; height: 30px; border-radius: 9px; }
   .roadmap-feature svg { width: 18px; height: 18px; }
-  .roadmap-feature > span:last-child { font-size: 8px; line-height: 1.25; overflow-wrap: anywhere; }
+  .roadmap-feature > span:last-child { font-size: 9px; line-height: 1.25; overflow-wrap: anywhere; }
   .roadmap-intro { grid-template-columns: 1fr 1fr; align-items: center; gap: 18px; }
   .roadmap-intro h2 { font-size: clamp(19px, 5.2vw, 28px); }
   .roadmap-intro > p { font-size: 11px; line-height: 1.5; }
@@ -350,8 +379,8 @@ body {
   .roadmap-node { width: 20px; height: 20px; border-width: 4px; }
   .roadmap-journey { margin-inline: -12px; }
   .roadmap-journey .roadmap-stop { min-height: 0; padding: 0; }
-  .roadmap-journey .roadmap-card-position { width: 39%; }
-  .roadmap-journey .roadmap-card { padding: 9px 8px; border-radius: 12px; }
+  .roadmap-journey .roadmap-card-position { width: 35%; }
+  .roadmap-journey .roadmap-card { padding: 8px 7px; border-radius: 12px; }
   .roadmap-journey .roadmap-card > div > span:first-child { font-size: 7px; }
   /* A tighter pill was tried here to keep card 2's date + badge on one line
      at 39% width; it only bought 2px, because the 23-character date range
