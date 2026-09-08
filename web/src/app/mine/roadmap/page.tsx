@@ -111,14 +111,25 @@ export default function RoadmapPage() {
       </section>
 
       <div className="roadmap-finale relative">
-        <section className="roadmap-note relative mx-auto mt-12 flex max-w-[650px] gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand"><InfoIcon size={20} /></span>
-          <div><h2 className="font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-1 text-xs leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
+        {/* The note and the CTA share one max-width and one corner radius so the
+            page closes on a matched pair, not two differently-sized slabs. */}
+        <section className="roadmap-note relative mx-auto mt-8 flex max-w-[560px] gap-2.5 rounded-2xl border border-line bg-card px-3.5 py-3 shadow-sm">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-tint text-brand"><InfoIcon size={16} /></span>
+          <div><h2 className="text-sm font-bold text-brand-ink">{t("roadmap.note.title")}</h2><p className="mt-0.5 text-[11px] leading-relaxed text-muted">{t("roadmap.note.body")}</p></div>
         </section>
 
-        <section className="roadmap-cta relative mt-6 overflow-hidden rounded-[22px] bg-brand px-6 py-7 text-white md:flex md:items-center md:justify-between md:px-10">
-          <div className="relative z-10"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/80">{t("roadmap.cta.eyebrow")}</p><h2 className="mt-1 text-3xl font-extrabold">{t("roadmap.cta.title")}</h2><p className="mt-1 text-sm text-white/85">{t("roadmap.cta.subtitle")}</p></div>
-          <Link href="/mine" className="relative z-10 mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-7 font-bold text-brand md:mt-0 md:w-auto">{t("roadmap.mine.cta")} <ArrowRightIcon size={18} /></Link>
+        {/* Colours come from .roadmap-cta in globals.css, not from bg-brand /
+            text-white: this panel shares the dark-glass system with every
+            card above it, and the cyan is spent on the button alone. */}
+        <section className="roadmap-cta relative mx-auto mt-3 flex max-w-[560px] items-center gap-4 overflow-hidden rounded-2xl px-3.5 py-3">
+          <div className="relative z-10 min-w-0">
+            <p className="text-[9px] font-bold uppercase tracking-[.14em] text-brand">{t("roadmap.cta.eyebrow")}</p>
+            <h2 className="mt-0.5 text-base font-extrabold leading-tight text-brand-ink">{t("roadmap.cta.title")}</h2>
+            <p className="mt-0.5 text-pretty text-[11px] leading-snug text-muted">{t("roadmap.cta.subtitle")}</p>
+          </div>
+          {/* min-h-11 is the 44px tap-target floor — the size came off the padding
+              and type around it, never off the button itself. */}
+          <Link href="/mine" className="relative z-10 inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 text-[13px] font-bold">{t("roadmap.mine.cta")} <ArrowRightIcon size={15} /></Link>
         </section>
       </div>
     </div>

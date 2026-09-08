@@ -134,8 +134,16 @@ body {
   --rm-muted: #a9c2ca;
   --rm-panel: rgba(2, 35, 42, .9);
   --rm-line: rgba(21, 224, 226, .46);
+  /* The illustrated world's OWN background, sampled from the top and bottom
+     edges of connected-world-v1.png (#000f18 / #000c13). Founder, 2026-09-07:
+     the scene looked pasted onto a different-coloured page because it was —
+     the page was a lighter teal (#031a20) than the art it framed. Everything
+     above and below now paints from these two, so the page reads as one
+     continuous world. Re-sample these if the artwork is ever replaced. */
+  --rm-sky: #000f18;
+  --rm-ground: #000c13;
   color: var(--rm-ink);
-  background: #031a20;
+  background: var(--rm-ground);
 }
 
 /* Each segment owns one continuous end-to-end curve. Its vertical tangents
@@ -143,24 +151,24 @@ body {
 .roadmap-live {
   isolation: isolate; overflow-wrap: anywhere;
   background:
-    radial-gradient(circle at 78% 4%, rgba(0, 224, 228, .16), transparent 18%),
-    radial-gradient(circle at 17% 43%, rgba(0, 174, 181, .12), transparent 22%),
-    linear-gradient(180deg, #031d24 0%, #03181e 48%, #021317 100%);
+    radial-gradient(circle at 78% 4%, rgba(0, 224, 228, .17), transparent 19%),
+    radial-gradient(circle at 17% 43%, rgba(0, 174, 181, .11), transparent 22%),
+    linear-gradient(180deg, var(--rm-sky) 0%, #00101a 46%, var(--rm-ground) 100%);
 }
 .roadmap-live::before, .roadmap-live::after {
   content: ""; position: absolute; z-index: -1; left: -8%; width: 116%; pointer-events: none;
 }
 .roadmap-live::before {
-  top: 180px; height: 430px; opacity: .52;
+  top: 180px; height: 430px; opacity: .38;
   background: linear-gradient(150deg, transparent 38%, rgba(4, 53, 63, .8) 39% 58%, transparent 59%);
   clip-path: polygon(0 72%, 10% 51%, 20% 68%, 35% 32%, 50% 67%, 67% 23%, 82% 64%, 92% 43%, 100% 64%, 100% 100%, 0 100%);
 }
 .roadmap-live::after {
-  bottom: 0; height: 38%; opacity: .32;
+  bottom: 0; height: 38%; opacity: .22;
   background: repeating-linear-gradient(94deg, transparent 0 5%, #07505b 5.3% 6.2%, transparent 6.4% 11%);
   clip-path: polygon(0 42%, 8% 18%, 13% 55%, 22% 8%, 31% 48%, 39% 14%, 48% 58%, 58% 7%, 68% 45%, 78% 12%, 88% 51%, 95% 19%, 100% 44%, 100% 100%, 0 100%);
 }
-.roadmap-stars { position: absolute; z-index: -1; inset: 70px 0 auto; height: 68%; opacity: .5; background-image: radial-gradient(circle, #42f4f1 0 1px, transparent 1.3px); background-size: 31px 37px; mask-image: linear-gradient(#000, transparent); }
+.roadmap-stars { position: absolute; z-index: -1; inset: 70px 0 auto; height: 68%; opacity: .38; background-image: radial-gradient(circle, #42f4f1 0 1px, transparent 1.3px); background-size: 31px 37px; mask-image: linear-gradient(#000, transparent); }
 .roadmap-live .text-brand-ink { color: var(--rm-ink); }
 .roadmap-live .text-brand, .roadmap-live h1 span, .roadmap-live .roadmap-intro h2 br + * { color: var(--rm-cyan); }
 .roadmap-live .text-muted { color: var(--rm-muted); }
@@ -253,13 +261,32 @@ body {
 /* The finished composition uses one illustrated world, not four floating
    stickers. HTML cards sit in the scene's intentional clearings while the
    luminous road is baked into the terrain and cannot visually disconnect. */
-.roadmap-journey { padding: 0; border-radius: 28px; overflow: hidden; box-shadow: 0 22px 70px rgba(0,0,0,.42); }
-.roadmap-world-image { display: block; width: 100%; height: auto; }
+/* Founder, 2026-09-07: the scene used to stop at a hard edge — a rounded,
+   drop-shadowed card floating on the page — which is what made the sections
+   above and below read as a different design. It runs edge to edge now and
+   dissolves into the page at both ends.
+   The mask sits on the IMAGE, never on .roadmap-journey itself: the step
+   cards are absolutely positioned over the scene (stop-3 sits at 84%, so its
+   lower half is inside the bottom fade) and must stay fully opaque. Masking
+   the container would fade the words too. */
+.roadmap-journey { padding: 0; border-radius: 0; overflow: hidden; margin-inline: -16px; }
+.roadmap-world-image {
+  display: block; width: 100%; height: auto;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 5%, #000 96%, transparent 100%);
+}
 .roadmap-journey .roadmap-stop { position: absolute; inset-inline: 0; min-height: 0; padding: 0; display: block; }
-.roadmap-journey .roadmap-card-position { position: relative; width: 43%; }
+.roadmap-journey .roadmap-card-position { position: relative; width: 39%; }
+/* 39% is measured, not guessed, and it is measured at TWO widths — the card
+   is 88px tall at 485px but 98px at 390px (titles wrap), and the taller card
+   reaches into a road pass the shorter one clears. At 43% the road ran UNDER
+   cards 2 and 4 and came within 2-4px of 1 and 3; 41% still left card 3 at
+   2px on a real phone. 39% clears the road by >=10px at both widths.
+   Widening these cards re-creates the collision — re-measure against the
+   artwork at 390px AND 485px before changing it, not just one. */
 .roadmap-journey .roadmap-card { border-color: rgba(38, 238, 240, .72); background: linear-gradient(135deg, rgba(2, 37, 44, .93), rgba(1, 21, 27, .88)); backdrop-filter: blur(9px); }
 .roadmap-journey .roadmap-stop-0 { top: 8%; }
-.roadmap-journey .roadmap-stop-1 { top: 32%; }
+.roadmap-journey .roadmap-stop-1 { top: 40%; }
 .roadmap-journey .roadmap-stop-2 { top: 56%; }
 .roadmap-journey .roadmap-stop-3 { top: 84%; }
 .roadmap-journey .roadmap-stop-0 .roadmap-card-position,
@@ -267,13 +294,23 @@ body {
 .roadmap-journey .roadmap-stop-1 .roadmap-card-position,
 .roadmap-journey .roadmap-stop-3 .roadmap-card-position { margin-left: 3%; }
 .roadmap-journey .roadmap-stop-0 .roadmap-node { left: 47%; }
-.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 55%; }
+.roadmap-journey .roadmap-stop-1 .roadmap-node { left: 64%; }
 .roadmap-journey .roadmap-stop-2 .roadmap-node { left: 46%; }
 .roadmap-journey .roadmap-stop-3 .roadmap-node { left: 54%; }
 .roadmap-journey .roadmap-node { top: 50%; }
-.roadmap-cta { background: linear-gradient(135deg, #08cfd2, #19e6e8); color: #01282e; border: 1px solid #73ffff; box-shadow: 0 18px 45px rgba(0, 225, 228, .16); }
-.roadmap-cta::before { content: ""; position: absolute; inset: -80% -10% auto 42%; height: 260px; border-radius: 50%; background: rgba(255,255,255,.13); transform: rotate(-12deg); }
-.roadmap-cta a { color: #034851; background: #f5ffff; }
+/* Founder, 2026-09-07: this closed the page as a tall, solid-cyan band —
+   the loudest thing on a deliberately cinematic dark page, and a different
+   visual language from every card above it. It is the same dark glass panel
+   as .roadmap-card now, and the cyan is spent where it earns something: the
+   one button. Shorter too — the height came from padding, not content. */
+.roadmap-cta {
+  background: linear-gradient(135deg, rgba(2, 37, 44, .95), rgba(1, 21, 27, .9));
+  border: 1px solid rgba(38, 238, 240, .55);
+  backdrop-filter: blur(9px);
+  box-shadow: inset 0 0 28px rgba(0, 224, 228, .07), 0 16px 40px rgba(0, 0, 0, .32), 0 0 36px rgba(0, 215, 221, .07);
+}
+.roadmap-cta::before { content: ""; position: absolute; inset: -70% -10% auto 46%; height: 240px; border-radius: 50%; background: rgba(25, 229, 232, .1); transform: rotate(-12deg); filter: blur(12px); }
+.roadmap-cta a { color: #02272e; background: var(--rm-cyan); box-shadow: 0 8px 22px rgba(25, 229, 232, .26); }
 .roadmap-finale::before {
   content: ""; position: absolute; z-index: -1; inset: -75px -9% -45px; pointer-events: none;
   background:
@@ -311,17 +348,23 @@ body {
   .roadmap-card h3 { font-size: 14px; line-height: 1.3; margin-top: 7px; }
   .roadmap-card p { font-size: 10px; line-height: 1.42; margin-top: 6px; }
   .roadmap-node { width: 20px; height: 20px; border-width: 4px; }
-  .roadmap-journey { margin-inline: -12px; border-radius: 0; }
+  .roadmap-journey { margin-inline: -12px; }
   .roadmap-journey .roadmap-stop { min-height: 0; padding: 0; }
-  .roadmap-journey .roadmap-card-position { width: 45%; }
-  .roadmap-journey .roadmap-card { padding: 10px 9px; border-radius: 13px; }
+  .roadmap-journey .roadmap-card-position { width: 39%; }
+  .roadmap-journey .roadmap-card { padding: 9px 8px; border-radius: 12px; }
   .roadmap-journey .roadmap-card > div > span:first-child { font-size: 7px; }
+  /* A tighter pill was tried here to keep card 2's date + badge on one line
+     at 39% width; it only bought 2px, because the 23-character date range
+     (103px at 7px) is what overflows the 134px row, not the pill. Cards 1
+     and 2 therefore show the badge on a second line at phone width. Card 1
+     already did that at the old 45% width, so it is the existing look. */
   .roadmap-journey .roadmap-card > div > span:last-child { font-size: 7px; }
   .roadmap-journey .roadmap-card h3 { font-size: 12px; line-height: 1.22; }
   .roadmap-journey .roadmap-card p { font-size: 8px; line-height: 1.35; }
-  .roadmap-note { padding: 12px; }
-  .roadmap-cta { padding: 20px; }
+  .roadmap-note, .roadmap-cta { padding: 12px; }
 }
+@media (min-width: 768px) { .roadmap-journey { margin-inline: -40px; } }
+@media (min-width: 1024px) { .roadmap-journey { margin-inline: -56px; } }
 @media (min-width: 600px) {
   .roadmap-stop { min-height: 280px; }
   .roadmap-journey .roadmap-stop { min-height: 0; }
@@ -637,6 +680,15 @@ body {
 }
 :root[data-theme="vault"] body {
   background: #0b1517;
+}
+
+/* The roadmap paints its own ground in EITHER skin. The vault rule directly
+   above is `:root[data-theme="vault"] .app-frame` — specificity (0,3,0), and
+   later in the file — so it beat the roadmap block's (0,2,0) up at the top and
+   the page kept painting #0b1517 behind an artwork whose own edges are
+   #000c13. That mismatch was the seam the founder could see. */
+:root .app-frame.app-frame-roadmap-exact {
+  background: var(--rm-ground);
 }
 
 /* Solid brand / accent / status surfaces carry DARK text in this skin —

@@ -4998,3 +4998,74 @@ See `docs/` for the full spec.
        `config.kycMaxImageBytes`'s default (4MB), with a comment flagging
        that the two must be kept in sync if the server-side env var is ever
        changed.
+
+- **THE ROADMAP PAGE READS AS ONE WORLD, AND ITS CARDS ARE PLACED BY
+  MEASUREMENT (founder, 2026-09-07/08).** Two passes over `/mine/roadmap`. The
+  founder's report: the illustrated middle was "absolutely perfect" but the
+  sections above and below "slightly look different", and the closing
+  "Mine ROZI today" block was too big. Verified: web `tsc --noEmit`, `eslint`
+  (0 errors), `next build` (39 routes) all clean. ⚠️ **Visual only — no API,
+  ledger or copy change**, so no backend suite was re-run.
+  - ⚠️ **THE SEAM WAS REAL, NOT A PERCEPTION.** The artwork's own edges are
+    `#000f18` (top) / `#000c13` (bottom), sampled from
+    `connected-world-v1.png`; the page behind it painted `#0b1517`. The scene
+    genuinely was pasted onto a different colour. New `--rm-sky` / `--rm-ground`
+    tokens drive the page ground, `.roadmap-live`'s gradient and the frame, so
+    everything above and below continues the same night sky. **Re-sample those
+    two values if the artwork is ever replaced.**
+  - ⚠️ **`:root .app-frame.app-frame-roadmap-exact` EXISTS FOR SPECIFICITY, NOT
+    STYLE.** `:root[data-theme="vault"] .app-frame` is (0,3,0) and sits ~500
+    lines LATER in the file, so the roadmap block's (0,2,0) background at the
+    top of the file never applied in the default skin. Removing the `:root`
+    prefix silently restores the seam.
+  - **The scene runs edge to edge and dissolves into the page** — the rounded,
+    drop-shadowed card framing is gone. ⚠️ **The fade is masked on the IMAGE,
+    never on `.roadmap-journey`**: the step cards are absolutely positioned over
+    the scene (stop-3 sits at 84%, inside the bottom fade) and must stay opaque.
+    Masking the container fades the words too.
+  - ⚠️ **CARD WIDTH IS 39% BECAUSE IT WAS MEASURED AT TWO WIDTHS, AND WIDENING
+    IT RE-CREATES A COLLISION.** Method: render the journey with the cards
+    hidden, take each card's real rect from the DOM, measure the pixel gap to
+    the road. At the old 43%/45% the road ran **under** cards 2 and 4 and came
+    within 2-3px of 1 and 3. 41% still left card 3 at **2px on a real phone** —
+    the card is 88px tall at 485px but 98px at 390px (titles wrap), and the
+    taller card reaches a road pass the shorter one clears. 39% clears by
+    >=10px at both. **Re-measure at 390px AND 485px, not one.**
+  - **Card 2 moved 32% -> 40%.** It sat above its graphic with dead space
+    below (the founder's own screenshot), and the road crossed beneath it at
+    every top from 26-37%. Its node moved 55% -> 64% to stay on the road.
+  - ⚠️ **CARD 3 COULD NOT BE FIXED BY MOVING IT, WHICH IS WHAT WAS ASKED.** The
+    founder suggested shifting it down; the road weaves under that whole band
+    (57-65% is UNDER at every width tried). Width, not position, controls that
+    gap — hence the 39%. Card 3 stays at 56%.
+  - **Card 4 was deliberately left at 84%**, matching the founder's own
+    instinct ("shift it below... will not look much good"). The road crosses
+    under it at every top from 80-89%, and the only clear slot (90%+) is inside
+    the bottom fade. There is no better position; this is a fixed illustration
+    meeting responsive cards.
+  - **The note and CTA are one matched pair** — shared max-width and radius.
+    Note 113 -> 84px, CTA **209 -> 94px**, page 1972 -> 1800px. The CTA also
+    stopped being a solid bright-cyan slab (the loudest thing on a deliberately
+    dark page) and became the same dark glass panel as `.roadmap-card`, with the
+    cyan spent on the one button. `min-h-11` is the 44px tap-target floor — the
+    height came off padding and type, never the button.
+  - **Accepted cost, stated:** at phone width cards 1 and 2 show their badge on
+    a second line under the date. Card 1 already did at the old width (checked,
+    not assumed); card 2 is new. A tighter pill was tried and bought only 2px —
+    the 23-character date range overflows the row, not the pill — so it was
+    reverted rather than left as a magic number that fixed nothing. Shortening
+    those two date strings is the real fix if it matters.
+  - ⚠️ **TWO MEASUREMENT TRAPS, both of which produced a wrong answer first.**
+    (a) **The dev server does not rebuild `globals.css` on a git checkout**, so
+    a stash/pop before/after comparison silently serves NEW css with OLD markup
+    — the first "before" screenshot showed a broken CTA that was never broken.
+    Restart the server for each capture. (b) **Chrome's `--window-size` does not
+    set the layout viewport**, so CLI screenshots render wide and look clipped;
+    drive it over the DevTools protocol with `Emulation.setDeviceMetricsOverride`
+    instead, and size the viewport to reach the element's page-coordinate BOTTOM
+    or everything below the fold paints as flat background and every measurement
+    under it is quietly wrong.
+  - ⚠️ **The road-detection threshold OVER-REPORTS at high resolution** — it
+    catches the road's cyan bloom, so card 1 measured "road under" at desktop
+    while the render plainly shows it well clear. Confirm a collision verdict by
+    looking at the render before acting on it.
