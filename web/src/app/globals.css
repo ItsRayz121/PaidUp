@@ -503,7 +503,41 @@ body {
    what's left here is the coin face gradients, the "ready" glow once the
    pour finishes, and a gem-sparkle twinkle carried over from the old
    gem-glint moment this replaced. */
-.hg-wrap { width: 108px; height: 166px; transition: filter 300ms; }
+/* ⚠️ THE CALLER OWNS THE SIZE. This used to be a fixed 108x166, which meant
+   the box and the artwork's aspect ratio were pinned in two different files —
+   widening the viewBox for the plinth and the crystals (HourglassClaim.tsx)
+   would have squashed the glass with nothing to say why. The three call sites
+   in app/mine/page.tsx set the box; the SVG just fills it. */
+.hg-wrap { width: 100%; height: 100%; transition: filter 300ms; }
+
+/* Ambient life while the glass sits there: glitter suspended in the top bulb
+   and a slow shimmer across the crystals. Decorative like everything else in
+   this file — neither reads a number, and both freeze for reduced motion. */
+.hg-glitter circle { animation: hg-float 4.2s ease-in-out infinite; }
+.hg-glitter circle:nth-child(2) { animation-delay: 0.7s; }
+.hg-glitter circle:nth-child(3) { animation-delay: 1.4s; }
+.hg-glitter circle:nth-child(4) { animation-delay: 2.1s; }
+.hg-glitter circle:nth-child(5) { animation-delay: 2.8s; }
+.hg-glitter circle:nth-child(6) { animation-delay: 3.5s; }
+@keyframes hg-float {
+  0%, 100% { opacity: 0.2; transform: translateY(2px); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+.hg-crystals { animation: hg-crystal-shimmer 5s ease-in-out infinite; }
+@keyframes hg-crystal-shimmer {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+.hg-neck { animation: hg-neck-glow 2.4s ease-in-out infinite; }
+@keyframes hg-neck-glow {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-glitter circle,
+  .hg-crystals,
+  .hg-neck { animation: none; }
+}
 .hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
 
 /* "Working" state (founder, 2026-08-29): coins sit settled in the bottom bulb
@@ -513,11 +547,16 @@ body {
 .hg-wrap.hg-working::after {
   content: "";
   position: absolute;
+  /* ⚠️ Percentages of the BOX, against art laid out in a viewBox — so this
+     had to move when the viewBox grew for the plinth and the crystals
+     (2026-09-08). The neck sits at y = 120 of a box spanning -12..258, i.e.
+     48.9% down; the dot starts just above it and falls through. Re-derive
+     this if VB_Y / VB_H in HourglassClaim.tsx ever change again. */
   left: 50%;
-  top: 42%;
-  width: 6px;
-  height: 6px;
-  margin-left: -3px;
+  top: 45%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
   border-radius: 9999px;
   background: var(--color-accent);
   pointer-events: none;
@@ -779,14 +818,15 @@ body {
   background-color: #07161a;
 }
 
-/* The claim / session hourglass (components/HourglassClaim.tsx) is a drawn
-   object with fixed wood + metal + glass colours. The dark metal caps and
-   the dark glass outline lose definition on the dark card — a thin light
-   rim on the whole illustration brings every edge back without touching the
-   SVG internals. The wrapper's own marigold "ready" glow is on `.hg-wrap`,
-   not the inner <svg>, so the two do not collide. */
-:root[data-theme="vault"] .app-frame .hg-wrap svg {
-  filter: drop-shadow(0 0 0.7px rgba(255, 255, 255, 0.6));
+/* ⚠️ THE WHITE RIM THIS RULE USED TO ADD IS GONE ON PURPOSE (2026-09-08).
+   It existed because the frame was dark wood and black metal, which lost its
+   edges against the dark card. The frame is brass now — the brightest thing
+   on the screen — and a white outline over gold only muddies it. What is left
+   is a warm lift on the light skin, where a gold frame on a near-white card
+   is the case that needs help instead. The wrapper's own marigold "ready"
+   glow is on `.hg-wrap`, not the inner <svg>, so the two do not collide. */
+:root:not([data-theme="vault"]) .app-frame .hg-wrap svg {
+  filter: drop-shadow(0 1px 2px rgba(8, 47, 54, 0.28));
 }
 
 /* ============================================================
@@ -835,6 +875,9 @@ body {
   100% { transform: scale(1.85); opacity: 0; }
 }
 .reactor { position: relative; display: grid; place-items: center; }
+.reactor .r-svg { position: absolute; inset: 0; overflow: visible; }
+/* The pulse rings bloom OUTSIDE the disc, which is why they stay HTML spans
+   rather than moving into the reactor's viewBox — see MiningReactor.tsx. */
 .reactor .r-ring {
   position: absolute;
   inset: 0;
@@ -845,50 +888,52 @@ body {
 }
 .reactor .r-ring:nth-child(2) { animation-delay: 0.9s; }
 .reactor .r-ring:nth-child(3) { animation-delay: 1.8s; }
-.reactor .r-spin {
-  position: absolute;
-  inset: 6px;
-  border-radius: 9999px;
-  background: conic-gradient(from 0deg, transparent, #48e6db, transparent 55%, var(--color-accent), transparent);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+/* Every animated SVG child rotates or scales about the CENTRE OF THE FACE,
+   not about its own bounding box — an arc's bbox centre is nowhere near the
+   circle's, so a fill-box transform origin would swing it off into space. */
+.reactor .r-sweep,
+.reactor .r-core,
+.reactor .r-ticks {
+  transform-box: view-box;
+  transform-origin: 100px 100px;
+}
+.reactor .r-sweep {
   animation: reactor-spin 3.6s linear infinite;
-  opacity: 0.9;
   will-change: transform;
 }
-/* A short static marigold arc on the outer rim — the gauge-like flourish from
-   the redesign mockup (founder, 2026-08-30). Static on purpose: it never moves
-   and never fills, so it cannot read as "progress toward" anything. Dimmed
-   with the rest of the reactor when idle. */
-.reactor .r-arc {
-  position: absolute;
-  inset: 0;
-  border-radius: 9999px;
-  background: conic-gradient(from 208deg, var(--color-accent) 0deg 66deg, transparent 67deg);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
-  opacity: 0.9;
+.reactor .r-core { animation: reactor-breathe 2.8s ease-in-out infinite; }
+.reactor .r-arc { filter: drop-shadow(0 0 5px currentColor); }
+.reactor .r-arc-brand { color: #3fe4d8; }
+.reactor .r-arc-gold { color: #f2a417; }
+.reactor .r-mark {
+  fill: #d9fffa;
+  paint-order: stroke;
+  filter: drop-shadow(0 0 6px rgba(120, 255, 244, 0.75));
 }
-.reactor .r-core {
-  width: 46%;
-  aspect-ratio: 1;
-  border-radius: 9999px;
-  background: radial-gradient(circle at 38% 34%, #7ff4ec, var(--color-brand) 46%, #0d5c63);
-  box-shadow: 0 0 28px rgba(22, 189, 182, 0.5);
-  animation: reactor-breathe 2.8s ease-in-out infinite;
+.reactor .r-mote { animation: reactor-mote 3.4s ease-in-out infinite; opacity: 0.75; }
+.reactor .r-mote.m2 { animation-delay: 0.8s; }
+.reactor .r-mote.m3 { animation-delay: 1.6s; }
+.reactor .r-mote.m4 { animation-delay: 2.4s; }
+@keyframes reactor-mote {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.9; }
 }
-.reactor.is-idle .r-spin,
-.reactor.is-idle .r-arc,
-.reactor.is-idle .r-ring { animation-play-state: paused; opacity: 0.2; }
-.reactor.is-idle .r-arc { filter: saturate(0.6); }
-.reactor.is-idle .r-core {
-  animation: none;
-  filter: saturate(0.6);
-  box-shadow: 0 0 12px rgba(22, 189, 182, 0.25);
-}
+.reactor.is-idle .r-sweep,
+.reactor.is-idle .r-core,
+.reactor.is-idle .r-mote,
+.reactor.is-idle .r-ring { animation-play-state: paused; }
+.reactor.is-idle .r-ring { opacity: 0.2; }
+.reactor.is-idle .r-sweep { opacity: 0.25; }
+.reactor.is-idle .r-mote { opacity: 0.2; }
+.reactor.is-idle .r-arc { filter: saturate(0.5) brightness(0.7); opacity: 0.55; }
+.reactor.is-idle .r-core { filter: saturate(0.6) brightness(0.85); }
+.reactor.is-idle .r-mark { filter: none; fill: #8fd6d0; }
 @media (prefers-reduced-motion: reduce) {
-  .reactor .r-ring, .reactor .r-spin, .reactor .r-core { animation: none; }
-  .reactor .r-spin { opacity: 0.5; }
+  .reactor .r-ring,
+  .reactor .r-sweep,
+  .reactor .r-core,
+  .reactor .r-mote { animation: none; }
+  .reactor .r-sweep { opacity: 0.5; }
   .reactor .r-ring { opacity: 0.14; }
 }
 

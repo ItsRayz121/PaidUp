@@ -31,8 +31,17 @@
 //    amount — same rule as above, just against a different real state.
 import { useEffect, useRef } from "react";
 
-const VB_W = 160;
-const VB_H = 246;
+// ⚠️ THE VIEWBOX HAS NEGATIVE ORIGIN MARGIN ON PURPOSE, AND NOTHING BELOW
+// MOVED TO GET IT. The gold frame's platform and the crystals beside it need
+// room outside the old 160x246 box, and the obvious way to make room — shift
+// every element right and down — would silently break the coin packing, whose
+// slot maths is hard-centred on x = 80 (see generateSlots). Growing the box
+// outward instead keeps x = 80 the centre and leaves NECK, TOP_BULB, BOT_BULB
+// and both clip paths byte-for-byte the values they have always had.
+const VB_X = -24;
+const VB_Y = -12;
+const VB_W = 208;
+const VB_H = 270;
 const NECK = { x: 80, y: 120 };
 const TOP_BULB = { wideY: 30, narrowY: 112, maxHalf: 34, minHalf: 5, rowStep: 13, spacing: 13 };
 const BOT_BULB = { wideY: 210, narrowY: 130, maxHalf: 34, minHalf: 5, rowStep: 13, spacing: 13 };
@@ -347,11 +356,47 @@ export function HourglassClaim({
 
   return (
     <div ref={wrapRef} className={`hg-wrap relative mx-auto ${className}`} aria-hidden="true">
-      <svg viewBox={`0 0 ${VB_W} ${VB_H}`} width="100%" height="100%">
+      <svg viewBox={`${VB_X} ${VB_Y} ${VB_W} ${VB_H}`} width="100%" height="100%">
         <defs>
-          <linearGradient id="hgWoodGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#8a4a30" />
-            <stop offset="100%" stopColor="#42210f" />
+          {/* Brass, lit from the upper left — one gradient shared by every
+              frame part so the cap, the posts and the base all agree about
+              where the light falls. */}
+          <linearGradient id="hgGold" x1="0" y1="0" x2="1" y2="0.3">
+            <stop offset="0%" stopColor="#7d4c05" />
+            <stop offset="18%" stopColor="#f7d68a" />
+            <stop offset="42%" stopColor="#f2a417" />
+            <stop offset="70%" stopColor="#c07a06" />
+            <stop offset="100%" stopColor="#6b3f03" />
+          </linearGradient>
+          <linearGradient id="hgGoldPost" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#6d4103" />
+            <stop offset="26%" stopColor="#ffe6ab" />
+            <stop offset="52%" stopColor="#e39a0d" />
+            <stop offset="100%" stopColor="#5e3702" />
+          </linearGradient>
+          <linearGradient id="hgGlass" x1="0.12" y1="0" x2="0.9" y2="1">
+            <stop offset="0%" stopColor="#d8fffa" stopOpacity="0.5" />
+            <stop offset="30%" stopColor="#66e0d8" stopOpacity="0.26" />
+            <stop offset="72%" stopColor="#1e9aa0" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#9ff3ea" stopOpacity="0.38" />
+          </linearGradient>
+          <radialGradient id="hgPlatform" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#3fe4d8" stopOpacity="0.55" />
+            <stop offset="60%" stopColor="#16bdb6" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#16bdb6" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hgTopLight" cx="50%" cy="12%" r="62%">
+            <stop offset="0%" stopColor="#fff3cd" stopOpacity="0.95" />
+            <stop offset="38%" stopColor="#ffd98a" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="hgCrystalA" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#7ff0e6" />
+            <stop offset="100%" stopColor="#0e5560" />
+          </linearGradient>
+          <linearGradient id="hgCrystalB" x1="1" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2fa9a6" />
+            <stop offset="100%" stopColor="#07323c" />
           </linearGradient>
           <linearGradient id="hgCoinGrad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#ffd77a" />
@@ -361,11 +406,6 @@ export function HourglassClaim({
             <stop offset="0%" stopColor="#ffffff" />
             <stop offset="100%" stopColor="#eaf6f2" />
           </linearGradient>
-          <linearGradient id="hgMetalGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#4a4e54" />
-            <stop offset="50%" stopColor="#2b2d31" />
-            <stop offset="100%" stopColor="#1c1d20" />
-          </linearGradient>
           <clipPath id="hgTopBulbClip">
             <path d="M40,26 L120,26 Q118,66 100,86 Q92,100 80,118 Q68,100 60,86 Q42,66 40,26 Z" />
           </clipPath>
@@ -374,33 +414,93 @@ export function HourglassClaim({
           </clipPath>
         </defs>
 
-        {/* wood caps */}
-        <rect x="26" y="6" width="108" height="18" rx="4" fill="url(#hgWoodGrad)" stroke="#20100a" strokeWidth="1" />
-        <rect x="31" y="9" width="98" height="3" rx="1.5" fill="#c98a5e" opacity="0.5" />
-        <rect x="26" y="214" width="108" height="18" rx="4" fill="url(#hgWoodGrad)" stroke="#20100a" strokeWidth="1" />
-        <rect x="31" y="217" width="98" height="3" rx="1.5" fill="#c98a5e" opacity="0.35" />
-        <circle cx="46" cy="238" r="4" fill="#1c1c1c" />
-        <circle cx="114" cy="238" r="4" fill="#1c1c1c" />
+        {/* ---- the brass frame ----------------------------------------
+            Everything here is decoration around the glass. The two bulb
+            paths and the neck below keep the EXACT coordinates the coin
+            packing is built on; nothing in this block may move them. */}
 
-        {/* metal posts */}
-        <rect x="30" y="24" width="5" height="190" rx="2.5" fill="url(#hgMetalGrad)" />
-        <rect x="125" y="24" width="5" height="190" rx="2.5" fill="url(#hgMetalGrad)" />
-        <circle cx="32.5" cy="22" r="5" fill="#2b2d31" />
-        <circle cx="32.5" cy="216" r="5" fill="#2b2d31" />
-        <circle cx="127.5" cy="22" r="5" fill="#2b2d31" />
-        <circle cx="127.5" cy="216" r="5" fill="#2b2d31" />
+        {/* the lit plinth it stands on */}
+        <ellipse cx="80" cy="240" rx="80" ry="16" fill="url(#hgPlatform)" />
+        <ellipse cx="80" cy="240" rx="56" ry="9" fill="#05202a" opacity="0.68" />
+        <ellipse cx="80" cy="240" rx="56" ry="9" fill="none" stroke="#3fe4d8" strokeWidth="1.4" opacity="0.9" />
+        <ellipse cx="80" cy="239" rx="42" ry="6" fill="none" stroke="#1c7f86" strokeWidth="0.9" opacity="0.7" />
 
-        {/* glass — a light phone background means a white-on-white stroke
-            disappears, so this uses a visible dark rim + a soft teal tint
-            rather than a translucent white line on a translucent white fill. */}
-        <path d="M40,26 L120,26 Q118,66 100,86 Q92,100 80,118 Q68,100 60,86 Q42,66 40,26 Z" fill="rgba(190,222,220,0.28)" stroke="rgba(8,47,54,0.55)" strokeWidth="2" />
-        <path d="M40,214 L120,214 Q118,174 100,154 Q92,140 80,122 Q68,140 60,154 Q42,174 40,214 Z" fill="rgba(190,222,220,0.28)" stroke="rgba(8,47,54,0.55)" strokeWidth="2" />
-        <path d="M46,32 Q44,60 58,80" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="2.2" strokeLinecap="round" />
+        {/* crystal shards, one cluster each side */}
+        <g className="hg-crystals">
+          <path d="M-2,240 L12,172 L28,240 Z" fill="url(#hgCrystalA)" />
+          <path d="M12,172 L28,240 L34,206 Z" fill="url(#hgCrystalB)" />
+          <path d="M-2,240 L12,172 L8,240 Z" fill="#0a4750" opacity="0.85" />
+          <path d="M-20,242 L-9,196 L6,242 Z" fill="url(#hgCrystalB)" />
+          <path d="M-9,196 L6,242 L12,218 Z" fill="url(#hgCrystalA)" opacity="0.8" />
+          <path d="M132,240 L148,172 L162,240 Z" fill="url(#hgCrystalA)" />
+          <path d="M148,172 L162,240 L126,208 Z" fill="url(#hgCrystalB)" />
+          <path d="M148,172 L162,240 L156,240 Z" fill="#0a4750" opacity="0.85" />
+          <path d="M154,242 L169,196 L180,242 Z" fill="url(#hgCrystalB)" />
+          <path d="M169,196 L180,242 L162,224 Z" fill="url(#hgCrystalA)" opacity="0.8" />
+        </g>
+
+        {/* base */}
+        <rect x="22" y="214" width="116" height="16" rx="5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
+        <rect x="18" y="207" width="124" height="8" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
+        <rect x="26" y="217" width="104" height="2.4" rx="1.2" fill="#ffeec2" opacity="0.55" />
+        <rect x="34" y="230" width="18" height="5" rx="2.5" fill="#6b3f03" />
+        <rect x="108" y="230" width="18" height="5" rx="2.5" fill="#6b3f03" />
+
+        {/* posts, with knurled collars */}
+        {[26, 123].map((px) => (
+          <g key={px}>
+            <rect x={px} y="24" width="11" height="184" rx="5" fill="url(#hgGoldPost)" />
+            <rect x={px + 2.6} y="26" width="2.2" height="180" rx="1.1" fill="#fff0c8" opacity="0.55" />
+            {[46, 92, 138, 184].map((cy) => (
+              <rect key={cy} x={px - 1.4} y={cy} width="13.8" height="7" rx="3" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.6" />
+            ))}
+          </g>
+        ))}
+
+        {/* top cap + the mark on the crown */}
+        <rect x="18" y="20" width="124" height="8" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
+        <rect x="22" y="6" width="116" height="16" rx="5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
+        <rect x="26" y="9" width="104" height="2.4" rx="1.2" fill="#ffeec2" opacity="0.6" />
+        <circle cx="80" cy="2" r="12" fill="url(#hgGold)" />
+        <circle cx="80" cy="2" r="9.2" fill="#062028" />
+        <text x="80" y="2" textAnchor="middle" dominantBaseline="central" fontSize="11" fontWeight="800" fill="#3fe4d8">R</text>
+
+        {/* ---- the glass -------------------------------------------------
+            These two paths and the neck are the load-bearing geometry: the
+            clip paths in <defs> use the same two `d` strings, and the coin
+            slots are packed against TOP_BULB / BOT_BULB. Restyled here, never
+            reshaped. */}
+        <path d="M40,26 L120,26 Q118,66 100,86 Q92,100 80,118 Q68,100 60,86 Q42,66 40,26 Z" fill="url(#hgGlass)" stroke="#7fe4dd" strokeWidth="1.5" strokeOpacity="0.7" />
+        <path d="M40,214 L120,214 Q118,174 100,154 Q92,140 80,122 Q68,140 60,154 Q42,174 40,214 Z" fill="url(#hgGlass)" stroke="#7fe4dd" strokeWidth="1.5" strokeOpacity="0.7" />
+
+        {/* the light in the top of the glass, and the glitter under it */}
+        <g clipPath="url(#hgTopBulbClip)">
+          <rect x="40" y="26" width="80" height="92" fill="url(#hgTopLight)" />
+          <g className="hg-glitter">
+            <circle cx="62" cy="46" r="1.3" fill="#bffdf6" />
+            <circle cx="96" cy="40" r="1.1" fill="#ffe9b5" />
+            <circle cx="80" cy="60" r="1.4" fill="#bffdf6" />
+            <circle cx="68" cy="76" r="1.1" fill="#ffe9b5" />
+            <circle cx="92" cy="70" r="1.2" fill="#bffdf6" />
+            <circle cx="104" cy="56" r="1" fill="#bffdf6" />
+          </g>
+        </g>
+
+        {/* the neck, glowing gold where the coins pass through */}
+        <g className="hg-neck">
+          <ellipse cx="80" cy="120" rx="16" ry="7" fill="#ffd98a" opacity="0.22" />
+          <ellipse cx="80" cy="120" rx="8.5" ry="3.2" fill="#fff0c4" />
+          <ellipse cx="80" cy="120" rx="4" ry="1.5" fill="#ffffff" />
+        </g>
 
         {/* tokens, populated imperatively above — see this file's header for why */}
         <g ref={topGroupRef} clipPath="url(#hgTopBulbClip)" />
         <g ref={botGroupRef} clipPath="url(#hgBottomBulbClip)" />
         <g ref={travelGroupRef} />
+        {/* Specular highlight, drawn AFTER the coin groups on purpose: under
+            them it vanishes the moment the bottom bulb fills up. */}
+        <path d="M46,32 Q44,60 58,80" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M46,208 Q44,182 56,162" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="1.8" strokeLinecap="round" />
         <circle ref={splashRef} className="hg-splash" cx="80" cy="122" r="8" fill="none" stroke="var(--color-accent)" strokeWidth="1.6" />
       </svg>
       <span className="hg-sparkle s1" />

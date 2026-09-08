@@ -29,6 +29,13 @@ import { rewardsHistory, type Row } from "@/lib/walletHistory";
 // The session countdown moved to lib/hooks.ts — the home screen leads with
 // mining now and shows the same clock.
 
+// The hourglass artwork is 208x270 in its own viewBox (components/
+// HourglassClaim.tsx), so a box that is not that ratio squashes the glass.
+// Kept here, next to the three call sites, because that file deliberately no
+// longer pins its own size.
+const HOURGLASS_BOX = { width: 224, height: 291 };
+const HOURGLASS_BOX_SM = { width: 168, height: 218 };
+
 export default function MinePage() {
   const { ready } = useRequireAuth();
   const { t } = useI18n();
@@ -313,7 +320,7 @@ export default function MinePage() {
             idle. Decorative and state-reflecting only (same rule as the
             mining-chamber rings); the numbers below are the exact figures. */}
         <div className="mt-5">
-          <MiningReactor active={s.session.active} size={168} />
+          <MiningReactor active={s.session.active} size={200} />
         </div>
         <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
           {t("mine.hashrate")}
@@ -338,20 +345,20 @@ export default function MinePage() {
 
         <div className="mt-5">
           {startPour ? (
-            <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
+            <div className="pt-1 pb-2">
               {/* Same hourglass the claim card uses (components/HourglassClaim.tsx)
                   — coins dropping from the upper glass to the lower one — played
                   once right after a session starts, not just on claim. Priority
                   over the running-session view below: mining.reload() flips
                   s.session.active to true while this is still playing, and this
                   branch must win that race so the pour is not skipped. */}
-              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+              <div className="relative mx-auto" style={HOURGLASS_BOX}>
                 <HourglassClaim onSettled={onStartPourSettled} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.started.pour")}</p>
             </div>
           ) : s.session.active ? (
-            <div className="rounded-xl border border-success/30 bg-success-tint/50 p-4">
+            <div className="pt-1 pb-2">
               {/* The session hourglass (founder, 2026-08-30): coins start in the
                   TOP bulb and drop one by one, newest through the neck, as the
                   session elapses — `progress` is the fraction of the session
@@ -359,7 +366,7 @@ export default function MinePage() {
                   time" look, which read as an already-finished glass. Purely
                   decorative — it tracks elapsed time, never the real ROZI
                   amount; the countdown below is the exact figure. */}
-              <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+              <div className="relative mx-auto" style={HOURGLASS_BOX}>
                 <HourglassClaim progress={sessionProgress} />
               </div>
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
@@ -399,7 +406,7 @@ export default function MinePage() {
           settlement or a tap. */}
       {s.claimableMicro > 0 && (
         <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
-          <div className="relative mx-auto" style={{ width: 108, height: 166 }}>
+          <div className="relative mx-auto" style={HOURGLASS_BOX_SM}>
             {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
             {/* Wood/metal/glass hourglass, filled with real RoziPay-mark
                 coins — see components/HourglassClaim.tsx. Pours once on
