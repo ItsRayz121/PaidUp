@@ -510,19 +510,129 @@ body {
    in app/mine/page.tsx set the box; the SVG just fills it. */
 .hg-wrap { width: 100%; height: 100%; transition: filter 300ms; }
 
-/* Ambient life while the glass sits there: glitter suspended in the top bulb
-   and a slow shimmer across the crystals. Decorative like everything else in
-   this file — neither reads a number, and both freeze for reduced motion. */
-.hg-glitter circle { animation: hg-float 4.2s ease-in-out infinite; }
-.hg-glitter circle:nth-child(2) { animation-delay: 0.7s; }
-.hg-glitter circle:nth-child(3) { animation-delay: 1.4s; }
-.hg-glitter circle:nth-child(4) { animation-delay: 2.1s; }
-.hg-glitter circle:nth-child(5) { animation-delay: 2.8s; }
-.hg-glitter circle:nth-child(6) { animation-delay: 3.5s; }
-@keyframes hg-float {
-  0%, 100% { opacity: 0.2; transform: translateY(2px); }
-  50% { opacity: 1; transform: translateY(-3px); }
+/* Ambient life while the glass sits there: lit grains drifting down the upper
+   bulb, the two arc sweeps behind the frame, gold dust around it, and a slow
+   shimmer across the crystals. Decorative like everything else in this file —
+   not one of them reads a number, and every one freezes for reduced motion. */
+
+/* The grains falling through the upper bulb. Delays are staggered across one
+   full duration so the stream never visibly stops and restart. */
+.hg-sand circle { animation: hg-sand-fall 4.6s linear infinite; }
+.hg-sand circle:nth-child(2) { animation-delay: 0.45s; }
+.hg-sand circle:nth-child(3) { animation-delay: 0.9s; }
+.hg-sand circle:nth-child(4) { animation-delay: 1.35s; }
+.hg-sand circle:nth-child(5) { animation-delay: 1.8s; }
+.hg-sand circle:nth-child(6) { animation-delay: 2.25s; }
+.hg-sand circle:nth-child(7) { animation-delay: 2.7s; }
+.hg-sand circle:nth-child(8) { animation-delay: 3.15s; }
+.hg-sand circle:nth-child(9) { animation-delay: 3.6s; }
+.hg-sand circle:nth-child(10) { animation-delay: 4.05s; }
+@keyframes hg-sand-fall {
+  0% { opacity: 0; transform: translateY(-4px); }
+  25% { opacity: 0.95; }
+  70% { opacity: 0.75; }
+  100% { opacity: 0; transform: translateY(14px); }
 }
+
+/* ⚠️ THE ARC BRIGHTNESS LIVES ONLY HERE — THE SVG CARRIES NO `opacity`
+   ATTRIBUTE ON THEM, on purpose (see the note at the arcs in
+   HourglassClaim.tsx). That means the reduced-motion fallback below MUST set
+   a static opacity for each of the three weights: with `animation: none` and
+   nothing else, they would all fall back to fully opaque, and the 7px-wide
+   glow arcs at full strength swamp the whole artwork. */
+.hg-arc { animation: hg-arc-breathe 5.6s ease-in-out infinite; }
+.hg-arc-wide { animation-name: hg-arc-breathe-soft; }
+.hg-arc-thin { animation-name: hg-arc-breathe-thin; }
+.hg-arc-b { animation-duration: 7.2s; animation-delay: 0.8s; }
+.hg-arc-c { animation-duration: 6.4s; animation-delay: 1.6s; }
+.hg-arc-d { animation-duration: 8s; animation-delay: 2.4s; }
+@keyframes hg-arc-breathe {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 0.95; }
+}
+@keyframes hg-arc-breathe-soft {
+  0%, 100% { opacity: 0.07; }
+  50% { opacity: 0.22; }
+}
+@keyframes hg-arc-breathe-thin {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.6; }
+}
+
+/* The gold dust (founder, 2026-09-08). Idle it only twinkles in place; while a
+   session runs, `.hg-mining` on the wrapper swaps in a keyframe that also
+   carries each mote outward, so the field reads as spreading.
+   ⚠️ OPACITY AND TRANSLATE ONLY — NEVER `scale`. A CSS transform on an SVG
+   element takes its origin from the user-space origin, not the shape's own
+   centre, so scaling a circle that is positioned by cx/cy throws it across the
+   artwork. `transform-box: fill-box` would fix that; not needing it at all is
+   cheaper and cannot regress. */
+/* ⚠️ THE ARC AND MOTE COLOURS ARE THEME VARIABLES, AND THE LIGHT SKIN IS NOT
+   OPTIONAL HERE. The near-white teal and gold below are tuned for the dark
+   vault card. The light skin puts the same artwork on a #ffffff card, where
+   `#ffd98a` gold dust and a `#ffdf9e` arc are invisible — so a light-skin user
+   would get a field of animated elements that paint every frame and show
+   nothing. These sit on :root rather than on `.app-frame` so they still
+   resolve if the glass is ever rendered outside the app shell. */
+:root {
+  --hg-arc-teal: #8ff8ec;
+  --hg-arc-teal-edge: #3fe4d8;
+  --hg-arc-gold: #ffdf9e;
+  --hg-arc-gold-edge: #f2a417;
+  --hg-mote: #ffd98a;
+}
+:root:not([data-theme="vault"]) {
+  --hg-arc-teal: #0f8f93;
+  --hg-arc-teal-edge: #12898f;
+  --hg-arc-gold: #c07a06;
+  --hg-arc-gold-edge: #a86400;
+  --hg-mote: #d98b06;
+}
+.hg-stop-t-mid { stop-color: var(--hg-arc-teal); }
+.hg-stop-t-edge { stop-color: var(--hg-arc-teal-edge); }
+.hg-stop-g-mid { stop-color: var(--hg-arc-gold); }
+.hg-stop-g-edge { stop-color: var(--hg-arc-gold-edge); }
+
+/* The stroke IS the mote's glow — a second, larger circle behind each one
+   would double the element count of the field for the same look. Element
+   opacity multiplies stroke-opacity, so it still fades out cleanly. */
+.hg-mote {
+  opacity: 0;
+  fill: var(--hg-mote);
+  stroke: var(--hg-mote);
+  stroke-width: 2.4;
+  stroke-opacity: 0.22;
+  animation: hg-mote-idle 6s ease-in-out infinite;
+}
+@keyframes hg-mote-idle {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.5; }
+}
+.hg-wrap.hg-mining .hg-mote-l { animation-name: hg-mote-out-l; }
+.hg-wrap.hg-mining .hg-mote-r { animation-name: hg-mote-out-r; }
+.hg-wrap.hg-mining .hg-mote-u { animation-name: hg-mote-out-u; }
+.hg-wrap.hg-mining .hg-mote-d { animation-name: hg-mote-out-d; }
+@keyframes hg-mote-out-l {
+  0% { opacity: 0; transform: translate(0, 0); }
+  35% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-9px, -4px); }
+}
+@keyframes hg-mote-out-r {
+  0% { opacity: 0; transform: translate(0, 0); }
+  35% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(9px, -4px); }
+}
+@keyframes hg-mote-out-u {
+  0% { opacity: 0; transform: translate(0, 0); }
+  35% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(0, -11px); }
+}
+@keyframes hg-mote-out-d {
+  0% { opacity: 0; transform: translate(0, 0); }
+  35% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-2px, 10px); }
+}
+
 .hg-crystals { animation: hg-crystal-shimmer 5s ease-in-out infinite; }
 @keyframes hg-crystal-shimmer {
   0%, 100% { opacity: 0.75; }
@@ -534,9 +644,19 @@ body {
   50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hg-glitter circle,
+  .hg-sand circle,
+  .hg-arc,
+  .hg-mote,
   .hg-crystals,
   .hg-neck { animation: none; }
+  /* Static stand-ins for the three animated opacities. Order matters: the
+     weight-specific rules have the same specificity as `.hg-arc`, so they
+     have to come after it to win. */
+  .hg-sand circle { opacity: 0.7; }
+  .hg-mote { opacity: 0.45; }
+  .hg-arc { opacity: 0.7; }
+  .hg-arc-thin { opacity: 0.45; }
+  .hg-arc-wide { opacity: 0.14; }
 }
 .hg-wrap.ready { filter: drop-shadow(0 0 16px rgba(242, 164, 23, 0.8)); }
 

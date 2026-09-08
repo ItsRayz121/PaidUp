@@ -1,8 +1,17 @@
 "use client";
 
-// The "claim your ROZI" hourglass — wood caps, black metal posts, rounded
+// The "claim your ROZI" hourglass — turned brass caps and columns, rounded
 // glass bulbs, filled with real RoziPay-mark coins instead of sand (founder,
-// 2026-08-13, refined from a photo reference + a coins-not-sand request).
+// 2026-08-13, refined from a photo reference + a coins-not-sand request;
+// rebuilt to a rendered reference 2026-09-08).
+//
+// ⚠️ IT IS ALL PLAIN SVG SHAPES AND GRADIENTS, AND THERE IS NOT ONE FILTER IN
+// HERE ON PURPOSE. Every glow — the halo, the arc sweeps, the lamp in the
+// crown, the pool above the neck, the plinth — is a radial or linear gradient.
+// feGaussianBlur would be the obvious way to get the same look and is the one
+// thing that would make this artwork genuinely expensive to paint on the
+// low-end Android phones this app is built for, on a screen that is already
+// running AmbientBg's blurred aurora layers behind it.
 //
 // ⚠️ THE COIN COUNT IS PURELY DECORATIVE, NEVER A READING OF THE REAL AMOUNT.
 // `s.claimableMicro` (the real, exact ROZI figure) is already shown as text
@@ -47,6 +56,40 @@ const TOP_BULB = { wideY: 30, narrowY: 112, maxHalf: 34, minHalf: 5, rowStep: 13
 const BOT_BULB = { wideY: 210, narrowY: 130, maxHalf: 34, minHalf: 5, rowStep: 13, spacing: 13 };
 export const HOURGLASS_COIN_COUNT = 14;
 const SVG_NS = "http://www.w3.org/2000/svg";
+
+// The gold dust that spreads out around the glass while a session runs
+// (founder, 2026-09-08). Positions are HAND-PLACED, not random, for two
+// reasons: a random field would differ between the server-rendered markup and
+// the client's first render, and a random field would sooner or later drop a
+// bright dot straight onto the R medallion or the neck, which are the two
+// things on this artwork that must stay clean.
+//
+// `dir` is which way the mote drifts, and it is always AWAY from the centre of
+// the frame — that is the whole difference between a field that reads as
+// spreading outward and one that reads as dots blinking in place.
+const GOLD_MOTES: {
+  x: number;
+  y: number;
+  r: number;
+  dir: "l" | "r" | "u" | "d";
+  delay: number;
+  dur: number;
+}[] = [
+  { x: -14, y: 52, r: 1.6, dir: "l", delay: 0, dur: 7 },
+  { x: -6, y: 100, r: 1.1, dir: "l", delay: 1.9, dur: 8.2 },
+  { x: -18, y: 148, r: 1.9, dir: "l", delay: 3.4, dur: 6.6 },
+  { x: 4, y: 196, r: 1.3, dir: "l", delay: 4.8, dur: 7.6 },
+  { x: 150, y: 44, r: 1.7, dir: "r", delay: 0.7, dur: 7.9 },
+  { x: 170, y: 92, r: 1.2, dir: "r", delay: 2.6, dur: 6.9 },
+  { x: 156, y: 132, r: 1.5, dir: "r", delay: 4.1, dur: 8.4 },
+  { x: 174, y: 180, r: 1.8, dir: "r", delay: 1.2, dur: 7.2 },
+  { x: 140, y: 210, r: 1.1, dir: "r", delay: 5.5, dur: 6.4 },
+  { x: 50, y: -2, r: 1.4, dir: "u", delay: 2.2, dur: 8 },
+  { x: 112, y: -6, r: 1.2, dir: "u", delay: 3.9, dur: 7.4 },
+  { x: 30, y: 20, r: 1, dir: "u", delay: 5.1, dur: 6.8 },
+  { x: 46, y: 244, r: 1.5, dir: "d", delay: 1.5, dur: 7.7 },
+  { x: 116, y: 246, r: 1.3, dir: "d", delay: 3, dur: 8.6 },
+];
 
 type BulbCfg = typeof TOP_BULB;
 type Slot = { x: number; y: number };
@@ -167,6 +210,13 @@ export function HourglassClaim({
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const sessionMode = initialProgressRef.current !== undefined;
+
+    // Both of the modes that mean "a session is running right now" turn the
+    // gold dust up: it drifts outward instead of only twinkling in place. The
+    // pour-once / ready state deliberately does NOT get it — that state
+    // already has its own marigold glow and corner sparkles, and stacking a
+    // third gold motion on top just reads as noise.
+    if (sessionMode || workingRef.current) wrap.classList.add("hg-mining");
 
     const topSlots = generateSlots(HOURGLASS_COIN_COUNT, TOP_BULB);
     const botSlots = generateSlots(HOURGLASS_COIN_COUNT, BOT_BULB);
@@ -368,11 +418,21 @@ export function HourglassClaim({
             <stop offset="70%" stopColor="#c07a06" />
             <stop offset="100%" stopColor="#6b3f03" />
           </linearGradient>
+          {/* Plate faces are lit TOP-DOWN, not left-right: a stack of turned
+              plates only reads as having thickness if each one's own top edge
+              catches the light and its underside falls into shadow. */}
+          <linearGradient id="hgPlate" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffeab4" />
+            <stop offset="32%" stopColor="#f2a417" />
+            <stop offset="100%" stopColor="#673d03" />
+          </linearGradient>
           <linearGradient id="hgGoldPost" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#6d4103" />
-            <stop offset="26%" stopColor="#ffe6ab" />
-            <stop offset="52%" stopColor="#e39a0d" />
-            <stop offset="100%" stopColor="#5e3702" />
+            <stop offset="0%" stopColor="#5e3702" />
+            <stop offset="14%" stopColor="#c98708" />
+            <stop offset="30%" stopColor="#ffe6ab" />
+            <stop offset="54%" stopColor="#e39a0d" />
+            <stop offset="82%" stopColor="#8d5304" />
+            <stop offset="100%" stopColor="#432601" />
           </linearGradient>
           <linearGradient id="hgGlass" x1="0.12" y1="0" x2="0.9" y2="1">
             <stop offset="0%" stopColor="#d8fffa" stopOpacity="0.5" />
@@ -380,16 +440,74 @@ export function HourglassClaim({
             <stop offset="72%" stopColor="#1e9aa0" stopOpacity="0.18" />
             <stop offset="100%" stopColor="#9ff3ea" stopOpacity="0.38" />
           </linearGradient>
+          {/* The broad soft highlight that makes glass read as glass — a wide
+              wash down the lit side, not the thin hairline stroke that was
+              doing this job on its own before. */}
+          <linearGradient id="hgSheen" x1="0" y1="0" x2="1" y2="0.35">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.5" />
+            <stop offset="48%" stopColor="#ffffff" stopOpacity="0.07" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+          {/* The lamp in the crown, and the shaft of light it throws down
+              through the upper glass. */}
+          <radialGradient id="hgTopLight" cx="50%" cy="10%" r="66%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.98" />
+            <stop offset="22%" stopColor="#fff3cd" stopOpacity="0.62" />
+            <stop offset="52%" stopColor="#ffd98a" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="hgShaft" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.42" />
+            <stop offset="38%" stopColor="#bdf6ee" stopOpacity="0.16" />
+            <stop offset="100%" stopColor="#3fe4d8" stopOpacity="0" />
+          </linearGradient>
+          {/* The bright pool of lit grains that gathers just above the neck. */}
+          <radialGradient id="hgPool" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#f0fffb" stopOpacity="0.95" />
+            <stop offset="42%" stopColor="#3fe4d8" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="#3fe4d8" stopOpacity="0" />
+          </radialGradient>
+          {/* Ambient depth behind the whole piece, so the frame sits IN a
+              scene instead of on a flat card. */}
+          <radialGradient id="hgHalo" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#2fd6cc" stopOpacity="0.2" />
+            <stop offset="52%" stopColor="#12898f" stopOpacity="0.09" />
+            <stop offset="100%" stopColor="#0b3d47" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hgMedGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#fff6da" stopOpacity="0.85" />
+            <stop offset="46%" stopColor="#ffd98a" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
+          </radialGradient>
           <radialGradient id="hgPlatform" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#3fe4d8" stopOpacity="0.55" />
             <stop offset="60%" stopColor="#16bdb6" stopOpacity="0.18" />
             <stop offset="100%" stopColor="#16bdb6" stopOpacity="0" />
           </radialGradient>
-          <radialGradient id="hgTopLight" cx="50%" cy="12%" r="62%">
-            <stop offset="0%" stopColor="#fff3cd" stopOpacity="0.95" />
-            <stop offset="38%" stopColor="#ffd98a" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
-          </radialGradient>
+          {/* The arc strokes fade at BOTH ends on purpose — an arc that stops
+              dead reads as a shape someone forgot to finish, where one that
+              dissolves reads as a sweep of light. The gradient runs down the
+              path's own bounding box (default objectBoundingBox units), so it
+              keeps fading correctly if a radius or span is ever retuned. */}
+          {/* ⚠️ THE ARC COLOURS COME FROM CSS CLASSES, NOT `stopColor`
+              ATTRIBUTES, BECAUSE THEY HAVE TO CHANGE WITH THE SKIN. These
+              near-white teal and gold values are tuned for the dark vault
+              card; on the light skin the same artwork sits on a #ffffff card,
+              where the gold arc and the gold dust are simply invisible. A
+              presentation attribute cannot hold a `var()`, so the stop colour
+              is set in globals.css off a theme variable — which is also what
+              keeps the both-ends fade instead of flattening the arc to one
+              solid colour per theme. */}
+          <linearGradient id="hgArcT" x1="0" y1="0" x2="0" y2="1">
+            <stop className="hg-stop-t-edge" offset="0%" stopOpacity="0" />
+            <stop className="hg-stop-t-mid" offset="46%" stopOpacity="0.95" />
+            <stop className="hg-stop-t-edge" offset="100%" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="hgArcG" x1="0" y1="0" x2="0" y2="1">
+            <stop className="hg-stop-g-edge" offset="0%" stopOpacity="0" />
+            <stop className="hg-stop-g-mid" offset="50%" stopOpacity="0.95" />
+            <stop className="hg-stop-g-edge" offset="100%" stopOpacity="0" />
+          </linearGradient>
           <linearGradient id="hgCrystalA" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#7ff0e6" />
             <stop offset="100%" stopColor="#0e5560" />
@@ -414,55 +532,139 @@ export function HourglassClaim({
           </clipPath>
         </defs>
 
-        {/* ---- the brass frame ----------------------------------------
-            Everything here is decoration around the glass. The two bulb
-            paths and the neck below keep the EXACT coordinates the coin
-            packing is built on; nothing in this block may move them. */}
+        {/* ---- the scene behind the glass ---------------------------------
+            Halo first, then the two arc sweeps. Everything in this block is
+            a static fill or an opacity breathe — and there is deliberately no
+            blur filter anywhere in this file: a soft radial gradient buys the
+            same glow for a fraction of the paint cost on the low-end Android
+            phones this app is built for. */}
+        <ellipse cx="80" cy="118" rx="102" ry="126" fill="url(#hgHalo)" />
+        {/* ⚠️ NOT ONE OF THESE CARRIES AN `opacity` ATTRIBUTE, AND THAT IS
+            DELIBERATE. Each arc's brightness lives entirely in globals.css,
+            because a CSS rule (never mind a keyframe) always beats an SVG
+            presentation attribute — so an `opacity="0.16"` here would read as
+            the wide glow's real value while doing absolutely nothing. Every
+            arc's resting AND animated opacity is set by its class there,
+            including the reduced-motion fallbacks. */}
+        <g className="hg-arcs">
+          <path className="hg-arc hg-arc-wide" d="M-4.8,175 A100,100 0 0 1 -0.9,63.2" fill="none" stroke="url(#hgArcT)" strokeWidth="7" strokeLinecap="round" />
+          <path className="hg-arc" d="M-4.8,175 A100,100 0 0 1 -0.9,63.2" fill="none" stroke="url(#hgArcT)" strokeWidth="2" strokeLinecap="round" />
+          <path className="hg-arc hg-arc-thin hg-arc-b" d="M0.3,154.2 A86,86 0 0 1 2.1,85.7" fill="none" stroke="url(#hgArcT)" strokeWidth="1.1" strokeLinecap="round" />
+          <path className="hg-arc hg-arc-wide hg-arc-c" d="M161.4,71.1 A96,96 0 0 1 159.6,175.7" fill="none" stroke="url(#hgArcG)" strokeWidth="7" strokeLinecap="round" />
+          <path className="hg-arc hg-arc-c" d="M161.4,71.1 A96,96 0 0 1 159.6,175.7" fill="none" stroke="url(#hgArcG)" strokeWidth="2" strokeLinecap="round" />
+          <path className="hg-arc hg-arc-thin hg-arc-d" d="M175.9,87.1 A102,102 0 0 1 175.9,156.9" fill="none" stroke="url(#hgArcG)" strokeWidth="1.1" strokeLinecap="round" />
+        </g>
 
         {/* the lit plinth it stands on */}
-        <ellipse cx="80" cy="240" rx="80" ry="16" fill="url(#hgPlatform)" />
+        <ellipse cx="80" cy="240" rx="82" ry="18" fill="url(#hgPlatform)" />
         <ellipse cx="80" cy="240" rx="56" ry="9" fill="#05202a" opacity="0.68" />
         <ellipse cx="80" cy="240" rx="56" ry="9" fill="none" stroke="#3fe4d8" strokeWidth="1.4" opacity="0.9" />
         <ellipse cx="80" cy="239" rx="42" ry="6" fill="none" stroke="#1c7f86" strokeWidth="0.9" opacity="0.7" />
+        <path d="M40,243 Q80,250 120,243" fill="none" stroke="#9ff3ea" strokeWidth="1" strokeLinecap="round" opacity="0.45" />
 
-        {/* crystal shards, one cluster each side */}
+        {/* Crystal shards. Each one is a five-sided shard — two SHOULDERS
+            below an off-centre tip — split into a lit face and a shadowed
+            face by a ridge, with a glint at the tip and low rubble around the
+            base.
+
+            ⚠️ NEVER DRAW THESE AS SYMMETRIC TRIANGLES WITH A CENTRED RIDGE.
+            Two earlier attempts did (first tall and narrow, then wide and
+            low) and both read unmistakably as PINE TREES, not crystal — in
+            this teal palette a triangle with a light half and a dark half
+            around a vertical spine is exactly a stylised conifer, and six of
+            them along a base is a treeline. What actually reads as crystal is
+            the asymmetry: an off-centre tip, shoulders that break the
+            silhouette, and no two shards the same height.
+            ⚠️ FOUR SHARDS, NOT SIX. Evenly spaced repeats along the plinth
+            read as scenery however each one is drawn. */}
         <g className="hg-crystals">
-          <path d="M-2,240 L12,172 L28,240 Z" fill="url(#hgCrystalA)" />
-          <path d="M12,172 L28,240 L34,206 Z" fill="url(#hgCrystalB)" />
-          <path d="M-2,240 L12,172 L8,240 Z" fill="#0a4750" opacity="0.85" />
-          <path d="M-20,242 L-9,196 L6,242 Z" fill="url(#hgCrystalB)" />
-          <path d="M-9,196 L6,242 L12,218 Z" fill="url(#hgCrystalA)" opacity="0.8" />
-          <path d="M132,240 L148,172 L162,240 Z" fill="url(#hgCrystalA)" />
-          <path d="M148,172 L162,240 L126,208 Z" fill="url(#hgCrystalB)" />
-          <path d="M148,172 L162,240 L156,240 Z" fill="#0a4750" opacity="0.85" />
-          <path d="M154,242 L169,196 L180,242 Z" fill="url(#hgCrystalB)" />
-          <path d="M169,196 L180,242 L162,224 Z" fill="url(#hgCrystalA)" opacity="0.8" />
+          {/* left, tall shard */}
+          <path d="M-2,241 L2,212 L13,184 L14,240 Z" fill="url(#hgCrystalB)" />
+          <path d="M14,240 L13,184 L24,205 L28,238 Z" fill="url(#hgCrystalA)" />
+          <path d="M13,184 L14,240" stroke="#b8fff4" strokeWidth="0.9" opacity="0.75" fill="none" />
+          <path d="M2,212 L13,184 L24,205" stroke="#8ff8ec" strokeWidth="0.7" opacity="0.5" fill="none" />
+          <circle cx="13" cy="185" r="1.7" fill="#e6fffc" opacity="0.9" />
+          {/* left, short shard in front */}
+          <path d="M-24,242 L-22,228 L-14,208 L-13,242 Z" fill="url(#hgCrystalB)" />
+          <path d="M-13,242 L-14,208 L-6,222 L-4,242 Z" fill="url(#hgCrystalA)" opacity="0.9" />
+          <path d="M-14,208 L-13,242" stroke="#b8fff4" strokeWidth="0.7" opacity="0.6" fill="none" />
+          {/* right, tall shard */}
+          <path d="M162,241 L158,212 L147,184 L146,240 Z" fill="url(#hgCrystalB)" />
+          <path d="M146,240 L147,184 L136,205 L132,238 Z" fill="url(#hgCrystalA)" />
+          <path d="M147,184 L146,240" stroke="#b8fff4" strokeWidth="0.9" opacity="0.75" fill="none" />
+          <path d="M158,212 L147,184 L136,205" stroke="#8ff8ec" strokeWidth="0.7" opacity="0.5" fill="none" />
+          <circle cx="147" cy="185" r="1.7" fill="#e6fffc" opacity="0.9" />
+          {/* right, short shard in front */}
+          <path d="M184,242 L182,228 L174,208 L173,242 Z" fill="url(#hgCrystalB)" />
+          <path d="M173,242 L174,208 L166,222 L164,242 Z" fill="url(#hgCrystalA)" opacity="0.9" />
+          <path d="M174,208 L173,242" stroke="#b8fff4" strokeWidth="0.7" opacity="0.6" fill="none" />
+          {/* Low rubble on the plinth. Wide and flat, so it can only ever
+              read as broken crystal lying down. */}
+          <path d="M34,242 L44,236 L51,242 Z" fill="url(#hgCrystalA)" opacity="0.75" />
+          <path d="M-12,243 L-4,239 L3,243 Z" fill="url(#hgCrystalA)" opacity="0.55" />
+          <path d="M126,242 L116,236 L109,242 Z" fill="url(#hgCrystalA)" opacity="0.75" />
+          <path d="M172,243 L164,239 L157,243 Z" fill="url(#hgCrystalA)" opacity="0.55" />
         </g>
 
-        {/* base */}
-        <rect x="22" y="214" width="116" height="16" rx="5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
-        <rect x="18" y="207" width="124" height="8" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
-        <rect x="26" y="217" width="104" height="2.4" rx="1.2" fill="#ffeec2" opacity="0.55" />
-        <rect x="34" y="230" width="18" height="5" rx="2.5" fill="#6b3f03" />
-        <rect x="108" y="230" width="18" height="5" rx="2.5" fill="#6b3f03" />
+        {/* ---- the brass frame ----------------------------------------
+            Everything here is decoration around the glass. The two bulb
+            paths and the neck below keep the EXACT coordinates the coin
+            packing is built on; nothing in this block may move them.
 
-        {/* posts, with knurled collars */}
+            ⚠️ THE BASE IS DRAWN BEFORE THE GLASS AND MUST STAY THERE. The
+            bottom bulb's first settled coin row sits at y = 210 and a coin is
+            r = 5.2, so it spans 204.8..215.2 — straight through the base's top
+            plate. Drawing the brass afterwards (which is how a real glass
+            seats into its frame) hides most of that row. */}
+
+        {/* base: three turned plates, a dark seam between them, and feet */}
+        <rect x="17" y="206.4" width="126" height="8.6" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.7" />
+        <rect x="21" y="207.6" width="118" height="1.8" rx="0.9" fill="#ffeec2" opacity="0.5" />
+        <rect x="17" y="214.6" width="126" height="1.5" fill="#4b2c02" opacity="0.7" />
+        <rect x="19" y="215.6" width="122" height="10" rx="4.5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.7" />
+        <rect x="23" y="217" width="114" height="2" rx="1" fill="#fff1c6" opacity="0.55" />
+        <rect x="24" y="225" width="112" height="7" rx="3.5" fill="url(#hgPlate)" stroke="#5a3502" strokeWidth="0.7" />
+        <rect x="34" y="231" width="20" height="5" rx="2.5" fill="#6b3f03" />
+        <rect x="106" y="231" width="20" height="5" rx="2.5" fill="#6b3f03" />
+
+        {/* Posts: a lit column, a shadowed far edge, and bands GROUPED near
+            each end rather than spaced evenly — even spacing reads as a
+            ladder, grouped bands read as turned metal. */}
         {[26, 123].map((px) => (
           <g key={px}>
             <rect x={px} y="24" width="11" height="184" rx="5" fill="url(#hgGoldPost)" />
-            <rect x={px + 2.6} y="26" width="2.2" height="180" rx="1.1" fill="#fff0c8" opacity="0.55" />
-            {[46, 92, 138, 184].map((cy) => (
-              <rect key={cy} x={px - 1.4} y={cy} width="13.8" height="7" rx="3" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.6" />
+            <rect x={px + 2.4} y="26" width="2.2" height="180" rx="1.1" fill="#fff0c8" opacity="0.6" />
+            <rect x={px + 9.1} y="26" width="1.5" height="180" rx="0.75" fill="#3d2201" opacity="0.45" />
+            {[34, 43, 105, 175, 184].map((cy) => (
+              <g key={cy}>
+                <rect x={px - 1.8} y={cy} width="14.6" height="7" rx="3.2" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.6" />
+                <rect x={px - 0.4} y={cy + 1} width="11.8" height="1.7" rx="0.85" fill="#ffeec2" opacity="0.5" />
+              </g>
             ))}
           </g>
         ))}
 
-        {/* top cap + the mark on the crown */}
-        <rect x="18" y="20" width="124" height="8" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
-        <rect x="22" y="6" width="116" height="16" rx="5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.8" />
-        <rect x="26" y="9" width="104" height="2.4" rx="1.2" fill="#ffeec2" opacity="0.6" />
-        <circle cx="80" cy="2" r="12" fill="url(#hgGold)" />
+        {/* top cap: the mirror of the base, plus a bead row along its lower
+            edge — the one detail that most separates "a gold rectangle" from
+            "a cast brass cap". */}
+        <rect x="17" y="19.4" width="126" height="8.6" rx="4" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.7" />
+        <rect x="21" y="20.6" width="118" height="1.8" rx="0.9" fill="#ffeec2" opacity="0.5" />
+        <g fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.3">
+          {[24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136].map((bx) => (
+            <circle key={bx} cx={bx} cy="24.2" r="1.9" />
+          ))}
+        </g>
+        <rect x="17" y="18" width="126" height="1.5" fill="#4b2c02" opacity="0.7" />
+        <rect x="19" y="8.4" width="122" height="10" rx="4.5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.7" />
+        <rect x="23" y="9.8" width="114" height="2" rx="1" fill="#fff1c6" opacity="0.55" />
+        <rect x="24" y="2.4" width="112" height="7" rx="3.5" fill="url(#hgPlate)" stroke="#5a3502" strokeWidth="0.7" />
+
+        {/* the mark on the crown, lit from behind */}
+        <circle cx="80" cy="2" r="19" fill="url(#hgMedGlow)" />
+        <circle cx="80" cy="2" r="12.5" fill="url(#hgGold)" stroke="#5a3502" strokeWidth="0.7" />
+        <circle cx="80" cy="2" r="10.4" fill="none" stroke="#ffeec2" strokeWidth="0.8" opacity="0.55" />
         <circle cx="80" cy="2" r="9.2" fill="#062028" />
+        <path d="M73,-3.4 Q80,-8 87,-3.4" fill="none" stroke="#9ff3ea" strokeWidth="1" opacity="0.4" strokeLinecap="round" />
         <text x="80" y="2" textAnchor="middle" dominantBaseline="central" fontSize="11" fontWeight="800" fill="#3fe4d8">R</text>
 
         {/* ---- the glass -------------------------------------------------
@@ -473,21 +675,44 @@ export function HourglassClaim({
         <path d="M40,26 L120,26 Q118,66 100,86 Q92,100 80,118 Q68,100 60,86 Q42,66 40,26 Z" fill="url(#hgGlass)" stroke="#7fe4dd" strokeWidth="1.5" strokeOpacity="0.7" />
         <path d="M40,214 L120,214 Q118,174 100,154 Q92,140 80,122 Q68,140 60,154 Q42,174 40,214 Z" fill="url(#hgGlass)" stroke="#7fe4dd" strokeWidth="1.5" strokeOpacity="0.7" />
 
-        {/* the light in the top of the glass, and the glitter under it */}
+        {/* The lamp, its shaft, the lit grains falling through it, and the
+            pool they gather in above the neck. All clipped to the upper bulb
+            so nothing leaks over the brass. */}
         <g clipPath="url(#hgTopBulbClip)">
           <rect x="40" y="26" width="80" height="92" fill="url(#hgTopLight)" />
-          <g className="hg-glitter">
-            <circle cx="62" cy="46" r="1.3" fill="#bffdf6" />
-            <circle cx="96" cy="40" r="1.1" fill="#ffe9b5" />
-            <circle cx="80" cy="60" r="1.4" fill="#bffdf6" />
-            <circle cx="68" cy="76" r="1.1" fill="#ffe9b5" />
-            <circle cx="92" cy="70" r="1.2" fill="#bffdf6" />
-            <circle cx="104" cy="56" r="1" fill="#bffdf6" />
+          <path d="M66,26 L94,26 L88,114 L72,114 Z" fill="url(#hgShaft)" />
+          <path d="M42,28 Q46,66 60,88 L48,92 Q40,58 40,28 Z" fill="url(#hgSheen)" />
+          <ellipse cx="80" cy="110" rx="15" ry="7" fill="url(#hgPool)" />
+          <g className="hg-sand">
+            <circle cx="58" cy="34" r="1.2" fill="#bffdf6" />
+            <circle cx="74" cy="30" r="0.9" fill="#ffe9b5" />
+            <circle cx="92" cy="36" r="1.3" fill="#bffdf6" />
+            <circle cx="106" cy="42" r="1" fill="#dffffb" />
+            <circle cx="64" cy="50" r="1.1" fill="#ffe9b5" />
+            <circle cx="84" cy="48" r="1.4" fill="#bffdf6" />
+            <circle cx="100" cy="58" r="0.9" fill="#dffffb" />
+            <circle cx="72" cy="64" r="1.2" fill="#bffdf6" />
+            <circle cx="88" cy="72" r="1" fill="#ffe9b5" />
+            <circle cx="80" cy="86" r="1.3" fill="#dffffb" />
           </g>
+          {/* A few unmoving specks, for density without another animation. */}
+          <g fill="#cffff9" opacity="0.5">
+            <circle cx="68" cy="42" r="0.7" />
+            <circle cx="96" cy="50" r="0.6" />
+            <circle cx="78" cy="58" r="0.7" />
+            <circle cx="90" cy="66" r="0.6" />
+          </g>
+        </g>
+
+        {/* a matching rim wash on the lower bulb, so the glass reads as one
+            piece rather than a bright half and a dull half */}
+        <g clipPath="url(#hgBottomBulbClip)">
+          <path d="M42,212 Q44,178 58,158 L48,154 Q40,180 40,212 Z" fill="url(#hgSheen)" opacity="0.7" />
         </g>
 
         {/* the neck, glowing gold where the coins pass through */}
         <g className="hg-neck">
+          <ellipse cx="80" cy="120" rx="20" ry="9" fill="#ffd98a" opacity="0.14" />
           <ellipse cx="80" cy="120" rx="16" ry="7" fill="#ffd98a" opacity="0.22" />
           <ellipse cx="80" cy="120" rx="8.5" ry="3.2" fill="#fff0c4" />
           <ellipse cx="80" cy="120" rx="4" ry="1.5" fill="#ffffff" />
@@ -502,6 +727,29 @@ export function HourglassClaim({
         <path d="M46,32 Q44,60 58,80" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2.2" strokeLinecap="round" />
         <path d="M46,208 Q44,182 56,162" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="1.8" strokeLinecap="round" />
         <circle ref={splashRef} className="hg-splash" cx="80" cy="122" r="8" fill="none" stroke="var(--color-accent)" strokeWidth="1.6" />
+
+        {/* ⚠️ THE GOLD MOTES LIVE IN THE SVG, NOT THE WRAPPER, ON PURPOSE.
+            The wrapper's existing `.hg-working::after` dot is positioned in
+            percentages of the BOX against art laid out in a viewBox — which
+            is exactly why it had to be re-derived by hand the last time the
+            viewBox grew. These sit in the same user units as the frame, so
+            they follow it for free.
+
+            Each mote drifts AWAY from the centre (its class picks which way),
+            so while a session runs the field reads as spreading outward
+            rather than as dots blinking in place. */}
+        <g className="hg-motes">
+          {GOLD_MOTES.map((m, i) => (
+            <circle
+              key={i}
+              className={`hg-mote hg-mote-${m.dir}`}
+              cx={m.x}
+              cy={m.y}
+              r={m.r}
+              style={{ animationDelay: `${m.delay}s`, animationDuration: `${m.dur}s` }}
+            />
+          ))}
+        </g>
       </svg>
       <span className="hg-sparkle s1" />
       <span className="hg-sparkle s2" />

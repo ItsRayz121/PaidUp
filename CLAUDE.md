@@ -5188,3 +5188,81 @@ See `docs/` for the full spec.
     per-device choice, so the first client render has to agree with it and
     reconcile once. The default is `"big"`, which is also the CSS default, so
     nothing flashes for anyone who has not chosen otherwise.
+
+- **THE HOURGLASS IS REBUILT TO A RENDERED REFERENCE (founder, 2026-09-08,
+  same day).** The founder sent a rendered mockup of the `/mine` glass and
+  asked for the real one to look like it — "very professional", with "golden
+  dots spreading during the mining phase". Only `components/HourglassClaim.tsx`
+  and the `.hg-*` block in `globals.css` changed. Verified: web `tsc --noEmit`
+  clean, `eslint src` 0 errors (the same 7 pre-existing `<img>` warnings),
+  `next build` clean — **and actually rendered in real headless Chrome and
+  looked at**, in the vault skin at both real box sizes (224x291 and 168x218)
+  and in the light skin, over three iterations. No backend suite re-run: no
+  API, ledger, copy or guardrail was touched.
+  - **What was added**, all as plain SVG shapes and gradients: turned brass
+    caps and base (stacked plates, a dark seam, a bead row), columns with
+    grouped bands and a shadowed far edge, a back-lit R medallion, a lamp in
+    the crown throwing a shaft down the upper bulb, lit grains falling into a
+    glowing pool above the neck, a broad glass sheen on both bulbs, a teal
+    arc sweep left and a gold one right, an ambient halo, and the gold dust.
+  - ⚠️ **EVERY LOAD-BEARING COORDINATE IS BYTE-FOR-BYTE UNCHANGED**: `NECK`,
+    `TOP_BULB`, `BOT_BULB`, both bulb `d` strings, both clip paths, the coin
+    slot maths, the viewBox, and all three modes' JS. The artwork is a
+    restyle around geometry the coin packing is built on, so
+    `HOURGLASS_BOX` in `app/mine/page.tsx` needed no change either.
+  - ⚠️ **THERE IS NOT ONE SVG FILTER IN THE FILE, ON PURPOSE.** Every glow is
+    a radial or linear gradient. `feGaussianBlur` is the obvious way to get
+    the same look and is the one thing that would make this genuinely
+    expensive to paint on the low-end Android phones this app is built for —
+    on a screen already running `AmbientBg`'s blurred aurora layers.
+  - ⚠️ **THE ARC AND MOTE COLOURS ARE CSS CLASSES ON `<stop>`, NOT
+    `stopColor` ATTRIBUTES, AND NEITHER CARRIES AN `opacity` ATTRIBUTE.** Two
+    separate reasons, both easy to "simplify" back into a bug. (a) A CSS rule
+    always beats an SVG presentation attribute, so an `opacity="0.16"` on the
+    wide glow arc would read as its real value while doing nothing — every
+    arc's resting *and* animated opacity lives in `globals.css`, which is
+    also why the reduced-motion fallback there **must** set a static opacity
+    per weight: with `animation: none` and nothing else, all six fall back to
+    fully opaque and the 7px glow arcs swamp the artwork. (b) A presentation
+    attribute cannot hold a `var()`, and these colours have to change with
+    the skin — the dark values are invisible on the light skin's `#ffffff`
+    card, so a light-skin user would have got a field of animated elements
+    painting every frame and showing nothing. Theme vars keep the gradients'
+    both-ends fade instead of flattening each arc to one solid colour.
+  - ⚠️ **THE MOTES ANIMATE OPACITY AND `translate` ONLY — NEVER `scale`.** A
+    CSS transform on an SVG element takes its origin from the user-space
+    origin, not the shape's own centre, so scaling a circle positioned by
+    cx/cy throws it across the artwork. `transform-box: fill-box` would fix
+    it; not needing it at all is cheaper and cannot regress.
+  - Positions are **hand-placed, not random** — a random field differs
+    between the server-rendered markup and the client's first render, and
+    would sooner or later drop a bright dot onto the R medallion or the neck.
+    `dir` is always away from the centre, which is what makes the field read
+    as *spreading* rather than as dots blinking in place; it turns on via
+    `.hg-mining`, added for both modes that mean a session is running.
+  - ⚠️ **NEVER DRAW THE CRYSTALS AS SYMMETRIC TRIANGLES WITH A CENTRED
+    RIDGE.** Two attempts did — first tall and narrow, then deliberately wide
+    and low — and **both rendered unmistakably as pine trees**, confirmed in
+    the browser, not guessed. In this teal palette a triangle with a light
+    half and a dark half around a vertical spine *is* a stylised conifer, and
+    six along a plinth is a treeline. What reads as crystal is asymmetry: an
+    off-centre tip, shoulders that break the silhouette, no two the same
+    height, four shards not six, plus low flat rubble that can only read as
+    lying down.
+  - ⚠️ **THE DEV SERVER SERVED STALE `globals.css` FOR THE WHOLE FIRST
+    ITERATION, AND `touch` DID NOT FIX IT.** The running server was still
+    serving the *old* `.hg-glitter` rules with none of the new ones — caught
+    only by fetching the served stylesheet and grepping it. This file already
+    warns about this twice; the reliable answer turned out to be `next build`
+    + `next start` on a spare port, which cannot be stale. **Before
+    concluding a CSS change has no effect, grep the served stylesheet for one
+    of your new rule names.**
+  - The temporary render harness (`app/hgpreview/page.tsx`) was deleted.
+    ⚠️ Deleting a route leaves `.next/types/validator.ts` importing it, so
+    `tsc --noEmit` fails with a missing-module error that looks like a broken
+    import — re-run `next build` first, which regenerates it.
+  - **Not done**: nobody has seen this on a real phone, and the `/mine` screen
+    itself was never opened (it needs a logged-in session against the live
+    API) — the artwork was verified in isolation at the exact box sizes that
+    screen uses. The coin behaviour in all three modes is untouched code, so
+    the risk is confined to how it looks in context.
