@@ -194,7 +194,17 @@ export class ApiError extends Error {
 //
 // Keyed on the token as well as the path, because a shared phone signing into
 // a second account must never join a flight opened for the first one.
+//
+// ⚠️ BROWSER ONLY, AND THAT GUARD IS A DATA-LEAK GUARD, NOT A TIDINESS ONE.
+// This map is module scope, and a module in a Next server process is shared by
+// EVERY request that process handles — while `getToken()` returns null on the
+// server, so the key would collapse to the same string for all of them. One
+// server-side GET would then be able to answer a second user from a flight
+// opened for a first. Nothing calls this outside the browser today (every
+// caller is a client component fetching from an effect or a tap), which is
+// exactly why the guard has to be here rather than remembered later.
 const inFlight = new Map<string, Promise<unknown>>();
+const canCoalesce = () => typeof window !== "undefined";
 
 function isGet(opts: RequestInit): boolean {
   const m = (opts.method ?? "GET").toUpperCase();
@@ -204,9 +214,14 @@ function isGet(opts: RequestInit): boolean {
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
 
-  // See the note above `inFlight`. GETs only, and never across a mutation.
-  if (isGet(opts)) {
-    const key = `${token ?? ""} ${path}`;
+  // See the note above `inFlight`. GETs only, in the browser only, and never
+  // across a mutation.
+  if (isGet(opts) && canCoalesce()) {
+    // The method is part of the key: `isGet` also admits HEAD, and a HEAD
+    // shares neither a body nor a status with a GET. Nothing sends a HEAD
+    // today, so this costs nothing and stops a future one being answered
+    // with a GET's payload.
+    const key = `${(opts.method ?? "GET").toUpperCase()} ${token ?? ""} ${path}`;
     const joined = inFlight.get(key);
     if (joined) return joined as Promise<T>;
     const started = apiFetchUncoalesced<T>(path, opts, token).finally(() => {
@@ -219,7 +234,9 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   }
 
   // A mutation invalidates every read that was already on the wire before it,
-  // so nothing issued afterwards can join a pre-mutation flight.
+  // so nothing issued afterwards can join a pre-mutation flight. (A GET that
+  // skipped coalescing lands here too, and clearing is still right for it:
+  // it never joined anything, and an empty map costs nothing to clear.)
   inFlight.clear();
   try {
     return await apiFetchUncoalesced<T>(path, opts, token);

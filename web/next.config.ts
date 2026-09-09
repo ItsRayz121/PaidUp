@@ -37,6 +37,13 @@ const nextConfig: NextConfig = {
       },
       {
         // Brand art, the PWA icon set, and the roadmap illustrations.
+        //
+        // Note the roadmap pair is drawn through `next/image`, so in practice
+        // the browser asks for /_next/image?url=%2Froadmap%2F... and gets the
+        // optimiser's own header (also a day) rather than this one. The rule
+        // still covers them if they are ever requested directly, and /brand/
+        // and /icons/ — the /mine hero is a plain CSS background-image and the
+        // PWA icons are fetched by their own URLs — are what it really serves.
         source: "/:dir(brand|icons|roadmap)/:file*",
         headers: [{ key: "Cache-Control", value: STATIC_ART }],
       },

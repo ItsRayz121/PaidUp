@@ -5658,3 +5658,80 @@ See `docs/` for the full spec.
     static scan reports ~111 false positives and deleting from it would break
     live copy. `.codex-remote-attachments/` (tool scratch, untracked and
     unignored) is now gitignored rather than committed by accident.
+
+- **CROSS-CHECK ON THE SPEED PASS ABOVE: THE SERVICE WORKER HAD PINNED THE
+  LOGOS FOREVER, ONE FILE AFTER REFUSING TO PIN THEM FOR A YEAR (2026-09-09,
+  same day).** A review of `1c09cfc` found one real bug, one inert claim and
+  one latent data-exposure shape. Verified: `npm run test:sw` (new, 5 checks)
+  + `npm run test:coalesce` (6, was 5) both green **and both proven able to
+  fail** — the fix was reverted in place for each and the suite caught it;
+  web `tsc --noEmit` clean, `eslint src` 0 errors (the same 7 pre-existing
+  `<img>` warnings), `next build` clean (38 routes); `security-review` — no
+  findings. `api/` untouched, so no backend suite is affected.
+  - ⚠️ **THE BUG: `next.config.ts` REFUSED `immutable` ON `/brand/` AND
+    `/icons/`, AND THE SAME COMMIT THEN GAVE THE SERVICE WORKER A PERMANENT
+    CACHE-FIRST PIN OVER THE SAME FILES.** The header comment is explicit
+    about why a long pin is wrong there — these names carry no content hash,
+    the logos and PWA icons are replaced IN PLACE, and a one-year pin puts a
+    replaced logo on every existing user's phone with no way to push a fix.
+    A cache-first service worker is **strictly worse than the header that was
+    rejected**: the pin is permanent, not a year, and only bumping `CACHE`
+    clears it. So "I changed the logo and it didn't change on my phone" was
+    already shipped, with no expiry.
+  - **Fixed as a split, not a revert, because the two kinds of asset really
+    are different.** `/_next/static/` is content-hashed — a new build is a new
+    URL — so a cached copy can never go stale and there is nothing to
+    revalidate: it stays cache-first **forever**. `/icons/`, `/brand/` and
+    `/roadmap/` are now **stale-while-revalidate**: the cached copy is served
+    immediately (**no speed is given up — nothing waits on the network**) and
+    a background `fetch` refreshes it, so a replaced asset corrects itself on
+    the very next visit. This also closes the same hazard on `/icons/`, which
+    predates the speed pass.
+    ⚠️ **The revalidation is close to free, and that is the header and the
+    worker composing rather than fighting**: `max-age=86400` means the
+    background fetch is answered out of the browser's own HTTP cache without
+    touching the network for a day.
+    ⚠️ **`event.waitUntil` is called INSIDE the `respondWith` promise chain,
+    and it has to be.** The event is only still "active" while the promise
+    handed to `respondWith` is pending; hoisting the refresh out of that
+    callback makes `waitUntil` throw `InvalidStateError` and the write is lost.
+  - ⚠️ **`/roadmap/` IS INERT IN BOTH THE HEADER RULE AND THE WORKER, AND THE
+    COMMENTS NOW SAY SO.** `/mine/roadmap` draws its two scenes through
+    `next/image`, so the real request is `/_next/image?url=%2Froadmap%2F…` —
+    which matches neither `^/(brand|icons|roadmap)/` nor the worker's prefix.
+    Confirmed live against `next start`: the direct paths get the new header,
+    the optimiser path gets its own (also a day, so nothing is actually
+    uncached). `/brand/` is the one that genuinely pays off — the `/mine` hero
+    is a plain CSS `background-image`, fetched by its own URL. **The fix was
+    NOT to mark those two `unoptimized`**: that would serve the full 279KB
+    `connected-world-v1.webp` instead of the optimiser's 83KB variant, which
+    is worse for a user on mobile data in our markets, and the metered
+    transformation is edge-cached after the first hit. `/_next/image` is
+    deliberately still not intercepted — those URLs embed an **unversioned**
+    source path for some assets, so caching them reintroduces the exact
+    permanent pin this split exists to remove.
+  - ⚠️ **THE COALESCING MAP IS MODULE SCOPE, AND ON A SERVER THAT MEANS ONE
+    MAP FOR EVERY USER THE PROCESS HANDLES.** `getToken()` returns `null`
+    outside the browser, so the key would collapse to the same string for
+    everyone and one server-side GET could answer a second user from a flight
+    opened for a first. Nothing calls `apiFetch` outside the browser today
+    (every caller is a client component fetching from an effect or a tap),
+    which is precisely why the guard belongs in the code rather than in
+    someone's memory — `canCoalesce()` refuses to coalesce without a `window`,
+    with a regression test that deletes the global and demands two requests.
+  - **The method is in the cache key now.** `isGet()` also admits `HEAD`, and
+    a `HEAD` shares neither a body nor a status with a `GET` — unreachable
+    today (nothing sends one), free to close, and a trap otherwise.
+  - **Checked and found sound, so it is not re-litigated:** the token is read
+    ONCE and is both the key and the `authorization` header, so there is no
+    window where a request is keyed as one principal and authenticated as
+    another; all 210 `apiFetch` call sites were enumerated and **no GET passes
+    an options object at all**, so nothing varies on headers, a body, a
+    `signal` or `credentials`; every mutation clears the map on issue *and* in
+    `finally`, and the settle-delete is identity-guarded so a late
+    pre-mutation flight cannot evict a newer entry; `unifyHistory`'s sorts run
+    on freshly-built array literals, never on a shared response array, so two
+    joiners holding one object is safe; `Math.round(p * 12)` over 240 steps
+    still reaches all 13 pile states, so no token landing was lost; and no
+    reference survives anywhere to the deleted PNGs, `roadmapArt.tsx`, or the
+    `.roadmap-road*` / `.roadmap-island` / `.rm-cloud` / `.rm-flag` CSS.

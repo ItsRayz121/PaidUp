@@ -96,6 +96,22 @@ test("a different token never joins another account's flight", async () => {
   store.set("rozipay_token", "tok-A");
 });
 
+test("nothing coalesces without a window: one server process, many users", async () => {
+  await reset();
+  // On the server `getToken()` returns null for everyone, so the key would
+  // collapse to one shared string and a second user could be answered from a
+  // flight opened for a first. api.ts refuses to coalesce there at all.
+  const win = (globalThis as any).window;
+  delete (globalThis as any).window;
+  try {
+    const [a, b] = [get(), get()];
+    await Promise.allSettled([a, b]);
+    assert.equal(calls.length, 2, "no window => no shared flight, ever");
+  } finally {
+    (globalThis as any).window = win;
+  }
+});
+
 test("an error reaches every joiner and is not retained", async () => {
   await reset();
   failNext = true;
