@@ -5466,3 +5466,45 @@ See `docs/` for the full spec.
     itself was never opened with a live session (it needs a logged-in account
     against the live API) — the hero was verified in isolation at the real card
     width across progress 0 / 0.25 / 0.5 / 0.75 / 1 and both other variants.
+  - ⚠️ **SAME DAY, FOLLOW-UP: THE ART HAD A FRAME AND THE FOUNDER SPOTTED IT
+    IMMEDIATELY — "it seems like it is a separate image imprinted on that
+    page... it has its own boundary too."** He was right, and it was two
+    things at once: `.mh-wrap` painted its OWN dark ground
+    (`#01363c` to `#00252b`, sampled from the asset's edges) which does not
+    match the card it sits in (`--color-card` is `#0e2429` in the vault skin),
+    and it had an `18px` radius drawing that edge in. A rounded rectangle of a
+    different tone inside a card is a picture stuck onto a screen.
+    - **The ground and the radius are gone** — the card shows through — and
+      the art's four edges are now **feathered** into whatever is behind them.
+      That answers the original reason the panel existed (a dark raster would
+      read as broken on the light skin's white card) *better* than the panel
+      did: a dark illustration that dissolves at its edges reads as an
+      illustration on any ground. Checked on the light skin too, not assumed.
+    - ⚠️ **THE FEATHER IS TWO SEPARATE SINGLE-GRADIENT MASKS, NOT ONE
+      TWO-GRADIENT MASK, AND THAT IS NOT STYLE.** Feathering both axes on one
+      element needs `mask-composite: intersect`; where that is unsupported the
+      layers fall back to `add`, which UNIONS them — very nearly opaque
+      everywhere — and silently restores the hard edge the feather exists to
+      remove. Nested masks MULTIPLY, so the horizontal feather lives on
+      `.mh-wrap` and the vertical one on `.mh-art` + `.mh-fx` inside it. Same
+      result, using only the widely-supported half of the feature.
+    - **The stops are held clear of the artwork and are not symmetric.** The
+      hourglass occupies roughly the middle third horizontally, so 8% a side
+      only touches the outermost crystals; vertically it very nearly fills the
+      frame (the brass cap starts ~6% down, the platform ends ~5% up), so those
+      stops are much tighter. **Widening the vertical feather eats the cap.**
+    - **On the dial card the art now BLEEDS to the card's own edges**
+      (`-mx-5` against its `p-5`, and that card already had `overflow-hidden`
+      so the rounded corners still clip). A feather alone was not enough there:
+      it softened the transition but left a plateau of a different tone in the
+      middle, still readable as a rectangle. Running full width removes the
+      side-by-side comparison that made it visible at all. The claim card keeps
+      its inset, capped hero — it is deliberately secondary — and relies on the
+      four-sided feather alone, which is enough at that size.
+    - ⚠️ **THE CLAIM WARMTH MOVED FROM A `box-shadow` TO AN INNER GLOW, AND IT
+      HAD TO.** `.mh-ready` was `box-shadow: 0 0 22px rgba(242,164,23,.28)` —
+      drawn OUTSIDE the border box, which a mask paints away completely, so the
+      claim card would have silently lost its warmth the moment the frame came
+      off. It also no longer meant anything: it was lighting the edge of a panel
+      that no longer exists. It is a `::before` radial inside the box now, which
+      survives the feather and lights the artwork instead of its edge.

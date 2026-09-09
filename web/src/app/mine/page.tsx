@@ -355,7 +355,7 @@ export default function MinePage() {
 
         <div className="mt-5">
           {startPour ? (
-            <div className="pt-1 pb-2">
+            <div className="-mx-5 pt-1 pb-2">
               {/* The start-of-session flourish — the same hero, run brighter
                   and faster for ~2.2s, then it hands off. Priority over the
                   running-session view below: mining.reload() flips
@@ -365,7 +365,7 @@ export default function MinePage() {
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.started.pour")}</p>
             </div>
           ) : s.session.active ? (
-            <div className="pt-1 pb-2">
+            <div className="-mx-5 pt-1 pb-2">
               {/* The glass is a picture of the countdown under it: the liquid
                   drains out of the top bulb, a pool gathers in the bottom one
                   and the tokens pile up as the session runs. Still decorative

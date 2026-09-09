@@ -515,17 +515,43 @@ body {
    ratio holds exactly — spelling it out means a future ratio slip shows up as
    a stretched image instead of as an overlay that silently drifts off the
    thing it points at. */
+/* ⚠️ THE ART HAS NO FRAME, AND REMOVING THAT FRAME WAS THE POINT (founder,
+   2026-09-09). This used to be a rounded panel painting its own dark ground
+   (`#01363c` to `#00252b`, sampled from the asset's own edges) so that a dark
+   raster would never sit on the light skin's white card. It worked, and it
+   also gave the hourglass a visible rectangle of its own: a tone that did not
+   match the card around it (`--color-card` is `#0e2429` in the vault skin) and
+   an 18px radius drawing the edge in. The founder read it, correctly, as a
+   picture stuck onto the screen rather than part of the screen.
+   So there is no ground and no radius now — the card shows through — and the
+   art's four edges are FEATHERED into whatever is behind them. That answers
+   the original light-skin worry better than a panel did: a dark illustration
+   that dissolves at its edges reads as an illustration on any ground, where a
+   hard-edged dark rectangle on white reads as a broken image.
+   ⚠️ THE FEATHER IS TWO SEPARATE SINGLE-GRADIENT MASKS ON PURPOSE, NOT ONE
+   TWO-GRADIENT MASK. Masking both axes on one element needs
+   `mask-composite: intersect`, and where that is unsupported the layers
+   default to `add` — they UNION, which is very nearly opaque everywhere and
+   silently gives back the hard edge this exists to remove. Nested masks
+   multiply instead, so putting the horizontal feather on the wrapper and the
+   vertical one on the two layers inside it gets the intersection using only
+   the widely-supported half of the feature. */
 .mh-wrap {
   position: relative;
   width: 100%;
   overflow: hidden;
-  border-radius: 18px;
-  /* ⚠️ THE PANEL PAINTS ITS OWN DARK GROUND, IN BOTH SKINS ON PURPOSE. The
-     art is one dark raster and cannot re-theme, so on the light skin it would
-     otherwise sit on a white card and read as a broken image. These two
-     values are sampled from the asset's own top and bottom edges, so the art
-     dissolves into the panel instead of ending on a visible seam. */
-  background: linear-gradient(180deg, #01363c 0%, #00252b 100%);
+  /* ⚠️ Feather stops are held clear of the artwork itself. The hourglass
+     occupies roughly the middle third horizontally, so 8% a side only ever
+     touches the outermost crystals. Vertically it very nearly fills the frame
+     — the brass cap starts about 6% down and the platform ends about 5% up —
+     so those stops are much tighter, and widening them eats the cap. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+.mh-art,
+.mh-fx {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 94%, transparent 100%);
 }
 .mh-art {
   position: absolute;
@@ -648,7 +674,20 @@ body {
 .mh-pour .mh-coin:nth-of-type(2) { animation-delay: 0.6s !important; }
 .mh-pour .mh-coin:nth-of-type(3) { animation-delay: 1.2s !important; }
 
-.mh-ready { box-shadow: 0 0 22px rgba(242, 164, 23, 0.28); }
+/* ⚠️ THE CLAIM WARMTH IS AN INNER GLOW, NOT A box-shadow, AND IT HAD TO MOVE.
+   This was `box-shadow: 0 0 22px rgba(242,164,23,0.28)` — a glow drawn OUTSIDE
+   the border box, which a mask paints away completely, so the claim card would
+   simply have lost its warmth when the frame came off. It also no longer made
+   sense: an outer glow was lighting the edge of a panel that does not exist
+   any more. Inside the box it survives the feather and lights the artwork
+   itself, which is the thing worth drawing attention to. */
+.mh-ready::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(62% 52% at 50% 62%, rgba(242, 164, 23, 0.26) 0%, rgba(242, 164, 23, 0) 70%);
+}
 .mh-ready .mh-stream-dot { animation-duration: 3.2s; }
 .mh-ready .mh-glow-med { animation-duration: 2.2s; }
 .mh-ready .mh-spark { animation-duration: 2.4s; }
