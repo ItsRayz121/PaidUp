@@ -522,10 +522,16 @@ body {
      dissolves into the panel instead of ending on a visible seam. */
   background: linear-gradient(180deg, #01363c 0%, #00252b 100%);
 }
+/* ⚠️ THE BASE LAYER IS THE EMPTY-GLASS ASSET, NOT THE ORIGINAL RENDER. The
+   nine coins are a separate sprite the component reveals one at a time as the
+   session runs (components/MiningHero.tsx). `mine-hero-v1.webp` is still in
+   this folder because it is the SOURCE both derived files are cut from — see
+   api/mine-hero-assets.cjs — but nothing loads it any more. Pointing this back
+   at it puts a full pile behind the live one, and the glass never empties. */
 .mh-art {
   position: absolute;
   inset: 0;
-  background-image: url("/brand/mine-hero-v1.webp");
+  background-image: url("/brand/mine-hero-empty-v1.webp");
   background-size: 100% 100%;
   background-repeat: no-repeat;
 }
@@ -577,8 +583,32 @@ body {
   100% { opacity: 0; transform: translateY(82px); }
 }
 
-/* A token dropping onto the pile the render already shows collected: fade in,
-   fall, one small bounce, hold, gone.
+/* ---- the pile ------------------------------------------------------------
+   The coins collected so far. Every one of the nine is always in the DOM; the
+   component only adds `.mh-on` as each becomes due, so revealing one is a pure
+   class change and the shared sprite is already decoded by then.
+   ⚠️ THE LAND ANIMATION MUST NOT RESTART ON EVERY RENDER. This screen
+   re-renders once a second to move the countdown, and it does not restart
+   because the class is added once and never taken off — a coin that has
+   arrived stays arrived. If you ever make the component render only the
+   visible slice of the array, every later coin will remount and this will
+   start over for all of them at once. */
+.mh-pile-coin { opacity: 0; }
+.mh-pile-coin.mh-on {
+  animation: mh-pile-land 560ms cubic-bezier(0.2, 0.85, 0.3, 1) both;
+}
+@keyframes mh-pile-land {
+  0% { opacity: 0; transform: translateY(-16px); }
+  55% { opacity: 1; transform: translateY(2px); }
+  75% { transform: translateY(-1.5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.mh-pile-halo { animation: mh-pulse 4.9s ease-in-out infinite; }
+
+/* A token dropping onto the pile: fade in, fall, one small bounce, hold, gone.
+   ⚠️ HOW FAR IT FALLS IS SET BY THE COMPONENT, NOT HERE — `--mh-drop` is an
+   inline style on `.mh-coins`, because the landing surface rises as the pile
+   builds. The fallback only matters if that variable ever goes missing.
    ⚠️ THE EXIT IS DELIBERATELY ABRUPT (~1.5% of the cycle, about 120ms) AND
    MUST STAY THAT WAY. The first version faded out over ten times that, and a
    half-transparent gold disc sitting on dark glass does not read as a coin
@@ -593,12 +623,12 @@ body {
 @keyframes mh-coin-drop {
   0% { opacity: 0; transform: translateY(0); }
   2% { opacity: 1; transform: translateY(2px); }
-  12% { opacity: 1; transform: translateY(30px); }
-  14% { transform: translateY(26px); }
-  16.5% { transform: translateY(30px); }
-  19% { opacity: 1; transform: translateY(30px); }
-  20.5% { opacity: 0; transform: translateY(30px); }
-  100% { opacity: 0; transform: translateY(30px); }
+  12% { opacity: 1; transform: translateY(var(--mh-drop, 30px)); }
+  14% { transform: translateY(calc(var(--mh-drop, 30px) - 4px)); }
+  16.5% { transform: translateY(var(--mh-drop, 30px)); }
+  19% { opacity: 1; transform: translateY(var(--mh-drop, 30px)); }
+  20.5% { opacity: 0; transform: translateY(var(--mh-drop, 30px)); }
+  100% { opacity: 0; transform: translateY(var(--mh-drop, 30px)); }
 }
 
 /* ---- ambience ----------------------------------------------------------- */
@@ -647,10 +677,18 @@ body {
   .mh-stream-core,
   .mh-stream-dot,
   .mh-coin,
+  .mh-pile-coin.mh-on,
+  .mh-pile-halo,
   .mh-glow-neck,
   .mh-glow-base,
   .mh-glow-med,
   .mh-spark { animation: none; }
+  /* The collected coins are STATE, not motion — they say how far through the
+     session we are, so they still have to be visible with animation off. The
+     `both` fill on their land animation is what would otherwise have been
+     holding them at opacity 1. */
+  .mh-pile-coin.mh-on { opacity: 1; }
+  .mh-pile-halo { opacity: 0.75; }
   /* Static stand-ins, since every one of the above rests at opacity 0 and
      would otherwise disappear entirely rather than simply stop moving. */
   .mh-grain { opacity: 0.7; }
