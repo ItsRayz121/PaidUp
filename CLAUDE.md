@@ -5508,3 +5508,153 @@ See `docs/` for the full spec.
       off. It also no longer meant anything: it was lighting the edge of a panel
       that no longer exists. It is a `::before` radial inside the box now, which
       survives the feather and lights the artwork instead of its edge.
+
+- **A SPEED AND DEBRIS PASS: 8.5 MB OF ART LEAVES THE BUNDLE, EVERY PAGE LOAD
+  STOPS FETCHING THE SAME TWO ENDPOINTS TWICE, AND THE /mine HERO STOPS
+  RE-RENDERING ONCE A SECOND (founder, 2026-09-09).** Asked for a whole-site
+  sweep for stale/useless weight plus a genuine speed and smoothness pass.
+  Verified: web `tsc --noEmit` clean, `eslint src` 0 errors (the same 7
+  pre-existing `<img>` warnings), `next build` clean (38 routes), new
+  `npm run test:coalesce` (5 checks) green **and proven able to fail** — the
+  safety invariant was removed in place and the suite caught it.
+  ⚠️ **`api/` was not touched at all** (`git status api/` empty), so no backend
+  suite is affected by this pass and none was re-run.
+  - ⚠️ **FOUR ROADMAP ISLAND PNGs — 5.28 MB — WERE DEAD AND HAD BEEN SINCE THE
+    PAGE MOVED TO ONE BAKED SCENE.** `lib/roadmap.ts` carried `art`/`width`/
+    `height` per milestone; the page only ever reads `key`.
+    `components/roadmapArt.tsx` (the component that drew them) had zero
+    importers, and its CSS — the SVG-drawn road (`.roadmap-road*`) and the
+    island grid (`.roadmap-island`) — was still in `globals.css`, i.e. still
+    parsed on every page in the app. All deleted; the dead fields are gone from
+    `roadmap.ts`.
+    ⚠️ Two of the removed rules were COMPOUND selectors sharing a live class
+    (`.roadmap-hero-stage, .roadmap-island` and
+    `.roadmap-hero-art, .roadmap-island img`) — the live half was kept. Do not
+    bulk-delete by prefix here.
+  - **The two roadmap images that ARE used are WebP now: 3,203 KB to 383 KB**
+    (q88, the same floor `mine-hero` uses — below it these dark gradients
+    band). ⚠️ **`hero-mountain-v2` has REAL transparency** (alpha mean 91/255)
+    and it survives losslessly — sharp defaults `alphaQuality: 100`, measured
+    at max alpha error **0**, so there is no halo where the mountain meets the
+    night sky. Visible-pixel RGB error is 2.6/255. Rendered in real headless
+    Chrome and looked at: mountain, road, landmarks, cards and markers all
+    correct.
+    ⚠️ **THE LOAD-BEARING EDGE COLOURS SURVIVED, AND THEY ARE WHY THIS NEEDED
+    CHECKING.** `--rm-sky`/`--rm-ground` were sampled from this file's own top
+    and bottom edges (see the 2026-09-07/08 entries); the re-encode shifts them
+    by 1-3/255, far inside the seam the founder originally reported. Re-sample
+    if the art is ever replaced.
+  - ⚠️ **A 1.5 MB MASTER RENDER WAS SITTING INSIDE `web/public/`, UNTRACKED AND
+    UNIGNORED.** `mine-hero-v2.png` — one `git add .` from being downloaded by
+    every real user on mobile data, which is the exact thing the 2026-09-09
+    entry above says it was deliberately kept out of the repo to avoid. Moved
+    to `art-masters/` (gitignored, with a README carrying the re-encode
+    command), so it is still safe on disk and can never ship. **There is no
+    image-generation tool in this workspace**, so these masters are genuinely
+    irreplaceable — do not delete them, and do not put them back under
+    `public/`.
+  - ⚠️ **`public/` HAD NO CACHING AT ALL, AND THAT IS MOST OF THE "RELOAD FEELS
+    LAGGY".** Measured against a real `next start`: every logo, PWA icon and
+    illustration was served `Cache-Control: public, max-age=0`, so the browser
+    revalidated **all of them on every single page load**. The ETag means no
+    bytes move — but it is a blocking round trip per asset, and at a 400 ms
+    mobile RTT four assets is most of a second of dead time before the screen
+    settles, every reload. `next.config.ts` now sets
+    `max-age=86400, stale-while-revalidate=604800` on `/brand/`, `/icons/` and
+    `/roadmap/`.
+    ⚠️ **`stale-while-revalidate` AND NOT `immutable`, DELIBERATELY.** None of
+    these filenames carry a content hash — the logos and icons are replaced in
+    place — so a one-year `immutable` pins a replaced logo on every existing
+    user's phone with no way to push a fix. SWR buys the same thing in practice
+    (instant, no round trip, for a week) while a bad asset still clears within
+    a day. The one-year tier is only ever correct for content-hashed files,
+    which is what Next already applies it to under `/_next/static`. A first
+    attempt used a two-tier regex to give the `-vN` files `immutable`; it
+    silently matched nothing (roadmap fell through to `max-age=0`) and was
+    dropped as complexity for a marginal gain. **Verified per-asset, not
+    assumed.**
+    ⚠️ **`/sw.js` IS STILL `no-store` AND MUST STAY THAT WAY** — a cached
+    service worker is a stuck service worker. The worker itself now also caches
+    `/brand/` and `/roadmap/` alongside `/icons/`, so the installed app paints
+    its hero with no network.
+  - ⚠️ **EVERY EARNER PAGE FETCHED `/wallet/balance` AND `/mining/state` TWICE,
+    ON EVERY LOAD AND EVERY CLIENT-SIDE NAVIGATION.** `TopBar` fetches both (it
+    shows the combined figure on every screen) and so does the page underneath
+    it — two independent `useApi` calls, same endpoint, same tick. **And
+    `/mining/state` IS A WRITE**: `sessionState()` calls `accrue()`, which
+    claims the device for the day and writes mining shares, so the duplicate
+    doubled the transaction load on the busiest write path in the product, not
+    just a read. `apiFetch` now coalesces concurrent identical GETs — the
+    second caller joins the first one's promise.
+    ⚠️ **IT IS NOT A RESPONSE CACHE AND MUST NEVER BECOME ONE.** The entry is
+    deleted the moment the request settles; nothing is ever served from it
+    after the fact. A stale balance out of a cache is the exact bug
+    `public/sw.js` refuses to open the door to.
+    ⚠️ **THE INVARIANT THAT MAKES IT SAFE: A COALESCED RESPONSE CAN NEVER
+    PREDATE A MUTATION THE CALLER HAS ALREADY MADE.** Without it, a `reload()`
+    fired straight after "claim my ROZI" could join a GET already in flight
+    before the claim and show the user their pre-claim balance as if the claim
+    had done nothing. Every non-GET clears the map, on issue and on settle.
+    `web/tests/apiCoalesce.test.mts` pins that case specifically, and the fix
+    was reverted in place to watch it fail before it was trusted. Keyed on the
+    token as well as the path, so a shared phone signing into a second account
+    can never join the first account's flight.
+    ⚠️ **The two tests that first "failed" were harness bugs, not real ones** —
+    an unawaited rejected flight leaking into the next test, which is correct
+    behaviour. Debug the harness before believing a money-path failure.
+  - **`/mine`'s hero stopped re-rendering once a second: 28,801 renders over an
+    8h session down to 241, i.e. 99.2% skipped.** `useCountdown` re-renders
+    that page every second for its clock, and `MiningHero` is ~150 SVG nodes
+    (grains, stream, pile, sparks, every gradient) — all of it reconciled every
+    second, for eight hours, on the screen users leave open, on the low-end
+    Android phones this app is built for. `MiningHero` is `memo`'d and the
+    caller quantises `progress` to 240 steps.
+    ⚠️ **THE MEMO AND THE QUANTISATION ARE ONE FIX.** A raw `Date.now()`
+    fraction changes every second and defeats `memo` completely — do not remove
+    the quantisation and leave the memo expecting it to still do anything.
+    ⚠️ **240 IS A MULTIPLE OF THE 12 PILE TOKENS**, so every token still lands
+    on schedule instead of drifting to the nearest step: all 12 counts still
+    occur and the worst landing drift is 60 s out of 28,800. The visual cost
+    was measured, not guessed — one step moves the liquid surface **0.18 CSS
+    px** on a 390px-wide phone (the pool 0.12 px), i.e. sub-pixel even at 3x
+    DPR. The countdown beside the glass is unquantised and remains the exact
+    figure.
+  - ⚠️ **`AmbientBg.tsx`'s COMMENT CLAIMED "all motion is transform/opacity
+    only (compositor-safe)" AND THAT WAS FALSE.** `liquid-blob-shape` animates
+    `border-radius`, which cannot run on the compositor, so each step repaints
+    the blob **and** re-applies its 40px blur over the whole layer — three
+    layers, on Home/Mine/Wallet/Profile, for as long as the screen is open.
+    This is already deliberately capped (`steps(6, end)`, the 2026-08-27 pass)
+    and the CSS says so; only the component's comment was wrong, and reading
+    that file as "nothing here repaints" is how it gets made worse by accident.
+    Comment corrected; **the look was NOT changed** — it is an approved design
+    layer and a previous pass already made this exact tradeoff knowingly.
+    ⚠️ **REPORTED, NOT ACTIONED, FOR THE FOUNDER TO DECIDE:** `.ambient-bg` is
+    `position: absolute; inset: 0` inside `.app-frame`, whose height is CONTENT
+    height, not the viewport — so on a long screen the blurred blobs are sized
+    as a percentage of the whole scroll height and are several times larger
+    than they need to be. Viewport-anchoring them (`position: fixed`) would cut
+    the blurred area severalfold, but it changes how the background behaves on
+    scroll, so it is a design call, not a cleanup.
+  - **Not done, and why**: **`api.ts`'s staff half ships to every earner** —
+    confirmed by finding `/staff/disbursements`, `/staff/treasury/wallet` and
+    friends inside the chunk set the HOME page loads. ~1,900 of its 2,490 lines
+    are staff-only. Splitting it is mechanical and the compiler would catch
+    every missed import, but it touches 19 money-adjacent staff files, and the
+    payload is short arrow functions and repeated `/staff/` string literals
+    that gzip extremely well — a modest win for a large diff across the staff
+    panel. Left deliberately; the bundle numbers barely moved this pass
+    (CSS 75.4 KB to 74.8 KB, JS unchanged) and are stated that way rather than
+    dressed up. **`mine-hero-v1.webp` (44 KB) and `ConnectWallet.tsx` are both
+    still unreferenced and both stay** — each is a recorded founder decision
+    (2026-09-09 and 2026-09-03), not debris, and nothing imports or requests
+    either, so neither costs page speed.
+  - **Also swept, no action needed**: web has exactly four runtime dependencies
+    and none are unused; `qrcode` is correctly confined to the three wallet
+    screens that need it and is absent from the home page's chunks; the deleted
+    hourglass left no `.hg-*` CSS behind. The unused-i18n-key hunt was
+    **abandoned on purpose** — keys are built by template literal
+    (`roadmap.step.<key>.when`, `roadmap.state.<state>`, `mh-<variant>`), so a
+    static scan reports ~111 false positives and deleting from it would break
+    live copy. `.codex-remote-attachments/` (tool scratch, untracked and
+    unignored) is now gitignored rather than committed by accident.

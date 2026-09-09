@@ -162,8 +162,77 @@ export class ApiError extends Error {
   }
 }
 
+// ---- In-flight GET coalescing ----------------------------------------------
+//
+// Two independent callers ask for the same thing on every single page load.
+// `TopBar` fetches the balance and the mining state (it shows the combined
+// figure on every screen), and so does the page underneath it — so `/` and
+// `/mine` each issued GET /wallet/balance TWICE and GET /mining/state TWICE,
+// on every load and every client-side navigation. On a 400ms mobile round
+// trip that is two whole round trips of dead time per screen.
+//
+// ⚠️ AND /mining/state IS A WRITE. `sessionState()` calls `accrue()`
+// (api/src/mining/engine.ts), which claims the device for the day and writes
+// mining shares — so the duplicate was not just a wasted read, it doubled the
+// transaction load on the busiest write path in the product.
+//
+// This merges callers that genuinely overlap in time: the second one joins the
+// first one's promise instead of opening its own request.
+//
+// ⚠️ THIS IS NOT A RESPONSE CACHE, AND IT MUST NEVER BECOME ONE. The entry is
+// deleted the moment the request settles, so nothing is ever served from it
+// after the fact. A stale balance read out of a cache is the exact bug
+// public/sw.js refuses to open the door to, and the same rule applies here.
+//
+// ⚠️ THE INVARIANT THAT MAKES IT SAFE: A COALESCED RESPONSE CAN NEVER PREDATE
+// A MUTATION THE CALLER HAS ALREADY MADE. Without that, a `reload()` fired
+// straight after "claim my ROZI" could join a GET that was already in flight
+// before the claim, and show the user their pre-claim balance as if the claim
+// had done nothing. So every non-GET request clears the whole map, both when
+// it is issued and when it settles: a GET that starts after a mutation always
+// opens a real request of its own. Do not remove that clearing.
+//
+// Keyed on the token as well as the path, because a shared phone signing into
+// a second account must never join a flight opened for the first one.
+const inFlight = new Map<string, Promise<unknown>>();
+
+function isGet(opts: RequestInit): boolean {
+  const m = (opts.method ?? "GET").toUpperCase();
+  return m === "GET" || m === "HEAD";
+}
+
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
+
+  // See the note above `inFlight`. GETs only, and never across a mutation.
+  if (isGet(opts)) {
+    const key = `${token ?? ""} ${path}`;
+    const joined = inFlight.get(key);
+    if (joined) return joined as Promise<T>;
+    const started = apiFetchUncoalesced<T>(path, opts, token).finally(() => {
+      // Settled: the entry has done its job. Nothing is retained, so no later
+      // caller can ever be answered from it.
+      if (inFlight.get(key) === started) inFlight.delete(key);
+    });
+    inFlight.set(key, started);
+    return started;
+  }
+
+  // A mutation invalidates every read that was already on the wire before it,
+  // so nothing issued afterwards can join a pre-mutation flight.
+  inFlight.clear();
+  try {
+    return await apiFetchUncoalesced<T>(path, opts, token);
+  } finally {
+    inFlight.clear();
+  }
+}
+
+async function apiFetchUncoalesced<T>(
+  path: string,
+  opts: RequestInit,
+  token: string | null,
+): Promise<T> {
   const deviceId = getDeviceId();
 
   // Only declare a content type when there IS content.

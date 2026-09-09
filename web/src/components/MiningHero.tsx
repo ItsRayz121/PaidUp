@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 // The /mine hero — the founder's own rendered concept as the base art, with a
 // live, session-linked fill layered over it (founder, 2026-09-08; the
 // top-to-bottom journey asked for and specified 2026-09-09).
@@ -244,7 +246,7 @@ function Coin({ r = COIN_R, rim }: { r?: number; rim: string }) {
   );
 }
 
-export function MiningHero({
+function MiningHeroImpl({
   variant = "mining",
   progress = 0,
   className = "",
@@ -617,3 +619,17 @@ export function MiningHero({
     </div>
   );
 }
+
+// ⚠️ MEMOISED, AND THAT IS A PERFORMANCE FIX WITH A REAL CAUSE, NOT A HABIT.
+// `/mine` re-renders once a second for its countdown (useCountdown in
+// lib/hooks.ts), and this hero is ~150 SVG nodes — the grains, the stream, the
+// pile, the sparks and every gradient. Without this, React reconciled all of
+// them every second for the whole 8-hour session, on the one screen users
+// leave open, on the low-end Android phones this app is built for.
+//
+// It only pays off because the caller QUANTISES `progress` (see
+// app/mine/page.tsx): a raw Date.now() fraction changes every second and would
+// defeat the memo completely. The two changes are one fix — do not remove the
+// quantisation and leave this in place expecting it to still do anything.
+export const MiningHero = memo(MiningHeroImpl);
+MiningHero.displayName = "MiningHero";

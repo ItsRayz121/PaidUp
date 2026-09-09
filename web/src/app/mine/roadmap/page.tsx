@@ -109,7 +109,7 @@ export default function RoadmapPage() {
           <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">{t("roadmap.hero.description")}</p>
         </div>
         <div className="roadmap-hero-stage relative min-w-0">
-          <Image src="/roadmap/hero-mountain-v2.png" alt="A luminous road climbing RoziPay mountain" width={1536} height={1024} priority sizes="(max-width: 599px) 55vw, 560px" className="roadmap-hero-art h-auto w-full" />
+          <Image src="/roadmap/hero-mountain-v2.webp" alt="A luminous road climbing RoziPay mountain" width={1536} height={1024} priority sizes="(max-width: 599px) 55vw, 560px" className="roadmap-hero-art h-auto w-full" />
         </div>
       </section>
 
@@ -143,7 +143,7 @@ export default function RoadmapPage() {
 
         <div className="roadmap-journey relative mt-10 md:mt-8" data-scene={scene}>
           <Image
-            src="/roadmap/connected-world-v1.png"
+            src="/roadmap/connected-world-v1.webp"
             alt="A glowing road connecting mining, identity verification, public trading and a global exchange"
             width={836}
             height={1882}

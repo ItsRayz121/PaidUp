@@ -98,7 +98,20 @@ self.addEventListener("fetch", (event) => {
   // Build assets are content-hashed (a new build = a new URL), so serving them
   // from cache can never go stale. This is what makes the installed app open
   // instantly on a slow Pakistani mobile connection.
-  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
+  //
+  // /brand/ and /roadmap/ hold the app's illustrations — the 108KB mining
+  // hero and the roadmap scenes. They carry no user data and are replaced by
+  // publishing a new `-vN` filename, so serving them from cache is what makes
+  // the installed app paint its hero with no network at all. (A file replaced
+  // in place under the SAME name would be pinned until CACHE is bumped below,
+  // which is already true of /icons/ and is why version suffixes are the
+  // convention for this art.)
+  if (
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith("/icons/") ||
+    url.pathname.startsWith("/brand/") ||
+    url.pathname.startsWith("/roadmap/")
+  ) {
     event.respondWith(
       caches.match(req).then(
         (hit) =>

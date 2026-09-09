@@ -119,8 +119,22 @@ export default function MinePage() {
   const now = Date.now();
   const sessionMs = (s?.session.sessionHours ?? 0) * 3600_000;
   const remainingMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - now : 0;
-  const sessionProgress =
+  //
+  // ⚠️ QUANTISED, AND THE MEMO ON <MiningHero> DEPENDS ON IT. The raw fraction
+  // is a Date.now() reading, so it changes every single second — which would
+  // re-reconcile the hero's ~150 SVG nodes once a second for eight hours on
+  // the screen people leave open. Over an 8h session the real fraction
+  // advances by 1/28800 per second, i.e. 0.003%: nothing an eye can see.
+  //
+  // 240 steps is one move every two minutes of an 8h session, and 240 is a
+  // multiple of the hero's 12 pile tokens, so every token still lands on
+  // schedule rather than drifting to the nearest step. The countdown beside
+  // the glass is unquantised and remains the exact figure — this only ever
+  // governs the picture.
+  const PROGRESS_STEPS = 240;
+  const rawProgress =
     sessionMs > 0 ? Math.min(1, Math.max(0, 1 - remainingMs / sessionMs)) : 0;
+  const sessionProgress = Math.round(rawProgress * PROGRESS_STEPS) / PROGRESS_STEPS;
 
   // Start mining. An ad fires first when the gate is on: the rewarded video
   // inside Telegram, the direct link on the website — the same formats the

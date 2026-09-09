@@ -135,7 +135,7 @@ body {
   --rm-panel: rgba(2, 35, 42, .9);
   --rm-line: rgba(21, 224, 226, .46);
   /* The illustrated world's OWN background, sampled from the top and bottom
-     edges of connected-world-v1.png (#000f18 / #000c13). Founder, 2026-09-07:
+     edges of connected-world-v1.webp (#000f18 / #000c13). Founder, 2026-09-07:
      the scene looked pasted onto a different-coloured page because it was —
      the page was a lighter teal (#031a20) than the art it framed. Everything
      above and below now paints from these two, so the page reads as one
@@ -185,12 +185,12 @@ body {
     linear-gradient(116deg, transparent 42%, rgba(9, 112, 126, .2) 53%, transparent 65%);
   filter: blur(8px);
 }
-.roadmap-hero-stage, .roadmap-island { position: relative; }
+.roadmap-hero-stage { position: relative; }
 .roadmap-hero-stage::after {
   content: ""; position: absolute; z-index: -1; inset: 13% 2% 5% 8%; border-radius: 50%;
   background: rgba(0, 226, 231, .18); filter: blur(30px); pointer-events: none;
 }
-.roadmap-hero-art, .roadmap-island img {
+.roadmap-hero-art {
   filter: hue-rotate(-13deg) saturate(1.18) brightness(.84) drop-shadow(0 14px 24px rgba(0, 238, 240, .28));
 }
 .roadmap-hero h1 { text-shadow: 0 3px 0 rgba(0,0,0,.22); }
@@ -211,21 +211,9 @@ body {
   column-gap: 12%; align-items: center;
   min-height: 250px; padding-block: 20px;
 }
-.roadmap-road { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.roadmap-road path { fill: none; }
-.roadmap-road-edge, .roadmap-road-surface { vector-effect: non-scaling-stroke; }
-.roadmap-road-edge { stroke: rgba(11, 238, 240, .38); stroke-width: clamp(34px, 8vw, 86px); filter: drop-shadow(0 0 7px #04cbd0); }
-.roadmap-road-surface { stroke: #087e8b; stroke-width: clamp(28px, 6.8vw, 73px); }
-.roadmap-road-center { stroke: #e6ffff; stroke-width: .75; stroke-dasharray: 2.3 2.5; filter: drop-shadow(0 0 1px #fff); }
-/* Vertical end tangents and non-scaling strokes keep joins smooth even when
-   adjacent cards wrap to different heights (including enlarged text). */
-.roadmap-island { z-index: 1; width: 118%; justify-self: center; }
-.roadmap-island img { display: block; width: 100%; height: auto; }
 .roadmap-card-position { position: relative; z-index: 2; min-width: 0; }
 .roadmap-stop:nth-of-type(odd) .roadmap-card-position { grid-column: 1; grid-row: 1; }
-.roadmap-stop:nth-of-type(odd) .roadmap-island { grid-column: 2; grid-row: 1; }
 .roadmap-stop:nth-of-type(even) .roadmap-card-position { grid-column: 2; grid-row: 1; }
-.roadmap-stop:nth-of-type(even) .roadmap-island { grid-column: 1; grid-row: 1; }
 .roadmap-node {
   position: absolute; top: 50%; left: 50%; z-index: 3;
   display: grid; place-items: center; transform: translate(-50%, -50%);
@@ -1047,20 +1035,3 @@ body {
   .reactor .r-ring { opacity: 0.14; }
 }
 
-/* /mine/roadmap decorative art (components/roadmapArt.tsx) — a slow cloud
-   drift and a faint flag sway, same "purely decorative" rule as the reactor
-   rings above: transform-only, frozen under reduced-motion. */
-.rm-cloud { animation: rm-drift 9s ease-in-out infinite; transform-origin: center; }
-.rm-cloud-2 { animation-duration: 12s; animation-delay: -3s; }
-@keyframes rm-drift {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(6px); }
-}
-.rm-flag { animation: rm-sway 3.4s ease-in-out infinite; transform-origin: 182px 10px; }
-@keyframes rm-sway {
-  0%, 100% { transform: translate(182px, 10px) rotate(0deg); }
-  50% { transform: translate(182px, 10px) rotate(2.5deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .rm-cloud, .rm-flag { animation: none; }
-}

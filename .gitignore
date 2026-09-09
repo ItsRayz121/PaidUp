@@ -15,3 +15,12 @@ api/data/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Full-resolution art masters: kept on disk, never shipped, never committed.
+# See art-masters/README.md.
+/art-masters/*
+!/art-masters/README.md
+
+# Scratch dir written by the Codex remote tooling. Not ours to keep, and one
+# "git add ." away from being committed.
+.codex-remote-attachments/

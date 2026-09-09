@@ -11,10 +11,17 @@ import type { CSSProperties } from "react";
 //   4. .ab-motes > i ×12  — small diamonds drifting upward, "mining energy"
 //
 // ⚠️ PURELY DECORATIVE. Never interactive, never a data visualisation — same
-// rule the mining-chamber rings and the claim hourglass already follow. All
-// motion is transform/opacity only (compositor-safe); `prefers-reduced-motion`
+// rule the mining-chamber rings already follow. `prefers-reduced-motion`
 // freezes every layer. `-z-10` keeps it behind every real element (see the
 // .app-frame stacking-context note in globals.css for why that works).
+//
+// ⚠️ THE MOTION IS *NOT* ALL TRANSFORM/OPACITY, WHICH THIS COMMENT USED TO
+// CLAIM. The motes and the drift are; `liquid-blob-shape` animates
+// `border-radius`, which cannot run on the compositor, so each step repaints
+// the blob AND re-applies its 40px blur over the whole layer. That is known
+// and deliberately capped — see the `steps(6, end)` note above the keyframes
+// in globals.css (2026-08-27 pass) — but it is not free, and reading this
+// file as "nothing here repaints" is how it gets made worse by accident.
 export function AmbientBg({ variant }: { variant?: "mine" }) {
   return (
     <div
