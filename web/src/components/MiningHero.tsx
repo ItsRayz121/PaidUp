@@ -9,28 +9,17 @@
 // shading, so the render itself is the base layer. What that costs us is
 // written down here so nobody "restores" the old component thinking it was
 // only ever worse:
+//   • The art is FIXED. The sand level in the upper bulb and the coin pile in
+//     the lower one are pixels in `mine-hero-v1.webp`, so neither can move.
+//     The old component's coin split tracked the fraction of the session
+//     elapsed (founder ask, 2026-08-30); that is retired here. It was always
+//     explicitly decorative — the countdown next to this hero is, and always
+//     was, the number a user should trust — but it IS a reversal, and if the
+//     founder wants it back the fix is a render of the same scene with an
+//     EMPTY glass, which this component could then fill live.
 //   • It is one raster, so it cannot re-theme. See `.mh-wrap` in globals.css:
 //     the panel paints its own dark ground in BOTH skins, because a dark 3D
 //     render dropped on the light skin's white card reads as a broken image.
-//
-// ⚠️ THE PILE IS LIVE AGAIN (2026-09-09), AND IT IS THE RENDER'S OWN COINS.
-// The first cut of this component had to retire the progress-linked coin split
-// the founder asked for on 2026-08-30, because the pile was baked into the
-// art and you cannot empty a glass made of pixels. It is back: the base layer
-// is now the same render with the pile INPAINTED OUT, and the nine coins are a
-// separate 5KB alpha sprite cut from the original, revealed one at a time as
-// the session elapses. Both files, and the geometry in `mineHeroPile.ts`, come
-// out of `api/mine-hero-assets.cjs` — read that script's header before
-// touching any coordinate here.
-//   • Hand-drawn vector coins were tried FIRST and rejected. Several sizes,
-//     face ratios and rim gradients were rendered next to the real pile and
-//     every one read as too bright, too flat or too big beside the render's
-//     shading. Do not re-attempt that: cutting the real coins out is exact by
-//     construction and costs 5KB.
-//   • It is still decorative. It tracks ELAPSED TIME, never the real ROZI
-//     figure — nine coins over an eight-hour session is one coin every ~53
-//     minutes, and no user should read a count off it. The countdown beside
-//     this hero is, and always was, the number to trust.
 //
 // ⚠️ THE OVERLAY IS REGISTERED TO THE ART IN IMAGE PIXELS, AND THREE THINGS
 // HOLD THAT ALIGNMENT. The SVG's viewBox is the asset's exact pixel size, the
@@ -42,8 +31,6 @@
 //   base top y 415 · platform ring y ~470 · medallion (383, 58).
 // If the asset is ever re-cropped or replaced, re-measure with a grid first.
 import { useEffect } from "react";
-
-import { PILE_COINS, PILE_RX, PILE_RY, PILE_SPRITE } from "./mineHeroPile";
 
 // The asset's intrinsic size. The viewBox, the CSS aspect-ratio and every
 // coordinate in this file are all in these units.
@@ -91,34 +78,16 @@ const LOWER_GRAINS = [
 ];
 
 // ⚠️ COINS SPAWN BELOW THE NECK, NOT ABOVE IT, AND THAT IS FORCED BY THE ART.
-// A coin matched to the pile is ~30px across and the neck glass is ~16px — a
-// coin cannot be drawn passing through it without visibly overflowing the
+// A coin matched to the baked pile is ~26px across and the neck glass is ~16px
+// — a coin cannot be drawn passing through it without visibly overflowing the
 // glass. So they fade in just under the neck, where the bulb has already
 // widened, and drop onto the pile. `x` is where each one lands, chosen to sit
-// over the pile rather than beside it.
+// on top of the baked pile rather than beside it.
 const DROP_COINS = [
   { x: 388, delay: 0 },
   { x: 372, delay: 2.6 },
   { x: 404, delay: 5.2 },
 ];
-
-// Where a dropping coin is released, in art pixels. How FAR it falls is not
-// fixed: see `dropDistance` below.
-const DROP_FROM_Y = 302;
-
-// ⚠️ A DROPPING COIN HAS TO LAND ON THE PILE THAT IS ACTUALLY THERE, AND THIS
-// IS NOT A FLOURISH. The fall used to be a constant 30px, which was right for
-// the old always-full baked pile and is wrong the moment the glass can be
-// empty: at the start of a session a coin would stop dead about 60px above the
-// rim and hang in clear glass, which reads as a bug, not as motion. So the
-// distance follows the surface the NEXT coin would land on.
-function dropDistance(coinsShown: number): number {
-  const next = PILE_COINS[Math.min(coinsShown, PILE_COINS.length - 1)];
-  // A full pile has no next coin to aim at, so land one coin-height above its
-  // top rather than inside it.
-  const y = coinsShown >= PILE_COINS.length ? next.y - PILE_RY : next.y;
-  return Math.round(y - DROP_FROM_Y);
-}
 
 // Gold sparkles, placed over areas where the render already has its own gold
 // bokeh so the live ones read as part of the same field.
@@ -140,7 +109,6 @@ const POUR_MS = 2200;
 
 export function MiningHero({
   variant = "mining",
-  progress,
   className = "",
   onSettled,
 }: {
@@ -148,21 +116,9 @@ export function MiningHero({
   // start tap, which calls onSettled when it finishes. "ready" — the claim
   // card, where the whole panel sits in a warmer, stronger glow.
   variant?: "mining" | "pour" | "ready";
-  // How far through the session we are, 0..1 — how much of the pile has
-  // collected. Only read for "mining": a "pour" has just started, so its glass
-  // is empty, and "ready" means there is something waiting to be collected, so
-  // its glass is full. Both of those are facts about the variant, not about
-  // any number a caller could pass.
-  progress?: number;
   className?: string;
   onSettled?: () => void;
 }) {
-  const filled =
-    variant === "ready" ? 1 : variant === "pour" ? 0 : Math.min(1, Math.max(0, progress ?? 0));
-  // One coin per whole 1/9th of the session. Floor, so the glass is honestly
-  // empty until the first ninth is actually behind us.
-  const coinsShown = Math.floor(filled * PILE_COINS.length);
-
   useEffect(() => {
     if (variant !== "pour" || !onSettled) return;
     const id = setTimeout(onSettled, POUR_MS);
@@ -216,29 +172,6 @@ export function MiningHero({
             <stop offset="52%" stopColor="#f3d72e" />
             <stop offset="100%" stopColor="#b58f0a" />
           </linearGradient>
-          {/* The halo a settled coin throws onto the glass around it. The
-              render had one baked in; cutting the coins out on their own
-              ellipse necessarily left it behind, and without something in its
-              place a revealed coin reads as pasted on. Drawn rather than
-              carried in the sprite's alpha on purpose — a soft tail in the
-              alpha would be made of the neighbouring coin's pixels, so it
-              would show a ghost of coins that have not been collected yet. */}
-          <radialGradient id="mhCoinHalo" cx="50%" cy="50%" r="50%">
-            <stop offset="42%" stopColor="#e9fff8" stopOpacity="0.5" />
-            <stop offset="70%" stopColor="#8ff0e2" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="#8ff0e2" stopOpacity="0" />
-          </radialGradient>
-          {/* One clip per coin, so the shared sprite shows exactly one of the
-              nine. ⚠️ These ids are fixed, and two heroes CAN be on screen at
-              once (the running card and the claim card). Duplicate ids resolve
-              to the first match in the document — harmless only because every
-              instance defines these identically, from the same generated
-              geometry. Do not make any of them depend on the instance. */}
-          {PILE_COINS.map((c, i) => (
-            <clipPath key={i} id={`mhPileCoin${i}`}>
-              <ellipse cx={c.x} cy={c.y} rx={PILE_RX} ry={PILE_RY} />
-            </clipPath>
-          ))}
         </defs>
 
         {/* Glows first, so the live motion reads on top of them. */}
@@ -288,55 +221,18 @@ export function MiningHero({
           ))}
         </g>
 
-        {/* The pile that has collected so far — the render's own coins, cut
-            out as a sprite and shown one clip at a time.
-            ⚠️ ALL NINE ARE ALWAYS IN THE DOM; only the class changes. Slicing
-            the array instead would mean the sprite is not fetched until the
-            first coin is due, which on a real session is ~53 minutes after the
-            screen was opened — so the first coin would pop in on a cold image
-            request. Rendering them all costs one request and one decode, and
-            makes revealing a coin a pure class change. */}
-        <g className="mh-pile">
-          {PILE_COINS.map((c, i) => (
-            <g key={i} className={`mh-pile-coin${i < coinsShown ? " mh-on" : ""}`}>
-              <ellipse
-                className="mh-pile-halo"
-                cx={c.x}
-                cy={c.y + 1}
-                rx={PILE_RX * 1.55}
-                ry={PILE_RY * 1.55}
-                fill="url(#mhCoinHalo)"
-              />
-              <g clipPath={`url(#mhPileCoin${i})`}>
-                <image
-                  href="/brand/mine-hero-pile-v1.webp"
-                  x={PILE_SPRITE.x}
-                  y={PILE_SPRITE.y}
-                  width={PILE_SPRITE.w}
-                  height={PILE_SPRITE.h}
-                />
-              </g>
-            </g>
-          ))}
-        </g>
-
-        {/* Tokens dropping onto the pile. */}
-        <g className="mh-coins" style={{ ["--mh-drop" as string]: `${dropDistance(coinsShown)}px` }}>
+        {/* Tokens dropping onto the pile the render already shows collected. */}
+        <g className="mh-coins">
           {DROP_COINS.map((c, i) => (
             <g key={i} className="mh-coin" style={{ animationDelay: `${c.delay}s` }}>
-              {/* An ellipse, not a circle, and sized from the real coins it
-                  lands among (30 x 25 px in the art — see mineHeroPile.ts).
-                  It was a circle while the pile was baked and unreachable;
-                  now it comes to rest touching the sprite's own coins, so a
-                  mismatched shape would be side by side and obvious. */}
-              <g transform={`translate(${c.x},${DROP_FROM_Y})`}>
-                <ellipse rx={PILE_RX - 0.6} ry={PILE_RY - 0.6} fill="url(#mhCoinRim)" />
-                <ellipse rx={(PILE_RX - 0.6) * 0.63} ry={(PILE_RY - 0.6) * 0.63} fill="#e8fff5" />
+              <g transform={`translate(${c.x},302)`}>
+                <circle r={12} fill="url(#mhCoinRim)" />
+                <circle r={9} fill="#e8fff5" />
                 <text
                   y={0.5}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fontSize={12}
+                  fontSize={11}
                   fontWeight={800}
                   fill="#003c38"
                 >

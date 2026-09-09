@@ -100,19 +100,12 @@ export default function MinePage() {
   // eslint-disable-next-line react-hooks/purity
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
-  // How far through the current mining session we are, 0..1 — it fills the
-  // hero's glass, one of the nine coins at a time, instead of the glass
-  // sitting full from the first second (founder, 2026-08-30; briefly lost when
-  // the hero became a render on 2026-09-08, restored 2026-09-09 once the pile
-  // was cut out of that render into its own sprite).
-  // ⚠️ PURELY DECORATIVE, AND THE DISTINCTION MATTERS: it tracks ELAPSED TIME,
-  // never the real ROZI amount. `countdown` above is the exact figure and
-  // always was. `useCountdown` re-renders this component every second, which
-  // is what keeps the Date.now() below fresh.
-  const sessionMs = (s?.session.sessionHours ?? 8) * 3600_000;
-  const sessionStartMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - sessionMs : 0;
-  // eslint-disable-next-line react-hooks/purity
-  const sessionProgress = sessionStartMs ? Math.min(1, Math.max(0, (Date.now() - sessionStartMs) / sessionMs)) : 0;
+  // The 0..1 "how far through the session" value that used to live here is
+  // gone with the SVG hourglass it fed (2026-09-08). The hero's art is a
+  // render, so nothing on this screen can consume a progress fraction any
+  // more — `countdown` above is the real, exact figure, and always was.
+  // components/MiningHero.tsx records what it would take to restore the
+  // progress-linked version.
 
   // Start mining. An ad fires first when the gate is on: the rewarded video
   // inside Telegram, the direct link on the website — the same formats the
@@ -358,11 +351,15 @@ export default function MinePage() {
             </div>
           ) : s.session.active ? (
             <div className="pt-1 pb-2">
-              {/* The glass fills as the session runs — one of the render's own
-                  nine coins per ninth of the session (founder, 2026-08-30).
-                  Decorative: it follows elapsed TIME, and `countdown` right
-                  below is the exact figure. */}
-              <MiningHero variant="mining" progress={sessionProgress} />
+              {/* ⚠️ THE HERO NO LONGER TAKES `progress`, AND THAT IS A KNOWN
+                  REVERSAL OF THE 2026-08-30 ASK. The base art is a render
+                  (components/MiningHero.tsx) whose sand level and coin pile
+                  are pixels, so the coin split can no longer track how far
+                  through the session we are. It was always explicitly
+                  decorative; `countdown` right below is the exact figure and
+                  always was. MiningHero's header records what it would take to
+                  bring the progress-linked version back. */}
+              <MiningHero variant="mining" />
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
