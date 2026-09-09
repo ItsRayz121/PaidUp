@@ -499,12 +499,17 @@ body {
 }
 
 /* The /mine hero — components/MiningHero.tsx. The base art is the founder's
-   own rendered concept (public/brand/mine-hero-v1.webp); everything here is
+   own rendered concept (public/brand/mine-hero-v2.webp); everything here is
    the live motion layered over it, plus the panel it sits in.
+
+   The LEVELS — how far the upper bulb has drained, how deep the pool is, how
+   many tokens have settled — are NOT in this file. They are progress-linked
+   geometry and live in the component, because they are a picture of the
+   countdown rather than a loop. Everything here is the motion on top of them.
 
    ⚠️ THREE PROPERTIES HOLD THE OVERLAY IN REGISTER WITH THE ART, AND ALL
    THREE HAVE TO AGREE: the SVG viewBox is the asset's exact pixel size
-   (770x528, set in the component), the wrapper's aspect-ratio is that same
+   (1515x1038, set in the component), the wrapper's aspect-ratio is that same
    ratio (set inline, from the same constants), and the art below is painted
    `100% 100%` rather than `cover`. `cover` would be equivalent only while the
    ratio holds exactly — spelling it out means a future ratio slip shows up as
@@ -525,7 +530,7 @@ body {
 .mh-art {
   position: absolute;
   inset: 0;
-  background-image: url("/brand/mine-hero-v1.webp");
+  background-image: url("/brand/mine-hero-v2.webp");
   background-size: 100% 100%;
   background-repeat: no-repeat;
 }
@@ -574,31 +579,37 @@ body {
   0% { opacity: 0; transform: translateY(0); }
   18% { opacity: 1; }
   82% { opacity: 0.7; }
-  100% { opacity: 0; transform: translateY(82px); }
+  100% { opacity: 0; transform: translateY(210px); }
 }
 
-/* A token dropping onto the pile the render already shows collected: fade in,
-   fall, one small bounce, hold, gone.
+/* A token begins in the upper chamber, converges on the neck, then fans out
+   and settles in the empty lower chamber: fade in, fall, one small bounce,
+   hold, gone.
    ⚠️ THE EXIT IS DELIBERATELY ABRUPT (~1.5% of the cycle, about 120ms) AND
    MUST STAY THAT WAY. The first version faded out over ten times that, and a
    half-transparent gold disc sitting on dark glass does not read as a coin
    disappearing — it reads as a grey ghost disc, i.e. as a rendering bug. Seen
    in a browser, not predicted.
-   ⚠️ The visible window (~20% of the cycle) is kept SHORTER than the stagger
-   between coins (a third of the cycle), so only one is ever on screen. */
+   The visible window (~40% of the cycle) now slightly EXCEEDS the stagger
+   between the three coins (a third of it), so one is still settling as the
+   next appears. That overlap is deliberate: the journey is long now — the
+   full height of the glass rather than a hop onto a pile — and one token at a
+   time across it reads as a stall between drops, not as a flow. */
 .mh-coin {
   opacity: 0;
   animation: mh-coin-drop 7.8s ease-in infinite;
 }
 @keyframes mh-coin-drop {
   0% { opacity: 0; transform: translateY(0); }
-  2% { opacity: 1; transform: translateY(2px); }
-  12% { opacity: 1; transform: translateY(30px); }
-  14% { transform: translateY(26px); }
-  16.5% { transform: translateY(30px); }
-  19% { opacity: 1; transform: translateY(30px); }
-  20.5% { opacity: 0; transform: translateY(30px); }
-  100% { opacity: 0; transform: translateY(30px); }
+  2% { opacity: 1; transform: translateY(0); }
+  7% { opacity: 1; transform: translateY(18px); }
+  16% { opacity: 1; transform: translate(var(--mh-neck-x), var(--mh-neck-y)); }
+  28% { opacity: 1; transform: translate(var(--mh-land-x), var(--mh-land-y)); }
+  30% { transform: translate(var(--mh-land-x), calc(var(--mh-land-y) - 10px)); }
+  33% { transform: translate(var(--mh-land-x), var(--mh-land-y)); }
+  39% { opacity: 1; transform: translate(var(--mh-land-x), var(--mh-land-y)); }
+  40.5% { opacity: 0; transform: translate(var(--mh-land-x), var(--mh-land-y)); }
+  100% { opacity: 0; transform: translate(var(--mh-land-x), var(--mh-land-y)); }
 }
 
 /* ---- ambience ----------------------------------------------------------- */
@@ -660,9 +671,14 @@ body {
   .mh-glow-neck,
   .mh-glow-base,
   .mh-glow-med { opacity: 0.8; }
-  /* The dropping tokens are the one thing with nowhere sensible to rest — the
-     render already shows a full pile — so they stay hidden. */
-  .mh-coin { opacity: 0; }
+  /* A static token rests in the upper bulb, where the animation starts.
+     ⚠️ REDUCED MOTION STILL GETS THE WHOLE PROGRESS-LINKED FILL, and that is
+     the point of putting the levels in the component rather than in a
+     keyframe: the drained top, the pool and the settled pile are plain
+     geometry, so someone who has asked their phone to stop animating things
+     still sees a glass that tells them how far through the session they are.
+     Only the drifting, falling and twinkling stops. */
+  .mh-coin { opacity: 0.9; transform: none; }
 }
 
 /* Ambient background — the "Liquid / Energy" motif (founder, 2026-08-13;

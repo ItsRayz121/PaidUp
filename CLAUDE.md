@@ -5361,3 +5361,108 @@ See `docs/` for the full spec.
     hero's job is to look like the render. The countdown beside it is the exact
     figure, and the pile was only ever decorative — nine coins over eight hours
     is one every ~53 minutes, which is not a number anyone reads off a picture.
+
+- **THE HOURGLASS FILLS FOR REAL: LIQUID AND TOKENS BOTH MAKE THE TRIP
+  (founder, 2026-09-09, approved from a live preview before it landed).** The
+  third attempt at a progress-linked glass, and the one that stuck. The founder
+  asked for the ROZI tokens to drop from the upper bulb to the lower one and
+  for the liquid to drain with them, so that when both have arrived the 8h
+  countdown is finished, the user claims, and the glass fills back up top.
+  Verified: web typecheck, eslint (0 errors, the same 7 pre-existing `<img>`
+  warnings), production build (38 routes) all clean, and every state below
+  rendered and inspected in real headless Chrome at the exact 388px card width
+  `/mine` gives it. No backend touched, so no API suite was re-run.
+  - ⚠️ **THE BASE ART IS THE START STATE, AND THAT IS THE WHOLE REASON THIS
+    ONE WORKED WHERE TWO ATTEMPTS FAILED.** `mine-hero-v2` has its upper bulb
+    FULL and its lower bulb EMPTY, so every layer only ever **adds** to the
+    render — a cover that grows down as the liquid leaves, a pool that rises, a
+    pile that grows. `mine-hero-v1` (the founder's own screenshot, and what was
+    live until now) is the END state: drained top, full coin pile, both painted
+    in. Animating THAT meant inpainting the pile out of the glass, which is
+    what `f419fc0` did and what the founder reverted on sight. **If the base
+    art is ever replaced, replace it with another START-state render**, or this
+    component goes straight back to being an erasure problem. A consequence
+    worth knowing: the founder's reference screenshot is now what the glass
+    looks like at the END of a session.
+  - **`progress` is back on the hero** (0..1), derived in `app/mine/page.tsx`
+    from `expiresAt` and `sessionHours` — ⚠️ **there is no `startedAt` on the
+    wire**, so the start is the expiry minus the length. No API change was
+    needed. `useCountdown` already re-renders once a second, which is what
+    moves it. `"pour"` pins it to 0 and `"ready"` pins it to 1, and that pinning
+    is what makes the **reset free**: claiming starts a new session, progress
+    returns to 0, liquid and tokens are back up top, and there is no separate
+    reset animation that could fall out of step.
+  - ⚠️ **A REAL BUG, FOUND BY MEASURING RENDERED PIXELS AND INVISIBLE IN THE
+    MARKUP: SVG ids ARE DOCUMENT-SCOPED.** Every instance emitted
+    `id="mhVacated"` — the clip that confines the drain to the band the liquid
+    has left, whose height is computed from progress — so `url(#mhVacated)`
+    resolved to the FIRST one on the page and every other hero clipped its
+    drain to that hero's band. On the review page five of six heroes simply
+    never painted their drain; sampling the output found it identical to the
+    untouched art (`#00a591` against the art's own `#03ad98`). Every gradient
+    and clip id is now scoped per instance with `useId()`, sanitised of the
+    colons React puts in it. **Only one hero renders at a time on `/mine`
+    today, so this was latent there — do not "simplify" the ids back.**
+  - ⚠️ **NOTHING IN THE OVERLAY MAY HAVE A STRAIGHT EDGE INSIDE THE GLASS
+    UNLESS IT IS A LIQUID SURFACE.** Both tells that made the first cut read as
+    a grey box pasted onto the art were straight edges: a hard horizontal line
+    where the fill started at the render's baked surface, and the two vertical
+    sides of a 52px rect standing in for the lamp beam. The fill now starts
+    56px HIGHER than the surface at alpha 0 and only reaches full strength
+    below it — and that same ramp does a second job, taking away the glow the
+    render paints just above the old surface, which was light cast by liquid
+    that is no longer there. The beam is an ellipse with a radial fade.
+  - ⚠️ **TWO NESTED CLIPS, AND THE NESTING IS THE MECHANISM.** A clipPath
+    holding two shapes UNIONS them; nesting one clipped group inside another
+    INTERSECTS them. Inside-the-bulb AND above-the-surface is an intersection,
+    which is what lets the beam be any soft shape and still never paint over
+    liquid that has not drained. Flatten them and the beam shows through the
+    remaining liquid.
+  - **The pile is a heap, not a lattice.** 12 tokens, one landing every ~40
+    minutes, in rows of 5/4/3 that **overlap** (gap 32 against a 38px coin),
+    with per-coin height, angle and ±1px radius jitter and a dark outer stroke.
+    The first cut laid 18 identical coins on an even grid and read as bubble
+    wrap; without the stroke, overlapping coins merge into one gold blob.
+    ⚠️ **The jitter is HAND-AUTHORED, never `Math.random()`** — this renders on
+    the server, so a random field differs from the client's first render and the
+    pile visibly jumps on load. ⚠️ **FILL order is bottom-row-first (a heap
+    grows upward) and PAINT order is the reverse** (on screen a lower coin is a
+    nearer coin); getting them the same way round makes the heap look inside
+    out.
+  - ⚠️ **THE TWO COIN RADII DIFFER ON PURPOSE AND ONLY ONE IS FREE.** A token
+    in flight is bounded by the **neck** — 30px of glass, so r=13 — while a
+    settled one passes through nothing and is sized to the founder's reference
+    instead (r=19), because a heap built at neck size reads as a scatter of
+    little rings however well it is stacked. Nothing morphs: a falling token
+    vanishes at its landing point rather than growing.
+  - ⚠️ **EVERY LEVEL FILL USES `gradientUnits="userSpaceOnUse"`.** These shapes
+    change height every second, and with the default `objectBoundingBox` the
+    gradient restretches each time — the colour at a given height in the glass
+    would drift as the level moved, so the liquid would appear to change hue
+    while draining.
+  - **At progress 0 nothing at all is painted over the art**: the drain group
+    is not rendered below p=0.001 and no token has settled, so a session that
+    has just started is the render exactly as approved.
+  - **Reduced motion still gets the whole fill.** The levels are plain geometry
+    in the component, not keyframes, so someone who has asked their phone to
+    stop animating things still sees how far through the session they are. Only
+    the drifting, falling and twinkling stops. That is the argument for keeping
+    the levels out of `globals.css`.
+  - **Every coordinate was measured, not estimated** — a 50px grid composited
+    over the asset, then the derived bulb silhouettes drawn back over it to
+    confirm the fit. Two corrections came out of that: the asset is
+    **1515x1038**, not the 1517x1034 an earlier draft assumed (which alone
+    drifts the whole overlay), and **the two bulbs do not share a centre line**
+    (upper 755, lower 753 — it is a hand-made render, and one centre puts a
+    meniscus visibly off-axis).
+  - **The 1.6MB `mine-hero-v2.png` master is deliberately NOT committed** —
+    everything under `web/public/` ships to every visitor. The app uses a
+    110KB WebP re-encode at q88 (q78/84/88/92 compared; dark gradients band
+    below that). The master is on the founder's disk and there is **no
+    image-generation tool in this workspace**, so it is worth keeping safe.
+    `mine-hero-v1.webp` is now referenced by nothing but is left in place as
+    the founder's approved reference for the end state.
+  - **Not verified**: nobody has seen this on a real handset, and `/mine`
+    itself was never opened with a live session (it needs a logged-in account
+    against the live API) — the hero was verified in isolation at the real card
+    width across progress 0 / 0.25 / 0.5 / 0.75 / 1 and both other variants.

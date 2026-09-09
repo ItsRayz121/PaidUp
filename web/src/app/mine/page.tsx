@@ -100,12 +100,27 @@ export default function MinePage() {
   // eslint-disable-next-line react-hooks/purity
   const claimWait = adClaim ? Math.max(0, Math.ceil((adClaim.readyAt - Date.now()) / 1000)) : 0;
 
-  // The 0..1 "how far through the session" value that used to live here is
-  // gone with the SVG hourglass it fed (2026-09-08). The hero's art is a
-  // render, so nothing on this screen can consume a progress fraction any
-  // more — `countdown` above is the real, exact figure, and always was.
-  // components/MiningHero.tsx records what it would take to restore the
-  // progress-linked version.
+  // How far through the session, 0..1 — restored 2026-09-09 on the founder's
+  // ask, and now the hero really can consume it (components/MiningHero.tsx
+  // layers the levels over a start-state render instead of trying to move
+  // pixels that were baked into an end-state one).
+  //
+  // ⚠️ DERIVED FROM `expiresAt` AND `sessionHours`, BECAUSE THERE IS NO
+  // `startedAt` ON THE WIRE. `MiningState.session` carries only
+  // { active, expiresAt, sessionHours }, so the start is expiresAt minus the
+  // length rather than a field of its own — no API change was needed for
+  // this. If a session's length is ever changed mid-flight, the fraction
+  // shifts with it; the countdown stays exact either way, which is why that,
+  // not this, is the figure on screen.
+  //
+  // Re-read fresh every render: `useCountdown` above re-renders us once a
+  // second, which is exactly what moves this along.
+  // eslint-disable-next-line react-hooks/purity
+  const now = Date.now();
+  const sessionMs = (s?.session.sessionHours ?? 0) * 3600_000;
+  const remainingMs = s?.session.expiresAt ? Date.parse(s.session.expiresAt) - now : 0;
+  const sessionProgress =
+    sessionMs > 0 ? Math.min(1, Math.max(0, 1 - remainingMs / sessionMs)) : 0;
 
   // Start mining. An ad fires first when the gate is on: the rewarded video
   // inside Telegram, the direct link on the website — the same formats the
@@ -351,15 +366,13 @@ export default function MinePage() {
             </div>
           ) : s.session.active ? (
             <div className="pt-1 pb-2">
-              {/* ⚠️ THE HERO NO LONGER TAKES `progress`, AND THAT IS A KNOWN
-                  REVERSAL OF THE 2026-08-30 ASK. The base art is a render
-                  (components/MiningHero.tsx) whose sand level and coin pile
-                  are pixels, so the coin split can no longer track how far
-                  through the session we are. It was always explicitly
-                  decorative; `countdown` right below is the exact figure and
-                  always was. MiningHero's header records what it would take to
-                  bring the progress-linked version back. */}
-              <MiningHero variant="mining" />
+              {/* The glass is a picture of the countdown under it: the liquid
+                  drains out of the top bulb, a pool gathers in the bottom one
+                  and the tokens pile up as the session runs. Still decorative
+                  — `countdown` right below is the exact figure and always
+                  was — but it means the screen looks different late in a
+                  session than early in one, which is what was asked for. */}
+              <MiningHero variant="mining" progress={sessionProgress} />
               <p className="mt-3 text-sm font-semibold text-success">{t("mine.running")}</p>
               <p className="num text-2xl font-bold text-brand-ink">{countdown}</p>
               <p className="mt-1 text-xs text-muted">{t("mine.running.note")}</p>
