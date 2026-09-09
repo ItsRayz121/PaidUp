@@ -5341,3 +5341,75 @@ See `docs/` for the full spec.
     never opened (it needs a logged-in session) — the hero was rendered in
     isolation at the real card width in both skins. The previous SVG hourglass
     is recoverable from commit `b6cec63` if the raster is ever rejected.
+
+- **THE GLASS FILLS LIVE AGAIN, WITH THE RENDER'S OWN COINS (2026-09-09).**
+  The entry directly above retired the progress-linked coin split (founder,
+  2026-08-30) because the pile was baked into the render — "the fix, if it is
+  ever wanted back, is a render of the same scene with an EMPTY glass". That is
+  what this is, except the empty glass was made from the render we already have
+  rather than commissioned. Verified: web `tsc --noEmit` clean, `eslint src`
+  0 errors (the same 7 pre-existing `<img>` warnings), `next build` clean
+  (38 routes) — **and rendered in real headless Chrome at every state** (0, 1,
+  3, 5, 7 and 9 coins, plus `pour` and `ready`), then A/B'd against the
+  original render at full pile. No API, ledger, copy or guardrail was touched,
+  so no backend suite was re-run.
+  - **`api/mine-hero-assets.cjs` cuts two derived assets out of
+    `mine-hero-v1.webp`** and is committed as the only record of how: the scene
+    with the pile inpainted out (`mine-hero-empty-v1.webp`, 40KB — a Laplace
+    fill seeded from the glass's own colours), and the nine coins alone
+    (`mine-hero-pile-v1.webp`, **5KB**, alpha). `MiningHero` shows the empty
+    glass and reveals one coin per ninth of the session, so a full pile IS the
+    render, pixel for pixel.
+  - ⚠️ **HAND-DRAWN VECTOR COINS WERE TRIED FIRST AND FAILED — DO NOT
+    RE-ATTEMPT.** Several sizes, face ratios and rim gradients were rendered
+    beside the real pile and every one read as too bright, too flat or too big
+    against the render's shading. Cutting the real coins out is exact by
+    construction and costs 5KB.
+  - ⚠️ **THE INPAINT DILATION IS 14 AND SMALLER VALUES FAIL IN A SPECIFIC,
+    EASY-TO-MISS WAY.** At 5 (where it started) and at 8 the fill still leaves
+    a soft triangular mound — the ghost of the pile, a pile-shaped glow with no
+    pile in it — because the boundary is still inside the coins' own baked
+    glow. It clears at ~11; past ~20 it flattens the glass's own highlight
+    curves. Compared at six radii at browser size, not guessed.
+  - ⚠️ **THE GEOMETRY IS GENERATED (`web/src/components/mineHeroPile.ts`), NOT
+    HAND-COPIED.** The component clips that sprite per coin, so its ellipses
+    and the ones the sprite's alpha was cut with must be the same numbers. Two
+    hand-kept copies drift, and the symptom — a thin crescent of empty glass
+    around one coin — is invisible in a diff. Regenerate both together by
+    running the script; **err LARGE on the radius, never small**, since too big
+    only borrows a ring of the neighbouring coin's own gold.
+  - ⚠️ **THE HALO UNDER EACH COIN IS DRAWN, NOT CARRIED IN THE SPRITE'S
+    ALPHA.** Cutting each coin on its own ellipse necessarily left behind the
+    glow the render had baked onto the glass around it, and without something
+    in its place a revealed coin reads as pasted on. A soft alpha tail was the
+    obvious fix and is wrong: those pixels are the NEIGHBOURING coin's, so it
+    would show a ghost of coins that have not been collected yet.
+  - **A falling coin now lands on the pile that is actually there.** The drop
+    was a fixed 30px — right for an always-full baked pile, wrong the moment
+    the glass can be empty: at the start of a session a coin stopped dead about
+    60px above the rim and hung in clear glass, which reads as a bug rather
+    than as motion. `--mh-drop` is an inline style set from the component.
+  - ⚠️ **ALL NINE COINS ARE ALWAYS IN THE DOM; ONLY THE CLASS CHANGES.**
+    Rendering just the visible slice would mean the sprite is not fetched until
+    the first coin is due — ~53 minutes into a real session — so it would pop
+    in on a cold image request. It is also what keeps the land animation from
+    restarting on every one of this screen's once-a-second re-renders: the
+    class is added once and never removed.
+  - **Still decorative, and the copy must keep saying so**: nine coins over an
+    eight-hour session is one coin every ~53 minutes. It tracks ELAPSED TIME,
+    never the real ROZI figure — the countdown beside the hero is the number to
+    trust, exactly as before.
+  - `mine-hero-v1.webp` stays in `web/public/brand/` as the SOURCE both derived
+    files are cut from. ⚠️ **Nothing loads it any more** — pointing `.mh-art`
+    back at it puts a full pile behind the live one and the glass never empties.
+  - ⚠️ **TWO LOCAL TRAPS COST REAL TIME AND BOTH LOOK LIKE A CODE BUG.**
+    (a) `pkill -f "next start"` does **not** match the server process here, so
+    a "rebuilt and restarted" server kept serving the OLD build — the symptom
+    was a `ready` hero rendering with an empty glass, which is not a state that
+    variant can produce. Kill it by PID from `netstat -ano | grep :3987`.
+    (b) A `&&` chain that builds then starts hides a failed build when a stale
+    server is still answering on the port: check the build log, and confirm the
+    page you are looking at is the one you just wrote.
+  - **Not done**: still nobody has seen this on a real phone, and `/mine`
+    itself has still never been opened (it needs a logged-in session against
+    the live API) — the hero was verified in isolation at the real card width.
