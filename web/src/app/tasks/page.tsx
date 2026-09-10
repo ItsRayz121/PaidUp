@@ -180,17 +180,33 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* "My activity" always shows this fixed 4-chip row (All + the three
-          named stages); History only shows its own row when it actually has
-          more than one group to switch between. */}
-      {(view === "mine" || chipLabels.length > 1) && (
+      {/* ⚠️ "My activity" gets its OWN, equal-width row (founder, 2026-09-10)
+          — NOT the shrink-to-content, horizontally-scrollable Chip row every
+          other filter in this file uses. That row lets the widest label
+          (here, "Pending reward") push the last chip half off the right edge
+          of the screen, which is exactly the "first eyesight" cutoff the
+          founder pointed at. Measured against real phone widths (358-380px
+          of content, i.e. a 390-412px screen): four equal `flex-1` chips at
+          `text-xs` wrap "Under review"/"Pending reward" to two lines and fit
+          every chip fully on screen with no scrolling and no clipping — see
+          the GroupChip component below for the full reasoning. History keeps
+          the old scrollable row (only shown once it has >1 group to switch
+          between), since its labels are short enough to never need this. */}
+      {view === "mine" ? (
+        <div className="flex gap-1.5">
+          <GroupChip label="All" active={activeGroup === ""} onClick={() => setGroup("")} />
+          {chipLabels.map((label) => (
+            <GroupChip key={label} label={label} active={activeGroup === label} onClick={() => setGroup(label)} />
+          ))}
+        </div>
+      ) : chipLabels.length > 1 ? (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           <Chip label="All" active={activeGroup === ""} onClick={() => setGroup("")} />
           {chipLabels.map((label) => (
             <Chip key={label} label={label} active={activeGroup === label} onClick={() => setGroup(label)} />
           ))}
         </div>
-      )}
+      ) : null}
 
       {tasks.loading ? (
         <Loading />
@@ -248,6 +264,28 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
   return (
     <button onClick={onClick} aria-pressed={active}
       className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold ${
+        active ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
+      {label}
+    </button>
+  );
+}
+
+// ⚠️ `min-w-0` IS LOAD-BEARING, NOT DECORATION (founder, 2026-09-10). A flex
+// item defaults to `min-width: auto`, which floors its width at its own
+// content's intrinsic width — with 4 equal `flex-1` chips that default would
+// make each one exactly as wide as the LONGEST label ("Pending reward"),
+// overflowing the row instead of sharing it. `min-w-0` is what actually lets
+// a chip shrink below its own text and wrap to two lines. Confirmed by
+// rendering this exact markup at 358px and 380px of content width (a
+// 390-412px phone) — every chip lands at `scrollWidth === clientWidth`
+// (nothing clipped), two lines for the longer labels, one for "All" and
+// "Completed". Do not "simplify" this back to `Chip`'s shrink-to-content,
+// horizontally-scrollable layout — that is the exact style that cut
+// "Completed" off the edge of the screen.
+function GroupChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} aria-pressed={active}
+      className={`min-w-0 flex-1 rounded-full px-1 py-1.5 text-center text-xs font-semibold leading-tight ${
         active ? "bg-brand text-white" : "bg-brand-tint text-brand"}`}>
       {label}
     </button>
