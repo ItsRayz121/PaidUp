@@ -71,6 +71,13 @@ export default function TasksPage() {
   const [limit, setLimit] = useState(12);
   const tasks = useApi(() => fetchTasks(view, 0, limit), [view, limit]);
   const [category, setCategory] = useState("");
+  // The status headings ("Under review" / "Pending" / "Completed", etc.) used
+  // to only ever stack vertically, one full section after another. This is
+  // the same chip-row filter the category row above already uses — "All"
+  // (the default) keeps today's stacked-sections behaviour; picking one
+  // status shows just that section, so the statuses read as a horizontal
+  // row instead of a scroll.
+  const [group, setGroup] = useState("");
   // A small, separate fetch — just enough for "My activity"'s Completed
   // group to show something without duplicating the History screen. See
   // groupsFor's own comment for why this is a second call, not a bigger
@@ -91,8 +98,11 @@ export default function TasksPage() {
   // that is most of them.
   const present = [...new Set(all.map((x) => x.category).filter(Boolean))] as string[];
   const list = category ? all.filter((x) => x.category === category) : all;
+  const groupList = view !== "available" ? groupsFor(view, list, recentlyCompleted) : [];
+  const activeGroup = groupList.some((g) => g.label === group) ? group : "";
+  const groupsToShow = activeGroup === "" ? groupList : groupList.filter((g) => g.label === activeGroup);
   const switchView = (next: TaskView) => {
-    setLimit(next === "history" ? 20 : 12); setCategory("");
+    setLimit(next === "history" ? 20 : 12); setCategory(""); setGroup("");
     const url = next === "available" ? "/tasks" : `/tasks?view=${next}`;
     window.history.replaceState(null, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -135,10 +145,19 @@ export default function TasksPage() {
 
       {present.length > 1 && (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-          <Chip label="All" active={category === ""} onClick={() => setCategory("")} />
+          <Chip label="All" active={category === ""} onClick={() => { setCategory(""); setGroup(""); }} />
           {present.map((c) => (
             <Chip key={c} label={TASK_CATEGORY_LABELS[c] ?? c}
-              active={category === c} onClick={() => setCategory(c)} />
+              active={category === c} onClick={() => { setCategory(c); setGroup(""); }} />
+          ))}
+        </div>
+      )}
+
+      {groupList.length > 1 && (
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+          <Chip label="All" active={activeGroup === ""} onClick={() => setGroup("")} />
+          {groupList.map((g) => (
+            <Chip key={g.label} label={g.label} active={activeGroup === g.label} onClick={() => setGroup(g.label)} />
           ))}
         </div>
       )}
@@ -157,9 +176,15 @@ export default function TasksPage() {
           {view === "available" ? (
             <TaskFlow tasks={list} />
           ) : (
-            groupsFor(view, list, recentlyCompleted).map((g) => (
+            groupsToShow.map((g) => (
               <section key={g.label} className="space-y-2">
-                <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{g.label}</h2>
+                {/* The chip row above already names the active status when one
+                    is picked — repeating it as a heading here would be the
+                    same word twice. The heading only earns its place when
+                    "All" is selected and several sections are stacked. */}
+                {activeGroup === "" && (
+                  <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{g.label}</h2>
+                )}
                 <TaskFlow tasks={g.items} />
               </section>
             ))
