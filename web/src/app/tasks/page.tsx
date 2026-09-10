@@ -40,6 +40,14 @@ import { fetchTasks, TASK_CATEGORY_LABELS, type TaskView, type Task } from "@/li
 // unfinished"). Reusing the tested History query for a quick glance here,
 // rather than changing what `view=mine` itself returns, keeps that existing
 // contract untouched — History remains the real, complete Completed list.
+//
+// ⚠️ THIS RETURNS EVERY GROUP, INCLUDING EMPTY ONES (founder, 2026-09-10) —
+// filtering empty groups out used to happen INSIDE this function, which was
+// fine while every group was also a section heading (an empty section is
+// just skipped). It no longer works once "Under review" / "Pending reward" /
+// "Completed" are fixed, always-visible chips: the caller needs to tell "this
+// chip is empty" apart from "this label doesn't exist", so filtering is now
+// the caller's job.
 function groupsFor(
   view: TaskView, list: Task[], recentCompleted: Task[] = [],
 ): { label: string; items: Task[] }[] {
@@ -51,14 +59,26 @@ function groupsFor(
       { label: "Needs another try", items: pick("rejected_retryable") },
       { label: "Pending", items: pick("started", "not_started") },
       { label: "Completed", items: recentCompleted.slice(0, 5) },
-    ].filter((g) => g.items.length > 0);
+    ];
   }
   // history
   return [
     { label: "Completed", items: pick("completed") },
     { label: "Ended campaigns", items: list.filter((x) => x.userState !== "completed") },
-  ].filter((g) => g.items.length > 0);
+  ];
 }
+
+// ⚠️ FIXED, ALWAYS-SHOWN CHIPS FOR "My activity" (founder, 2026-09-10): "Under
+// review" / "Pending reward" / "Completed" are the three stages the founder
+// called "the most suitable category at the present moment" — shown as a
+// fixed row (plus "All") regardless of whether a given one has anything in it
+// right now, unlike every other chip row in this file (category, History's
+// own group row), which only ever lists what's actually present. "Needs
+// another try" and "Pending" (not yet submitted) are real states that must
+// still surface — see groupsFor's own header comment — so they are not
+// dropped, just folded into "All" rather than given a fourth/fifth chip of
+// their own; the founder's ask was for exactly four chips.
+const MINE_CHIPS = ["Under review", "Pending reward", "Completed"];
 
 export default function TasksPage() {
   const { ready } = useRequireAuth();
@@ -98,9 +118,16 @@ export default function TasksPage() {
   // that is most of them.
   const present = [...new Set(all.map((x) => x.category).filter(Boolean))] as string[];
   const list = category ? all.filter((x) => x.category === category) : all;
-  const groupList = view !== "available" ? groupsFor(view, list, recentlyCompleted) : [];
-  const activeGroup = groupList.some((g) => g.label === group) ? group : "";
-  const groupsToShow = activeGroup === "" ? groupList : groupList.filter((g) => g.label === activeGroup);
+  const rawGroups = view !== "available" ? groupsFor(view, list, recentlyCompleted) : [];
+  const nonEmptyGroups = rawGroups.filter((g) => g.items.length > 0);
+  // "My activity" gets the fixed four (All + the three named stages, always
+  // offered); History keeps the old behaviour of only ever listing whichever
+  // groups actually have something in them right now.
+  const chipLabels = view === "mine" ? MINE_CHIPS : nonEmptyGroups.map((g) => g.label);
+  const activeGroup = chipLabels.includes(group) ? group : "";
+  const groupsToShow = activeGroup === ""
+    ? nonEmptyGroups
+    : [{ label: activeGroup, items: rawGroups.find((g) => g.label === activeGroup)?.items ?? [] }];
   const switchView = (next: TaskView) => {
     setLimit(next === "history" ? 20 : 12); setCategory(""); setGroup("");
     const url = next === "available" ? "/tasks" : `/tasks?view=${next}`;
@@ -153,11 +180,14 @@ export default function TasksPage() {
         </div>
       )}
 
-      {groupList.length > 1 && (
+      {/* "My activity" always shows this fixed 4-chip row (All + the three
+          named stages); History only shows its own row when it actually has
+          more than one group to switch between. */}
+      {(view === "mine" || chipLabels.length > 1) && (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           <Chip label="All" active={activeGroup === ""} onClick={() => setGroup("")} />
-          {groupList.map((g) => (
-            <Chip key={g.label} label={g.label} active={activeGroup === g.label} onClick={() => setGroup(g.label)} />
+          {chipLabels.map((label) => (
+            <Chip key={label} label={label} active={activeGroup === label} onClick={() => setGroup(label)} />
           ))}
         </div>
       )}
@@ -185,7 +215,16 @@ export default function TasksPage() {
                 {activeGroup === "" && (
                   <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{g.label}</h2>
                 )}
-                <TaskFlow tasks={g.items} />
+                {/* A fixed "My activity" chip (unlike every other chip in this
+                    file) can be picked while it genuinely has nothing in it —
+                    TaskFlow renders an empty list as literally nothing, which
+                    would read as a broken screen rather than "nothing here
+                    right now". */}
+                {g.items.length === 0 ? (
+                  <p className="px-1 text-sm text-muted">Nothing here right now.</p>
+                ) : (
+                  <TaskFlow tasks={g.items} />
+                )}
               </section>
             ))
           )}
