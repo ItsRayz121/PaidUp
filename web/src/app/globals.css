@@ -503,43 +503,66 @@ body {
    ratio holds exactly — spelling it out means a future ratio slip shows up as
    a stretched image instead of as an overlay that silently drifts off the
    thing it points at. */
-/* ⚠️ THE ART HAS NO FRAME, AND REMOVING THAT FRAME WAS THE POINT (founder,
-   2026-09-09). This used to be a rounded panel painting its own dark ground
-   (`#01363c` to `#00252b`, sampled from the asset's own edges) so that a dark
-   raster would never sit on the light skin's white card. It worked, and it
-   also gave the hourglass a visible rectangle of its own: a tone that did not
-   match the card around it (`--color-card` is `#0e2429` in the vault skin) and
-   an 18px radius drawing the edge in. The founder read it, correctly, as a
-   picture stuck onto the screen rather than part of the screen.
-   So there is no ground and no radius now — the card shows through — and the
-   art's four edges are FEATHERED into whatever is behind them. That answers
-   the original light-skin worry better than a panel did: a dark illustration
-   that dissolves at its edges reads as an illustration on any ground, where a
-   hard-edged dark rectangle on white reads as a broken image.
-   ⚠️ THE FEATHER IS TWO SEPARATE SINGLE-GRADIENT MASKS ON PURPOSE, NOT ONE
-   TWO-GRADIENT MASK. Masking both axes on one element needs
-   `mask-composite: intersect`, and where that is unsupported the layers
-   default to `add` — they UNION, which is very nearly opaque everywhere and
-   silently gives back the hard edge this exists to remove. Nested masks
-   multiply instead, so putting the horizontal feather on the wrapper and the
-   vertical one on the two layers inside it gets the intersection using only
-   the widely-supported half of the feature. */
+/* ⚠️ THE ART HAS NO FRAME AND NO SIDE EDGES — IT IS A FULL-BLEED BAND ACROSS
+   THE CARD, AND ONLY ITS TOP AND BOTTOM DISSOLVE (founder, 2026-09-10).
+   The history matters, because each step was a founder call:
+     1. It was a rounded panel painting its own dark ground. That read as a
+        picture stuck onto the screen — a tone that did not match the card and
+        an 18px radius drawing the edge in.
+     2. So the ground and the radius came off and all four edges were
+        feathered (2026-09-09). In the vault skin that worked, because the
+        art's dark teal and `--color-card` (#0e2429) are close enough that
+        nothing reads as a boundary. In the LIGHT skin it did not: the art is
+        a dark raster on a #ffffff card, and an 8%/5% ramp against that much
+        contrast is still a ramp you can see — the founder's report was that
+        "the background is still visible in light mode", with a screenshot of
+        a dark rectangle floating in a white card.
+   The fix is to stop having side edges at all rather than to soften them
+   further. The hero already spans the card's full width (`-mx-5` against the
+   card's `p-5`), so left and right are now the CARD'S OWN edges, which read as
+   a full-bleed illustration the way any app's header image does. Only the top
+   and bottom sit inside the card, and those dissolve.
+   ⚠️ BOTH `/mine` HEROES MUST STAY FULL-BLEED FOR THIS TO HOLD. There is no
+   horizontal feather any more, so an inset copy of this component would show
+   two hard vertical edges — which is exactly the rectangle this removes. The
+   claim card's hero was capped at 300px and was widened to `-mx-5` in the same
+   change for that reason. If a third caller ever wants an inset hero it needs
+   its own treatment; do not simply drop it in.
+   ⚠️ THE DISSOLVE IS A MASK, NOT A PAINTED GRADIENT, AND THAT IS WHAT MAKES IT
+   "ADJUST IN BOTH SKINS EASILY". A gradient ending in `var(--color-card)` was
+   built and compared against this: it looks all but identical, and it is
+   strictly worse to own — it hard-codes which token is behind the hero, so it
+   is wrong on the claim card (`bg-accent-tint`, a cream tint in the light
+   skin, not the card colour) and wrong again the next time this component is
+   put on a different ground. Fading to transparent resolves to whatever is
+   actually behind it, in either skin, with nothing to keep in sync. */
 .mh-wrap {
   position: relative;
   width: 100%;
   overflow: hidden;
-  /* ⚠️ Feather stops are held clear of the artwork itself. The hourglass
-     occupies roughly the middle third horizontally, so 8% a side only ever
-     touches the outermost crystals. Vertically it very nearly fills the frame
-     — the brass cap starts about 6% down and the platform ends about 5% up —
-     so those stops are much tighter, and widening them eats the cap. */
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 8%, #000 92%, transparent 100%);
-  mask-image: linear-gradient(to right, transparent 0%, #000 8%, #000 92%, transparent 100%);
 }
 .mh-art,
 .mh-fx {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 94%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 94%, transparent 100%);
+  /* ⚠️ EASED, NOT LINEAR, AND THE TWO REQUIREMENTS PULL OPPOSITE WAYS.
+     The brass cap starts about 6% down and the platform's glow ring ends about
+     5% up, so the ramp has almost no empty art to work in: a LONG ramp kills
+     the edge but mists the cap, a SHORT one keeps the cap crisp but leaves the
+     cliff. Rendered all three at 3x on a white card and looked at them — 5%
+     linear (what shipped before) is a visible cliff, 10% linear washes the top
+     of the cap and leaves a grey plateau, and this curve does neither: it is
+     past 60% opacity by 4.5% and past 88% by 7%, so the cap is solid, while
+     the last stretch into transparency is gentle enough that there is no line
+     to see. Re-render before retuning these stops; they are not guesses. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%, rgba(0, 0, 0, 0.28) 2%, rgba(0, 0, 0, 0.62) 4.5%, rgba(0, 0, 0, 0.88) 7%, #000 10%,
+    #000 90%, rgba(0, 0, 0, 0.85) 94%, rgba(0, 0, 0, 0.42) 97%, transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%, rgba(0, 0, 0, 0.28) 2%, rgba(0, 0, 0, 0.62) 4.5%, rgba(0, 0, 0, 0.88) 7%, #000 10%,
+    #000 90%, rgba(0, 0, 0, 0.85) 94%, rgba(0, 0, 0, 0.42) 97%, transparent 100%
+  );
 }
 .mh-art {
   position: absolute;
@@ -662,13 +685,17 @@ body {
 .mh-pour .mh-coin:nth-of-type(2) { animation-delay: 0.6s !important; }
 .mh-pour .mh-coin:nth-of-type(3) { animation-delay: 1.2s !important; }
 
-/* ⚠️ THE CLAIM WARMTH IS AN INNER GLOW, NOT A box-shadow, AND IT HAD TO MOVE.
-   This was `box-shadow: 0 0 22px rgba(242,164,23,0.28)` — a glow drawn OUTSIDE
-   the border box, which a mask paints away completely, so the claim card would
-   simply have lost its warmth when the frame came off. It also no longer made
-   sense: an outer glow was lighting the edge of a panel that does not exist
-   any more. Inside the box it survives the feather and lights the artwork
-   itself, which is the thing worth drawing attention to. */
+/* ⚠️ THE CLAIM WARMTH IS AN INNER GLOW, NOT A box-shadow, AND IT MUST STAY
+   ONE. This was `box-shadow: 0 0 22px rgba(242,164,23,0.28)` — a glow drawn
+   OUTSIDE the border box, lighting the edge of a panel that does not exist any
+   more, so it stopped meaning anything the moment the frame came off.
+   ⚠️ AND IT IS ALL BUT INVISIBLE TODAY, WHICH IS A KNOWN GAP, NOT AN
+   ACCIDENT WAITING TO BE "FIXED" BY MOVING IT. A `::before` is the element's
+   FIRST child, so it paints UNDER `.mh-art` — which is opaque wherever the
+   vertical mask is — and only shows through the top and bottom dissolve.
+   Switching it to `::after` would put a warm wash over the whole hero on the
+   claim card: a real change to how that card looks, and one nobody has asked
+   for. Leave it until someone does. */
 .mh-ready::before {
   content: "";
   position: absolute;
@@ -923,9 +950,10 @@ body {
 }
 
 /* The light-skin lift that used to sit here is gone with the SVG hourglass it
-   was written for (2026-09-08). The hero is a raster on its own dark panel
-   now — see `.mh-wrap`, which paints that ground in BOTH skins — so there is
-   no longer a case of gold-on-near-white needing help. */
+   was written for (2026-09-08). The hero is a raster now, and it brings its
+   own dark sky with it — see `.mh-wrap`, a full-bleed band that dissolves at
+   the top and bottom into whatever card is behind it — so there is no longer a
+   case of gold-on-near-white needing help. */
 
 /* ============================================================
    Balance hero sheen — a slow light sweep across the big number

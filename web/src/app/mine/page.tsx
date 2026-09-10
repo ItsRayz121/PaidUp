@@ -31,9 +31,17 @@ import { rewardsHistory, type Row } from "@/lib/walletHistory";
 
 // The hero is a landscape panel now (components/MiningHero.tsx) and it sets
 // its own aspect ratio from the asset, so there is no box to pin here any
-// more — it fills whatever width it is given. The claim card gets a cap so a
-// secondary, conditional card does not out-shout the mining hero above it.
-const CLAIM_HERO_MAX = 300;
+// more — it fills whatever width it is given.
+// ⚠️ THE CLAIM HERO'S 300px CAP IS GONE (founder, 2026-09-10) AND THAT WAS NOT
+// A LOOK CHANGE FOR ITS OWN SAKE. The hero no longer has a horizontal feather
+// — see `.mh-wrap` in globals.css — because on the light skin an 8% ramp from
+// a dark raster to a white card is still an edge you can see, and the fix was
+// to stop having side edges rather than soften them again. That only works
+// while the hero spans its card's full width, so an inset copy would show two
+// hard vertical edges: exactly the rectangle the change removes. The cap
+// existed so a secondary, conditional card would not out-shout the mining hero
+// above it; that job is now done by the card's tint, its border and its
+// position, which is the cheaper way to say the same thing.
 
 export default function MinePage() {
   const { ready } = useRequireAuth();
@@ -424,7 +432,7 @@ export default function MinePage() {
           settlement or a tap. */}
       {s.claimableMicro > 0 && (
         <Card className="border-accent/40 bg-accent-tint/70 p-5 text-center">
-          <div className="relative mx-auto" style={{ maxWidth: CLAIM_HERO_MAX }}>
+          <div className="relative -mx-5">
             {justClaimed && <span className="claim-burst text-accent" aria-hidden="true" />}
             {/* The same hero in its "ready" state — a warmer glow and a calmed
                 stream, because the moment here is "there is something to

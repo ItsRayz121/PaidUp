@@ -5735,3 +5735,73 @@ See `docs/` for the full spec.
     still reaches all 13 pile states, so no token landing was lost; and no
     reference survives anywhere to the deleted PNGs, `roadmapArt.tsx`, or the
     `.roadmap-road*` / `.roadmap-island` / `.rm-cloud` / `.rm-flag` CSS.
+
+- **THE /mine HERO STOPS BEING A DARK RECTANGLE ON A WHITE CARD (founder,
+  2026-09-10).** The founder's report, with a screenshot: "this background is
+  still visible in light mode which makes it bad looking — can we adjust it so
+  it also adjusts like above in light and dark mode easily", pointing at the
+  dial above it, which works in both skins. Verified: web `tsc --noEmit`
+  clean, `eslint src` 0 errors (the same 7 pre-existing `<img>` warnings),
+  `next build` clean, and rendered in real headless Chrome **against the built
+  stylesheet with the real `/mine` markup**, not a mock, in both skins. No
+  backend touched, so no API suite is affected and none was re-run.
+  - ⚠️ **THE FOUR-SIDED FEATHER (2026-09-09) WAS ONLY EVER GOING TO WORK IN
+    ONE SKIN, AND THAT IS THE THING TO UNDERSTAND BEFORE TOUCHING THIS AGAIN.**
+    In the vault skin the art's dark teal and `--color-card` (`#0e2429`) are
+    close enough that no ramp is visible at any width. On `#ffffff` the
+    contrast is enormous, and an 8%/5% ramp against that much contrast is
+    still a ramp you can see. Softening it further does not converge —
+    a wider ramp on white is a bigger smudge, not a smaller edge. Two
+    alternatives were built and rendered before this one was picked: a blurred
+    "haze" halo extending past the box read as a grey smear around the
+    artwork, and a band that kept its side feather still read as a picture
+    stuck onto the card.
+  - **The fix is to stop having side edges rather than soften them.** The hero
+    already spans the card's full width (`-mx-5` against the card's `p-5`), so
+    left and right are now the CARD'S OWN edges, which read as a full-bleed
+    illustration the way a header image does in any app. Only the top and
+    bottom sit inside the card, and only those dissolve.
+  - ⚠️ **BOTH `/mine` HEROES MUST STAY FULL-BLEED.** There is no horizontal
+    feather any more, so an inset copy shows two hard vertical edges — exactly
+    the rectangle this removes. The claim card's hero was capped at 300px and
+    is now `-mx-5` for that reason; its "a secondary, conditional card should
+    not out-shout the mining hero" job is carried by its tint, border and
+    position instead, which says the same thing more cheaply. A third caller
+    wanting an inset hero needs its own treatment — do not just drop it in.
+  - ⚠️ **THE DISSOLVE IS A MASK, NOT A PAINTED GRADIENT, AND THAT IS WHAT
+    MAKES IT "ADJUST IN BOTH SKINS EASILY".** A ground ending in
+    `var(--color-card)` was built and compared side by side: it looks all but
+    identical and is strictly worse to own, because it hard-codes which token
+    is behind the hero — already wrong on the claim card (`bg-accent-tint`, a
+    cream tint in the light skin, not the card colour) and wrong again the next
+    time this component is put on a different ground. Fading to transparent
+    resolves to whatever is actually behind it, in either skin, with nothing to
+    keep in sync.
+  - ⚠️ **THE FADE CURVE IS EASED, NOT LINEAR, AND THE TWO REQUIREMENTS PULL
+    OPPOSITE WAYS.** The brass cap starts ~6% down and the platform's glow ring
+    ends ~5% up, so the ramp has almost no empty art to work in: a LONG ramp
+    kills the edge but mists the cap, a SHORT one keeps the cap crisp and
+    leaves the cliff. All three were rendered at 3x on a white card and looked
+    at — 5% linear (what shipped) is the cliff the founder reported, 10% linear
+    washes the top of the cap and leaves a grey plateau, and the eased curve
+    does neither: past 60% opacity by 4.5% and past 88% by 7%, so the cap is
+    solid, while the last stretch into transparency is gentle enough that there
+    is no line to see. **Re-render before retuning those stops.**
+  - **Found while in there, comment corrected but behaviour deliberately left
+    alone**: `.mh-ready::before` (the claim card's warm glow) is a `::before`,
+    so it is the element's FIRST child and paints UNDER the opaque `.mh-art`,
+    showing only through the top and bottom dissolve — its own comment claimed
+    it "lights the artwork itself". Switching it to `::after` would put a warm
+    wash over the whole claim hero: a real change to how that card looks, and
+    one nobody asked for. The comment now says so. Same pass also fixed a
+    second stale comment still describing the hero as "a raster on its own dark
+    panel... which paints that ground in BOTH skins", untrue since 2026-09-09.
+  - ⚠️ **A TRAP THAT LOOKS EXACTLY LIKE A STALE BUILD, AND NEARLY COST AN
+    UNNECESSARY `rm -rf .next`: `.next/static/chunks/*.css` KEEPS HASHED FILES
+    FROM PREVIOUS BUILDS.** A post-edit `next build` succeeded and a grep of
+    "the" CSS chunk still showed the OLD rules — because the grep had hit a
+    leftover chunk from an earlier build sitting in the same directory. The
+    build was correct all along. This is a THIRD variant of the stale-CSS trap
+    this file already records twice (dev server after a git checkout; dev
+    server after an edit). **Check the mtime and grep EVERY `.css` in that
+    directory before concluding a build did not pick a change up.**
